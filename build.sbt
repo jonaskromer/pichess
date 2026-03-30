@@ -4,7 +4,7 @@ ThisBuild / scalaVersion := "3.8.2"
 
 lazy val root = (project in file("."))
   .settings(
-    name := "SoftArchess",
+    name := "pichess",
     libraryDependencies ++= Seq(
       "dev.zio"       %% "zio"       % "2.1.14",
       "org.scalatest" %% "scalatest" % "3.2.19" % Test,

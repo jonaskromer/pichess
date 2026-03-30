@@ -2,7 +2,7 @@
 
 ## Overview
 
-SoftArchess is a console chess game written in pure Scala 3 using a functional style. The architecture is deliberately layered to support future additions — HTTP access, microservices, dual-database persistence, reactive streams, and Kafka — without requiring changes to the domain model.
+πChess is a console chess game written in pure Scala 3 using a functional style. The architecture is deliberately layered to support future additions — HTTP access, microservices, dual-database persistence, reactive streams, and Kafka — without requiring changes to the domain model.
 
 ## Layer Diagram
 

@@ -6,7 +6,7 @@ Instructions for AI Coding Agents when working on this project.
 
 ## Project
 
-SoftArchess is a console chess game written in pure Scala 3 with ZIO. It is a university lecture project — each phase introduces a new technology on top of the existing codebase.
+πChess is a console chess game written in pure Scala 3 with ZIO. It is a university lecture project — each phase introduces a new technology on top of the existing codebase.
 
 See [`docs/architecture.md`](docs/architecture.md) for the full layer structure and package overview.
 
