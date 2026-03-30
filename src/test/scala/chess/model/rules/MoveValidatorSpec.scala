@@ -285,10 +285,10 @@ class MoveValidatorSpec extends AnyFlatSpec with Matchers:
     val s = state(pos('a', 1) -> WR)
     val result = MoveValidator.validate(s, Move(pos('e', 4), pos('e', 5)))
     result.isLeft shouldBe true
-    result.left.get should include("e4")
+    result.swap.toOption.get.asInstanceOf[chess.model.GameError].message should include("e4")
 
   it should "return Left mentioning the piece color when moving opponent's piece" in:
     val s = state(pos('e', 7) -> BP)
     val result = MoveValidator.validate(s, Move(pos('e', 7), pos('e', 6)))
     result.isLeft shouldBe true
-    result.left.get should include("Black")
+    result.swap.toOption.get.asInstanceOf[chess.model.GameError].message should include("Black")

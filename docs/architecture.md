@@ -45,6 +45,7 @@ Pure domain types. No I/O, no ZIO, no dependencies on other packages.
 | File | Purpose |
 |---|---|
 | `GameId.scala` | `type GameId = String` — single change point if stronger typing is needed later |
+| `GameError.scala` | Defines `enum GameError` representing typed failure tracks (e.g. `ParseError`, `InvalidMove`) |
 | `GameEvent.scala` | Domain events: `GameStarted`, `MoveMade`, `InvalidMoveAttempted` |
 | `board/Board.scala` | `type Board = Map[Position, Piece]` + initial board setup |
 | `board/GameState.scala` | Immutable game snapshot: board, active color, en passant target |

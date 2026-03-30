@@ -57,13 +57,13 @@ class GameSpec extends AnyFlatSpec with Matchers:
     val move = Move(Position('e', 4), Position('e', 5))
     val result = Game.applyMove(initial, move)
     result.isLeft shouldBe true
-    result.left.get should include("e4")
+    result.swap.toOption.get.asInstanceOf[chess.model.GameError].message should include("e4")
 
   it should "return Left when moving an opponent's piece" in:
     val move = Move(Position('e', 7), Position('e', 5))
     val result = Game.applyMove(initial, move)
     result.isLeft shouldBe true
-    result.left.get should include("Black")
+    result.swap.toOption.get.asInstanceOf[chess.model.GameError].message should include("Black")
 
   // ─── En passant target tracking ─────────────────────────────────────────────
 

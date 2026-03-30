@@ -9,7 +9,9 @@ final class InMemoryGameRepository(store: Ref[Map[GameId, GameState]]) extends G
     store.update(_ + (id -> state))
 
   def load(id: GameId): Task[Option[GameState]] =
-    store.get.map(_.get(id))
+    for
+      s <- store.get
+    yield s.get(id)
 
   def delete(id: GameId): Task[Unit] =
     store.update(_ - id)

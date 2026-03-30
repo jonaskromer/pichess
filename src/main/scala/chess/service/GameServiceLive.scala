@@ -21,9 +21,9 @@ final class GameServiceLive(repo: GameRepository) extends GameService:
       stateOpt <- repo.load(id)
       state <- ZIO
         .fromOption(stateOpt)
-        .orElseFail(new NoSuchElementException(s"Game not found: $id"))
-      move <- ZIO.fromEither(MoveParser.parse(rawInput)).mapError(RuntimeException(_))
-      newState <- ZIO.fromEither(Game.applyMove(state, move)).mapError(RuntimeException(_))
+        .orElseFail(chess.model.GameError.GameNotFound(id))
+      move <- ZIO.fromEither(MoveParser.parse(rawInput))
+      newState <- ZIO.fromEither(Game.applyMove(state, move))
       _ <- repo.save(id, newState)
     yield (newState, GameEvent.MoveMade(id, move, newState))
 

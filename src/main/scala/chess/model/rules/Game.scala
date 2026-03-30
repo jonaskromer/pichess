@@ -4,7 +4,7 @@ import chess.model.piece.{Piece, PieceType}
 import chess.model.board.{Board, GameState, Move, Position}
 
 object Game:
-  def applyMove(state: GameState, move: Move): Either[String, GameState] =
+  def applyMove(state: GameState, move: Move): Either[chess.model.GameError, GameState] =
     MoveValidator
       .validate(state, move)
       .map: _ =>

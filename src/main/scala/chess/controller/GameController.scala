@@ -4,7 +4,13 @@ import chess.model.board.GameState
 import chess.model.rules.Game
 
 object GameController:
-  def handleInput(state: GameState, input: String): Option[Either[String, GameState]] =
+  def handleInput(state: GameState, input: String): Option[Either[chess.model.GameError, GameState]] =
     input match
       case "quit" => None
-      case in     => Some(MoveParser.parse(in).flatMap(move => Game.applyMove(state, move)))
+      case in =>
+        Some(
+          for
+            move <- MoveParser.parse(in)
+            newState <- Game.applyMove(state, move)
+          yield newState
+        )
