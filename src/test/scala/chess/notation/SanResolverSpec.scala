@@ -13,7 +13,9 @@ object SanResolverSpec extends ZIOSpecDefault:
     suite("pawn push")(
       test("find the pawn that can reach the destination") {
         for result <- SanResolver.parse("e4", initial)
-        yield assertTrue(result == Some(Move(Position('e', 2), Position('e', 4))))
+        yield assertTrue(
+          result == Some(Move(Position('e', 2), Position('e', 4)))
+        )
       },
       test("return None for non-SAN input") {
         for result <- SanResolver.parse("e2 e4", initial)
@@ -30,13 +32,17 @@ object SanResolverSpec extends ZIOSpecDefault:
           Color.White
         )
         for result <- SanResolver.parse("exd5", state)
-        yield assertTrue(result == Some(Move(Position('e', 4), Position('d', 5))))
+        yield assertTrue(
+          result == Some(Move(Position('e', 4), Position('d', 5)))
+        )
       }
     ),
     suite("piece move")(
       test("find the knight that can reach the destination") {
         for result <- SanResolver.parse("Nf3", initial)
-        yield assertTrue(result == Some(Move(Position('g', 1), Position('f', 3))))
+        yield assertTrue(
+          result == Some(Move(Position('g', 1), Position('f', 3)))
+        )
       },
       test("fail when no piece of that type can reach the destination") {
         for exit <- SanResolver.parse("Re4", initial).exit
@@ -64,7 +70,9 @@ object SanResolverSpec extends ZIOSpecDefault:
           Color.White
         )
         for result <- SanResolver.parse("Rae1", state)
-        yield assertTrue(result == Some(Move(Position('a', 1), Position('e', 1))))
+        yield assertTrue(
+          result == Some(Move(Position('a', 1), Position('e', 1)))
+        )
       },
       test("select the piece on the given rank") {
         val state = GameState(
@@ -75,7 +83,9 @@ object SanResolverSpec extends ZIOSpecDefault:
           Color.White
         )
         for result <- SanResolver.parse("R1a3", state)
-        yield assertTrue(result == Some(Move(Position('a', 1), Position('a', 3))))
+        yield assertTrue(
+          result == Some(Move(Position('a', 1), Position('a', 3)))
+        )
       }
     )
   )

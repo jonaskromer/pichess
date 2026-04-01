@@ -32,10 +32,57 @@ object MoveValidator:
     piece.pieceType match
       case PieceType.Pawn =>
         validatePawn(state.board, move, piece.color, state.enPassantTarget)
+      case PieceType.King if isCastlingAttempt(move) =>
+        validateCastling(state, move)
       case pt =>
         guard(Ray.canReach(state.board, move.from, pt, move.to))(
           s"$pt cannot move to ${move.to}"
         )
+
+  // ─── Castling ──────────────────────────────────────────────────────────────
+
+  private def isCastlingAttempt(move: Move): Boolean =
+    Math.abs(move.to.col - move.from.col) == 2
+
+  private def validateCastling(
+      state: GameState,
+      move: Move
+  ): IO[GameError, Unit] =
+    val color = state.activeColor
+    val rank = if color == Color.White then 1 else 8
+    val kingSide = move.to.col > move.from.col
+    val rookCol = if kingSide then 'h' else 'a'
+    val rookPos = Position(rookCol, rank)
+
+    val hasRight =
+      if color == Color.White then
+        if kingSide then state.castlingRights.whiteKingSide
+        else state.castlingRights.whiteQueenSide
+      else if kingSide then state.castlingRights.blackKingSide
+      else state.castlingRights.blackQueenSide
+
+    val betweenCols =
+      if kingSide then ('f' to 'g')
+      else ('b' to 'd')
+
+    val pathClear =
+      betweenCols.forall(c => !state.board.contains(Position(c, rank)))
+
+    val transitCols =
+      if kingSide then List('e', 'f', 'g')
+      else List('e', 'd', 'c')
+
+    guard(hasRight)("Castling rights have been lost") *>
+      guard(state.board.get(rookPos).contains(Piece(color, PieceType.Rook)))(
+        "Rook is not on its starting square"
+      ) *>
+      guard(pathClear)("Pieces are between king and rook") *>
+      guard(!state.inCheck)("Cannot castle while in check") *>
+      guard(
+        transitCols.forall(c =>
+          !isSquareAttacked(state.board, Position(c, rank), color)
+        )
+      )("King passes through or lands on an attacked square")
 
   // ─── Pawn ──────────────────────────────────────────────────────────────────
 
@@ -71,13 +118,22 @@ object MoveValidator:
 
   // ─── Check detection ───────────────────────────────────────────────────────
 
+  def isSquareAttacked(
+      board: Board,
+      square: Position,
+      byOpponentOf: Color
+  ): Boolean =
+    board.exists { case (pos, piece) =>
+      piece.color != byOpponentOf && canAttack(board, pos, piece, square)
+    }
+
   def isInCheck(board: Board, color: Color): Boolean =
-    board.collectFirst { case (pos, Piece(`color`, PieceType.King)) => pos } match
+    board.collectFirst { case (pos, Piece(`color`, PieceType.King)) =>
+      pos
+    } match
       case None => false
       case Some(kingPos) =>
-        board.exists { case (pos, piece) =>
-          piece.color != color && canAttack(board, pos, piece, kingPos)
-        }
+        isSquareAttacked(board, kingPos, color)
 
   private def canAttack(
       board: Board,
@@ -88,6 +144,8 @@ object MoveValidator:
     piece.pieceType match
       case PieceType.Pawn =>
         val direction = if piece.color == Color.White then 1 else -1
-        Math.abs(target.col - from.col) == 1 && (target.row - from.row) == direction
+        Math.abs(
+          target.col - from.col
+        ) == 1 && (target.row - from.row) == direction
       case pt =>
         Ray.canReach(board, from, pt, target)

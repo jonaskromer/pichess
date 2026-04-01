@@ -6,7 +6,8 @@ case class GameState(
     board: Board,
     activeColor: Color,
     enPassantTarget: Option[Position] = None,
-    inCheck: Boolean = false
+    inCheck: Boolean = false,
+    castlingRights: CastlingRights = CastlingRights()
 )
 
 object GameState:

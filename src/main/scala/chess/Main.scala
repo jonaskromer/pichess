@@ -64,7 +64,8 @@ object Main extends ZIOAppDefault:
       _ <- printLine(
         s"${s.state.activeColor}'s turn — enter a move (e.g. e2 e4), 'help', 'flip', or 'quit':"
       )
-      event <- inputQueue.take.map(TuiEvent.Input(_))
+      event <- inputQueue.take
+        .map(TuiEvent.Input(_))
         .race(
           session.changes.drop(1).take(1).runHead.as(TuiEvent.ExternalChange)
         )
@@ -82,10 +83,14 @@ object Main extends ZIOAppDefault:
               printLine(HelpView.render)
             )
             result <- TuiController.handleCommand(
-              command, gs, session, shutdown, flipped
+              command,
+              gs,
+              session,
+              shutdown,
+              flipped
             )
             _ <- result match
-              case TuiController.Result.Shutdown  => ZIO.unit
+              case TuiController.Result.Shutdown => ZIO.unit
               case TuiController.Result.Continue(f) =>
                 tuiLoop(gs, session, shutdown, inputQueue, f)
           yield ()

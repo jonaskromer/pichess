@@ -63,7 +63,8 @@ Domain types. No I/O, no dependencies on other packages.
 | `GameEvent.scala` | Domain events: `GameStarted`, `MoveMade`, `InvalidMoveAttempted` |
 | `SessionState.scala` | Shared mutable state: `gameId`, `GameState`, `moveLog`, `error` — held in a `SubscriptionRef` |
 | `board/Board.scala` | `type Board = Map[Position, Piece]` + initial board setup |
-| `board/GameState.scala` | Immutable game snapshot: board, active color, en passant target |
+| `board/CastlingRights.scala` | Case class with four booleans tracking kingside/queenside castling rights for each color |
+| `board/GameState.scala` | Immutable game snapshot: board, active color, en passant target, castling rights, in-check flag |
 | `board/Move.scala` | A move from one `Position` to another, with optional promotion piece |
 | `board/Position.scala` | A board square identified by column (`Char`) and row (`Int`) |
 | `piece/Color.scala` | `White` / `Black` with `.opposite` |
@@ -98,6 +99,7 @@ Input handling and shared move-processing logic.
 | File | Purpose |
 |---|---|
 | `GameController.scala` | `makeMove(gs, session, rawInput): IO[GameError, Unit]` — shared move-processing logic used by both TUI and web. Orchestrates `GameService.makeMove`, SAN serialization, and session state update. |
+| `TuiController.scala` | TUI command parsing (`quit`, `help`, `flip`, move) and dispatch. Returns `Result.Shutdown` or `Result.Continue(flipped)`. |
 | `MoveParser.scala` | Orchestrator: chains `CoordinateResolver`, `CastlingResolver`, `SanResolver` in order; `parse(input, state): IO[GameError, Move]` |
 | `WebController.scala` | HTTP route handlers (zio-http), SSE endpoint for state streaming, session management |
 

@@ -16,9 +16,12 @@ object WebBoardView:
     val errorJson = error.map(e => s""""${escapeJson(e)}"""").getOrElse("null")
     val checkedKingJson =
       if state.inCheck then
-        state.board.collectFirst {
-          case (pos, Piece(state.activeColor, PieceType.King)) => pos
-        }.map(p => s""""$p"""").getOrElse("null")
+        state.board
+          .collectFirst {
+            case (pos, Piece(state.activeColor, PieceType.King)) => pos
+          }
+          .map(p => s""""$p"""")
+          .getOrElse("null")
       else "null"
     s"""{"squares":[$squaresJson],"activeColor":"$activeColor","moveLog":[$moveLogJson],"error":$errorJson,"inCheck":${state.inCheck},"checkedKingPos":$checkedKingJson}"""
 

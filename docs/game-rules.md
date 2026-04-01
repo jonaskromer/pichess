@@ -47,6 +47,19 @@ To quit the game, type `quit`. To flip the board, type `flip`. To see help, type
 
 ### King
 - Moves one square in any direction (horizontal, vertical, or diagonal).
+- **Castling**: the king moves two squares toward a rook, and that rook jumps to the other side of the king. Requires:
+  - Neither the king nor the chosen rook has previously moved (tracked via `CastlingRights`).
+  - All squares between the king and rook are empty.
+  - The king is not currently in check.
+  - The king does not pass through or land on a square attacked by an enemy piece.
+- **Kingside** (`O-O`): king from e1/e8 to g1/g8, rook from h1/h8 to f1/f8.
+- **Queenside** (`O-O-O`): king from e1/e8 to c1/c8, rook from a1/a8 to d1/d8.
+- Castling rights are permanently lost when the king moves, or when the relevant rook moves or is captured.
+
+### Check
+- A move that leaves the player's own king in check is rejected.
+- The checked king is highlighted in both the TUI (red) and the web GUI.
+- The `+` suffix is appended to SAN output when a move gives check.
 
 ---
 
@@ -54,8 +67,6 @@ To quit the game, type `quit`. To flip the board, type `flip`. To see help, type
 
 | Rule | Status |
 |---|---|
-| Castling (kingside and queenside) | Not implemented |
-| Check detection | Not implemented |
 | Checkmate / stalemate detection | Not implemented |
 | Draw conditions (50-move rule, threefold repetition, insufficient material) | Not implemented |
 

@@ -35,15 +35,33 @@ object MoveParserSpec extends ZIOSpecDefault:
     suite("coordinate promotion")(
       test("parse with no separator") {
         for move <- MoveParser.parse("e7e8=Q", initial)
-        yield assertTrue(move == Move(Position('e', 7), Position('e', 8), Some(PieceType.Queen)))
+        yield assertTrue(
+          move == Move(
+            Position('e', 7),
+            Position('e', 8),
+            Some(PieceType.Queen)
+          )
+        )
       },
       test("parse with space separator") {
         for move <- MoveParser.parse("e7 e8=Q", initial)
-        yield assertTrue(move == Move(Position('e', 7), Position('e', 8), Some(PieceType.Queen)))
+        yield assertTrue(
+          move == Move(
+            Position('e', 7),
+            Position('e', 8),
+            Some(PieceType.Queen)
+          )
+        )
       },
       test("parse with dash separator") {
         for move <- MoveParser.parse("e7-e8=Q", initial)
-        yield assertTrue(move == Move(Position('e', 7), Position('e', 8), Some(PieceType.Queen)))
+        yield assertTrue(
+          move == Move(
+            Position('e', 7),
+            Position('e', 8),
+            Some(PieceType.Queen)
+          )
+        )
       }
     ),
     suite("pawn push (SAN)")(
@@ -89,29 +107,67 @@ object MoveParserSpec extends ZIOSpecDefault:
           Color.White
         )
         for move <- MoveParser.parse("exd8=Q", state)
-        yield assertTrue(move == Move(Position('e', 7), Position('d', 8), Some(PieceType.Queen)))
+        yield assertTrue(
+          move == Move(
+            Position('e', 7),
+            Position('d', 8),
+            Some(PieceType.Queen)
+          )
+        )
       }
     ),
     suite("pawn promotion (SAN)")(
       test("resolve a queen promotion") {
-        val state = GameState(Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)), Color.White)
+        val state = GameState(
+          Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)),
+          Color.White
+        )
         for move <- MoveParser.parse("e8=Q", state)
-        yield assertTrue(move == Move(Position('e', 7), Position('e', 8), Some(PieceType.Queen)))
+        yield assertTrue(
+          move == Move(
+            Position('e', 7),
+            Position('e', 8),
+            Some(PieceType.Queen)
+          )
+        )
       },
       test("resolve a knight underpromotion") {
-        val state = GameState(Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)), Color.White)
+        val state = GameState(
+          Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)),
+          Color.White
+        )
         for move <- MoveParser.parse("e8=N", state)
-        yield assertTrue(move == Move(Position('e', 7), Position('e', 8), Some(PieceType.Knight)))
+        yield assertTrue(
+          move == Move(
+            Position('e', 7),
+            Position('e', 8),
+            Some(PieceType.Knight)
+          )
+        )
       },
       test("resolve a rook underpromotion") {
-        val state = GameState(Map(Position('a', 2) -> Piece(Color.Black, PieceType.Pawn)), Color.Black)
+        val state = GameState(
+          Map(Position('a', 2) -> Piece(Color.Black, PieceType.Pawn)),
+          Color.Black
+        )
         for move <- MoveParser.parse("a1=R", state)
-        yield assertTrue(move == Move(Position('a', 2), Position('a', 1), Some(PieceType.Rook)))
+        yield assertTrue(
+          move == Move(Position('a', 2), Position('a', 1), Some(PieceType.Rook))
+        )
       },
       test("resolve a bishop underpromotion") {
-        val state = GameState(Map(Position('d', 7) -> Piece(Color.White, PieceType.Pawn)), Color.White)
+        val state = GameState(
+          Map(Position('d', 7) -> Piece(Color.White, PieceType.Pawn)),
+          Color.White
+        )
         for move <- MoveParser.parse("d8=B", state)
-        yield assertTrue(move == Move(Position('d', 7), Position('d', 8), Some(PieceType.Bishop)))
+        yield assertTrue(
+          move == Move(
+            Position('d', 7),
+            Position('d', 8),
+            Some(PieceType.Bishop)
+          )
+        )
       },
       test("resolve a capture with knight underpromotion") {
         val state = GameState(
@@ -122,7 +178,13 @@ object MoveParserSpec extends ZIOSpecDefault:
           Color.White
         )
         for move <- MoveParser.parse("exd8=N", state)
-        yield assertTrue(move == Move(Position('e', 7), Position('d', 8), Some(PieceType.Knight)))
+        yield assertTrue(
+          move == Move(
+            Position('e', 7),
+            Position('d', 8),
+            Some(PieceType.Knight)
+          )
+        )
       }
     ),
     suite("piece moves (SAN)")(
@@ -182,17 +244,38 @@ object MoveParserSpec extends ZIOSpecDefault:
       }
     ),
     suite("castling")(
-      test("fail for kingside with not-implemented error") {
-        for err <- MoveParser.parse("O-O", initial).flip
-        yield assertTrue(err.message.contains("Kingside"))
+      test("parse O-O as king-side castling") {
+        val state = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('h', 1) -> Piece(Color.White, PieceType.Rook)
+          ),
+          Color.White
+        )
+        for move <- MoveParser.parse("O-O", state)
+        yield assertTrue(move == Move(Position('e', 1), Position('g', 1)))
       },
-      test("fail for queenside with not-implemented error") {
-        for err <- MoveParser.parse("O-O-O", initial).flip
-        yield assertTrue(err.message.contains("Queenside"))
+      test("parse O-O-O as queen-side castling") {
+        val state = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('a', 1) -> Piece(Color.White, PieceType.Rook)
+          ),
+          Color.White
+        )
+        for move <- MoveParser.parse("O-O-O", state)
+        yield assertTrue(move == Move(Position('e', 1), Position('c', 1)))
       },
-      test("accept a check suffix") {
-        for err <- MoveParser.parse("O-O+", initial).flip
-        yield assertTrue(err.message.contains("Kingside"))
+      test("accept a check suffix on castling") {
+        val state = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('h', 1) -> Piece(Color.White, PieceType.Rook)
+          ),
+          Color.White
+        )
+        for move <- MoveParser.parse("O-O+", state)
+        yield assertTrue(move == Move(Position('e', 1), Position('g', 1)))
       }
     ),
     suite("errors")(

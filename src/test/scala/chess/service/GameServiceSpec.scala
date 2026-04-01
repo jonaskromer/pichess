@@ -35,7 +35,9 @@ object GameServiceSpec extends ZIOSpecDefault:
           (state, event) <- GameService.makeMove(started.gameId, "e2 e4")
         yield assertTrue(
           event.isInstanceOf[GameEvent.MoveMade],
-          state.board.get(Position('e', 4)) == Some(Piece(Color.White, PieceType.Pawn))
+          state.board.get(Position('e', 4)) == Some(
+            Piece(Color.White, PieceType.Pawn)
+          )
         )
       },
       test("persist the updated state after a valid move") {
@@ -44,7 +46,9 @@ object GameServiceSpec extends ZIOSpecDefault:
           _ <- GameService.makeMove(started.gameId, "e2 e4")
           stored <- GameService.getState(started.gameId)
         yield assertTrue(
-          stored.get.board.get(Position('e', 4)) == Some(Piece(Color.White, PieceType.Pawn))
+          stored.get.board.get(Position('e', 4)) == Some(
+            Piece(Color.White, PieceType.Pawn)
+          )
         )
       },
       test("fail for an illegal move") {
@@ -64,7 +68,9 @@ object GameServiceSpec extends ZIOSpecDefault:
           started <- GameService.newGame()
           (state, _) <- GameService.makeMove(started.gameId, "e4")
         yield assertTrue(
-          state.board.get(Position('e', 4)) == Some(Piece(Color.White, PieceType.Pawn))
+          state.board.get(Position('e', 4)) == Some(
+            Piece(Color.White, PieceType.Pawn)
+          )
         )
       },
       test("accept SAN knight move notation") {
@@ -72,7 +78,9 @@ object GameServiceSpec extends ZIOSpecDefault:
           started <- GameService.newGame()
           (state, _) <- GameService.makeMove(started.gameId, "Nf3")
         yield assertTrue(
-          state.board.get(Position('f', 3)) == Some(Piece(Color.White, PieceType.Knight))
+          state.board.get(Position('f', 3)) == Some(
+            Piece(Color.White, PieceType.Knight)
+          )
         )
       },
       test("accept coordinate notation without separator") {
@@ -80,10 +88,12 @@ object GameServiceSpec extends ZIOSpecDefault:
           started <- GameService.newGame()
           (state, _) <- GameService.makeMove(started.gameId, "e2e4")
         yield assertTrue(
-          state.board.get(Position('e', 4)) == Some(Piece(Color.White, PieceType.Pawn))
+          state.board.get(Position('e', 4)) == Some(
+            Piece(Color.White, PieceType.Pawn)
+          )
         )
       },
-      test("fail for SAN castling since it is not yet implemented") {
+      test("reject castling on initial board (path is blocked)") {
         for
           started <- GameService.newGame()
           exit <- GameService.makeMove(started.gameId, "O-O").exit

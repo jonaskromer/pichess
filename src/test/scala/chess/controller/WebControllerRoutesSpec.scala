@@ -34,7 +34,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         body <- response.body.asString
       yield assertTrue(
         response.status == Status.Ok,
-        body.contains("activeColor")
+        body.contains(""""activeColor":"white"""")
       )
     },
     test("POST /api/move applies a valid move") {
@@ -61,7 +61,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         body <- response.body.asString
       yield assertTrue(
         response.status == Status.BadRequest,
-        body.contains("error")
+        body.contains(""""error":""")
       )
     },
     test("POST /api/move returns error for missing move field") {
@@ -94,7 +94,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         isDone <- shutdown.isDone
       yield assertTrue(
         response.status == Status.Ok,
-        body.contains("quit"),
+        body.contains(""""quit":true"""),
         isDone
       )
     }

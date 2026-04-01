@@ -12,11 +12,13 @@ object SanSerializerSpec extends ZIOSpecDefault:
   def spec = suite("SanSerializer.toSan")(
     suite("pawn")(
       test("render a pawn push") {
-        for san <- SanSerializer.toSan(Move(Position('e', 2), Position('e', 4)), initial)
+        for san <- SanSerializer
+            .toSan(Move(Position('e', 2), Position('e', 4)), initial)
         yield assertTrue(san == "e4")
       },
       test("render a single-square pawn push") {
-        for san <- SanSerializer.toSan(Move(Position('e', 2), Position('e', 3)), initial)
+        for san <- SanSerializer
+            .toSan(Move(Position('e', 2), Position('e', 3)), initial)
         yield assertTrue(san == "e3")
       },
       test("render a pawn capture with file prefix") {
@@ -27,7 +29,8 @@ object SanSerializerSpec extends ZIOSpecDefault:
           ),
           Color.White
         )
-        for san <- SanSerializer.toSan(Move(Position('e', 4), Position('d', 5)), state)
+        for san <- SanSerializer
+            .toSan(Move(Position('e', 4), Position('d', 5)), state)
         yield assertTrue(san == "exd5")
       },
       test("render an en passant capture") {
@@ -39,7 +42,8 @@ object SanSerializerSpec extends ZIOSpecDefault:
           Color.White,
           enPassantTarget = Some(Position('d', 6))
         )
-        for san <- SanSerializer.toSan(Move(Position('e', 5), Position('d', 6)), state)
+        for san <- SanSerializer
+            .toSan(Move(Position('e', 5), Position('d', 6)), state)
         yield assertTrue(san == "exd6")
       },
       test("render a promotion") {
@@ -47,7 +51,10 @@ object SanSerializerSpec extends ZIOSpecDefault:
           Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)),
           Color.White
         )
-        for san <- SanSerializer.toSan(Move(Position('e', 7), Position('e', 8), Some(PieceType.Queen)), state)
+        for san <- SanSerializer.toSan(
+            Move(Position('e', 7), Position('e', 8), Some(PieceType.Queen)),
+            state
+          )
         yield assertTrue(san == "e8=Q")
       },
       test("render a capture with promotion") {
@@ -58,13 +65,17 @@ object SanSerializerSpec extends ZIOSpecDefault:
           ),
           Color.White
         )
-        for san <- SanSerializer.toSan(Move(Position('e', 7), Position('d', 8), Some(PieceType.Knight)), state)
+        for san <- SanSerializer.toSan(
+            Move(Position('e', 7), Position('d', 8), Some(PieceType.Knight)),
+            state
+          )
         yield assertTrue(san == "exd8=N")
       }
     ),
     suite("piece")(
       test("render a knight move") {
-        for san <- SanSerializer.toSan(Move(Position('g', 1), Position('f', 3)), initial)
+        for san <- SanSerializer
+            .toSan(Move(Position('g', 1), Position('f', 3)), initial)
         yield assertTrue(san == "Nf3")
       },
       test("render a piece capture") {
@@ -75,7 +86,8 @@ object SanSerializerSpec extends ZIOSpecDefault:
           ),
           Color.White
         )
-        for san <- SanSerializer.toSan(Move(Position('d', 1), Position('g', 4)), state)
+        for san <- SanSerializer
+            .toSan(Move(Position('d', 1), Position('g', 4)), state)
         yield assertTrue(san == "Qxg4")
       },
       test("render a king move") {
@@ -83,7 +95,8 @@ object SanSerializerSpec extends ZIOSpecDefault:
           Map(Position('e', 1) -> Piece(Color.White, PieceType.King)),
           Color.White
         )
-        for san <- SanSerializer.toSan(Move(Position('e', 1), Position('f', 2)), state)
+        for san <- SanSerializer
+            .toSan(Move(Position('e', 1), Position('f', 2)), state)
         yield assertTrue(san == "Kf2")
       }
     ),
@@ -96,7 +109,8 @@ object SanSerializerSpec extends ZIOSpecDefault:
           ),
           Color.White
         )
-        for san <- SanSerializer.toSan(Move(Position('a', 1), Position('e', 1)), state)
+        for san <- SanSerializer
+            .toSan(Move(Position('a', 1), Position('e', 1)), state)
         yield assertTrue(san == "Rae1")
       },
       test("add rank when two pieces share a file") {
@@ -107,7 +121,8 @@ object SanSerializerSpec extends ZIOSpecDefault:
           ),
           Color.White
         )
-        for san <- SanSerializer.toSan(Move(Position('a', 1), Position('a', 3)), state)
+        for san <- SanSerializer
+            .toSan(Move(Position('a', 1), Position('a', 3)), state)
         yield assertTrue(san == "R1a3")
       },
       test("add file and rank when both are needed") {
@@ -119,12 +134,40 @@ object SanSerializerSpec extends ZIOSpecDefault:
           ),
           Color.White
         )
-        for san <- SanSerializer.toSan(Move(Position('d', 4), Position('a', 1)), state)
+        for san <- SanSerializer
+            .toSan(Move(Position('d', 4), Position('a', 1)), state)
         yield assertTrue(san == "Qd4a1")
       },
       test("not disambiguate when only one piece can reach the destination") {
-        for san <- SanSerializer.toSan(Move(Position('g', 1), Position('f', 3)), initial)
+        for san <- SanSerializer
+            .toSan(Move(Position('g', 1), Position('f', 3)), initial)
         yield assertTrue(san == "Nf3")
+      }
+    ),
+    suite("castling")(
+      test("render king-side castling as O-O") {
+        val state = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('h', 1) -> Piece(Color.White, PieceType.Rook)
+          ),
+          Color.White
+        )
+        for san <- SanSerializer
+            .toSan(Move(Position('e', 1), Position('g', 1)), state)
+        yield assertTrue(san == "O-O")
+      },
+      test("render queen-side castling as O-O-O") {
+        val state = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('a', 1) -> Piece(Color.White, PieceType.Rook)
+          ),
+          Color.White
+        )
+        for san <- SanSerializer
+            .toSan(Move(Position('e', 1), Position('c', 1)), state)
+        yield assertTrue(san == "O-O-O")
       }
     ),
     suite("check suffix")(
@@ -137,11 +180,13 @@ object SanSerializerSpec extends ZIOSpecDefault:
           ),
           Color.White
         )
-        for san <- SanSerializer.toSan(Move(Position('a', 1), Position('a', 5)), state)
+        for san <- SanSerializer
+            .toSan(Move(Position('a', 1), Position('a', 5)), state)
         yield assertTrue(san == "Ra5+")
       },
       test("no suffix when move does not give check") {
-        for san <- SanSerializer.toSan(Move(Position('e', 2), Position('e', 4)), initial)
+        for san <- SanSerializer
+            .toSan(Move(Position('e', 2), Position('e', 4)), initial)
         yield assertTrue(san == "e4")
       }
     )

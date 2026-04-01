@@ -73,7 +73,7 @@ When two pieces of the same type can both reach the destination, add the source 
 
 ### Check and checkmate suffixes
 
-`+` (check) and `#` (checkmate) are accepted after any move and ignored — the game does not yet detect check or checkmate.
+`+` (check) and `#` (checkmate) suffixes are accepted after any move. The `+` suffix is also appended automatically when a move gives check.
 
 | Input | Treated as |
 |---|---|
@@ -94,11 +94,14 @@ The `White` and `Black` labels are styled with ANSI colors matching their side (
 
 ---
 
-## Not Yet Supported
+### Castling
 
-| Notation | Reason |
+| Input | Meaning |
 |---|---|
-| `O-O` / `O-O-O` | Castling is not yet implemented |
+| `O-O` | Kingside castling (king to g-file, rook to f-file) |
+| `O-O-O` | Queenside castling (king to c-file, rook to d-file) |
+
+Castling requires that neither the king nor the chosen rook has moved, all squares between them are empty, the king is not in check, and the king does not pass through or land on an attacked square.
 
 ---
 

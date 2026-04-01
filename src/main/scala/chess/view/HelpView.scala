@@ -21,10 +21,9 @@ object HelpView:
        |  Piece capture:   Nxf3    Bxc6
        |  Disambiguation:  Nbd2    N1f3   Raxd5  (file, rank, or both)
        |  Promotion:       e8=Q    exd8=R  (=Q, =R, =B, or =N)
+       |  Castling:        O-O (kingside)   O-O-O (queenside)
        |  Check/mate:      Nf3+    Qxf7#  (accepted and ignored)
        |  Piece letters:   N=Knight  B=Bishop  R=Rook  Q=Queen  K=King
-       |
-       |  Not yet supported: castling (O-O / O-O-O)
        |
        |IMPLEMENTED RULES
        |  Pawn    — one square forward; two squares from starting rank;
@@ -33,13 +32,14 @@ object HelpView:
        |  Bishop  — any distance diagonally; blocked by pieces
        |  Queen   — any distance in any direction; blocked by pieces
        |  Knight  — L-shape (2+1 squares); jumps over pieces
-       |  King    — one square in any direction
+       |  King    — one square in any direction; castling (O-O / O-O-O)
        |  Check   — moves leaving own king in check are rejected;
        |            checked king is highlighted in both TUI and GUI
+       |  Castling — king moves two squares toward rook; rook jumps over;
+       |             requires: neither piece moved, path clear, no check
        |  Turn order: White moves first, then alternates
        |
        |NOT YET IMPLEMENTED
-       |  Castling         (kingside and queenside)
        |  Checkmate        (game does not end on checkmate)
        |  Stalemate        (game does not end on stalemate)
        |  Draw conditions  (50-move rule, threefold repetition, insufficient material)

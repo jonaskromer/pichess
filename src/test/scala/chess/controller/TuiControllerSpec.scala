@@ -35,7 +35,8 @@ object TuiControllerSpec extends ZIOSpecDefault:
       session: SubscriptionRef[SessionState],
       shutdown: Promise[Nothing, Unit]
   ): UIO[TuiEvent] =
-    inputQueue.take.map(TuiEvent.Input(_))
+    inputQueue.take
+      .map(TuiEvent.Input(_))
       .race(
         session.changes.drop(1).take(1).runHead.as(TuiEvent.ExternalChange)
       )
@@ -48,7 +49,11 @@ object TuiControllerSpec extends ZIOSpecDefault:
       (gs, session, shutdown) <- withSession
       command = TuiController.parseCommand(input)
       result <- TuiController.handleCommand(
-        command, gs, session, shutdown, flipped
+        command,
+        gs,
+        session,
+        shutdown,
+        flipped
       )
       isDone <- shutdown.isDone
       s <- session.get
@@ -135,7 +140,11 @@ object TuiControllerSpec extends ZIOSpecDefault:
         for
           (gs, session, shutdown) <- withSession
           result <- TuiController.handleCommand(
-            TuiController.Command.Quit, gs, session, shutdown, false
+            TuiController.Command.Quit,
+            gs,
+            session,
+            shutdown,
+            false
           )
           isDone <- shutdown.isDone
         yield assertTrue(
@@ -159,7 +168,10 @@ object TuiControllerSpec extends ZIOSpecDefault:
           event <- inputQueue.take.map(TuiEvent.Input(_))
           result <- TuiController.handleCommand(
             TuiController.parseCommand("quit"),
-            gs, session, shutdown, false
+            gs,
+            session,
+            shutdown,
+            false
           )
           isDone <- shutdown.isDone
         yield assertTrue(

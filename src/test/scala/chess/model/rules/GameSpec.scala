@@ -2,7 +2,7 @@ package chess.model.rules
 
 import chess.model.GameError
 import chess.model.piece.{Color, Piece, PieceType}
-import chess.model.board.{GameState, Move, Position}
+import chess.model.board.{CastlingRights, GameState, Move, Position}
 import zio.*
 import zio.test.*
 
@@ -21,21 +21,28 @@ object GameSpec extends ZIOSpecDefault:
 
   def spec = suite("Game.applyMove")(
     test("move a piece from source to destination") {
-      for result <- Game.applyMove(initial, Move(Position('e', 2), Position('e', 4)))
-      yield assertTrue(result.board(Position('e', 4)) == Piece(Color.White, PieceType.Pawn))
+      for result <- Game
+          .applyMove(initial, Move(Position('e', 2), Position('e', 4)))
+      yield assertTrue(
+        result.board(Position('e', 4)) == Piece(Color.White, PieceType.Pawn)
+      )
     },
     test("empty the source square after a move") {
-      for result <- Game.applyMove(initial, Move(Position('e', 2), Position('e', 4)))
+      for result <- Game
+          .applyMove(initial, Move(Position('e', 2), Position('e', 4)))
       yield assertTrue(result.board.get(Position('e', 2)).isEmpty)
     },
     test("switch active color from White to Black") {
-      for result <- Game.applyMove(initial, Move(Position('e', 2), Position('e', 4)))
+      for result <- Game
+          .applyMove(initial, Move(Position('e', 2), Position('e', 4)))
       yield assertTrue(result.activeColor == Color.Black)
     },
     test("switch active color from Black to White") {
       for
-        afterWhite <- Game.applyMove(initial, Move(Position('e', 2), Position('e', 4)))
-        result <- Game.applyMove(afterWhite, Move(Position('e', 7), Position('e', 5)))
+        afterWhite <- Game
+          .applyMove(initial, Move(Position('e', 2), Position('e', 4)))
+        result <- Game
+          .applyMove(afterWhite, Move(Position('e', 7), Position('e', 5)))
       yield assertTrue(result.activeColor == Color.White)
     },
     test("capture an opponent piece by overwriting the destination") {
@@ -47,38 +54,53 @@ object GameSpec extends ZIOSpecDefault:
         Color.White
       )
       for result <- Game.applyMove(s, Move(Position('d', 1), Position('g', 4)))
-      yield assertTrue(result.board(Position('g', 4)) == Piece(Color.White, PieceType.Queen))
+      yield assertTrue(
+        result.board(Position('g', 4)) == Piece(Color.White, PieceType.Queen)
+      )
     },
     test("fail when the source square is empty") {
-      for err <- Game.applyMove(initial, Move(Position('e', 4), Position('e', 5))).flip
+      for err <- Game
+          .applyMove(initial, Move(Position('e', 4), Position('e', 5)))
+          .flip
       yield assertTrue(err.message.contains("e4"))
     },
     test("fail when moving an opponent's piece") {
-      for err <- Game.applyMove(initial, Move(Position('e', 7), Position('e', 5))).flip
+      for err <- Game
+          .applyMove(initial, Move(Position('e', 7), Position('e', 5)))
+          .flip
       yield assertTrue(err.message.contains("Black"))
     },
     // ─── En passant target tracking ─────────────────────────────────────────────
     suite("en passant target")(
       test("set after white pawn double advance") {
-        for result <- Game.applyMove(initial, Move(Position('e', 2), Position('e', 4)))
+        for result <- Game
+            .applyMove(initial, Move(Position('e', 2), Position('e', 4)))
         yield assertTrue(result.enPassantTarget == Some(Position('e', 3)))
       },
       test("set after black pawn double advance") {
         for
-          afterWhite <- Game.applyMove(initial, Move(Position('e', 2), Position('e', 4)))
-          result <- Game.applyMove(afterWhite, Move(Position('d', 7), Position('d', 5)))
+          afterWhite <- Game
+            .applyMove(initial, Move(Position('e', 2), Position('e', 4)))
+          result <- Game
+            .applyMove(afterWhite, Move(Position('d', 7), Position('d', 5)))
         yield assertTrue(result.enPassantTarget == Some(Position('d', 6)))
       },
       test("clear after a non-double-advance move") {
         for
-          withTarget <- Game.applyMove(initial, Move(Position('e', 2), Position('e', 4)))
-          result <- Game.applyMove(withTarget, Move(Position('d', 7), Position('d', 6)))
+          withTarget <- Game
+            .applyMove(initial, Move(Position('e', 2), Position('e', 4)))
+          result <- Game
+            .applyMove(withTarget, Move(Position('d', 7), Position('d', 6)))
         yield assertTrue(result.enPassantTarget.isEmpty)
       },
       test("overwrite when a second double advance follows") {
         for
-          afterWhite <- Game.applyMove(initial, Move(Position('e', 2), Position('e', 4)))
-          afterBlack <- Game.applyMove(afterWhite, Move(Position('d', 7), Position('d', 5)))
+          afterWhite <- Game.applyMove(
+            initial,
+            Move(Position('e', 2), Position('e', 4))
+          )
+          afterBlack <- Game
+            .applyMove(afterWhite, Move(Position('d', 7), Position('d', 5)))
         yield assertTrue(
           afterWhite.enPassantTarget == Some(Position('e', 3)),
           afterBlack.enPassantTarget == Some(Position('d', 6))
@@ -86,63 +108,121 @@ object GameSpec extends ZIOSpecDefault:
       },
       test("clear after a single pawn advance") {
         for
-          withTarget <- Game.applyMove(initial, Move(Position('e', 2), Position('e', 4)))
-          result <- Game.applyMove(withTarget, Move(Position('a', 7), Position('a', 6)))
+          withTarget <- Game
+            .applyMove(initial, Move(Position('e', 2), Position('e', 4)))
+          result <- Game
+            .applyMove(withTarget, Move(Position('a', 7), Position('a', 6)))
         yield assertTrue(result.enPassantTarget.isEmpty)
       }
     ),
     // ─── En passant capture mechanics ───────────────────────────────────────────
     suite("en passant capture")(
       test("place pawn on target square") {
-        for result <- Game.applyMove(enPassantState, Move(Position('e', 5), Position('d', 6)))
+        for result <- Game
+            .applyMove(enPassantState, Move(Position('e', 5), Position('d', 6)))
         yield assertTrue(
-          result.board.get(Position('d', 6)) == Some(Piece(Color.White, PieceType.Pawn))
+          result.board.get(Position('d', 6)) == Some(
+            Piece(Color.White, PieceType.Pawn)
+          )
         )
       },
       test("remove captured pawn") {
-        for result <- Game.applyMove(enPassantState, Move(Position('e', 5), Position('d', 6)))
+        for result <- Game
+            .applyMove(enPassantState, Move(Position('e', 5), Position('d', 6)))
         yield assertTrue(result.board.get(Position('d', 5)).isEmpty)
       },
       test("clear en passant target") {
-        for result <- Game.applyMove(enPassantState, Move(Position('e', 5), Position('d', 6)))
+        for result <- Game
+            .applyMove(enPassantState, Move(Position('e', 5), Position('d', 6)))
         yield assertTrue(result.enPassantTarget.isEmpty)
       }
     ),
     // ─── Pawn promotion ───────────────────────────────────────────────────────
     suite("pawn promotion")(
       test("promote white pawn to queen on rank 8") {
-        val s = GameState(Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)), Color.White)
-        for result <- Game.applyMove(s, Move(Position('e', 7), Position('e', 8), Some(PieceType.Queen)))
-        yield assertTrue(result.board(Position('e', 8)) == Piece(Color.White, PieceType.Queen))
+        val s = GameState(
+          Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)),
+          Color.White
+        )
+        for result <- Game.applyMove(
+            s,
+            Move(Position('e', 7), Position('e', 8), Some(PieceType.Queen))
+          )
+        yield assertTrue(
+          result.board(Position('e', 8)) == Piece(Color.White, PieceType.Queen)
+        )
       },
       test("promote white pawn to knight (underpromotion)") {
-        val s = GameState(Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)), Color.White)
-        for result <- Game.applyMove(s, Move(Position('e', 7), Position('e', 8), Some(PieceType.Knight)))
-        yield assertTrue(result.board(Position('e', 8)) == Piece(Color.White, PieceType.Knight))
+        val s = GameState(
+          Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)),
+          Color.White
+        )
+        for result <- Game.applyMove(
+            s,
+            Move(Position('e', 7), Position('e', 8), Some(PieceType.Knight))
+          )
+        yield assertTrue(
+          result.board(Position('e', 8)) == Piece(Color.White, PieceType.Knight)
+        )
       },
       test("promote black pawn to queen on rank 1") {
-        val s = GameState(Map(Position('d', 2) -> Piece(Color.Black, PieceType.Pawn)), Color.Black)
-        for result <- Game.applyMove(s, Move(Position('d', 2), Position('d', 1), Some(PieceType.Queen)))
-        yield assertTrue(result.board(Position('d', 1)) == Piece(Color.Black, PieceType.Queen))
+        val s = GameState(
+          Map(Position('d', 2) -> Piece(Color.Black, PieceType.Pawn)),
+          Color.Black
+        )
+        for result <- Game.applyMove(
+            s,
+            Move(Position('d', 2), Position('d', 1), Some(PieceType.Queen))
+          )
+        yield assertTrue(
+          result.board(Position('d', 1)) == Piece(Color.Black, PieceType.Queen)
+        )
       },
       test("reject pawn reaching back rank without promotion") {
-        val s = GameState(Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)), Color.White)
-        for err <- Game.applyMove(s, Move(Position('e', 7), Position('e', 8))).flip
+        val s = GameState(
+          Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)),
+          Color.White
+        )
+        for err <- Game
+            .applyMove(s, Move(Position('e', 7), Position('e', 8)))
+            .flip
         yield assertTrue(err.message.contains("must promote"))
       },
       test("reject promotion on a non-back-rank move") {
-        val s = GameState(Map(Position('e', 2) -> Piece(Color.White, PieceType.Pawn)), Color.White)
-        for err <- Game.applyMove(s, Move(Position('e', 2), Position('e', 3), Some(PieceType.Queen))).flip
+        val s = GameState(
+          Map(Position('e', 2) -> Piece(Color.White, PieceType.Pawn)),
+          Color.White
+        )
+        for err <- Game
+            .applyMove(
+              s,
+              Move(Position('e', 2), Position('e', 3), Some(PieceType.Queen))
+            )
+            .flip
         yield assertTrue(err.message.contains("back rank"))
       },
       test("reject promotion to King") {
-        val s = GameState(Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)), Color.White)
-        for err <- Game.applyMove(s, Move(Position('e', 7), Position('e', 8), Some(PieceType.King))).flip
+        val s = GameState(
+          Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)),
+          Color.White
+        )
+        for err <- Game
+            .applyMove(
+              s,
+              Move(Position('e', 7), Position('e', 8), Some(PieceType.King))
+            )
+            .flip
         yield assertTrue(err.message.contains("Queen, Rook, Bishop, or Knight"))
       },
       test("remove pawn from source after promotion") {
-        val s = GameState(Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)), Color.White)
-        for result <- Game.applyMove(s, Move(Position('e', 7), Position('e', 8), Some(PieceType.Queen)))
+        val s = GameState(
+          Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)),
+          Color.White
+        )
+        for result <- Game.applyMove(
+            s,
+            Move(Position('e', 7), Position('e', 8), Some(PieceType.Queen))
+          )
         yield assertTrue(result.board.get(Position('e', 7)).isEmpty)
       },
       test("promote via capture") {
@@ -153,8 +233,13 @@ object GameSpec extends ZIOSpecDefault:
           ),
           Color.White
         )
-        for result <- Game.applyMove(s, Move(Position('e', 7), Position('d', 8), Some(PieceType.Queen)))
-        yield assertTrue(result.board(Position('d', 8)) == Piece(Color.White, PieceType.Queen))
+        for result <- Game.applyMove(
+            s,
+            Move(Position('e', 7), Position('d', 8), Some(PieceType.Queen))
+          )
+        yield assertTrue(
+          result.board(Position('d', 8)) == Piece(Color.White, PieceType.Queen)
+        )
       }
     ),
     // ─── Check rules ──────────────────────────────────────────────────────────
@@ -170,7 +255,9 @@ object GameSpec extends ZIOSpecDefault:
           ),
           Color.White
         )
-        for err <- Game.applyMove(s, Move(Position('e', 2), Position('d', 2))).flip
+        for err <- Game
+            .applyMove(s, Move(Position('e', 2), Position('d', 2)))
+            .flip
         yield assertTrue(err.message.contains("check"))
       },
       test("allow move that blocks check") {
@@ -184,7 +271,8 @@ object GameSpec extends ZIOSpecDefault:
           Color.White,
           inCheck = true
         )
-        for result <- Game.applyMove(s, Move(Position('a', 2), Position('e', 2)))
+        for result <- Game
+            .applyMove(s, Move(Position('a', 2), Position('e', 2)))
         yield assertTrue(result.board.contains(Position('e', 2)))
       },
       test("reject move that does not resolve check") {
@@ -198,7 +286,9 @@ object GameSpec extends ZIOSpecDefault:
           Color.White,
           inCheck = true
         )
-        for err <- Game.applyMove(s, Move(Position('a', 2), Position('b', 2))).flip
+        for err <- Game
+            .applyMove(s, Move(Position('a', 2), Position('b', 2)))
+            .flip
         yield assertTrue(err.message.contains("check"))
       },
       test("allow king to move out of check") {
@@ -210,7 +300,8 @@ object GameSpec extends ZIOSpecDefault:
           Color.White,
           inCheck = true
         )
-        for result <- Game.applyMove(s, Move(Position('e', 1), Position('d', 1)))
+        for result <- Game
+            .applyMove(s, Move(Position('e', 1), Position('d', 1)))
         yield assertTrue(result.board.contains(Position('d', 1)))
       },
       test("reject king moving into check") {
@@ -221,7 +312,9 @@ object GameSpec extends ZIOSpecDefault:
           ),
           Color.White
         )
-        for err <- Game.applyMove(s, Move(Position('e', 1), Position('d', 1))).flip
+        for err <- Game
+            .applyMove(s, Move(Position('e', 1), Position('d', 1)))
+            .flip
         yield assertTrue(err.message.contains("check"))
       },
       test("set inCheck flag when move gives check") {
@@ -234,12 +327,277 @@ object GameSpec extends ZIOSpecDefault:
           ),
           Color.White
         )
-        for result <- Game.applyMove(s, Move(Position('a', 1), Position('a', 5)))
+        for result <- Game
+            .applyMove(s, Move(Position('a', 1), Position('a', 5)))
         yield assertTrue(result.inCheck)
       },
       test("clear inCheck flag when not in check") {
-        for result <- Game.applyMove(initial, Move(Position('e', 2), Position('e', 4)))
+        for result <- Game
+            .applyMove(initial, Move(Position('e', 2), Position('e', 4)))
         yield assertTrue(!result.inCheck)
+      }
+    ),
+    // ─── Castling mechanics ─────────────────────────────────────────────────────
+    suite("castling mechanics")(
+      test("white king-side: king ends on g1 and rook ends on f1") {
+        val s = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('h', 1) -> Piece(Color.White, PieceType.Rook)
+          ),
+          Color.White
+        )
+        for result <- Game
+            .applyMove(s, Move(Position('e', 1), Position('g', 1)))
+        yield assertTrue(
+          result.board(Position('g', 1)) == Piece(Color.White, PieceType.King),
+          result.board(Position('f', 1)) == Piece(Color.White, PieceType.Rook),
+          !result.board.contains(Position('e', 1)),
+          !result.board.contains(Position('h', 1))
+        )
+      },
+      test("white queen-side: king ends on c1 and rook ends on d1") {
+        val s = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('a', 1) -> Piece(Color.White, PieceType.Rook)
+          ),
+          Color.White
+        )
+        for result <- Game
+            .applyMove(s, Move(Position('e', 1), Position('c', 1)))
+        yield assertTrue(
+          result.board(Position('c', 1)) == Piece(Color.White, PieceType.King),
+          result.board(Position('d', 1)) == Piece(Color.White, PieceType.Rook),
+          !result.board.contains(Position('e', 1)),
+          !result.board.contains(Position('a', 1))
+        )
+      },
+      test("black king-side: king ends on g8 and rook ends on f8") {
+        val s = GameState(
+          Map(
+            Position('e', 8) -> Piece(Color.Black, PieceType.King),
+            Position('h', 8) -> Piece(Color.Black, PieceType.Rook)
+          ),
+          Color.Black
+        )
+        for result <- Game
+            .applyMove(s, Move(Position('e', 8), Position('g', 8)))
+        yield assertTrue(
+          result.board(Position('g', 8)) == Piece(Color.Black, PieceType.King),
+          result.board(Position('f', 8)) == Piece(Color.Black, PieceType.Rook),
+          !result.board.contains(Position('e', 8)),
+          !result.board.contains(Position('h', 8))
+        )
+      },
+      test("black queen-side: king ends on c8 and rook ends on d8") {
+        val s = GameState(
+          Map(
+            Position('e', 8) -> Piece(Color.Black, PieceType.King),
+            Position('a', 8) -> Piece(Color.Black, PieceType.Rook)
+          ),
+          Color.Black
+        )
+        for result <- Game
+            .applyMove(s, Move(Position('e', 8), Position('c', 8)))
+        yield assertTrue(
+          result.board(Position('c', 8)) == Piece(Color.Black, PieceType.King),
+          result.board(Position('d', 8)) == Piece(Color.Black, PieceType.Rook),
+          !result.board.contains(Position('e', 8)),
+          !result.board.contains(Position('a', 8))
+        )
+      }
+    ),
+    // ─── Castling rights tracking ───────────────────────────────────────────────
+    suite("castling rights tracking")(
+      test("lose both white castling rights when white king moves") {
+        val s = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('a', 1) -> Piece(Color.White, PieceType.Rook),
+            Position('h', 1) -> Piece(Color.White, PieceType.Rook)
+          ),
+          Color.White
+        )
+        for result <- Game
+            .applyMove(s, Move(Position('e', 1), Position('f', 1)))
+        yield assertTrue(
+          !result.castlingRights.whiteKingSide,
+          !result.castlingRights.whiteQueenSide
+        )
+      },
+      test("lose white king-side right when h1 rook moves") {
+        val s = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('h', 1) -> Piece(Color.White, PieceType.Rook)
+          ),
+          Color.White
+        )
+        for result <- Game
+            .applyMove(s, Move(Position('h', 1), Position('h', 3)))
+        yield assertTrue(
+          !result.castlingRights.whiteKingSide,
+          result.castlingRights.whiteQueenSide
+        )
+      },
+      test("lose white queen-side right when a1 rook moves") {
+        val s = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('a', 1) -> Piece(Color.White, PieceType.Rook)
+          ),
+          Color.White
+        )
+        for result <- Game
+            .applyMove(s, Move(Position('a', 1), Position('a', 3)))
+        yield assertTrue(
+          result.castlingRights.whiteKingSide,
+          !result.castlingRights.whiteQueenSide
+        )
+      },
+      test("lose both black castling rights when black king moves") {
+        val s = GameState(
+          Map(
+            Position('e', 8) -> Piece(Color.Black, PieceType.King),
+            Position('a', 8) -> Piece(Color.Black, PieceType.Rook),
+            Position('h', 8) -> Piece(Color.Black, PieceType.Rook)
+          ),
+          Color.Black
+        )
+        for result <- Game
+            .applyMove(s, Move(Position('e', 8), Position('f', 8)))
+        yield assertTrue(
+          !result.castlingRights.blackKingSide,
+          !result.castlingRights.blackQueenSide
+        )
+      },
+      test("lose black king-side right when h8 rook moves") {
+        val s = GameState(
+          Map(
+            Position('e', 8) -> Piece(Color.Black, PieceType.King),
+            Position('h', 8) -> Piece(Color.Black, PieceType.Rook)
+          ),
+          Color.Black
+        )
+        for result <- Game
+            .applyMove(s, Move(Position('h', 8), Position('h', 6)))
+        yield assertTrue(
+          !result.castlingRights.blackKingSide,
+          result.castlingRights.blackQueenSide
+        )
+      },
+      test("lose black queen-side right when a8 rook moves") {
+        val s = GameState(
+          Map(
+            Position('e', 8) -> Piece(Color.Black, PieceType.King),
+            Position('a', 8) -> Piece(Color.Black, PieceType.Rook)
+          ),
+          Color.Black
+        )
+        for result <- Game
+            .applyMove(s, Move(Position('a', 8), Position('a', 6)))
+        yield assertTrue(
+          result.castlingRights.blackKingSide,
+          !result.castlingRights.blackQueenSide
+        )
+      },
+      test("lose white king-side right when rook on h1 is captured") {
+        // Black rook captures white's h1 rook — white loses king-side right
+        val s = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('h', 1) -> Piece(Color.White, PieceType.Rook),
+            Position('h', 8) -> Piece(Color.Black, PieceType.Rook),
+            Position('e', 8) -> Piece(Color.Black, PieceType.King)
+          ),
+          Color.Black
+        )
+        for result <- Game
+            .applyMove(s, Move(Position('h', 8), Position('h', 1)))
+        yield assertTrue(!result.castlingRights.whiteKingSide)
+      },
+      test("lose white queen-side right when rook on a1 is captured") {
+        val s = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('a', 1) -> Piece(Color.White, PieceType.Rook),
+            Position('a', 8) -> Piece(Color.Black, PieceType.Rook),
+            Position('e', 8) -> Piece(Color.Black, PieceType.King)
+          ),
+          Color.Black
+        )
+        for result <- Game
+            .applyMove(s, Move(Position('a', 8), Position('a', 1)))
+        yield assertTrue(!result.castlingRights.whiteQueenSide)
+      },
+      test("lose black king-side right when rook on h8 is captured") {
+        val s = GameState(
+          Map(
+            Position('e', 8) -> Piece(Color.Black, PieceType.King),
+            Position('h', 8) -> Piece(Color.Black, PieceType.Rook),
+            Position('h', 1) -> Piece(Color.White, PieceType.Rook),
+            Position('e', 1) -> Piece(Color.White, PieceType.King)
+          ),
+          Color.White
+        )
+        for result <- Game
+            .applyMove(s, Move(Position('h', 1), Position('h', 8)))
+        yield assertTrue(!result.castlingRights.blackKingSide)
+      },
+      test("lose black queen-side right when rook on a8 is captured") {
+        val s = GameState(
+          Map(
+            Position('e', 8) -> Piece(Color.Black, PieceType.King),
+            Position('a', 8) -> Piece(Color.Black, PieceType.Rook),
+            Position('a', 1) -> Piece(Color.White, PieceType.Rook),
+            Position('e', 1) -> Piece(Color.White, PieceType.King)
+          ),
+          Color.White
+        )
+        for result <- Game
+            .applyMove(s, Move(Position('a', 1), Position('a', 8)))
+        yield assertTrue(!result.castlingRights.blackQueenSide)
+      },
+      test("lose both white rights after castling") {
+        val s = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('h', 1) -> Piece(Color.White, PieceType.Rook)
+          ),
+          Color.White
+        )
+        for result <- Game
+            .applyMove(s, Move(Position('e', 1), Position('g', 1)))
+        yield assertTrue(
+          !result.castlingRights.whiteKingSide,
+          !result.castlingRights.whiteQueenSide
+        )
+      },
+      test("preserve opponent castling rights when own pieces move") {
+        val s = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('h', 1) -> Piece(Color.White, PieceType.Rook)
+          ),
+          Color.White
+        )
+        for result <- Game
+            .applyMove(s, Move(Position('e', 1), Position('f', 1)))
+        yield assertTrue(
+          result.castlingRights.blackKingSide,
+          result.castlingRights.blackQueenSide
+        )
+      },
+      test("non-rook non-king move preserves all rights") {
+        for result <- Game
+            .applyMove(initial, Move(Position('e', 2), Position('e', 4)))
+        yield assertTrue(
+          result.castlingRights.whiteKingSide,
+          result.castlingRights.whiteQueenSide,
+          result.castlingRights.blackKingSide,
+          result.castlingRights.blackQueenSide
+        )
       }
     )
   )

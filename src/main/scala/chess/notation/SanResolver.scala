@@ -66,14 +66,16 @@ object SanResolver extends NotationResolver:
       state: GameState,
       promotion: Option[PieceType] = None
   ): IO[GameError, Move] =
-    val rawCandidates = state.board.toList.collect {
-      case (from, p)
-          if p.color == state.activeColor && p.pieceType == piece =>
-        from
-    }.filter { from =>
-      disambigFile.forall(_ == from.col) &&
-      disambigRank.forall(_ == from.row)
-    }
+    val rawCandidates = state.board.toList
+      .collect {
+        case (from, p)
+            if p.color == state.activeColor && p.pieceType == piece =>
+          from
+      }
+      .filter { from =>
+        disambigFile.forall(_ == from.col) &&
+        disambigRank.forall(_ == from.row)
+      }
     ZIO
       .filter(rawCandidates)(from =>
         MoveValidator

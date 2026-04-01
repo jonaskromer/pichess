@@ -1,7 +1,7 @@
 package chess.model.rules
 
 import chess.model.piece.{Color, Piece, PieceType}
-import chess.model.board.{Board, GameState, Move, Position}
+import chess.model.board.{Board, CastlingRights, GameState, Move, Position}
 import chess.model.GameError
 import zio.*
 
@@ -26,7 +26,8 @@ object Game:
       board = newBoard,
       activeColor = state.activeColor.opposite,
       enPassantTarget = nextEnPassantTarget(move, piece),
-      inCheck = MoveValidator.isInCheck(newBoard, state.activeColor.opposite)
+      inCheck = MoveValidator.isInCheck(newBoard, state.activeColor.opposite),
+      castlingRights = updatedCastlingRights(state, move)
     )
 
   private def isPromotionRank(piece: Piece, row: Int): Boolean =
@@ -65,13 +66,27 @@ object Game:
       case Some(pt) => piece.copy(pieceType = pt)
       case None     => piece
 
-  /** Compute the board after applying a move (no validation). Used by SanSerializer for check suffix. */
+  /** Compute the board after applying a move (no validation). Used by
+    * SanSerializer for check suffix.
+    */
   def applyMoveToBoard(state: GameState, move: Move, piece: Piece): Board =
     updatedBoard(state, move, promotedPiece(piece, move))
 
+  private def isCastling(move: Move, piece: Piece): Boolean =
+    piece.pieceType == PieceType.King && Math.abs(
+      move.to.col - move.from.col
+    ) == 2
+
   private def updatedBoard(state: GameState, move: Move, piece: Piece) =
     val base = state.board - move.from + (move.to -> piece)
-    if isEnPassantCapture(state, move, piece) then
+    if isCastling(move, piece) then
+      val rank = move.from.row
+      val kingSide = move.to.col > move.from.col
+      val rookFrom = Position(if kingSide then 'h' else 'a', rank)
+      val rookTo = Position(if kingSide then 'f' else 'd', rank)
+      val rook = state.board(rookFrom)
+      base - rookFrom + (rookTo -> rook)
+    else if isEnPassantCapture(state, move, piece) then
       base - Position(move.to.col, move.from.row)
     else base
 
@@ -90,3 +105,35 @@ object Game:
       ) == 2
     then Some(Position(move.from.col, (move.from.row + move.to.row) / 2))
     else None
+
+  // ─── Castling rights tracking ─────────────────────────────────────────────
+
+  private def updatedCastlingRights(
+      state: GameState,
+      move: Move
+  ): CastlingRights =
+    val piece = state.board(move.from)
+    val cr = state.castlingRights
+
+    // Revoke rights based on the piece that moved
+    val afterMove = piece.pieceType match
+      case PieceType.King if piece.color == Color.White =>
+        cr.copy(whiteKingSide = false, whiteQueenSide = false)
+      case PieceType.King if piece.color == Color.Black =>
+        cr.copy(blackKingSide = false, blackQueenSide = false)
+      case PieceType.Rook =>
+        (move.from.col, move.from.row, piece.color) match
+          case ('h', 1, Color.White) => cr.copy(whiteKingSide = false)
+          case ('a', 1, Color.White) => cr.copy(whiteQueenSide = false)
+          case ('h', 8, Color.Black) => cr.copy(blackKingSide = false)
+          case ('a', 8, Color.Black) => cr.copy(blackQueenSide = false)
+          case _                     => cr
+      case _ => cr
+
+    // Revoke rights when a rook is captured on its starting square
+    (move.to.col, move.to.row) match
+      case ('h', 1) => afterMove.copy(whiteKingSide = false)
+      case ('a', 1) => afterMove.copy(whiteQueenSide = false)
+      case ('h', 8) => afterMove.copy(blackKingSide = false)
+      case ('a', 8) => afterMove.copy(blackQueenSide = false)
+      case _        => afterMove

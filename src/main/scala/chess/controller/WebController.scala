@@ -72,7 +72,9 @@ object WebController:
       req: Request
   ): ZIO[Any, Nothing, Response] =
     (for
-      body <- req.body.asString.mapError(e => GameError.ParseError(e.getMessage))
+      body <- req.body.asString.mapError(e =>
+        GameError.ParseError(e.getMessage)
+      )
       move <- ZIO
         .fromOption(extractMove(body))
         .orElseFail(GameError.ParseError("Missing move field"))

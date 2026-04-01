@@ -19,6 +19,9 @@ object SanSerializer:
   def toSan(move: Move, state: GameState): IO[GameError, String] =
     val piece = state.board(move.from)
     val baseSan = piece.pieceType match
+      case PieceType.King if isCastling(move) =>
+        val san = if move.to.col > move.from.col then "O-O" else "O-O-O"
+        ZIO.succeed(san)
       case PieceType.Pawn => ZIO.succeed(pawnSan(move, state))
       case pt             => pieceSan(move, state, piece, pt)
     baseSan.map { san =>
@@ -27,6 +30,9 @@ object SanSerializer:
       if MoveValidator.isInCheck(newBoard, opponent) then s"$san+"
       else san
     }
+
+  private def isCastling(move: Move): Boolean =
+    Math.abs(move.to.col - move.from.col) == 2
 
   private def pawnSan(move: Move, state: GameState): String =
     val isCapture =
