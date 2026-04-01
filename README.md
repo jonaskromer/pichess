@@ -2,9 +2,9 @@
 
 Welcome to **πChess** (pronounced like *peaches* in German)! 
 
-πChess is a console-based chess game written in **pure Scala 3** using a strict **functional programming** style and **ZIO**. 
+πChess is a chess game written in **Scala 3** using **ZIO** throughout — from domain validation to HTTP serving. It features a terminal TUI and a browser-based web GUI that stay in sync via `SubscriptionRef` and Server-Sent Events.
 
-This project serves as a foundation for a layered architecture that will progressively evolve through multiple university lecture phases. Starting as a humble Text User Interface (TUI) game, it is designed to seamlessly scale into a modern, reactive system featuring HTTP APIs, persistence (MongoDB/PostgreSQL), WebSocket streams, and Kafka event publishing—all without mutating the core domain model.
+This project serves as a foundation for a layered architecture that will progressively evolve through multiple university lecture phases. Starting as a TUI game, it is designed to seamlessly scale into a modern, reactive system featuring HTTP APIs, persistence (MongoDB/PostgreSQL), reactive streams, and Kafka event publishing — all without mutating the core domain model.
 
 ## 🚀 Getting Started
 
@@ -14,6 +14,8 @@ To run the game locally:
 ```bash
 sbt run
 ```
+
+This starts both the TUI in the terminal and a web GUI at [http://localhost:8090](http://localhost:8090). Moves made in either UI are instantly reflected in the other.
 
 To run the tests and verify the strict 100% test coverage:
 ```bash
@@ -25,13 +27,24 @@ sbt clean coverage test coverageReport
 Dive deeper into the project structure, our development workflow, and where the project is heading next:
 
 - 🍑 **[Game Rules](docs/game-rules.md)**: A breakdown of the currently implemented chess piece mechanics, move notations, and missing rules.
-- 🍑 **[Architecture](docs/architecture.md)**: Details on the pure functional domain layers, dependency injection via ZLayer, and ADRs.
+- 🍑 **[Architecture](docs/architecture.md)**: Details on the layered architecture, ZIO effects, dependency injection via ZLayer, and ADRs.
 - 🍑 **[Development Workflow](docs/development.md)**: Guidelines on our strict TDD rules, code formatting, and the `sbt` pipeline.
-- 🍑 **[Roadmap](docs/roadmap.md)**: The 10-phase evolution plan of this project, taking it from a TUI game to a fully-distributed reactive microservice architecture.
+- 🍑 **[Roadmap](docs/roadmap.md)**: The 14-phase evolution plan of this project, taking it from a TUI game to a fully-distributed reactive microservice architecture.
 
-## 🛠️ Current Status (Phase 1+)
+## 🛠️ Current Status (Phase 3)
 
-Currently, the project has completed **Phase 1: TUI Chess** plus **pawn promotion** from Phase 2. You can jump into `sbt run` and play a game right inside your console with piece validation, en passant, pawn promotion, a live move log in SAN, and in-memory persistence! Up next is the rest of Phase 2: check detection, checkmate, castling, and draw conditions.
+The project is currently in **Phase 3** (Parser Combinators). Phase 1 (TUI Chess) is complete, Phase 2 (Functional Style) is partially complete (functional patterns applied; some chess rules remain), and the web GUI from Phase 7 was built ahead of schedule.
+
+**What works:**
+- Full piece movement validation (all piece types)
+- En passant and pawn promotion
+- Coordinate notation and Standard Algebraic Notation (SAN) with disambiguation
+- ANSI-colored TUI with board flipping and move log
+- Browser GUI with drag-and-drop, promotion dialog, and live sync via SSE
+- Typed error handling with `IO[GameError, A]` throughout
+- 100% test coverage with zio-test
+
+**What's next:** FEN/PGN parsers using `scala-parser-combinators`, and the remaining chess rules (check, checkmate, castling, draw conditions).
 
 ---
 *Built with pure functions, immutability, and plenty of 🍑.*

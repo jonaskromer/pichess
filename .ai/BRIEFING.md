@@ -18,7 +18,7 @@ See [`docs/architecture.md`](docs/architecture.md) for the full layer structure 
 - **Functional style** — immutable data, pure functions, no mutation, no side effects outside of ZIO.
 - **`val` over `var`** everywhere.
 - **No `null`** — use `Option`, `Either`, or other sum types instead.
-- **Error handling** — use `scala.util.Try` and its combinators (`map`, `flatMap`, `recover`) instead of try-catch blocks.
+- **Error handling** — use `ZIO`'s typed error channel (`IO[GameError, A]`) throughout the codebase. Domain errors use the `GameError` enum. No try-catch blocks.
 
 ---
 
@@ -68,6 +68,14 @@ The following addendum files are **required reading** for any AI agent working o
 | [`addendum-sa03-parser-combinators.md`](addendum-sa03-parser-combinators.md) | Parser combinator operators, Either return pattern, FEN/PGN parser task |
 | [`addendum-sa04-microservices.md`](addendum-sa04-microservices.md) | 9 microservice characteristics, SBT multi-project, Docker, Task 3 |
 | [`addendum-sa05-rest.md`](addendum-sa05-rest.md) | REST principles, URL design rules, Akka HTTP routing DSL, Task 4 |
+| [`addendum-sa06-docker.md`](addendum-sa06-docker.md) | Docker containerization, Dockerfile, docker-compose |
+| [`addendum-sa07-slick.md`](addendum-sa07-slick.md) | Slick (PostgreSQL), functional relational mapping |
+| [`addendum-sa08-mongodb.md`](addendum-sa08-mongodb.md) | MongoDB document store, Scala driver |
+| [`addendum-sa09-performance-testing.md`](addendum-sa09-performance-testing.md) | Gatling load tests, JMH microbenchmarks |
+| [`addendum-sa10-reactive-streams.md`](addendum-sa10-reactive-streams.md) | Reactive streams, backpressure, Akka Streams / ZIO Streams |
+| [`addendum-sa11-kafka.md`](addendum-sa11-kafka.md) | Kafka event publishing, producer/consumer |
+| [`addendum-sa12-architecture-patterns.md`](addendum-sa12-architecture-patterns.md) | Architecture patterns (CQRS, event sourcing, etc.) |
+| [`addendum-sa13-spark.md`](addendum-sa13-spark.md) | Apache Spark, batch processing |
 
 ---
 
@@ -75,17 +83,17 @@ The following addendum files are **required reading** for any AI agent working o
 
 These are known upcoming lecture phases. When suggesting any architectural change, check that it does not close off or complicate a future phase. Prefer thin traits, ZLayer wiring, and pure functions in the domain.
 
-| Phase | Technology | Key integration point |
+| Phase | Lecture technology | Key integration point |
 |---|---|---|
-| 3 — Export/Import | JSON (Circe), PGN, FEN, parser combinators | New `chess.codec` package; no domain changes |
-| 4 — HTTP | **Akka HTTP** (Routing DSL) | `GameService` trait is the seam; HTTP routes call it directly; also add module REST API for Docker IPC |
-| 5 — Microservices | SBT multi-project + **Docker** | Each module in its own container; modules communicate via the Phase 4 REST API |
-| 6 — Persistence | MongoDB + PostgreSQL | `GameRepository` trait is already in place; new impls swap via ZLayer |
-| 7 — Web UI | Browser-based UI | View layer must stay separate from transport |
-| 8 — Performance | Gatling + JMH | Avoid hidden allocations or blocking in hot paths |
+| 3 — Parser / FEN / PGN | `scala-parser-combinators`, `RegexParsers` | New `chess.codec` package; no domain changes |
+| 4 — HTTP / REST | **Akka HTTP** Routing DSL (or zio-http) | `GameService` trait is the seam; HTTP routes call it directly; also add module REST API for Docker IPC |
+| 5 — Microservices + Docker | SBT multi-project + **Docker Compose** | Each module in its own container; modules communicate via Phase 4 REST API |
+| 6 — Slick (PostgreSQL) | **Slick** FRM + DAO pattern | `GameRepository` trait is already the DAO; new Slick impl swaps via ZLayer |
+| 7 — MongoDB + Web UI | **MongoDB** Scala driver | Second `GameRepository` impl behind same DAO trait. Web UI already partially complete. |
+| 8 — Performance | **Gatling** (record, optimize, measure, improve) | REST API (Phase 4) is the Gatling target |
 | 9 — Bot / AI | Pluggable move strategy | Bot calls `GameService.makeMove` with computed move |
-| 10 — Reactive Streams | fs2 / ZIO streams | `GameService.makeMove` return value is the stream publishing seam |
-| 11 — Kafka | Kafka event publishing | `(newState, event)` return from `makeMove` is the integration point |
-| 12 — Spark | Large-scale game data processing | Consume Kafka events from Phase 11 |
-| 13 — Tournament | Multi-game, multi-player logic | Builds on Bot (Phase 9) + Kafka (Phase 11) |
+| 10 — Reactive Streams | **Akka Streams** GraphDSL (or ZIO Streams) | `GameService.makeMove` return value is the stream publishing seam |
+| 11 — Kafka | **Alpakka Kafka** (or ZIO Kafka) | `(newState, event)` return from `makeMove` is the integration point; connect to Phase 10 stream |
+| 12 — Architecture Patterns | Theoretical (no code) | Evaluate: layered, event-driven, microservice, space-based, SOA |
+| 13 — Spark | **Apache Spark** + Kafka stream | Aggregate game data from Kafka; Spark requires Scala 2.12 sub-project |
 | 14 — Final presentation | — | — |

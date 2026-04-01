@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted (signature updated: `Option[Either[GameError, Move]]` became `IO[GameError, Option[Move]]` per [ADR 005](005-pure-domain-model-zio-at-boundaries.md); the Strategy/Chain-of-Responsibility pattern is unchanged)
 
 ## Context
 

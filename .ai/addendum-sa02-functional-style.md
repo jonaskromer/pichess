@@ -93,7 +93,7 @@ Implement the chess domain abstractions in pure functional Scala:
 - All types as `case class` or `sealed trait`
 - No mutation (`val` everywhere)
 - Bitboard without bit operations
-- ScalaTest: 100% coverage
+- zio-test: 100% coverage (lecture originally specified ScalaTest; migrated to zio-test)
 
 ## Task 2 (Monads)
 

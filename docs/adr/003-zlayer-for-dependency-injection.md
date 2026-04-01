@@ -19,7 +19,8 @@ All stateful components are provided as `ZLayer`s. Wiring happens in `Main.scala
 ```scala
 app.provide(
   GameService.layer,
-  InMemoryGameRepository.layer
+  InMemoryGameRepository.layer,
+  Server.defaultWithPort(8090)
 )
 ```
 

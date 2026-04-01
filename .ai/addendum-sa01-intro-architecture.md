@@ -75,7 +75,7 @@ Product Line, Product Family, Generative Architecture, Enterprise Architecture.
 
 - **Claude Code** — use heavily for AI-assisted development
 - **sbt** — build tool
-- **ScalaTest** — 100% test coverage enforced
+- **zio-test** — 100% test coverage enforced (lecture originally specified ScalaTest; migrated to zio-test for consistency with ZIO-everywhere approach)
 - **Scoverage** — coverage reporting
 - **Lichess** — open-source Scala chess; domain model reference
 

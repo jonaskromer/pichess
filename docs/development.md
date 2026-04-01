@@ -16,7 +16,9 @@
 | `sbt scalafmtAll` | Format all source files (required before committing) |
 | `sbt coverage test coverageReport` | Run tests with coverage report |
 
-Coverage is enforced at 100%. The build fails if any line is uncovered. `Main.scala` is explicitly excluded from coverage measurement.
+Coverage is enforced at 100%. The build fails if any line is uncovered. `Main.scala` and `WebController.scala` are excluded from coverage measurement.
+
+Tests use **zio-test** (`ZIOSpecDefault`). Each test spec is an `object` extending `ZIOSpecDefault` with a `def spec` that returns a `Spec` tree of `suite(...)` and `test(...)` blocks. Assertions use `assertTrue(...)`. Service/repository tests provide layers via `.provide(layer)` on the suite.
 
 ---
 
@@ -35,14 +37,14 @@ Coverage is enforced at 100%. The build fails if any line is uncovered. `Main.sc
 1. Create a class in `chess.repository` that extends `GameRepository`:
    ```scala
    final class PostgresGameRepository(...) extends GameRepository:
-     def save(id: GameId, state: GameState): Task[Unit] = ???
-     def load(id: GameId): Task[Option[GameState]] = ???
-     def delete(id: GameId): Task[Unit] = ???
+     def save(id: GameId, state: GameState): IO[GameError, Unit] = ???
+     def load(id: GameId): IO[GameError, Option[GameState]] = ???
+     def delete(id: GameId): IO[GameError, Unit] = ???
    ```
 2. Expose it as a `ZLayer`:
    ```scala
    object PostgresGameRepository:
-     val layer: TaskLayer[GameRepository] = ZLayer.fromFunction(...)
+     val layer: URLayer[DataSource, GameRepository] = ZLayer.fromFunction(...)
    ```
 3. In `Main.scala`, replace `InMemoryGameRepository.layer` with `PostgresGameRepository.layer` — no other file changes needed.
 
@@ -54,7 +56,7 @@ Coverage is enforced at 100%. The build fails if any line is uncovered. `Main.sc
 
 All chess logic lives in `chess.model.rules`:
 
-- `MoveValidator.scala` — validates a proposed move; returns `Either[GameError, Unit]`
+- `MoveValidator.scala` — validates a proposed move; returns `IO[GameError, Unit]`
 - `Game.scala` — applies a validated move to produce a new `GameState`; also validates and applies promotion
 
 For a rule that only blocks moves (e.g. check detection): add a guard in `MoveValidator.validate`.
@@ -69,10 +71,10 @@ Notation resolvers live in `chess.notation` and implement `NotationResolver`:
 
 ```scala
 object MyResolver extends NotationResolver:
-  def parse(input: String, state: GameState): Option[Either[GameError, Move]] =
-    // Return None if this resolver doesn't recognize the input
-    // Return Some(Right(move)) on success
-    // Return Some(Left(error)) if recognized but invalid
+  def parse(input: String, state: GameState): IO[GameError, Option[Move]] =
+    // Return ZIO.succeed(None) if this resolver doesn't recognize the input
+    // Return ZIO.succeed(Some(move)) on success
+    // Return ZIO.fail(error) if recognized but invalid
 ```
 
 Register the new resolver in `MoveParser.resolvers` (order matters — first match wins).
