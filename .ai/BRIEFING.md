@@ -48,6 +48,20 @@ Always keep `docs/` in sync with the code. After any change:
 
 ---
 
+## Required Reading — Addendums
+
+The following addendum files are **required reading** for any AI agent working on this project. They contain the full academic context for each lecture phase, including task requirements, design constraints, and technology choices that must be followed.
+
+| Addendum | Covers |
+|----------|--------|
+| [`addendum-sa01-intro-architecture.md`](addendum-sa01-intro-architecture.md) | Architecture philosophy, 14-phase plan, tooling, architect role |
+| [`addendum-sa02-functional-style.md`](addendum-sa02-functional-style.md) | ScalaChess domain model, functional style rules, monads, two-track pattern |
+| [`addendum-sa03-parser-combinators.md`](addendum-sa03-parser-combinators.md) | Parser combinator operators, Either return pattern, FEN/PGN parser task |
+| [`addendum-sa04-microservices.md`](addendum-sa04-microservices.md) | 9 microservice characteristics, SBT multi-project, Docker, Task 3 |
+| [`addendum-sa05-rest.md`](addendum-sa05-rest.md) | REST principles, URL design rules, Akka HTTP routing DSL, Task 4 |
+
+---
+
 ## Future Phases
 
 These are known upcoming lecture phases. When suggesting any architectural change, check that it does not close off or complicate a future phase. Prefer thin traits, ZLayer wiring, and pure functions in the domain.
@@ -55,13 +69,14 @@ These are known upcoming lecture phases. When suggesting any architectural chang
 | Phase | Technology | Key integration point |
 |---|---|---|
 | 3 — Export/Import | JSON (Circe), PGN, FEN, parser combinators | New `chess.codec` package; no domain changes |
-| 4 — HTTP | http4s + fs2 | `GameService` trait is the seam; HTTP routes call it directly |
-| 5 — Microservices | Separate deployable services | Small, focused interfaces; ZLayer wiring stays the same |
+| 4 — HTTP | **Akka HTTP** (Routing DSL) | `GameService` trait is the seam; HTTP routes call it directly; also add module REST API for Docker IPC |
+| 5 — Microservices | SBT multi-project + **Docker** | Each module in its own container; modules communicate via the Phase 4 REST API |
 | 6 — Persistence | MongoDB + PostgreSQL | `GameRepository` trait is already in place; new impls swap via ZLayer |
 | 7 — Web UI | Browser-based UI | View layer must stay separate from transport |
 | 8 — Performance | Gatling + JMH | Avoid hidden allocations or blocking in hot paths |
-| 9 — Reactive Streams | fs2 / ZIO streams | `GameService.makeMove` return value is the stream publishing seam |
-| 10 — Kafka | Kafka event publishing | `(newState, event)` return from `makeMove` is the integration point |
-| 11 — Spark | Large-scale game data processing | — |
-| 12 — Tournament | Multi-game, multi-player logic | — |
+| 9 — Bot / AI | Pluggable move strategy | Bot calls `GameService.makeMove` with computed move |
+| 10 — Reactive Streams | fs2 / ZIO streams | `GameService.makeMove` return value is the stream publishing seam |
+| 11 — Kafka | Kafka event publishing | `(newState, event)` return from `makeMove` is the integration point |
+| 12 — Spark | Large-scale game data processing | Consume Kafka events from Phase 11 |
+| 13 — Tournament | Multi-game, multi-player logic | Builds on Bot (Phase 9) + Kafka (Phase 11) |
 | 14 — Final presentation | — | — |

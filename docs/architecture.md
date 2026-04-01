@@ -134,7 +134,21 @@ See [`docs/adr/`](adr/) for the full decision records:
 
 ## Future Integration Points
 
-See [`docs/roadmap.md`](roadmap.md) for the full phased plan. In short: all future transports (HTTP, WebSocket, Kafka) call [`GameService`](../src/main/scala/chess/service/GameService.scala) directly; all future persistence implementations swap in via a single `ZLayer` line in [`Main.scala`](../src/main/scala/chess/Main.scala).
+See [`docs/roadmap.md`](roadmap.md) for the full phased plan.
+
+| Phase | Technology | Integration seam |
+|-------|-----------|-----------------|
+| 3 — Parser / FEN / PGN | `scala-parser-combinators` | New `chess.codec` package; no domain changes |
+| 4 — HTTP / REST | **Akka HTTP** (Routing DSL) | `GameService` trait; HTTP routes call it directly |
+| 5 — Microservices | SBT multi-project + **Docker** | Module boundaries mirror existing package dependencies; REST IPC between containers |
+| 6 — Persistence | MongoDB + PostgreSQL | `GameRepository` trait; new impls swap in via a single ZLayer line in `Main.scala` |
+| 7 — Web UI | Browser-based view | View layer must stay separate from transport |
+| 8 — Performance | Gatling (load) + JMH (micro) | REST API (Phase 4) is the Gatling target; avoid blocking in hot paths |
+| 9 — Bot / AI | Pluggable move strategy | Bot calls `GameService.makeMove` |
+| 10 — Reactive | fs2 / ZIO streams | `GameService.makeMove` return value is the stream publishing seam |
+| 11 — Kafka | Kafka producer | `(newState, event)` return from `makeMove` is the integration point |
+| 12 — Spark | Spark batch jobs | Consume Kafka events from Phase 11 |
+| 13 — Tournament | Multi-game logic | Builds on Bot (Phase 9) + Kafka (Phase 11) |
 
 ## Build & Tooling
 

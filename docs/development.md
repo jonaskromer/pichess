@@ -65,6 +65,66 @@ Cover every new branch with tests in `MoveValidatorSpec` or `GameSpec` before th
 
 ---
 
+## Adding a Parser (Phase 3)
+
+Parsers live in `chess.codec` and extend `RegexParsers`:
+
+```scala
+import scala.util.parsing.combinator.RegexParsers
+
+class FenParser extends RegexParsers:
+  // terminals
+  private def rank: Parser[Int] = """\d""".r ^^ (_.toInt)
+  // ...
+
+  // public API always returns Either
+  def parse(input: String): Either[String, GameState] =
+    parseAll(fenRule, input) match
+      case Success(result, _)   => Right(result)
+      case NoSuccess(msg, next) => Left(s"[${next.pos}] $msg")
+```
+
+Key rules:
+- Extend `RegexParsers` (not bare `Parsers`)
+- Always use `parseAll` (not `parse`) so unconsumed input is an error
+- Public method returns `Either[String, T]` — never expose `ParseResult` directly
+- Chain post-parse validation with for-comprehension on `Either`
+- Dependency: `"org.scala-lang.modules" %% "scala-parser-combinators" % "2.1.1"`
+
+---
+
+## Adding a REST Route (Phase 4)
+
+Routes live in `chess.http` and use the Akka HTTP Routing DSL:
+
+```scala
+import akka.http.scaladsl.server.Directives._
+
+val gameRoutes =
+  path("games") {
+    post { /* GameService.newGame() */ }
+  } ~
+  path("games" / Segment) { id =>
+    get    { /* GameService.getState(id) */ } ~
+    delete { /* terminate game */ }
+  } ~
+  path("games" / Segment / "moves") { id =>
+    post {
+      entity(as[String]) { input =>
+        /* GameService.makeMove(id, input) */
+      }
+    }
+  }
+```
+
+URL design rules (from lecture):
+- **Nouns not verbs** — `/games` not `/getGame`
+- **Plural for collections**, singular instance via ID
+- **Two URLs per resource**: `/games` (collection) and `/games/:id` (item)
+- Routes are a view layer — they call `GameService`, contain no domain logic
+
+---
+
 ## Adding a New View
 
 Views live in `chess.view` and are pure functions over `GameState`:
