@@ -18,10 +18,15 @@ object Game:
       piece = state.board(move.from)
       _ <- validatePromotion(piece, move)
       movedPiece = promotedPiece(piece, move)
+      newBoard = updatedBoard(state, move, movedPiece)
+      _ <- ZIO.when(MoveValidator.isInCheck(newBoard, state.activeColor))(
+        ZIO.fail(GameError.InvalidMove("King cannot be left in check"))
+      )
     yield GameState(
-      board = updatedBoard(state, move, movedPiece),
+      board = newBoard,
       activeColor = state.activeColor.opposite,
-      enPassantTarget = nextEnPassantTarget(move, piece)
+      enPassantTarget = nextEnPassantTarget(move, piece),
+      inCheck = MoveValidator.isInCheck(newBoard, state.activeColor.opposite)
     )
 
   private def isPromotionRank(piece: Piece, row: Int): Boolean =
@@ -38,7 +43,7 @@ object Game:
       case Some(pt) if !reachesBackRank =>
         ZIO.fail(
           GameError.InvalidMove(
-            "Promotion is only allowed when a pawn reaches the back rank"
+            "Pawn cannot promote unless it reaches the back rank"
           )
         )
       case Some(pt) if !promotionPieces.contains(pt) =>
@@ -50,7 +55,7 @@ object Game:
       case None if reachesBackRank =>
         ZIO.fail(
           GameError.InvalidMove(
-            "Pawn reaching the back rank must promote (e.g. e8=Q)"
+            "Pawn must promote when reaching the back rank (e.g. e8=Q)"
           )
         )
       case _ => ZIO.unit
@@ -59,6 +64,10 @@ object Game:
     move.promotion match
       case Some(pt) => piece.copy(pieceType = pt)
       case None     => piece
+
+  /** Compute the board after applying a move (no validation). Used by SanSerializer for check suffix. */
+  def applyMoveToBoard(state: GameState, move: Move, piece: Piece): Board =
+    updatedBoard(state, move, promotedPiece(piece, move))
 
   private def updatedBoard(state: GameState, move: Move, piece: Piece) =
     val base = state.board - move.from + (move.to -> piece)

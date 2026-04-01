@@ -156,5 +156,90 @@ object GameSpec extends ZIOSpecDefault:
         for result <- Game.applyMove(s, Move(Position('e', 7), Position('d', 8), Some(PieceType.Queen)))
         yield assertTrue(result.board(Position('d', 8)) == Piece(Color.White, PieceType.Queen))
       }
+    ),
+    // ─── Check rules ──────────────────────────────────────────────────────────
+    suite("check")(
+      test("reject move that leaves own king in check") {
+        // White king on e1, white rook on e2 shielding from black rook on e8
+        // Moving the rook off the e-file exposes the king
+        val s = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 2) -> Piece(Color.White, PieceType.Rook),
+            Position('e', 8) -> Piece(Color.Black, PieceType.Rook)
+          ),
+          Color.White
+        )
+        for err <- Game.applyMove(s, Move(Position('e', 2), Position('d', 2))).flip
+        yield assertTrue(err.message.contains("check"))
+      },
+      test("allow move that blocks check") {
+        // White king on e1, black rook on e8 giving check, white rook on a2 blocks
+        val s = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('a', 2) -> Piece(Color.White, PieceType.Rook),
+            Position('e', 8) -> Piece(Color.Black, PieceType.Rook)
+          ),
+          Color.White,
+          inCheck = true
+        )
+        for result <- Game.applyMove(s, Move(Position('a', 2), Position('e', 2)))
+        yield assertTrue(result.board.contains(Position('e', 2)))
+      },
+      test("reject move that does not resolve check") {
+        // White king on e1 in check from black rook on e8, white rook on a2 moves elsewhere
+        val s = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('a', 2) -> Piece(Color.White, PieceType.Rook),
+            Position('e', 8) -> Piece(Color.Black, PieceType.Rook)
+          ),
+          Color.White,
+          inCheck = true
+        )
+        for err <- Game.applyMove(s, Move(Position('a', 2), Position('b', 2))).flip
+        yield assertTrue(err.message.contains("check"))
+      },
+      test("allow king to move out of check") {
+        val s = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 8) -> Piece(Color.Black, PieceType.Rook)
+          ),
+          Color.White,
+          inCheck = true
+        )
+        for result <- Game.applyMove(s, Move(Position('e', 1), Position('d', 1)))
+        yield assertTrue(result.board.contains(Position('d', 1)))
+      },
+      test("reject king moving into check") {
+        val s = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('d', 8) -> Piece(Color.Black, PieceType.Rook)
+          ),
+          Color.White
+        )
+        for err <- Game.applyMove(s, Move(Position('e', 1), Position('d', 1))).flip
+        yield assertTrue(err.message.contains("check"))
+      },
+      test("set inCheck flag when move gives check") {
+        // White rook delivers check to black king
+        val s = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('a', 1) -> Piece(Color.White, PieceType.Rook),
+            Position('a', 8) -> Piece(Color.Black, PieceType.King)
+          ),
+          Color.White
+        )
+        for result <- Game.applyMove(s, Move(Position('a', 1), Position('a', 5)))
+        yield assertTrue(result.inCheck)
+      },
+      test("clear inCheck flag when not in check") {
+        for result <- Game.applyMove(initial, Move(Position('e', 2), Position('e', 4)))
+        yield assertTrue(!result.inCheck)
+      }
     )
   )

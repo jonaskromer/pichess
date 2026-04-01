@@ -3,7 +3,7 @@ package chess.notation
 import chess.model.GameError
 import chess.model.board.{GameState, Move, Position}
 import chess.model.piece.{PieceType, Piece}
-import chess.model.rules.MoveValidator
+import chess.model.rules.{Game, MoveValidator}
 import zio.*
 
 object SanSerializer:
@@ -18,9 +18,15 @@ object SanSerializer:
 
   def toSan(move: Move, state: GameState): IO[GameError, String] =
     val piece = state.board(move.from)
-    piece.pieceType match
+    val baseSan = piece.pieceType match
       case PieceType.Pawn => ZIO.succeed(pawnSan(move, state))
       case pt             => pieceSan(move, state, piece, pt)
+    baseSan.map { san =>
+      val newBoard = Game.applyMoveToBoard(state, move, piece)
+      val opponent = state.activeColor.opposite
+      if MoveValidator.isInCheck(newBoard, opponent) then s"$san+"
+      else san
+    }
 
   private def pawnSan(move: Move, state: GameState): String =
     val isCapture =

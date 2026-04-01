@@ -84,11 +84,11 @@ object SanResolver extends NotationResolver:
       .flatMap {
         case List(from) => ZIO.succeed(Move(from, dest, promotion))
         case Nil =>
-          ZIO.fail(GameError.InvalidMove(s"No ${piece} can move to $dest"))
+          ZIO.fail(GameError.InvalidMove(s"No $piece can move to $dest"))
         case _ =>
           ZIO.fail(
             GameError.InvalidMove(
-              s"Ambiguous: multiple ${piece}s can reach $dest — add a disambiguation character"
+              s"Multiple ${piece}s can move to $dest, add a disambiguation character"
             )
           )
       }

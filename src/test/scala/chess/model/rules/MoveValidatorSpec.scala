@@ -332,5 +332,48 @@ object MoveValidatorSpec extends ZIOSpecDefault:
         for err <- MoveValidator.validate(s, Move(pos('e', 7), pos('e', 6))).flip
         yield assertTrue(err.message.contains("Black"))
       }
+    ),
+    // ─── Check detection ────────────────────────────────────────────────────────
+    suite("isInCheck")(
+      test("detect rook giving check") {
+        val board = Map(pos('e', 1) -> WK, pos('e', 8) -> BR).toMap
+        assertTrue(MoveValidator.isInCheck(board, Color.White))
+      },
+      test("no check when path is blocked") {
+        val board = Map(pos('e', 1) -> WK, pos('e', 4) -> WP, pos('e', 8) -> BR).toMap
+        assertTrue(!MoveValidator.isInCheck(board, Color.White))
+      },
+      test("detect bishop giving check") {
+        val board = Map(pos('e', 1) -> WK, pos('h', 4) -> BB).toMap
+        assertTrue(MoveValidator.isInCheck(board, Color.White))
+      },
+      test("detect queen giving check diagonally") {
+        val board = Map(pos('e', 1) -> WK, pos('a', 5) -> BQ).toMap
+        assertTrue(MoveValidator.isInCheck(board, Color.White))
+      },
+      test("detect queen giving check on file") {
+        val board = Map(pos('e', 1) -> WK, pos('e', 6) -> BQ).toMap
+        assertTrue(MoveValidator.isInCheck(board, Color.White))
+      },
+      test("detect knight giving check") {
+        val board = Map(pos('e', 1) -> WK, pos('f', 3) -> BN).toMap
+        assertTrue(MoveValidator.isInCheck(board, Color.White))
+      },
+      test("detect pawn giving check") {
+        val board = Map(pos('e', 4) -> WK, pos('f', 5) -> BP).toMap
+        assertTrue(MoveValidator.isInCheck(board, Color.White))
+      },
+      test("pawn does not give check from behind") {
+        val board = Map(pos('e', 4) -> WK, pos('f', 3) -> BP).toMap
+        assertTrue(!MoveValidator.isInCheck(board, Color.White))
+      },
+      test("no check on initial board") {
+        assertTrue(!MoveValidator.isInCheck(GameState.initial.board, Color.White))
+        assertTrue(!MoveValidator.isInCheck(GameState.initial.board, Color.Black))
+      },
+      test("detect black king in check") {
+        val board = Map(pos('e', 8) -> BK, pos('e', 1) -> WR).toMap
+        assertTrue(MoveValidator.isInCheck(board, Color.Black))
+      }
     )
   )
