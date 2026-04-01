@@ -1,25 +1,44 @@
-# ADR 002 — GameController exists but is not used at runtime
+# ADR 002 — GameController owns shared move-processing logic
 
 ## Status
 
-Accepted
+Accepted (supersedes earlier decision where GameController was unused at runtime)
 
 ## Context
 
-`GameController` is a pure function that routes `"quit"` → `None` and delegates move strings to `MoveParser` + `Game`. It was written and fully tested as a utility combinator.
+Both the TUI (`Main.tuiLoop`) and the web GUI (`WebController.handleMove`) need to process a move against the shared game session. The sequence is identical:
 
-At runtime, `Main.scala` handles `"quit"` via direct pattern matching, and move parsing is delegated to `GameService` (which calls `MoveParser` directly). `GameController` is therefore not on the hot path.
+1. Read current session state
+2. Call `GameService.makeMove` with the raw input
+3. Compute SAN notation via `SanSerializer.toSan`
+4. Update the `SubscriptionRef[SessionState]` with the new state and move log entry
+
+Previously this logic was duplicated in both UIs. `GameController` existed as an unused pure utility.
 
 ## Decision
 
-Keep `GameController` as a tested pure utility. Do not wire it into `Main` or `GameServiceLive`.
+`GameController.makeMove` encapsulates the shared "apply a move to the session" logic. Both `Main` and `WebController` delegate to it:
+
+```scala
+object GameController:
+  def makeMove(
+      gs: GameService,
+      session: SubscriptionRef[SessionState],
+      rawInput: String
+  ): IO[GameError, Unit]
+```
+
+- **TUI:** `GameController.makeMove(gs, session, raw).foldZIO(err => ..., _ => ...)`
+- **Web:** extracts the move string from JSON, then calls `GameController.makeMove(gs, session, move)`
+
+Quit routing remains in each UI — it is a transport concern, not a game concern.
 
 ## Consequences
 
-**Why not use it in Main?**
-`"quit"` is a TUI concern, not a domain or service concern. Routing it through `GameController` would leak UI-level semantics into a layer meant to be transport-agnostic. An HTTP handler, for example, would never send `"quit"` as a move string.
+**Benefits:**
+- Move-processing logic lives in one place. Adding steps (e.g., check/checkmate detection, move validation feedback) requires a single change.
+- Both UIs stay thin — they handle only transport-specific concerns (terminal I/O, HTTP request/response).
+- `GameController` is fully testable with `SubscriptionRef` — no HTTP or console mocking needed.
 
-**Why keep it at all?**
-- It is fully covered by tests and has no maintenance cost.
-- It remains available as a convenience combinator for future TUI variants or CLI tools that want a single-function interface over `(GameState, String) => Option[Either[String, GameState]]`.
-- Deleting tested, passing code provides no benefit.
+**Trade-offs:**
+- `GameController` depends on `SubscriptionRef[SessionState]`, tying it to the shared-state architecture. If the session model changes, the controller changes too.

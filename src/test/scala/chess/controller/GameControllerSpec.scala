@@ -1,36 +1,91 @@
 package chess.controller
 
-import chess.model.piece.{Color, Piece, PieceType}
+import chess.model.SessionState
 import chess.model.board.{GameState, Position}
-import org.scalatest.flatspec.AnyFlatSpec
-import org.scalatest.matchers.should.Matchers
+import chess.model.piece.{Color, Piece, PieceType}
+import chess.repository.InMemoryGameRepository
+import chess.service.{GameService, GameServiceLive}
+import zio.*
+import zio.stream.SubscriptionRef
+import zio.test.*
 
-class GameControllerSpec extends AnyFlatSpec with Matchers:
+object GameControllerSpec extends ZIOSpecDefault:
 
-  private val initial = GameState.initial
+  private val appLayer: ULayer[GameService] =
+    InMemoryGameRepository.layer >>> GameServiceLive.layer
 
-  "GameController.handleInput" should "return None for 'quit'" in:
-    GameController.handleInput(initial, "quit") shouldBe None
+  private def withSession =
+    for
+      gs <- ZIO.service[GameService]
+      event <- gs.newGame()
+      session <- SubscriptionRef.make(
+        SessionState(event.gameId, event.initialState, Nil, None)
+      )
+    yield (gs, session)
 
-  it should "return Some(Right(newState)) for a valid move" in:
-    val result = GameController.handleInput(initial, "e2 e4")
-    result shouldBe defined
-    result.get.isRight shouldBe true
-    result.get.toOption.get.board.get(Position('e', 4)) shouldBe Some(
-      Piece(Color.White, PieceType.Pawn)
-    )
-
-  it should "return Some(Left(error)) for an illegal move" in:
-    val result = GameController.handleInput(initial, "e2 e5")
-    result shouldBe defined
-    result.get.isLeft shouldBe true
-
-  it should "return Some(Left(error)) for a parse error" in:
-    val result = GameController.handleInput(initial, "garbage")
-    result shouldBe defined
-    result.get.isLeft shouldBe true
-
-  it should "return Some(Left(error)) when moving the opponent's piece" in:
-    val result = GameController.handleInput(initial, "e7 e5")
-    result shouldBe defined
-    result.get.isLeft shouldBe true
+  def spec = suite("GameController.makeMove")(
+    test("update session state after a valid move") {
+      for
+        (gs, session) <- withSession
+        _ <- GameController.makeMove(gs, session, "e2 e4")
+        s <- session.get
+      yield assertTrue(
+        s.state.board.get(Position('e', 4)) == Some(
+          Piece(Color.White, PieceType.Pawn)
+        ),
+        s.state.activeColor == Color.Black
+      )
+    },
+    test("append SAN to the move log") {
+      for
+        (gs, session) <- withSession
+        _ <- GameController.makeMove(gs, session, "e2 e4")
+        s <- session.get
+      yield assertTrue(
+        s.moveLog == List((Color.White, "e4"))
+      )
+    },
+    test("clear error on successful move") {
+      for
+        (gs, session) <- withSession
+        _ <- session.update(_.copy(error = Some("previous error")))
+        _ <- GameController.makeMove(gs, session, "e2 e4")
+        s <- session.get
+      yield assertTrue(s.error.isEmpty)
+    },
+    test("fail for an illegal move") {
+      for
+        (gs, session) <- withSession
+        exit <- GameController.makeMove(gs, session, "e2 e5").exit
+      yield assertTrue(exit.isFailure)
+    },
+    test("fail for a parse error") {
+      for
+        (gs, session) <- withSession
+        exit <- GameController.makeMove(gs, session, "garbage").exit
+      yield assertTrue(exit.isFailure)
+    },
+    test("accept SAN notation") {
+      for
+        (gs, session) <- withSession
+        _ <- GameController.makeMove(gs, session, "Nf3")
+        s <- session.get
+      yield assertTrue(
+        s.state.board.get(Position('f', 3)) == Some(
+          Piece(Color.White, PieceType.Knight)
+        ),
+        s.moveLog == List((Color.White, "Nf3"))
+      )
+    },
+    test("chain multiple moves") {
+      for
+        (gs, session) <- withSession
+        _ <- GameController.makeMove(gs, session, "e4")
+        _ <- GameController.makeMove(gs, session, "e5")
+        s <- session.get
+      yield assertTrue(
+        s.moveLog == List((Color.White, "e4"), (Color.Black, "e5")),
+        s.state.activeColor == Color.White
+      )
+    }
+  ).provide(appLayer)

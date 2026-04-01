@@ -3,6 +3,7 @@ package chess.model.rules
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.model.board.{Board, GameState, Move, Position}
 import chess.model.GameError
+import zio.*
 
 object MoveValidator:
 
@@ -31,7 +32,7 @@ object MoveValidator:
     PieceType.King -> Set(Shape.Horizontal, Shape.Vertical, Shape.Diagonal)
   )
 
-  // ─── Validation entry point (monadic Either chain) ──────────────────────────
+  // ─── Validation entry point ────────────────────────────────────────────────
   //
   // Each step in the for-comprehension depends on the previous:
   //   1. resolve the piece at `from`       → need it for step 2
@@ -39,55 +40,52 @@ object MoveValidator:
   //   3. check destination isn't friendly  → need piece.color + move.to
   //   4. validate piece-specific rules     → need piece.pieceType
   //
-  // If any step produces Left, the remaining steps are skipped (short-circuit).
+  // If any step fails, the remaining steps are skipped (short-circuit).
 
   def validate(
       state: GameState,
       move: Move
-  ): Either[GameError, Unit] =
-    requirePieceAt(state, move.from)
-      .flatMap(piece =>
-        requireActiveColor(piece, state.activeColor)
-          .flatMap(_ => requireNotFriendly(state.board, move.to, piece.color))
-          .flatMap(_ => validatePieceRules(state, move, piece))
-      )
+  ): IO[GameError, Unit] =
+    requirePieceAt(state, move.from).flatMap { piece =>
+      requireActiveColor(piece, state.activeColor) *>
+        requireNotFriendly(state.board, move.to, piece.color) *>
+        validatePieceRules(state, move, piece)
+    }
 
   private def requirePieceAt(
       state: GameState,
       pos: Position
-  ): Either[GameError, Piece] =
-    state.board
-      .get(pos)
-      .toRight(GameError.InvalidMove(s"No piece at $pos"))
+  ): IO[GameError, Piece] =
+    ZIO
+      .fromOption(state.board.get(pos))
+      .orElseFail(GameError.InvalidMove(s"No piece at $pos"))
 
   private def requireActiveColor(
       piece: Piece,
       activeColor: Color
-  ): Either[GameError, Unit] =
-    Either.cond(
-      piece.color == activeColor,
-      (),
-      GameError.InvalidMove(
-        s"Cannot move ${piece.color} piece on ${activeColor}'s turn"
+  ): IO[GameError, Unit] =
+    ZIO.unless(piece.color == activeColor)(
+      ZIO.fail(
+        GameError.InvalidMove(
+          s"Cannot move ${piece.color} piece on ${activeColor}'s turn"
+        )
       )
-    )
+    ).unit
 
   private def requireNotFriendly(
       board: Board,
       pos: Position,
       color: Color
-  ): Either[GameError, Unit] =
-    Either.cond(
-      !isOccupiedBySameColor(board, pos, color),
-      (),
-      GameError.InvalidMove(s"Cannot capture own piece at $pos")
-    )
+  ): IO[GameError, Unit] =
+    ZIO.when(isOccupiedBySameColor(board, pos, color))(
+      ZIO.fail(GameError.InvalidMove(s"Cannot capture own piece at $pos"))
+    ).unit
 
   private def validatePieceRules(
       state: GameState,
       move: Move,
       piece: Piece
-  ): Either[GameError, Unit] =
+  ): IO[GameError, Unit] =
     piece.pieceType match
       case PieceType.Pawn =>
         validatePawn(state.board, move, piece.color, state.enPassantTarget)
@@ -99,41 +97,39 @@ object MoveValidator:
       board: Board,
       move: Move,
       pt: PieceType
-  ): Either[GameError, Unit] =
-    requireAllowedShape(move, pt)
-      .flatMap(_ => requireKingDistance(move, pt))
-      .flatMap(_ => requireClearPath(board, move, pt))
+  ): IO[GameError, Unit] =
+    requireAllowedShape(move, pt) *>
+      requireKingDistance(move, pt) *>
+      requireClearPath(board, move, pt)
 
   private def requireAllowedShape(
       move: Move,
       pt: PieceType
-  ): Either[GameError, Unit] =
-    Either.cond(
-      allowedShapes(pt).contains(classifyShape(move)),
-      (),
-      GameError.InvalidMove(s"Illegal move for $pt")
-    )
+  ): IO[GameError, Unit] =
+    ZIO.unless(allowedShapes(pt).contains(classifyShape(move)))(
+      ZIO.fail(GameError.InvalidMove(s"Illegal move for $pt"))
+    ).unit
 
   private def requireKingDistance(
       move: Move,
       pt: PieceType
-  ): Either[GameError, Unit] =
-    Either.cond(
-      pt != PieceType.King || chebyshevDistance(move) <= 1,
-      (),
-      GameError.InvalidMove("King can only move one square in any direction")
-    )
+  ): IO[GameError, Unit] =
+    ZIO.when(pt == PieceType.King && chebyshevDistance(move) > 1)(
+      ZIO.fail(
+        GameError.InvalidMove("King can only move one square in any direction")
+      )
+    ).unit
 
   private def requireClearPath(
       board: Board,
       move: Move,
       pt: PieceType
-  ): Either[GameError, Unit] =
-    Either.cond(
-      classifyShape(move) == Shape.KnightLeap || isPathClear(board, move),
-      (),
-      GameError.InvalidMove(s"${pt} path is blocked")
-    )
+  ): IO[GameError, Unit] =
+    ZIO.unless(
+      classifyShape(move) == Shape.KnightLeap || isPathClear(board, move)
+    )(
+      ZIO.fail(GameError.InvalidMove(s"${pt} path is blocked"))
+    ).unit
 
   // ─── Pawn (special: direction, double-step, diagonal-capture-only) ──────────
 
@@ -142,7 +138,7 @@ object MoveValidator:
       move: Move,
       color: Color,
       enPassantTarget: Option[Position]
-  ): Either[GameError, Unit] =
+  ): IO[GameError, Unit] =
     val direction = if color == Color.White then 1 else -1
     val startRank = if color == Color.White then 2 else 7
     val colDiff = move.to.col - move.from.col
@@ -152,7 +148,7 @@ object MoveValidator:
       validatePawnForward(board, move, direction, startRank, rowDiff)
     else if Math.abs(colDiff) == 1 && rowDiff == direction then
       validatePawnCapture(board, move.to, enPassantTarget)
-    else Left(GameError.InvalidMove("Illegal pawn move"))
+    else ZIO.fail(GameError.InvalidMove("Illegal pawn move"))
 
   private def validatePawnForward(
       board: Board,
@@ -160,46 +156,47 @@ object MoveValidator:
       direction: Int,
       startRank: Int,
       rowDiff: Int
-  ): Either[GameError, Unit] =
+  ): IO[GameError, Unit] =
     if rowDiff == direction then
-      Either.cond(
-        !board.contains(move.to),
-        (),
-        GameError.InvalidMove(
-          "Pawn cannot move forward: destination is occupied"
-        )
-      )
-    else if rowDiff == 2 * direction && move.from.row == startRank then
-      val intermediate = Position(move.from.col, move.from.row + direction)
-      Either
-        .cond(
-          !board.contains(intermediate),
-          (),
-          GameError.InvalidMove("Pawn cannot move forward: path is blocked")
-        )
-        .flatMap(_ =>
-          Either.cond(
-            !board.contains(move.to),
-            (),
-            GameError.InvalidMove(
-              "Pawn cannot move forward: destination is occupied"
-            )
+      ZIO.when(board.contains(move.to))(
+        ZIO.fail(
+          GameError.InvalidMove(
+            "Pawn cannot move forward: destination is occupied"
           )
         )
-    else Left(GameError.InvalidMove("Illegal pawn move"))
+      ).unit
+    else if rowDiff == 2 * direction && move.from.row == startRank then
+      val intermediate = Position(move.from.col, move.from.row + direction)
+      ZIO
+        .when(board.contains(intermediate))(
+          ZIO.fail(
+            GameError.InvalidMove("Pawn cannot move forward: path is blocked")
+          )
+        )
+        .unit *>
+        ZIO
+          .when(board.contains(move.to))(
+            ZIO.fail(
+              GameError.InvalidMove(
+                "Pawn cannot move forward: destination is occupied"
+              )
+            )
+          )
+          .unit
+    else ZIO.fail(GameError.InvalidMove("Illegal pawn move"))
 
   private def validatePawnCapture(
       board: Board,
       target: Position,
       enPassantTarget: Option[Position]
-  ): Either[GameError, Unit] =
-    Either.cond(
-      board.contains(target) || enPassantTarget.contains(target),
-      (),
-      GameError.InvalidMove(
-        "Pawn can only move diagonally to capture an enemy piece"
+  ): IO[GameError, Unit] =
+    ZIO.unless(board.contains(target) || enPassantTarget.contains(target))(
+      ZIO.fail(
+        GameError.InvalidMove(
+          "Pawn can only move diagonally to capture an enemy piece"
+        )
       )
-    )
+    ).unit
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
 

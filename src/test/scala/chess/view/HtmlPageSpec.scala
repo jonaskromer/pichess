@@ -1,68 +1,88 @@
 package chess.view
 
-import org.scalatest.flatspec.AnyFlatSpec
-import org.scalatest.matchers.should.Matchers
+import zio.test.*
 
-class HtmlPageSpec extends AnyFlatSpec with Matchers:
+object HtmlPageSpec extends ZIOSpecDefault:
 
   private val html = HtmlPage.render
 
-  "HtmlPage.render" should "produce a valid HTML document" in:
-    html should include("<!DOCTYPE html>")
-    html should include("<html")
-    html should include("</html>")
-
-  it should "include the page title" in:
-    html should include("<title>piChess</title>")
-
-  it should "include CSS grid board styling" in:
-    html should include("grid-template-columns: repeat(8,")
-    html should include("grid-template-rows: repeat(8,")
-
-  it should "include light and dark square colors" in:
-    html should include("#fde8d0")
-    html should include("#e8956a")
-
-  it should "include the board container" in:
-    html should include("""id="board"""")
-
-  it should "include the move input form" in:
-    html should include("""id="moveForm"""")
-    html should include("""id="moveInput"""")
-
-  it should "include drag and drop JavaScript handlers" in:
-    html should include("dragstart")
-    html should include("dragover")
-    html should include("onDrop")
-    html should include("onDragStart")
-
-  it should "include the move log container" in:
-    html should include("""id="moveLog"""")
-
-  it should "include the turn indicator" in:
-    html should include("""id="turnIndicator"""")
-
-  it should "include promotion dialog" in:
-    html should include("""id="promotionOverlay"""")
-    html should include("""id="promotionDialog"""")
-
-  it should "include the new game button" in:
-    html should include("newGame()")
-    html should include("New Game")
-
-  it should "include the quit button" in:
-    html should include("quitGame()")
-    html should include("Quit")
-
-  it should "include the toast notification element" in:
-    html should include("""id="toast"""")
-
-  it should "include the fetch API call for moves" in:
-    html should include("fetch('/api/move'")
-
-  it should "include the state loading function" in:
-    html should include("fetch('/api/state'")
-
-  it should "include piece styling classes" in:
-    html should include("white-piece")
-    html should include("black-piece")
+  def spec = suite("HtmlPage.render")(
+    test("produce a valid HTML document") {
+      assertTrue(
+        html.contains("<!DOCTYPE html>"),
+        html.contains("<html"),
+        html.contains("</html>")
+      )
+    },
+    test("include the page title") {
+      assertTrue(html.contains("<title>piChess</title>"))
+    },
+    test("include CSS grid board styling") {
+      assertTrue(
+        html.contains("grid-template-columns: repeat(8,"),
+        html.contains("grid-template-rows: repeat(8,")
+      )
+    },
+    test("include light and dark square colors") {
+      assertTrue(
+        html.contains("#fde8d0"),
+        html.contains("#e8956a")
+      )
+    },
+    test("include the board container") {
+      assertTrue(html.contains("""id="board""""))
+    },
+    test("include the move input form") {
+      assertTrue(
+        html.contains("""id="moveForm""""),
+        html.contains("""id="moveInput"""")
+      )
+    },
+    test("include drag and drop JavaScript handlers") {
+      assertTrue(
+        html.contains("dragstart"),
+        html.contains("dragover"),
+        html.contains("onDrop"),
+        html.contains("onDragStart")
+      )
+    },
+    test("include the move log container") {
+      assertTrue(html.contains("""id="moveLog""""))
+    },
+    test("include the turn indicator") {
+      assertTrue(html.contains("""id="turnIndicator""""))
+    },
+    test("include promotion dialog") {
+      assertTrue(
+        html.contains("""id="promotionOverlay""""),
+        html.contains("""id="promotionDialog"""")
+      )
+    },
+    test("include the new game button") {
+      assertTrue(
+        html.contains("newGame()"),
+        html.contains("New Game")
+      )
+    },
+    test("include the quit button") {
+      assertTrue(
+        html.contains("quitGame()"),
+        html.contains("Quit")
+      )
+    },
+    test("include the toast notification element") {
+      assertTrue(html.contains("""id="toast""""))
+    },
+    test("include the fetch API call for moves") {
+      assertTrue(html.contains("fetch('/api/move'"))
+    },
+    test("include the state loading function") {
+      assertTrue(html.contains("fetch('/api/state'"))
+    },
+    test("include piece styling classes") {
+      assertTrue(
+        html.contains("white-piece"),
+        html.contains("black-piece")
+      )
+    }
+  )

@@ -1,8 +1,10 @@
 package chess.notation
 
+import chess.model.GameError
 import chess.model.board.{GameState, Move, Position}
 import chess.model.piece.{PieceType, Piece}
 import chess.model.rules.MoveValidator
+import zio.*
 
 object SanSerializer:
 
@@ -14,10 +16,10 @@ object SanSerializer:
     PieceType.Knight -> 'N'
   )
 
-  def toSan(move: Move, state: GameState): String =
+  def toSan(move: Move, state: GameState): IO[GameError, String] =
     val piece = state.board(move.from)
     piece.pieceType match
-      case PieceType.Pawn => pawnSan(move, state)
+      case PieceType.Pawn => ZIO.succeed(pawnSan(move, state))
       case pt             => pieceSan(move, state, piece, pt)
 
   private def pawnSan(move: Move, state: GameState): String =
@@ -33,27 +35,36 @@ object SanSerializer:
       state: GameState,
       piece: Piece,
       pt: PieceType
-  ): String =
+  ): IO[GameError, String] =
     val letter = pieceChar(pt)
-    val disambig = disambiguation(move, state, piece)
     val capture = if state.board.contains(move.to) then "x" else ""
     val dest = squareStr(move.to)
-    s"$letter$disambig$capture$dest"
+    disambiguation(move, state, piece).map { disambig =>
+      s"$letter$disambig$capture$dest"
+    }
 
   private def disambiguation(
       move: Move,
       state: GameState,
       piece: Piece
-  ): String =
-    val others = state.board.toList.collect {
-      case (pos, p)
-          if p == piece && pos != move.from &&
-            MoveValidator.validate(state, Move(pos, move.to)).isRight =>
-        pos
+  ): IO[GameError, String] =
+    val candidatePositions = state.board.toList.collect {
+      case (pos, p) if p == piece && pos != move.from => pos
     }
-    if others.isEmpty then ""
-    else if others.forall(_.col != move.from.col) then move.from.col.toString
-    else if others.forall(_.row != move.from.row) then move.from.row.toString
-    else s"${move.from.col}${move.from.row}"
+    ZIO
+      .filter(candidatePositions)(pos =>
+        MoveValidator
+          .validate(state, Move(pos, move.to))
+          .as(true)
+          .catchAll(_ => ZIO.succeed(false))
+      )
+      .map { others =>
+        if others.isEmpty then ""
+        else if others.forall(_.col != move.from.col) then
+          move.from.col.toString
+        else if others.forall(_.row != move.from.row) then
+          move.from.row.toString
+        else s"${move.from.col}${move.from.row}"
+      }
 
   private def squareStr(pos: Position): String = s"${pos.col}${pos.row}"

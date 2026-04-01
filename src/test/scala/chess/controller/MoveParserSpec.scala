@@ -2,263 +2,239 @@ package chess.controller
 
 import chess.model.board.{GameState, Move, Position}
 import chess.model.piece.{Color, Piece, PieceType}
-import org.scalatest.flatspec.AnyFlatSpec
-import org.scalatest.matchers.should.Matchers
+import zio.*
+import zio.test.*
 
-class MoveParserSpec extends AnyFlatSpec with Matchers:
+object MoveParserSpec extends ZIOSpecDefault:
 
   private val initial = GameState.initial
 
-  // ─── Coordinate notation ───────────────────────────────────────────────────
-
-  "MoveParser.parse coordinate" should "parse space-separated squares" in:
-    MoveParser.parse("e2 e4", initial) shouldBe Right(
-      Move(Position('e', 2), Position('e', 4))
+  def spec = suite("MoveParser.parse")(
+    suite("coordinate notation")(
+      test("parse space-separated squares") {
+        for move <- MoveParser.parse("e2 e4", initial)
+        yield assertTrue(move == Move(Position('e', 2), Position('e', 4)))
+      },
+      test("parse corner squares") {
+        for move <- MoveParser.parse("a1 h8", initial)
+        yield assertTrue(move == Move(Position('a', 1), Position('h', 8)))
+      },
+      test("parse squares with multiple spaces") {
+        for move <- MoveParser.parse("e2  e4", initial)
+        yield assertTrue(move == Move(Position('e', 2), Position('e', 4)))
+      },
+      test("parse squares with no separator") {
+        for move <- MoveParser.parse("e2e4", initial)
+        yield assertTrue(move == Move(Position('e', 2), Position('e', 4)))
+      },
+      test("parse squares separated by a dash") {
+        for move <- MoveParser.parse("e2-e4", initial)
+        yield assertTrue(move == Move(Position('e', 2), Position('e', 4)))
+      }
+    ),
+    suite("coordinate promotion")(
+      test("parse with no separator") {
+        for move <- MoveParser.parse("e7e8=Q", initial)
+        yield assertTrue(move == Move(Position('e', 7), Position('e', 8), Some(PieceType.Queen)))
+      },
+      test("parse with space separator") {
+        for move <- MoveParser.parse("e7 e8=Q", initial)
+        yield assertTrue(move == Move(Position('e', 7), Position('e', 8), Some(PieceType.Queen)))
+      },
+      test("parse with dash separator") {
+        for move <- MoveParser.parse("e7-e8=Q", initial)
+        yield assertTrue(move == Move(Position('e', 7), Position('e', 8), Some(PieceType.Queen)))
+      }
+    ),
+    suite("pawn push (SAN)")(
+      test("resolve from the initial position") {
+        for move <- MoveParser.parse("e4", initial)
+        yield assertTrue(move == Move(Position('e', 2), Position('e', 4)))
+      },
+      test("accept a check suffix") {
+        val state = GameState(
+          Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)),
+          Color.White
+        )
+        for move <- MoveParser.parse("e8=Q+", state)
+        yield assertTrue(move.to == Position('e', 8))
+      },
+      test("accept a checkmate suffix") {
+        val state = GameState(
+          Map(Position('d', 2) -> Piece(Color.Black, PieceType.Pawn)),
+          Color.Black
+        )
+        for move <- MoveParser.parse("d1=Q#", state)
+        yield assertTrue(move.to == Position('d', 1))
+      }
+    ),
+    suite("pawn capture (SAN)")(
+      test("resolve with file hint") {
+        val state = GameState(
+          Map(
+            Position('e', 4) -> Piece(Color.White, PieceType.Pawn),
+            Position('d', 5) -> Piece(Color.Black, PieceType.Pawn)
+          ),
+          Color.White
+        )
+        for move <- MoveParser.parse("exd5", state)
+        yield assertTrue(move == Move(Position('e', 4), Position('d', 5)))
+      },
+      test("resolve a pawn capture with promotion") {
+        val state = GameState(
+          Map(
+            Position('e', 7) -> Piece(Color.White, PieceType.Pawn),
+            Position('d', 8) -> Piece(Color.Black, PieceType.Rook)
+          ),
+          Color.White
+        )
+        for move <- MoveParser.parse("exd8=Q", state)
+        yield assertTrue(move == Move(Position('e', 7), Position('d', 8), Some(PieceType.Queen)))
+      }
+    ),
+    suite("pawn promotion (SAN)")(
+      test("resolve a queen promotion") {
+        val state = GameState(Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)), Color.White)
+        for move <- MoveParser.parse("e8=Q", state)
+        yield assertTrue(move == Move(Position('e', 7), Position('e', 8), Some(PieceType.Queen)))
+      },
+      test("resolve a knight underpromotion") {
+        val state = GameState(Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)), Color.White)
+        for move <- MoveParser.parse("e8=N", state)
+        yield assertTrue(move == Move(Position('e', 7), Position('e', 8), Some(PieceType.Knight)))
+      },
+      test("resolve a rook underpromotion") {
+        val state = GameState(Map(Position('a', 2) -> Piece(Color.Black, PieceType.Pawn)), Color.Black)
+        for move <- MoveParser.parse("a1=R", state)
+        yield assertTrue(move == Move(Position('a', 2), Position('a', 1), Some(PieceType.Rook)))
+      },
+      test("resolve a bishop underpromotion") {
+        val state = GameState(Map(Position('d', 7) -> Piece(Color.White, PieceType.Pawn)), Color.White)
+        for move <- MoveParser.parse("d8=B", state)
+        yield assertTrue(move == Move(Position('d', 7), Position('d', 8), Some(PieceType.Bishop)))
+      },
+      test("resolve a capture with knight underpromotion") {
+        val state = GameState(
+          Map(
+            Position('e', 7) -> Piece(Color.White, PieceType.Pawn),
+            Position('d', 8) -> Piece(Color.Black, PieceType.Rook)
+          ),
+          Color.White
+        )
+        for move <- MoveParser.parse("exd8=N", state)
+        yield assertTrue(move == Move(Position('e', 7), Position('d', 8), Some(PieceType.Knight)))
+      }
+    ),
+    suite("piece moves (SAN)")(
+      test("resolve a knight move") {
+        for move <- MoveParser.parse("Nf3", initial)
+        yield assertTrue(move == Move(Position('g', 1), Position('f', 3)))
+      },
+      test("resolve a piece capture") {
+        val state = GameState(
+          Map(
+            Position('g', 1) -> Piece(Color.White, PieceType.Knight),
+            Position('f', 3) -> Piece(Color.Black, PieceType.Pawn)
+          ),
+          Color.White
+        )
+        for move <- MoveParser.parse("Nxf3", state)
+        yield assertTrue(move == Move(Position('g', 1), Position('f', 3)))
+      },
+      test("accept a check suffix") {
+        for move <- MoveParser.parse("Nf3+", initial)
+        yield assertTrue(move.to == Position('f', 3))
+      },
+      test("accept a checkmate suffix") {
+        val state = GameState(
+          Map(
+            Position('h', 5) -> Piece(Color.White, PieceType.Queen),
+            Position('f', 7) -> Piece(Color.Black, PieceType.Pawn)
+          ),
+          Color.White
+        )
+        for move <- MoveParser.parse("Qxf7#", state)
+        yield assertTrue(move.to == Position('f', 7))
+      }
+    ),
+    suite("disambiguation (SAN)")(
+      test("resolve with file disambiguation") {
+        val state = GameState(
+          Map(
+            Position('a', 1) -> Piece(Color.White, PieceType.Rook),
+            Position('f', 1) -> Piece(Color.White, PieceType.Rook)
+          ),
+          Color.White
+        )
+        for move <- MoveParser.parse("Rae1", state)
+        yield assertTrue(move == Move(Position('a', 1), Position('e', 1)))
+      },
+      test("resolve with rank disambiguation") {
+        val state = GameState(
+          Map(
+            Position('a', 1) -> Piece(Color.White, PieceType.Rook),
+            Position('a', 5) -> Piece(Color.White, PieceType.Rook)
+          ),
+          Color.White
+        )
+        for move <- MoveParser.parse("R1a3", state)
+        yield assertTrue(move == Move(Position('a', 1), Position('a', 3)))
+      }
+    ),
+    suite("castling")(
+      test("fail for kingside with not-implemented error") {
+        for err <- MoveParser.parse("O-O", initial).flip
+        yield assertTrue(err.message.contains("Kingside"))
+      },
+      test("fail for queenside with not-implemented error") {
+        for err <- MoveParser.parse("O-O-O", initial).flip
+        yield assertTrue(err.message.contains("Queenside"))
+      },
+      test("accept a check suffix") {
+        for err <- MoveParser.parse("O-O+", initial).flip
+        yield assertTrue(err.message.contains("Kingside"))
+      }
+    ),
+    suite("errors")(
+      test("reject three or more tokens") {
+        for exit <- MoveParser.parse("e2 e4 d5", initial).exit
+        yield assertTrue(exit.isFailure)
+      },
+      test("reject empty input") {
+        for exit <- MoveParser.parse("", initial).exit
+        yield assertTrue(exit.isFailure)
+      },
+      test("reject an invalid column") {
+        for exit <- MoveParser.parse("i2 e4", initial).exit
+        yield assertTrue(exit.isFailure)
+      },
+      test("reject a row above 8") {
+        for exit <- MoveParser.parse("e9 e4", initial).exit
+        yield assertTrue(exit.isFailure)
+      },
+      test("reject a row of 0") {
+        for exit <- MoveParser.parse("e0 e4", initial).exit
+        yield assertTrue(exit.isFailure)
+      },
+      test("reject an invalid destination column") {
+        for exit <- MoveParser.parse("e2 z4", initial).exit
+        yield assertTrue(exit.isFailure)
+      },
+      test("reject an invalid destination row") {
+        for exit <- MoveParser.parse("e2 e9", initial).exit
+        yield assertTrue(exit.isFailure)
+      },
+      test("reject a token that is too long") {
+        for exit <- MoveParser.parse("e22 e4", initial).exit
+        yield assertTrue(exit.isFailure)
+      },
+      test("reject a token that is too short") {
+        for exit <- MoveParser.parse("e e4", initial).exit
+        yield assertTrue(exit.isFailure)
+      },
+      test("include a hint pointing to help") {
+        for err <- MoveParser.parse("nonsense", initial).flip
+        yield assertTrue(err.message.contains("help"))
+      }
     )
-
-  it should "parse corner squares" in:
-    MoveParser.parse("a1 h8", initial) shouldBe Right(
-      Move(Position('a', 1), Position('h', 8))
-    )
-
-  it should "parse squares with multiple spaces" in:
-    MoveParser.parse("e2  e4", initial) shouldBe Right(
-      Move(Position('e', 2), Position('e', 4))
-    )
-
-  it should "parse squares with no separator" in:
-    MoveParser.parse("e2e4", initial) shouldBe Right(
-      Move(Position('e', 2), Position('e', 4))
-    )
-
-  it should "parse squares separated by a dash" in:
-    MoveParser.parse("e2-e4", initial) shouldBe Right(
-      Move(Position('e', 2), Position('e', 4))
-    )
-
-  // ─── Coordinate promotion ────────────────────────────────────────────────
-
-  "MoveParser.parse coordinate promotion" should "parse with no separator" in:
-    MoveParser.parse("e7e8=Q", initial) shouldBe Right(
-      Move(Position('e', 7), Position('e', 8), Some(PieceType.Queen))
-    )
-
-  it should "parse with space separator" in:
-    MoveParser.parse("e7 e8=Q", initial) shouldBe Right(
-      Move(Position('e', 7), Position('e', 8), Some(PieceType.Queen))
-    )
-
-  it should "parse with dash separator" in:
-    MoveParser.parse("e7-e8=Q", initial) shouldBe Right(
-      Move(Position('e', 7), Position('e', 8), Some(PieceType.Queen))
-    )
-
-  // ─── Pawn push (SAN) ─────────────────────────────────────────────────────
-
-  "MoveParser.parse pawn push" should "resolve a pawn push from the initial position" in:
-    MoveParser.parse("e4", initial) shouldBe Right(
-      Move(Position('e', 2), Position('e', 4))
-    )
-
-  it should "accept a check suffix" in:
-    val state = GameState(
-      Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)),
-      Color.White
-    )
-    MoveParser.parse("e8=Q+", state).isRight shouldBe true
-
-  it should "accept a checkmate suffix" in:
-    val state = GameState(
-      Map(Position('d', 2) -> Piece(Color.Black, PieceType.Pawn)),
-      Color.Black
-    )
-    MoveParser.parse("d1=Q#", state).isRight shouldBe true
-
-  // ─── Pawn capture (SAN) ──────────────────────────────────────────────────
-
-  "MoveParser.parse pawn capture" should "resolve with file hint" in:
-    val state = GameState(
-      Map(
-        Position('e', 4) -> Piece(Color.White, PieceType.Pawn),
-        Position('d', 5) -> Piece(Color.Black, PieceType.Pawn)
-      ),
-      Color.White
-    )
-    MoveParser.parse("exd5", state) shouldBe Right(
-      Move(Position('e', 4), Position('d', 5))
-    )
-
-  it should "resolve a pawn capture with promotion" in:
-    val state = GameState(
-      Map(
-        Position('e', 7) -> Piece(Color.White, PieceType.Pawn),
-        Position('d', 8) -> Piece(Color.Black, PieceType.Rook)
-      ),
-      Color.White
-    )
-    MoveParser.parse("exd8=Q", state) shouldBe Right(
-      Move(Position('e', 7), Position('d', 8), Some(PieceType.Queen))
-    )
-
-  // ─── Pawn promotion (SAN) ────────────────────────────────────────────────
-
-  "MoveParser.parse pawn promotion" should "resolve a queen promotion" in:
-    val state = GameState(
-      Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)),
-      Color.White
-    )
-    MoveParser.parse("e8=Q", state) shouldBe Right(
-      Move(Position('e', 7), Position('e', 8), Some(PieceType.Queen))
-    )
-
-  it should "resolve a knight underpromotion" in:
-    val state = GameState(
-      Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)),
-      Color.White
-    )
-    MoveParser.parse("e8=N", state) shouldBe Right(
-      Move(Position('e', 7), Position('e', 8), Some(PieceType.Knight))
-    )
-
-  it should "resolve a rook underpromotion" in:
-    val state = GameState(
-      Map(Position('a', 2) -> Piece(Color.Black, PieceType.Pawn)),
-      Color.Black
-    )
-    MoveParser.parse("a1=R", state) shouldBe Right(
-      Move(Position('a', 2), Position('a', 1), Some(PieceType.Rook))
-    )
-
-  it should "resolve a bishop underpromotion" in:
-    val state = GameState(
-      Map(Position('d', 7) -> Piece(Color.White, PieceType.Pawn)),
-      Color.White
-    )
-    MoveParser.parse("d8=B", state) shouldBe Right(
-      Move(Position('d', 7), Position('d', 8), Some(PieceType.Bishop))
-    )
-
-  it should "resolve a capture with knight underpromotion" in:
-    val state = GameState(
-      Map(
-        Position('e', 7) -> Piece(Color.White, PieceType.Pawn),
-        Position('d', 8) -> Piece(Color.Black, PieceType.Rook)
-      ),
-      Color.White
-    )
-    MoveParser.parse("exd8=N", state) shouldBe Right(
-      Move(Position('e', 7), Position('d', 8), Some(PieceType.Knight))
-    )
-
-  // ─── Piece moves (SAN) ───────────────────────────────────────────────────
-
-  "MoveParser.parse piece move" should "resolve a knight move" in:
-    MoveParser.parse("Nf3", initial) shouldBe Right(
-      Move(Position('g', 1), Position('f', 3))
-    )
-
-  it should "resolve a piece capture" in:
-    val state = GameState(
-      Map(
-        Position('g', 1) -> Piece(Color.White, PieceType.Knight),
-        Position('f', 3) -> Piece(Color.Black, PieceType.Pawn)
-      ),
-      Color.White
-    )
-    MoveParser.parse("Nxf3", state) shouldBe Right(
-      Move(Position('g', 1), Position('f', 3))
-    )
-
-  it should "accept a check suffix" in:
-    MoveParser.parse("Nf3+", initial).isRight shouldBe true
-
-  it should "accept a checkmate suffix" in:
-    val state = GameState(
-      Map(
-        Position('h', 5) -> Piece(Color.White, PieceType.Queen),
-        Position('f', 7) -> Piece(Color.Black, PieceType.Pawn)
-      ),
-      Color.White
-    )
-    MoveParser.parse("Qxf7#", state).isRight shouldBe true
-
-  // ─── Disambiguation (SAN) ────────────────────────────────────────────────
-
-  "MoveParser.parse disambiguation" should "resolve with file disambiguation" in:
-    val state = GameState(
-      Map(
-        Position('a', 1) -> Piece(Color.White, PieceType.Rook),
-        Position('f', 1) -> Piece(Color.White, PieceType.Rook)
-      ),
-      Color.White
-    )
-    MoveParser.parse("Rae1", state) shouldBe Right(
-      Move(Position('a', 1), Position('e', 1))
-    )
-
-  it should "resolve with rank disambiguation" in:
-    val state = GameState(
-      Map(
-        Position('a', 1) -> Piece(Color.White, PieceType.Rook),
-        Position('a', 5) -> Piece(Color.White, PieceType.Rook)
-      ),
-      Color.White
-    )
-    MoveParser.parse("R1a3", state) shouldBe Right(
-      Move(Position('a', 1), Position('a', 3))
-    )
-
-  // ─── Castling ────────────────────────────────────────────────────────────
-
-  "MoveParser.parse castling" should "fail for kingside with a not-implemented error" in:
-    val result = MoveParser.parse("O-O", initial)
-    result shouldBe a[Left[?, ?]]
-    result.left.toOption.get.message should include("Kingside")
-
-  it should "fail for queenside with a not-implemented error" in:
-    val result = MoveParser.parse("O-O-O", initial)
-    result shouldBe a[Left[?, ?]]
-    result.left.toOption.get.message should include("Queenside")
-
-  it should "accept a check suffix" in:
-    val result = MoveParser.parse("O-O+", initial)
-    result shouldBe a[Left[?, ?]]
-    result.left.toOption.get.message should include("Kingside")
-
-  // ─── Error cases ─────────────────────────────────────────────────────────
-
-  "MoveParser.parse errors" should "reject three or more tokens" in:
-    MoveParser.parse("e2 e4 d5", initial) shouldBe a[Left[?, ?]]
-
-  it should "reject empty input" in:
-    MoveParser.parse("", initial) shouldBe a[Left[?, ?]]
-
-  it should "reject an invalid column" in:
-    MoveParser.parse("i2 e4", initial) shouldBe a[Left[?, ?]]
-
-  it should "reject a row above 8" in:
-    MoveParser.parse("e9 e4", initial) shouldBe a[Left[?, ?]]
-
-  it should "reject a row of 0" in:
-    MoveParser.parse("e0 e4", initial) shouldBe a[Left[?, ?]]
-
-  it should "reject an invalid destination column" in:
-    MoveParser.parse("e2 z4", initial) shouldBe a[Left[?, ?]]
-
-  it should "reject an invalid destination row" in:
-    MoveParser.parse("e2 e9", initial) shouldBe a[Left[?, ?]]
-
-  it should "reject a token that is too long" in:
-    MoveParser.parse("e22 e4", initial) shouldBe a[Left[?, ?]]
-
-  it should "reject a token that is too short" in:
-    MoveParser.parse("e e4", initial) shouldBe a[Left[?, ?]]
-
-  it should "include a hint pointing to help in error messages" in:
-    MoveParser
-      .parse("nonsense", initial)
-      .swap
-      .toOption
-      .get
-      .asInstanceOf[chess.model.GameError]
-      .message should include("help")
+  )

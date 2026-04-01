@@ -1,12 +1,14 @@
 package chess.model.piece
 
-import org.scalatest.flatspec.AnyFlatSpec
-import org.scalatest.matchers.should.Matchers
+import zio.test.*
 
-class ColorSpec extends AnyFlatSpec with Matchers:
+object ColorSpec extends ZIOSpecDefault:
 
-  "Color.White.opposite" should "be Black" in:
-    Color.White.opposite shouldBe Color.Black
-
-  "Color.Black.opposite" should "be White" in:
-    Color.Black.opposite shouldBe Color.White
+  def spec = suite("Color")(
+    test("Color.White.opposite should be Black") {
+      assertTrue(Color.White.opposite == Color.Black)
+    },
+    test("Color.Black.opposite should be White") {
+      assertTrue(Color.Black.opposite == Color.White)
+    }
+  )

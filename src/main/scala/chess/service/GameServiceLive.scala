@@ -1,7 +1,7 @@
 package chess.service
 
 import chess.controller.MoveParser
-import chess.model.{GameEvent, GameId}
+import chess.model.{GameError, GameEvent, GameId}
 import chess.model.board.GameState
 import chess.model.rules.Game
 import chess.repository.GameRepository
@@ -9,9 +9,9 @@ import zio.*
 
 final class GameServiceLive(repo: GameRepository) extends GameService:
 
-  def newGame(): Task[GameEvent.GameStarted] =
+  def newGame(): IO[GameError, GameEvent.GameStarted] =
     for
-      id <- ZIO.attempt(java.util.UUID.randomUUID().toString)
+      id <- ZIO.succeed(java.util.UUID.randomUUID().toString)
       state = GameState.initial
       _ <- repo.save(id, state)
     yield GameEvent.GameStarted(id, state)
@@ -19,18 +19,18 @@ final class GameServiceLive(repo: GameRepository) extends GameService:
   def makeMove(
       id: GameId,
       rawInput: String
-  ): Task[(GameState, GameEvent.MoveMade)] =
+  ): IO[GameError, (GameState, GameEvent.MoveMade)] =
     for
       stateOpt <- repo.load(id)
       state <- ZIO
         .fromOption(stateOpt)
-        .orElseFail(chess.model.GameError.GameNotFound(id))
-      move <- ZIO.fromEither(MoveParser.parse(rawInput, state))
-      newState <- ZIO.fromEither(Game.applyMove(state, move))
+        .orElseFail(GameError.GameNotFound(id))
+      move <- MoveParser.parse(rawInput, state)
+      newState <- Game.applyMove(state, move)
       _ <- repo.save(id, newState)
     yield (newState, GameEvent.MoveMade(id, move, newState))
 
-  def getState(id: GameId): Task[Option[GameState]] =
+  def getState(id: GameId): IO[GameError, Option[GameState]] =
     repo.load(id)
 
 object GameServiceLive:

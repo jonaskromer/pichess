@@ -4,6 +4,7 @@ import chess.model.GameError
 import chess.model.board.{GameState, Move, Position}
 import chess.model.piece.PieceType
 import chess.model.rules.MoveValidator
+import zio.*
 
 object SanResolver extends NotationResolver:
 
@@ -27,41 +28,35 @@ object SanResolver extends NotationResolver:
     "K" -> PieceType.King
   )
 
-  def parse(input: String, state: GameState): Option[Either[GameError, Move]] =
+  def parse(input: String, state: GameState): IO[GameError, Option[Move]] =
     input match
       case piecePattern(p, file, rank, _, dest) =>
-        Some(
-          resolveSan(
-            pieceLetters(p),
-            pos(dest),
-            Option(file).filter(_.nonEmpty).map(_.head),
-            Option(rank).filter(_.nonEmpty).map(_.head - '0'),
-            state
-          )
-        )
+        resolveSan(
+          pieceLetters(p),
+          pos(dest),
+          Option(file).filter(_.nonEmpty).map(_.head),
+          Option(rank).filter(_.nonEmpty).map(_.head - '0'),
+          state
+        ).map(Some(_))
       case pawnCapPattern(fromFile, dest, promo) =>
-        Some(
-          resolveSan(
-            PieceType.Pawn,
-            pos(dest),
-            Some(fromFile.head),
-            None,
-            state,
-            promoType(promo)
-          )
-        )
+        resolveSan(
+          PieceType.Pawn,
+          pos(dest),
+          Some(fromFile.head),
+          None,
+          state,
+          promoType(promo)
+        ).map(Some(_))
       case pawnPushPattern(dest, promo) =>
-        Some(
-          resolveSan(
-            PieceType.Pawn,
-            pos(dest),
-            None,
-            None,
-            state,
-            promoType(promo)
-          )
-        )
-      case _ => None
+        resolveSan(
+          PieceType.Pawn,
+          pos(dest),
+          None,
+          None,
+          state,
+          promoType(promo)
+        ).map(Some(_))
+      case _ => ZIO.succeed(None)
 
   private def resolveSan(
       piece: PieceType,
@@ -70,28 +65,33 @@ object SanResolver extends NotationResolver:
       disambigRank: Option[Int],
       state: GameState,
       promotion: Option[PieceType] = None
-  ): Either[GameError, Move] =
-    val candidates = state.board.toList
-      .collect {
-        case (from, p)
-            if p.color == state.activeColor && p.pieceType == piece =>
-          from
-      }
-      .filter { from =>
-        disambigFile.forall(_ == from.col) &&
-        disambigRank.forall(_ == from.row) &&
-        MoveValidator.validate(state, Move(from, dest)).isRight
-      }
-    candidates match
-      case List(from) => Right(Move(from, dest, promotion))
-      case Nil =>
-        Left(GameError.InvalidMove(s"No ${piece} can move to $dest"))
-      case _ =>
-        Left(
-          GameError.InvalidMove(
-            s"Ambiguous: multiple ${piece}s can reach $dest — add a disambiguation character"
+  ): IO[GameError, Move] =
+    val rawCandidates = state.board.toList.collect {
+      case (from, p)
+          if p.color == state.activeColor && p.pieceType == piece =>
+        from
+    }.filter { from =>
+      disambigFile.forall(_ == from.col) &&
+      disambigRank.forall(_ == from.row)
+    }
+    ZIO
+      .filter(rawCandidates)(from =>
+        MoveValidator
+          .validate(state, Move(from, dest))
+          .as(true)
+          .catchAll(_ => ZIO.succeed(false))
+      )
+      .flatMap {
+        case List(from) => ZIO.succeed(Move(from, dest, promotion))
+        case Nil =>
+          ZIO.fail(GameError.InvalidMove(s"No ${piece} can move to $dest"))
+        case _ =>
+          ZIO.fail(
+            GameError.InvalidMove(
+              s"Ambiguous: multiple ${piece}s can reach $dest — add a disambiguation character"
+            )
           )
-        )
+      }
 
   private def pos(s: String): Position = Position(s.head, s(1) - '0')
 

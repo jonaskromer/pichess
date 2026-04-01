@@ -1,19 +1,28 @@
 package chess.controller
 
-import chess.model.board.GameState
-import chess.model.rules.Game
+import chess.model.{GameError, SessionState}
+import chess.notation.SanSerializer
+import chess.service.GameService
+import zio.*
+import zio.stream.SubscriptionRef
 
 object GameController:
-  def handleInput(
-      state: GameState,
-      input: String
-  ): Option[Either[chess.model.GameError, GameState]] =
-    input match
-      case "quit" => None
-      case in =>
-        Some(
-          for
-            move <- MoveParser.parse(in, state)
-            newState <- Game.applyMove(state, move)
-          yield newState
-        )
+
+  def makeMove(
+      gs: GameService,
+      session: SubscriptionRef[SessionState],
+      rawInput: String
+  ): IO[GameError, Unit] =
+    session.get.flatMap { s =>
+      gs.makeMove(s.gameId, rawInput).flatMap { (newState, event) =>
+        SanSerializer.toSan(event.move, s.state).flatMap { san =>
+          session.update(st =>
+            st.copy(
+              state = newState,
+              moveLog = st.moveLog :+ (s.state.activeColor, san),
+              error = None
+            )
+          )
+        }
+      }
+    }

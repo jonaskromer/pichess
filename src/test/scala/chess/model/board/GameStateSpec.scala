@@ -1,16 +1,18 @@
 package chess.model.board
 
 import chess.model.piece.Color
-import org.scalatest.flatspec.AnyFlatSpec
-import org.scalatest.matchers.should.Matchers
+import zio.test.*
 
-class GameStateSpec extends AnyFlatSpec with Matchers:
+object GameStateSpec extends ZIOSpecDefault:
 
-  "GameState.initial" should "set White as the active color" in:
-    GameState.initial.activeColor shouldBe Color.White
-
-  it should "use the standard initial board" in:
-    GameState.initial.board shouldBe Board.initial
-
-  it should "have no en passant target initially" in:
-    GameState.initial.enPassantTarget shouldBe None
+  def spec = suite("GameState.initial")(
+    test("set White as the active color") {
+      assertTrue(GameState.initial.activeColor == Color.White)
+    },
+    test("use the standard initial board") {
+      assertTrue(GameState.initial.board == Board.initial)
+    },
+    test("have no en passant target initially") {
+      assertTrue(GameState.initial.enPassantTarget == None)
+    }
+  )

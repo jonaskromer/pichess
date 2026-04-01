@@ -1,8 +1,7 @@
 package chess
 
-import chess.controller.WebController
+import chess.controller.{GameController, WebController}
 import chess.model.SessionState
-import chess.notation.SanSerializer
 import chess.repository.InMemoryGameRepository
 import chess.service.GameService
 import chess.view.{BoardView, HelpView, MoveLogView}
@@ -79,28 +78,18 @@ object Main extends ZIOAppDefault:
               )
             case "flip" => tuiLoop(gs, session, shutdown, !flipped)
             case raw =>
-              session.get.flatMap { s =>
-                val color = s.state.activeColor
-                gs.makeMove(s.gameId, raw)
-                  .foldZIO(
-                    err =>
-                      printLine(s"Error: ${err.getMessage}") *> tuiLoop(
-                        gs,
-                        session,
-                        shutdown,
-                        flipped
-                      ),
-                    (newState, event) =>
-                      val san = SanSerializer.toSan(event.move, s.state)
-                      session.update(st =>
-                        st.copy(
-                          state = newState,
-                          moveLog = st.moveLog :+ (color, san),
-                          error = None
-                        )
-                      ) *> tuiLoop(gs, session, shutdown, flipped)
-                  )
-              }
+              GameController
+                .makeMove(gs, session, raw)
+                .foldZIO(
+                  err =>
+                    printLine(s"Error: ${err.message}") *> tuiLoop(
+                      gs,
+                      session,
+                      shutdown,
+                      flipped
+                    ),
+                  _ => tuiLoop(gs, session, shutdown, flipped)
+                )
     yield ()
 
   private def openBrowser: Task[Unit] = ZIO.attempt {

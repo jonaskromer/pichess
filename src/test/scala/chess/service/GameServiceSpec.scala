@@ -4,130 +4,100 @@ import chess.model.GameEvent
 import chess.model.board.{GameState, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.repository.InMemoryGameRepository
-import org.scalatest.flatspec.AnyFlatSpec
-import org.scalatest.matchers.should.Matchers
 import zio.*
+import zio.test.*
 
-class GameServiceSpec extends AnyFlatSpec with Matchers:
+object GameServiceSpec extends ZIOSpecDefault:
 
   private val appLayer: ULayer[GameService] =
     InMemoryGameRepository.layer >>> GameServiceLive.layer
 
-  private def run[A](task: ZIO[GameService, Throwable, A]): A =
-    Unsafe.unsafe { implicit unsafe =>
-      Runtime.default.unsafe
-        .run(task.provide(appLayer))
-        .getOrThrowFiberFailure()
-    }
-
-  private def runFailing[A](
-      task: ZIO[GameService, Throwable, A]
-  ): Exit[Throwable, A] =
-    Unsafe.unsafe { implicit unsafe =>
-      Runtime.default.unsafe.run(task.provide(appLayer))
-    }
-
-  "GameService.newGame" should "return a GameStarted event with initial state" in:
-    val event = run(GameService.newGame())
-    event.initialState shouldBe GameState.initial
-    event.gameId should not be empty
-
-  it should "persist the initial state so getState returns it" in:
-    val result = run(
-      for
-        event <- GameService.newGame()
-        state <- GameService.getState(event.gameId)
-      yield state
+  def spec = suite("GameService")(
+    suite("newGame")(
+      test("return a GameStarted event with initial state") {
+        for event <- GameService.newGame()
+        yield assertTrue(
+          event.initialState == GameState.initial,
+          event.gameId.nonEmpty
+        )
+      },
+      test("persist the initial state so getState returns it") {
+        for
+          event <- GameService.newGame()
+          state <- GameService.getState(event.gameId)
+        yield assertTrue(state == Some(GameState.initial))
+      }
+    ),
+    suite("makeMove")(
+      test("return a MoveMade event and updated state on a valid move") {
+        for
+          started <- GameService.newGame()
+          (state, event) <- GameService.makeMove(started.gameId, "e2 e4")
+        yield assertTrue(
+          event.isInstanceOf[GameEvent.MoveMade],
+          state.board.get(Position('e', 4)) == Some(Piece(Color.White, PieceType.Pawn))
+        )
+      },
+      test("persist the updated state after a valid move") {
+        for
+          started <- GameService.newGame()
+          _ <- GameService.makeMove(started.gameId, "e2 e4")
+          stored <- GameService.getState(started.gameId)
+        yield assertTrue(
+          stored.get.board.get(Position('e', 4)) == Some(Piece(Color.White, PieceType.Pawn))
+        )
+      },
+      test("fail for an illegal move") {
+        for
+          started <- GameService.newGame()
+          exit <- GameService.makeMove(started.gameId, "e2 e5").exit
+        yield assertTrue(exit.isFailure)
+      },
+      test("fail for malformed input") {
+        for
+          started <- GameService.newGame()
+          exit <- GameService.makeMove(started.gameId, "garbage").exit
+        yield assertTrue(exit.isFailure)
+      },
+      test("accept SAN pawn push notation") {
+        for
+          started <- GameService.newGame()
+          (state, _) <- GameService.makeMove(started.gameId, "e4")
+        yield assertTrue(
+          state.board.get(Position('e', 4)) == Some(Piece(Color.White, PieceType.Pawn))
+        )
+      },
+      test("accept SAN knight move notation") {
+        for
+          started <- GameService.newGame()
+          (state, _) <- GameService.makeMove(started.gameId, "Nf3")
+        yield assertTrue(
+          state.board.get(Position('f', 3)) == Some(Piece(Color.White, PieceType.Knight))
+        )
+      },
+      test("accept coordinate notation without separator") {
+        for
+          started <- GameService.newGame()
+          (state, _) <- GameService.makeMove(started.gameId, "e2e4")
+        yield assertTrue(
+          state.board.get(Position('e', 4)) == Some(Piece(Color.White, PieceType.Pawn))
+        )
+      },
+      test("fail for SAN castling since it is not yet implemented") {
+        for
+          started <- GameService.newGame()
+          exit <- GameService.makeMove(started.gameId, "O-O").exit
+        yield assertTrue(exit.isFailure)
+      },
+      test("fail when the game id does not exist") {
+        for exit <- GameService.makeMove("nonexistent", "e2 e4").exit
+        yield assertTrue(exit.isFailure)
+      }
+    ),
+    suite("getState")(
+      test("return None for an unknown game id") {
+        for state <- GameService.getState("unknown")
+        yield assertTrue(state.isEmpty)
+      }
     )
-    result shouldBe Some(GameState.initial)
-
-  "GameService.makeMove" should "return a MoveMade event and updated state on a valid move" in:
-    val (state, event) = run(
-      for
-        started <- GameService.newGame()
-        stateAndEvent <- GameService.makeMove(started.gameId, "e2 e4")
-      yield stateAndEvent
-    )
-    event shouldBe a[GameEvent.MoveMade]
-    state.board.get(Position('e', 4)) shouldBe Some(
-      Piece(Color.White, PieceType.Pawn)
-    )
-
-  it should "persist the updated state after a valid move" in:
-    val stored = run(
-      for
-        started <- GameService.newGame()
-        _ <- GameService.makeMove(started.gameId, "e2 e4")
-        state <- GameService.getState(started.gameId)
-      yield state
-    )
-    stored.get.board.get(Position('e', 4)) shouldBe Some(
-      Piece(Color.White, PieceType.Pawn)
-    )
-
-  it should "fail for an illegal move" in:
-    val exit = runFailing(
-      for
-        started <- GameService.newGame()
-        result <- GameService.makeMove(started.gameId, "e2 e5")
-      yield result
-    )
-    exit.isFailure shouldBe true
-
-  it should "fail for malformed input" in:
-    val exit = runFailing(
-      for
-        started <- GameService.newGame()
-        result <- GameService.makeMove(started.gameId, "garbage")
-      yield result
-    )
-    exit.isFailure shouldBe true
-
-  it should "accept SAN pawn push notation" in:
-    val (state, _) = run(
-      for
-        started <- GameService.newGame()
-        result <- GameService.makeMove(started.gameId, "e4")
-      yield result
-    )
-    state.board.get(Position('e', 4)) shouldBe Some(
-      Piece(Color.White, PieceType.Pawn)
-    )
-
-  it should "accept SAN knight move notation" in:
-    val (state, _) = run(
-      for
-        started <- GameService.newGame()
-        result <- GameService.makeMove(started.gameId, "Nf3")
-      yield result
-    )
-    state.board.get(Position('f', 3)) shouldBe Some(
-      Piece(Color.White, PieceType.Knight)
-    )
-
-  it should "accept coordinate notation without separator" in:
-    val (state, _) = run(
-      for
-        started <- GameService.newGame()
-        result <- GameService.makeMove(started.gameId, "e2e4")
-      yield result
-    )
-    state.board.get(Position('e', 4)) shouldBe Some(
-      Piece(Color.White, PieceType.Pawn)
-    )
-
-  it should "fail for SAN castling since it is not yet implemented" in:
-    runFailing(
-      for
-        started <- GameService.newGame()
-        result <- GameService.makeMove(started.gameId, "O-O")
-      yield result
-    ).isFailure shouldBe true
-
-  it should "fail when the game id does not exist" in:
-    runFailing(
-      GameService.makeMove("nonexistent", "e2 e4")
-    ).isFailure shouldBe true
-
-  "GameService.getState" should "return None for an unknown game id" in:
-    run(GameService.getState("unknown")) shouldBe None
+  ).provide(appLayer)

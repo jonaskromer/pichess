@@ -3,18 +3,16 @@ package chess.model.rules
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.model.board.{Board, GameState, Move, Position}
 import chess.model.GameError
+import zio.*
 
 object Game:
   private val promotionPieces: Set[PieceType] =
     Set(PieceType.Queen, PieceType.Rook, PieceType.Bishop, PieceType.Knight)
 
-  // Monadic Either chain: validate → check promotion → build new state.
-  // Each step can short-circuit with Left(GameError).
-
   def applyMove(
       state: GameState,
       move: Move
-  ): Either[GameError, GameState] =
+  ): IO[GameError, GameState] =
     for
       _ <- MoveValidator.validate(state, move)
       piece = state.board(move.from)
@@ -34,28 +32,28 @@ object Game:
   private def validatePromotion(
       piece: Piece,
       move: Move
-  ): Either[GameError, Unit] =
+  ): IO[GameError, Unit] =
     val reachesBackRank = isPromotionRank(piece, move.to.row)
     move.promotion match
       case Some(pt) if !reachesBackRank =>
-        Left(
+        ZIO.fail(
           GameError.InvalidMove(
             "Promotion is only allowed when a pawn reaches the back rank"
           )
         )
       case Some(pt) if !promotionPieces.contains(pt) =>
-        Left(
+        ZIO.fail(
           GameError.InvalidMove(
             "Pawn must promote to Queen, Rook, Bishop, or Knight"
           )
         )
       case None if reachesBackRank =>
-        Left(
+        ZIO.fail(
           GameError.InvalidMove(
             "Pawn reaching the back rank must promote (e.g. e8=Q)"
           )
         )
-      case _ => Right(())
+      case _ => ZIO.unit
 
   private def promotedPiece(piece: Piece, move: Move): Piece =
     move.promotion match

@@ -6,10 +6,12 @@ lazy val root = (project in file("."))
   .settings(
     name := "pichess",
     libraryDependencies ++= Seq(
-      "dev.zio"       %% "zio"       % "2.1.14",
-      "dev.zio"       %% "zio-http"  % "3.10.1",
-      "org.scalatest" %% "scalatest" % "3.2.19" % Test,
+      "dev.zio"       %% "zio"          % "2.1.24",
+      "dev.zio"       %% "zio-http"     % "3.10.1",
+      "dev.zio"       %% "zio-test"     % "2.1.24" % Test,
+      "dev.zio"       %% "zio-test-sbt" % "2.1.24" % Test,
     ),
+    testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
     // Main and WebController are excluded: ZIO/HTTP wiring boundaries with no pure testable logic
     coverageExcludedFiles := ".*Main.*|.*WebController.*",
     coverageEnabled := true,

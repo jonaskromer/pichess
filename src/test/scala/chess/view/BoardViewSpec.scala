@@ -1,10 +1,9 @@
 package chess.view
 
 import chess.model.board.GameState
-import org.scalatest.flatspec.AnyFlatSpec
-import org.scalatest.matchers.should.Matchers
+import zio.test.*
 
-class BoardViewSpec extends AnyFlatSpec with Matchers:
+object BoardViewSpec extends ZIOSpecDefault:
 
   // Strip ANSI escape codes so we can check plain text content
   private def stripAnsi(s: String): String =
@@ -12,83 +11,93 @@ class BoardViewSpec extends AnyFlatSpec with Matchers:
 
   private val rendered = stripAnsi(BoardView.render(GameState.initial))
 
-  "BoardView.render" should "include all White piece symbols" in:
-    rendered should include("♔")
-    rendered should include("♕")
-    rendered should include("♖")
-    rendered should include("♗")
-    rendered should include("♘")
-    rendered should include("♙")
-
-  it should "include all Black piece symbols" in:
-    rendered should include("♚")
-    rendered should include("♛")
-    rendered should include("♜")
-    rendered should include("♝")
-    rendered should include("♞")
-    rendered should include("♟")
-
-  it should "include all row labels" in:
-    (1 to 8).foreach: row =>
-      rendered should include(row.toString)
-
-  it should "include all column labels" in:
-    ('a' to 'h').foreach: col =>
-      rendered should include(col.toString)
-
-  it should "show 8 ranks in the output" in:
-    // Each rank is rendered as a line starting with the rank number
-    val rankLines = rendered.linesIterator
-      .filter(l => l.trim.headOption.exists(_.isDigit))
-      .toList
-    rankLines.size shouldBe 8
-
-  it should "show rank 8 at the top when not flipped" in:
-    val rankLines = rendered.linesIterator
-      .filter(l => l.trim.headOption.exists(_.isDigit))
-      .toList
-    rankLines.head should startWith("8")
-
-  it should "show rank 1 at the bottom when not flipped" in:
-    val rankLines = rendered.linesIterator
-      .filter(l => l.trim.headOption.exists(_.isDigit))
-      .toList
-    rankLines.last should startWith("1")
-
-  it should "show column a first when not flipped" in:
-    rendered.linesIterator.next().trim should startWith("a")
-
   private val flippedRendered = stripAnsi(
     BoardView.render(GameState.initial, flipped = true)
   )
 
-  "BoardView.render when flipped" should "include all White piece symbols" in:
-    flippedRendered should include("♔")
-    flippedRendered should include("♕")
-    flippedRendered should include("♖")
-    flippedRendered should include("♗")
-    flippedRendered should include("♘")
-    flippedRendered should include("♙")
-
-  it should "include all Black piece symbols" in:
-    flippedRendered should include("♚")
-    flippedRendered should include("♛")
-    flippedRendered should include("♜")
-    flippedRendered should include("♝")
-    flippedRendered should include("♞")
-    flippedRendered should include("♟")
-
-  it should "show rank 1 at the top" in:
-    val rankLines = flippedRendered.linesIterator
-      .filter(l => l.trim.headOption.exists(_.isDigit))
-      .toList
-    rankLines.head should startWith("1")
-
-  it should "show rank 8 at the bottom" in:
-    val rankLines = flippedRendered.linesIterator
-      .filter(l => l.trim.headOption.exists(_.isDigit))
-      .toList
-    rankLines.last should startWith("8")
-
-  it should "show column h first" in:
-    flippedRendered.linesIterator.next().trim should startWith("h")
+  def spec = suite("BoardView.render")(
+    test("include all White piece symbols") {
+      assertTrue(
+        rendered.contains("♔"),
+        rendered.contains("♕"),
+        rendered.contains("♖"),
+        rendered.contains("♗"),
+        rendered.contains("♘"),
+        rendered.contains("♙")
+      )
+    },
+    test("include all Black piece symbols") {
+      assertTrue(
+        rendered.contains("♚"),
+        rendered.contains("♛"),
+        rendered.contains("♜"),
+        rendered.contains("♝"),
+        rendered.contains("♞"),
+        rendered.contains("♟")
+      )
+    },
+    test("include all row labels") {
+      assertTrue((1 to 8).forall(row => rendered.contains(row.toString)))
+    },
+    test("include all column labels") {
+      assertTrue(('a' to 'h').forall(col => rendered.contains(col.toString)))
+    },
+    test("show 8 ranks in the output") {
+      val rankLines = rendered.linesIterator
+        .filter(l => l.trim.headOption.exists(_.isDigit))
+        .toList
+      assertTrue(rankLines.size == 8)
+    },
+    test("show rank 8 at the top when not flipped") {
+      val rankLines = rendered.linesIterator
+        .filter(l => l.trim.headOption.exists(_.isDigit))
+        .toList
+      assertTrue(rankLines.head.startsWith("8"))
+    },
+    test("show rank 1 at the bottom when not flipped") {
+      val rankLines = rendered.linesIterator
+        .filter(l => l.trim.headOption.exists(_.isDigit))
+        .toList
+      assertTrue(rankLines.last.startsWith("1"))
+    },
+    test("show column a first when not flipped") {
+      assertTrue(rendered.linesIterator.next().trim.startsWith("a"))
+    },
+    suite("when flipped")(
+      test("include all White piece symbols") {
+        assertTrue(
+          flippedRendered.contains("♔"),
+          flippedRendered.contains("♕"),
+          flippedRendered.contains("♖"),
+          flippedRendered.contains("♗"),
+          flippedRendered.contains("♘"),
+          flippedRendered.contains("♙")
+        )
+      },
+      test("include all Black piece symbols") {
+        assertTrue(
+          flippedRendered.contains("♚"),
+          flippedRendered.contains("♛"),
+          flippedRendered.contains("♜"),
+          flippedRendered.contains("♝"),
+          flippedRendered.contains("♞"),
+          flippedRendered.contains("♟")
+        )
+      },
+      test("show rank 1 at the top") {
+        val rankLines = flippedRendered.linesIterator
+          .filter(l => l.trim.headOption.exists(_.isDigit))
+          .toList
+        assertTrue(rankLines.head.startsWith("1"))
+      },
+      test("show rank 8 at the bottom") {
+        val rankLines = flippedRendered.linesIterator
+          .filter(l => l.trim.headOption.exists(_.isDigit))
+          .toList
+        assertTrue(rankLines.last.startsWith("8"))
+      },
+      test("show column h first") {
+        assertTrue(flippedRendered.linesIterator.next().trim.startsWith("h"))
+      }
+    )
+  )

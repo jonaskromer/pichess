@@ -1,7 +1,6 @@
 package chess.controller
 
-import chess.model.SessionState
-import chess.notation.SanSerializer
+import chess.model.{GameError, SessionState}
 import chess.service.GameService
 import chess.view.{HtmlPage, WebBoardView}
 import zio.*
@@ -73,24 +72,14 @@ object WebController:
       req: Request
   ): ZIO[Any, Nothing, Response] =
     (for
-      body <- req.body.asString
+      body <- req.body.asString.mapError(e => GameError.ParseError(e.getMessage))
       move <- ZIO
         .fromOption(extractMove(body))
-        .orElseFail(new Exception("Missing move field"))
-      s <- session.get
-      result <- gs.makeMove(s.gameId, move)
-      (newState, event) = result
-      san = SanSerializer.toSan(event.move, s.state)
-      _ <- session.update(st =>
-        st.copy(
-          state = newState,
-          moveLog = st.moveLog :+ (s.state.activeColor, san),
-          error = None
-        )
-      )
+        .orElseFail(GameError.ParseError("Missing move field"))
+      _ <- GameController.makeMove(gs, session, move)
       updated <- session.get
     yield stateResponse(updated)).catchAll(err =>
-      ZIO.succeed(errorResponse(err.getMessage, Status.BadRequest))
+      ZIO.succeed(errorResponse(err.message, Status.BadRequest))
     )
 
   private def handleNewGame(
@@ -104,7 +93,7 @@ object WebController:
       )
       s <- session.get
     yield stateResponse(s)).catchAll(err =>
-      ZIO.succeed(errorResponse(err.getMessage, Status.InternalServerError))
+      ZIO.succeed(errorResponse(err.message, Status.InternalServerError))
     )
 
   private def handleQuit(

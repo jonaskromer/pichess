@@ -1,23 +1,29 @@
 package chess.view
 
 import chess.model.piece.{Color, Piece, PieceType}
-import org.scalatest.flatspec.AnyFlatSpec
-import org.scalatest.matchers.should.Matchers
+import zio.test.*
 
-class PieceUnicodeSpec extends AnyFlatSpec with Matchers:
+object PieceUnicodeSpec extends ZIOSpecDefault:
 
-  "PieceUnicode" should "return correct white piece symbols" in:
-    PieceUnicode(Piece(Color.White, PieceType.King)) shouldBe '\u2654'
-    PieceUnicode(Piece(Color.White, PieceType.Queen)) shouldBe '\u2655'
-    PieceUnicode(Piece(Color.White, PieceType.Rook)) shouldBe '\u2656'
-    PieceUnicode(Piece(Color.White, PieceType.Bishop)) shouldBe '\u2657'
-    PieceUnicode(Piece(Color.White, PieceType.Knight)) shouldBe '\u2658'
-    PieceUnicode(Piece(Color.White, PieceType.Pawn)) shouldBe '\u2659'
-
-  it should "return correct black piece symbols" in:
-    PieceUnicode(Piece(Color.Black, PieceType.King)) shouldBe '\u265a'
-    PieceUnicode(Piece(Color.Black, PieceType.Queen)) shouldBe '\u265b'
-    PieceUnicode(Piece(Color.Black, PieceType.Rook)) shouldBe '\u265c'
-    PieceUnicode(Piece(Color.Black, PieceType.Bishop)) shouldBe '\u265d'
-    PieceUnicode(Piece(Color.Black, PieceType.Knight)) shouldBe '\u265e'
-    PieceUnicode(Piece(Color.Black, PieceType.Pawn)) shouldBe '\u265f'
+  def spec = suite("PieceUnicode")(
+    test("return correct white piece symbols") {
+      assertTrue(
+        PieceUnicode(Piece(Color.White, PieceType.King)) == '\u2654',
+        PieceUnicode(Piece(Color.White, PieceType.Queen)) == '\u2655',
+        PieceUnicode(Piece(Color.White, PieceType.Rook)) == '\u2656',
+        PieceUnicode(Piece(Color.White, PieceType.Bishop)) == '\u2657',
+        PieceUnicode(Piece(Color.White, PieceType.Knight)) == '\u2658',
+        PieceUnicode(Piece(Color.White, PieceType.Pawn)) == '\u2659'
+      )
+    },
+    test("return correct black piece symbols") {
+      assertTrue(
+        PieceUnicode(Piece(Color.Black, PieceType.King)) == '\u265a',
+        PieceUnicode(Piece(Color.Black, PieceType.Queen)) == '\u265b',
+        PieceUnicode(Piece(Color.Black, PieceType.Rook)) == '\u265c',
+        PieceUnicode(Piece(Color.Black, PieceType.Bishop)) == '\u265d',
+        PieceUnicode(Piece(Color.Black, PieceType.Knight)) == '\u265e',
+        PieceUnicode(Piece(Color.Black, PieceType.Pawn)) == '\u265f'
+      )
+    }
+  )

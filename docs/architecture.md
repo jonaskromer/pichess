@@ -154,6 +154,9 @@ See [`docs/adr/`](adr/) for the full decision records:
 - [ADR 002 — `GameController` exists but is not used at runtime](adr/002-game-controller-not-used-at-runtime.md)
 - [ADR 003 — ZLayer for dependency injection](adr/003-zlayer-for-dependency-injection.md)
 - [ADR 004 — Notation parsing via Strategy / Chain of Responsibility](adr/004-notation-resolver-pattern.md)
+- [ADR 005 — Pure domain model; ZIO only at boundaries](adr/005-pure-domain-model-zio-at-boundaries.md)
+- [ADR 006 — SubscriptionRef + SSE for TUI/GUI synchronization](adr/006-subscriptionref-sse-for-ui-sync.md)
+- [ADR 007 — Promise for coordinated shutdown](adr/007-promise-for-coordinated-shutdown.md)
 
 ## Future Integration Points
 
