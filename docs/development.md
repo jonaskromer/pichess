@@ -54,14 +54,28 @@ Coverage is enforced at 100%. The build fails if any line is uncovered. `Main.sc
 
 All chess logic lives in `chess.model.rules`:
 
-- `MoveValidator.scala` — validates a proposed move; returns `Either[String, Unit]`
-- `Game.scala` — applies a validated move to produce a new `GameState`
+- `MoveValidator.scala` — validates a proposed move; returns `Either[GameError, Unit]`
+- `Game.scala` — applies a validated move to produce a new `GameState`; also validates and applies promotion
 
 For a rule that only blocks moves (e.g. check detection): add a guard in `MoveValidator.validate`.
 
-For a rule that also changes board state after the move (e.g. castling, en passant): add the state-mutation logic in `Game.applyMove` / `Game.updatedBoard`.
+For a rule that also changes board state after the move (e.g. castling, en passant, promotion): add the state-mutation logic in `Game.applyMove` / `Game.updatedBoard`.
 
 Cover every new branch with tests in `MoveValidatorSpec` or `GameSpec` before the build will pass.
+
+### Adding a New Notation Style
+
+Notation resolvers live in `chess.notation` and implement `NotationResolver`:
+
+```scala
+object MyResolver extends NotationResolver:
+  def parse(input: String, state: GameState): Option[Either[GameError, Move]] =
+    // Return None if this resolver doesn't recognize the input
+    // Return Some(Right(move)) on success
+    // Return Some(Left(error)) if recognized but invalid
+```
+
+Register the new resolver in `MoveParser.resolvers` (order matters — first match wins).
 
 ---
 

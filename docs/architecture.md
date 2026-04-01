@@ -15,12 +15,20 @@
 ┌──────────▼──────────────────┐  ┌───────▼────────────┐
 │  chess.service.GameService  │  │    chess.view      │
 │  (orchestration: moves,     │  │    BoardView       │
-│   persistence, events)      │  └───────┬────────────┘
-└──────┬──────────┬───────────┘          │ uses
-       │ uses     │ uses                 │
-       │   ┌──────▼──────────────┐       │
+│   persistence, events)      │  │    MoveLogView     │
+└──────┬──────────┬───────────┘  │    HelpView        │
+       │ uses     │ uses         └───────┬────────────┘
+       │   ┌──────▼──────────────┐       │ uses
        │   │  chess.controller   │       │
        │   │  MoveParser         │       │
+       │   └──────┬──────────────┘       │
+       │ uses     │ uses                 │
+       │   ┌──────▼──────────────┐       │
+       │   │  chess.notation     │       │
+       │   │  CoordinateResolver │       │
+       │   │  SanResolver        │       │
+       │   │  CastlingResolver   │       │
+       │   │  SanSerializer      │       │
        │   └──────┬──────────────┘       │
        │ uses     │ uses                 │
 ┌──────▼──────────▼───────────────────────────────────┐
@@ -49,7 +57,7 @@ Pure domain types. No I/O, no ZIO, no dependencies on other packages.
 | `GameEvent.scala` | Domain events: `GameStarted`, `MoveMade`, `InvalidMoveAttempted` |
 | `board/Board.scala` | `type Board = Map[Position, Piece]` + initial board setup |
 | `board/GameState.scala` | Immutable game snapshot: board, active color, en passant target |
-| `board/Move.scala` | A move from one `Position` to another |
+| `board/Move.scala` | A move from one `Position` to another, with optional promotion piece |
 | `board/Position.scala` | A board square identified by column (`Char`) and row (`Int`) |
 | `piece/Color.scala` | `White` / `Black` with `.opposite` |
 | `piece/Piece.scala` | A piece: color + type |
@@ -57,12 +65,24 @@ Pure domain types. No I/O, no ZIO, no dependencies on other packages.
 
 ### `chess.model.rules`
 
-Pure chess logic. Takes `GameState` and `Move`, returns `Either[String, GameState]`. No side effects.
+Pure chess logic. Takes `GameState` and `Move`, returns `Either[GameError, GameState]`. No side effects.
 
 | File | Purpose |
 |---|---|
 | `MoveValidator.scala` | Validates a move against all chess rules for all piece types, including en passant |
-| `Game.scala` | Applies a validated move to produce a new `GameState`; handles en passant capture and target tracking |
+| `Game.scala` | Applies a validated move to produce a new `GameState`; handles en passant capture/target tracking and pawn promotion |
+
+### `chess.notation`
+
+Notation parsing and serialization. Each notation style has its own resolver implementing the `NotationResolver` trait (Strategy pattern). The resolvers are chained by `MoveParser` (Chain of Responsibility).
+
+| File | Purpose |
+|---|---|
+| `NotationResolver.scala` | Trait: `parse(input, state): Option[Either[GameError, Move]]` — returns `None` if the notation doesn't match, `Some(Left/Right)` if it does |
+| `CoordinateResolver.scala` | Parses coordinate notation: `e2 e4`, `e2e4`, `e2-e4`, `e7e8=Q` |
+| `SanResolver.scala` | Parses SAN: piece moves (`Nf3`), pawn pushes (`e4`), pawn captures (`exd5`), promotion (`e8=Q`), disambiguation (`Nbd2`) |
+| `CastlingResolver.scala` | Parses castling notation (`O-O`, `O-O-O`); currently returns an error (not yet implemented) |
+| `SanSerializer.scala` | `toSan(move, state): String` — serializes a `Move` + pre-move `GameState` into SAN (with disambiguation, capture notation, and promotion) |
 
 ### `chess.controller`
 
@@ -70,7 +90,7 @@ Pure input-handling functions. No ZIO, no state.
 
 | File | Purpose |
 |---|---|
-| `MoveParser.scala` | Parses `"e2 e4"` style strings into `Move`; returns `Either[String, Move]`. Used by `GameServiceLive` at runtime. |
+| `MoveParser.scala` | Orchestrator: chains `CoordinateResolver`, `CastlingResolver`, `SanResolver` in order; `parse(input, state): Either[GameError, Move]` |
 | `GameController.scala` | Thin combinator: routes `"quit"` → `None`, otherwise delegates to `MoveParser` + `Game`. Not used at runtime (Main handles `"quit"` directly and calls `GameService`); retained as a tested pure utility. |
 
 ### `chess.repository`
@@ -101,7 +121,9 @@ Pure rendering. No I/O.
 
 | File | Purpose |
 |---|---|
-| `BoardView.scala` | `render(state: GameState): String` — ANSI-colored board with Unicode chess symbols |
+| `BoardView.scala` | `render(state, flipped): String` — ANSI-colored board with Unicode chess symbols; supports flipped perspective |
+| `MoveLogView.scala` | `render(log): String` — displays the last two moves in SAN with color-coded player labels |
+| `HelpView.scala` | `render: String` — in-game help screen listing commands, notation, and implemented rules |
 
 **Future:** `HtmlBoardView`, `JsonBoardView` etc. will be separate modules consuming the same `GameState`.
 
@@ -109,14 +131,14 @@ Pure rendering. No I/O.
 
 | File | Purpose |
 |---|---|
-| `Main.scala` | ZIO app entry point. Wires `GameService.layer` + `InMemoryGameRepository.layer`, then runs the TUI game loop. Excluded from test coverage. |
+| `Main.scala` | ZIO app entry point. Wires `GameService.layer` + `InMemoryGameRepository.layer`, then runs the TUI game loop with move log tracking. Excluded from test coverage. |
 
 ## Dependency Rules
 
 Dependencies only flow **downward**:
 
 ```
-Main → service → controller → model
+Main → service → controller → notation → model
                → model.rules → model
                → repository
      → view → model
@@ -131,6 +153,7 @@ See [`docs/adr/`](adr/) for the full decision records:
 - [ADR 001 — `GameEvent` as a return value, not a side-effect bus](adr/001-game-event-as-return-value.md)
 - [ADR 002 — `GameController` exists but is not used at runtime](adr/002-game-controller-not-used-at-runtime.md)
 - [ADR 003 — ZLayer for dependency injection](adr/003-zlayer-for-dependency-injection.md)
+- [ADR 004 — Notation parsing via Strategy / Chain of Responsibility](adr/004-notation-resolver-pattern.md)
 
 ## Future Integration Points
 

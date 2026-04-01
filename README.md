@@ -29,9 +29,9 @@ Dive deeper into the project structure, our development workflow, and where the 
 - 🍑 **[Development Workflow](docs/development.md)**: Guidelines on our strict TDD rules, code formatting, and the `sbt` pipeline.
 - 🍑 **[Roadmap](docs/roadmap.md)**: The 10-phase evolution plan of this project, taking it from a TUI game to a fully-distributed reactive microservice architecture.
 
-## 🛠️ Current Status (Phase 1)
+## 🛠️ Current Status (Phase 1+)
 
-Currently, the project has completed **Phase 1: TUI Chess**. You can jump into `sbt run` and play a game right inside your console with piece validation, en passant, and in-memory persistence! Up next is Phase 2 to implement the missing chess rules (check, checkmate, castling, and draw conditions).
+Currently, the project has completed **Phase 1: TUI Chess** plus **pawn promotion** from Phase 2. You can jump into `sbt run` and play a game right inside your console with piece validation, en passant, pawn promotion, a live move log in SAN, and in-memory persistence! Up next is the rest of Phase 2: check detection, checkmate, castling, and draw conditions.
 
 ---
 *Built with pure functions, immutability, and plenty of 🍑.*

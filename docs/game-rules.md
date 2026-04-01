@@ -2,17 +2,16 @@
 
 ## Move Notation
 
-Moves are entered as two space-separated squares: `<from> <to>`
+πChess accepts both **coordinate notation** and **Standard Algebraic Notation (SAN)**. See [notation.md](notation.md) for the full guide.
 
 ```
-e2 e4   — move the piece on e2 to e4
-g1 f3   — move the piece on g1 to f3
+e2 e4   — coordinate: move the piece on e2 to e4
+Nf3     — SAN: knight to f3
+exd5    — SAN: pawn on e-file captures on d5
+e8=Q    — SAN: pawn to e8, promote to queen
 ```
 
-- Columns: `a` through `h` (left to right from White's perspective)
-- Rows: `1` through `8` (White starts on rows 1–2, Black on rows 7–8)
-
-To quit the game, type `quit`.
+To quit the game, type `quit`. To flip the board, type `flip`. To see help, type `help`.
 
 ---
 
@@ -28,6 +27,7 @@ To quit the game, type `quit`.
 - May move forward two squares from its starting rank (rank 2 for White, rank 7 for Black).
 - Captures diagonally one square forward.
 - **En passant**: if a pawn advances two squares and lands beside an enemy pawn, the enemy pawn may capture it by moving diagonally to the skipped square. This right expires after the very next move.
+- **Promotion**: when a pawn reaches the back rank (rank 8 for White, rank 1 for Black), it must promote to a Queen, Rook, Bishop, or Knight. Append the promotion suffix to the move (e.g. `e8=Q`, `exd8=N`). Promotion is mandatory — the game rejects a pawn reaching the back rank without specifying a piece.
 
 ### Rook
 - Moves any number of squares horizontally or vertically.
@@ -55,7 +55,6 @@ To quit the game, type `quit`.
 | Rule | Status |
 |---|---|
 | Castling (kingside and queenside) | Not implemented |
-| Pawn promotion | Not implemented |
 | Check detection | Not implemented |
 | Checkmate / stalemate detection | Not implemented |
 | Draw conditions (50-move rule, threefold repetition, insufficient material) | Not implemented |

@@ -19,13 +19,18 @@ Console chess game with full move validation, en passant, ANSI board rendering, 
 
 **Goal:** Complete the ruleset so the game can end naturally.
 
-| Rule | Where to add |
-|---|---|
-| Check detection | `MoveValidator` — reject moves that leave own king in check |
-| Checkmate / stalemate | `Game.applyMove` — return a terminal `GameState` variant |
-| Castling | `MoveValidator` + `Game.updatedBoard` |
-| Pawn promotion | `Game.updatedBoard` — replace pawn with chosen piece |
-| Draw conditions | `Game.applyMove` — track move history for 50-move / threefold |
+| Rule | Where to add | Status |
+|---|---|---|
+| Pawn promotion | `Game.applyMove` — validate and replace pawn with chosen piece | Done |
+| Check detection | `MoveValidator` — reject moves that leave own king in check | Not started |
+| Checkmate / stalemate | `Game.applyMove` — return a terminal `GameState` variant | Not started |
+| Castling | `MoveValidator` + `Game.updatedBoard` | Not started |
+| Draw conditions | `Game.applyMove` — track move history for 50-move / threefold | Not started |
+
+**Also completed (beyond core rules):**
+- Notation parsing refactored into `chess.notation` package with Strategy/Chain-of-Responsibility pattern (`NotationResolver` trait, `CoordinateResolver`, `SanResolver`, `CastlingResolver`)
+- SAN serialization (`SanSerializer`) for move display
+- Live move log in TUI showing last two moves with color-coded labels
 
 ---
 

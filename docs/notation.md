@@ -2,6 +2,8 @@
 
 πChess accepts two notation styles: **coordinate notation** and **Standard Algebraic Notation (SAN)**. Both can be used interchangeably.
 
+Internally, notation parsing is handled by the `chess.notation` package, which provides a resolver for each style. The controller layer (`MoveParser`) chains the resolvers and returns the first match.
+
 ---
 
 ## Coordinate Notation
@@ -13,6 +15,7 @@ Enter the source square followed by the destination square. The separator is fle
 | `e2 e4` | Move the piece on e2 to e4 (space) |
 | `e2e4` | Same move, no separator |
 | `e2-e4` | Same move, dash separator |
+| `e7 e8=Q` | Move pawn to e8 and promote to queen |
 
 Squares are written as **column** (`a`–`h`) then **row** (`1`–`8`). White starts on rows 1–2; Black on rows 7–8.
 
@@ -30,6 +33,18 @@ The official notation used in tournament chess. No source square is needed — t
 | `d5` | Push a pawn to d5 |
 | `exd5` | Pawn on the e-file captures on d5 |
 | `cxb4` | Pawn on the c-file captures on b4 |
+
+### Pawn promotion
+
+When a pawn reaches the back rank (rank 8 for White, rank 1 for Black), it must promote. Append `=` followed by the piece letter (`Q`, `R`, `B`, or `N`).
+
+| Input | Meaning |
+|---|---|
+| `e8=Q` | Push pawn to e8, promote to queen |
+| `e8=N` | Push pawn to e8, promote to knight (underpromotion) |
+| `exd8=R` | Pawn on e-file captures on d8, promote to rook |
+
+Promotion is mandatory — the game will reject a pawn move to the back rank without a promotion suffix.
 
 ### Piece moves
 
@@ -67,12 +82,23 @@ When two pieces of the same type can both reach the destination, add the source 
 
 ---
 
+## Move Log
+
+After each move, the game displays the last two moves in SAN with color-coded labels:
+
+```
+White: e4 -> Black: e5
+```
+
+The `White` and `Black` labels are styled with ANSI colors matching their side (black-on-white and white-on-black respectively).
+
+---
+
 ## Not Yet Supported
 
 | Notation | Reason |
 |---|---|
 | `O-O` / `O-O-O` | Castling is not yet implemented |
-| `e8=Q` | Pawn promotion is not yet implemented |
 
 ---
 
