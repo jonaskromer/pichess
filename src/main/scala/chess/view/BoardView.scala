@@ -12,10 +12,13 @@ object BoardView:
   private val blackFg = "\u001b[1;30m"
   private val reset = "\u001b[0m"
 
-  def render(state: GameState): String =
-    val colLabels = " " + ('a' to 'h').map(c => s" $c ").mkString + "\n"
-    val ranks = (8 to 1 by -1).map: row =>
-      val squares = ('a' to 'h').map: col =>
+  def render(state: GameState, flipped: Boolean = false): String =
+    val cols: Seq[Char] =
+      if flipped then ('a' to 'h').toList.reverse else ('a' to 'h').toList
+    val rows = if flipped then (1 to 8) else (8 to 1 by -1)
+    val colLabels = " " + cols.map(c => s" $c ").mkString + "\n"
+    val ranks = rows.map: row =>
+      val squares = cols.map: col =>
         val pos = Position(col, row)
         val isDark = (col - 'a' + row) % 2 == 1
         val bg = if isDark then darkBg else lightBg

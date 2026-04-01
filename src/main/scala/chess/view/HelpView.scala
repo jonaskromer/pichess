@@ -6,6 +6,7 @@ object HelpView:
        |
        |COMMANDS
        |  <from> <to>   Move a piece  (e.g. e2 e4)
+       |  flip          Flip the board (toggle White/Black perspective)
        |  help          Show this help screen
        |  quit          Exit the game
        |

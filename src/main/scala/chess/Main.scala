@@ -19,27 +19,34 @@ object Main extends ZIOAppDefault:
   private val app: ZIO[GameService, Throwable, Unit] =
     for
       event <- GameService.newGame()
-      _ <- loop(event.gameId, event.initialState)
+      _ <- loop(event.gameId, event.initialState, flipped = false)
     yield ()
 
   private def loop(
       id: GameId,
-      state: GameState
+      state: GameState,
+      flipped: Boolean
   ): ZIO[GameService, Throwable, Unit] =
     for
-      _ <- printLine(BoardView.render(state))
+      _ <- printLine(BoardView.render(state, flipped))
       _ <- printLine(
-        s"${state.activeColor}'s turn — enter a move (e.g. e2 e4), 'help', or 'quit':"
+        s"${state.activeColor}'s turn — enter a move (e.g. e2 e4), 'help', 'flip', or 'quit':"
       )
       input <- readLine
       _ <- input.trim match
         case "quit" => printLine("Goodbye!")
-        case "help" => printLine(HelpView.render) *> loop(id, state)
+        case "help" => printLine(HelpView.render) *> loop(id, state, flipped)
+        case "flip" => loop(id, state, !flipped)
         case raw =>
           GameService
             .makeMove(id, raw)
             .foldZIO(
-              err => printLine(s"Error: ${err.getMessage}") *> loop(id, state),
-              (newState, _) => loop(id, newState)
+              err =>
+                printLine(s"Error: ${err.getMessage}") *> loop(
+                  id,
+                  state,
+                  flipped
+                ),
+              (newState, _) => loop(id, newState, flipped)
             )
     yield ()

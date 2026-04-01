@@ -13,6 +13,9 @@ class HelpViewSpec extends AnyFlatSpec with Matchers:
   it should "list the help command" in:
     help should include("help")
 
+  it should "list the flip command" in:
+    help should include("flip")
+
   it should "list the quit command" in:
     help should include("quit")
 

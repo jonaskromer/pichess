@@ -42,3 +42,53 @@ class BoardViewSpec extends AnyFlatSpec with Matchers:
       .filter(l => l.trim.headOption.exists(_.isDigit))
       .toList
     rankLines.size shouldBe 8
+
+  it should "show rank 8 at the top when not flipped" in:
+    val rankLines = rendered.linesIterator
+      .filter(l => l.trim.headOption.exists(_.isDigit))
+      .toList
+    rankLines.head should startWith("8")
+
+  it should "show rank 1 at the bottom when not flipped" in:
+    val rankLines = rendered.linesIterator
+      .filter(l => l.trim.headOption.exists(_.isDigit))
+      .toList
+    rankLines.last should startWith("1")
+
+  it should "show column a first when not flipped" in:
+    rendered.linesIterator.next().trim should startWith("a")
+
+  private val flippedRendered = stripAnsi(
+    BoardView.render(GameState.initial, flipped = true)
+  )
+
+  "BoardView.render when flipped" should "include all White piece symbols" in:
+    flippedRendered should include("♔")
+    flippedRendered should include("♕")
+    flippedRendered should include("♖")
+    flippedRendered should include("♗")
+    flippedRendered should include("♘")
+    flippedRendered should include("♙")
+
+  it should "include all Black piece symbols" in:
+    flippedRendered should include("♚")
+    flippedRendered should include("♛")
+    flippedRendered should include("♜")
+    flippedRendered should include("♝")
+    flippedRendered should include("♞")
+    flippedRendered should include("♟")
+
+  it should "show rank 1 at the top" in:
+    val rankLines = flippedRendered.linesIterator
+      .filter(l => l.trim.headOption.exists(_.isDigit))
+      .toList
+    rankLines.head should startWith("1")
+
+  it should "show rank 8 at the bottom" in:
+    val rankLines = flippedRendered.linesIterator
+      .filter(l => l.trim.headOption.exists(_.isDigit))
+      .toList
+    rankLines.last should startWith("8")
+
+  it should "show column h first" in:
+    flippedRendered.linesIterator.next().trim should startWith("h")
