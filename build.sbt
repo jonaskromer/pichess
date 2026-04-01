@@ -10,8 +10,8 @@ lazy val root = (project in file("."))
       "dev.zio"       %% "zio-http"  % "3.10.1",
       "org.scalatest" %% "scalatest" % "3.2.19" % Test,
     ),
-    // Main is excluded: it is a pure ZIO wiring boundary with no testable logic
-    coverageExcludedFiles := ".*Main.*",
+    // Main and WebController are excluded: ZIO/HTTP wiring boundaries with no pure testable logic
+    coverageExcludedFiles := ".*Main.*|.*WebController.*",
     coverageEnabled := true,
     coverageMinimumStmtTotal := 100,
     coverageFailOnMinimum := true,

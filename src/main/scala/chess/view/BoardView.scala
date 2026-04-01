@@ -1,6 +1,6 @@
 package chess.view
 
-import chess.model.piece.{Color, Piece, PieceType}
+import chess.model.piece.{Color, Piece}
 import chess.model.board.{GameState, Position}
 
 object BoardView:
@@ -26,23 +26,6 @@ object BoardView:
           case None => s"$bg   $reset"
           case Some(piece) =>
             val fg = if piece.color == Color.White then whiteFg else blackFg
-            s"$bg$fg ${unicodeFor(piece)} $reset"
+            s"$bg$fg ${PieceUnicode(piece)} $reset"
       s"$row${squares.mkString} $row"
     colLabels + ranks.mkString("\n") + "\n" + colLabels
-
-  private def unicodeFor(piece: Piece): Char =
-    import Color.*
-    import PieceType.*
-    (piece.color, piece.pieceType) match
-      case (White, King)   => '♔'
-      case (White, Queen)  => '♕'
-      case (White, Rook)   => '♖'
-      case (White, Bishop) => '♗'
-      case (White, Knight) => '♘'
-      case (White, Pawn)   => '♙'
-      case (Black, King)   => '♚'
-      case (Black, Queen)  => '♛'
-      case (Black, Rook)   => '♜'
-      case (Black, Bishop) => '♝'
-      case (Black, Knight) => '♞'
-      case (Black, Pawn)   => '♟'

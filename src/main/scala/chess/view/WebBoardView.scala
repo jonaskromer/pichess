@@ -1,7 +1,7 @@
 package chess.view
 
 import chess.model.board.{GameState, Position}
-import chess.model.piece.{Color, Piece, PieceType}
+import chess.model.piece.{Color, Piece}
 
 object WebBoardView:
 
@@ -25,7 +25,7 @@ object WebBoardView:
       val squareColor = if (col - 'a' + row) % 2 == 1 then "dark" else "light"
       state.board.get(pos) match
         case Some(piece) =>
-          val pieceChar = unicodeFor(piece).toString
+          val pieceChar = PieceUnicode(piece).toString
           val pieceColor = colorStr(piece.color)
           s"""{"pos":"$pos","squareColor":"$squareColor","piece":"$pieceChar","pieceColor":"$pieceColor"}"""
         case None =>
@@ -52,20 +52,3 @@ object WebBoardView:
       case '\t' => "\\t"
       case c    => c.toString
     }
-
-  private def unicodeFor(piece: Piece): Char =
-    import Color.*
-    import PieceType.*
-    (piece.color, piece.pieceType) match
-      case (White, King)   => '\u2654'
-      case (White, Queen)  => '\u2655'
-      case (White, Rook)   => '\u2656'
-      case (White, Bishop) => '\u2657'
-      case (White, Knight) => '\u2658'
-      case (White, Pawn)   => '\u2659'
-      case (Black, King)   => '\u265a'
-      case (Black, Queen)  => '\u265b'
-      case (Black, Rook)   => '\u265c'
-      case (Black, Bishop) => '\u265d'
-      case (Black, Knight) => '\u265e'
-      case (Black, Pawn)   => '\u265f'
