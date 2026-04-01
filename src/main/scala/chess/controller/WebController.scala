@@ -1,35 +1,34 @@
 package chess.controller
 
-import chess.model.GameId
-import chess.model.board.GameState
-import chess.model.piece.Color
+import chess.model.SessionState
 import chess.notation.SanSerializer
 import chess.service.GameService
 import chess.view.{HtmlPage, WebBoardView}
 import zio.*
 import zio.http.*
+import zio.schema.Schema
+import zio.stream.SubscriptionRef
 
 object WebController:
 
-  case class SessionState(
-      gameId: GameId,
-      state: GameState,
-      moveLog: List[(Color, String)],
-      error: Option[String]
-  )
+  private given Schema[String] = Schema[String]
 
   def routes(
       gs: GameService,
-      session: Ref[SessionState]
+      session: SubscriptionRef[SessionState],
+      shutdown: Promise[Nothing, Unit]
   ): Routes[Any, Response] =
     Routes(
       Method.GET / "" -> handler(servePage()),
       Method.GET / "api" / "state" -> handler(serveState(session)),
+      Method.GET / "api" / "events" -> handler(
+        serveEvents(session, shutdown)
+      ),
       Method.POST / "api" / "move" -> handler { (req: Request) =>
         handleMove(gs, session, req)
       },
       Method.POST / "api" / "new" -> handler(handleNewGame(gs, session)),
-      Method.POST / "api" / "quit" -> handler(handleQuit())
+      Method.POST / "api" / "quit" -> handler(handleQuit(shutdown))
     )
 
   private def servePage(): ZIO[Any, Nothing, Response] =
@@ -42,13 +41,35 @@ object WebController:
     )
 
   private def serveState(
-      session: Ref[SessionState]
+      session: SubscriptionRef[SessionState]
   ): ZIO[Any, Nothing, Response] =
     session.get.map(s => stateResponse(s))
 
+  private def serveEvents(
+      session: SubscriptionRef[SessionState],
+      shutdown: Promise[Nothing, Unit]
+  ): ZIO[Any, Nothing, Response] =
+    ZIO.succeed {
+      val stateEvents = session.changes.map { s =>
+        ServerSentEvent(
+          data = WebBoardView.toJson(s.state, s.moveLog, s.error),
+          eventType = Some("state")
+        )
+      }
+      val quitEvent = zio.stream.ZStream
+        .fromZIO(shutdown.await)
+        .map(_ =>
+          ServerSentEvent(
+            data = "quit",
+            eventType = Some("quit")
+          )
+        )
+      Response.fromServerSentEvents(stateEvents.merge(quitEvent))
+    }
+
   private def handleMove(
       gs: GameService,
-      session: Ref[SessionState],
+      session: SubscriptionRef[SessionState],
       req: Request
   ): ZIO[Any, Nothing, Response] =
     (for
@@ -74,7 +95,7 @@ object WebController:
 
   private def handleNewGame(
       gs: GameService,
-      session: Ref[SessionState]
+      session: SubscriptionRef[SessionState]
   ): ZIO[Any, Nothing, Response] =
     (for
       event <- gs.newGame()
@@ -86,13 +107,11 @@ object WebController:
       ZIO.succeed(errorResponse(err.getMessage, Status.InternalServerError))
     )
 
-  private def handleQuit(): ZIO[Any, Nothing, Response] =
-    ZIO.succeed(
-      Response.json("""{"quit":true}""")
-    ) <* ZIO
-      .sleep(500.millis)
-      .flatMap(_ => ZIO.attempt(java.lang.Runtime.getRuntime.halt(0)))
-      .forkDaemon
+  private def handleQuit(
+      shutdown: Promise[Nothing, Unit]
+  ): ZIO[Any, Nothing, Response] =
+    shutdown.succeed(()) *>
+      ZIO.succeed(Response.json("""{"quit":true}"""))
 
   private def stateResponse(s: SessionState): Response =
     Response.json(WebBoardView.toJson(s.state, s.moveLog, s.error))

@@ -1,5 +1,6 @@
 package chess.controller
 
+import chess.model.SessionState
 import chess.model.board.GameState
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.model.board.Position
@@ -40,7 +41,7 @@ class WebControllerSpec extends AnyFlatSpec with Matchers:
 
   "SessionState" should "hold game state with empty defaults" in:
     val state =
-      WebController.SessionState("id", GameState.initial, Nil, None)
+      SessionState("id", GameState.initial, Nil, None)
     state.gameId shouldBe "id"
     state.state shouldBe GameState.initial
     state.moveLog shouldBe Nil
@@ -48,11 +49,11 @@ class WebControllerSpec extends AnyFlatSpec with Matchers:
 
   it should "hold game state with error" in:
     val state =
-      WebController.SessionState("id", GameState.initial, Nil, Some("oops"))
+      SessionState("id", GameState.initial, Nil, Some("oops"))
     state.error shouldBe Some("oops")
 
   it should "hold game state with move log" in:
     val log = List((Color.White, "e4"), (Color.Black, "e5"))
     val state =
-      WebController.SessionState("id", GameState.initial, log, None)
+      SessionState("id", GameState.initial, log, None)
     state.moveLog shouldBe log

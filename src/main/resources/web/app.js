@@ -6,11 +6,27 @@ const WHITE_PIECES = { Q: '\u2655', R: '\u2656', B: '\u2657', N: '\u2658' };
 const BLACK_PIECES = { Q: '\u265b', R: '\u265c', B: '\u265d', N: '\u265e' };
 
 async function loadState() {
-  const res = await fetch('/api/state');
-  gameState = await res.json();
-  renderBoard();
-  renderMoveLog();
-  renderTurnIndicator();
+  try {
+    const res = await fetch('/api/state');
+    gameState = await res.json();
+    renderBoard();
+    renderMoveLog();
+    renderTurnIndicator();
+  } catch (e) {}
+}
+
+function connectEvents() {
+  const source = new EventSource('/api/events');
+  source.addEventListener('state', (e) => {
+    gameState = JSON.parse(e.data);
+    renderBoard();
+    renderMoveLog();
+    renderTurnIndicator();
+  });
+  source.addEventListener('quit', () => {
+    source.close();
+    showGoodbye();
+  });
 }
 
 function renderBoard() {
@@ -170,11 +186,6 @@ async function sendMove(move) {
     const data = await res.json();
     if (data.error) {
       showToast(data.error);
-    } else {
-      gameState = data;
-      renderBoard();
-      renderMoveLog();
-      renderTurnIndicator();
     }
   } catch (err) {
     showToast('Connection error');
@@ -190,16 +201,15 @@ function submitMove() {
 
 async function newGame() {
   const res = await fetch('/api/new', { method: 'POST' });
-  gameState = await res.json();
-  renderBoard();
-  renderMoveLog();
-  renderTurnIndicator();
 }
 
 async function quitGame() {
   try {
     await fetch('/api/quit', { method: 'POST' });
   } catch (e) {}
+}
+
+function showGoodbye() {
   document.body.innerHTML = '<div style="display:flex;justify-content:center;align-items:center;height:100vh;font-size:24px;color:#f7a072;">Goodbye!</div>';
 }
 
@@ -210,4 +220,7 @@ function showToast(msg) {
   setTimeout(() => toast.classList.remove('visible'), 3000);
 }
 
-document.addEventListener('DOMContentLoaded', loadState);
+document.addEventListener('DOMContentLoaded', () => {
+  loadState();
+  connectEvents();
+});
