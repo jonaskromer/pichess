@@ -2,26 +2,29 @@ package chess.model.rules
 
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.model.board.{Board, GameState, Move, Position}
+import chess.model.GameError
 
 object Game:
   private val promotionPieces: Set[PieceType] =
     Set(PieceType.Queen, PieceType.Rook, PieceType.Bishop, PieceType.Knight)
 
+  // Monadic Either chain: validate → check promotion → build new state.
+  // Each step can short-circuit with Left(GameError).
+
   def applyMove(
       state: GameState,
       move: Move
-  ): Either[chess.model.GameError, GameState] =
-    MoveValidator
-      .validate(state, move)
-      .flatMap: _ =>
-        val piece = state.board(move.from)
-        validatePromotion(piece, move).map: _ =>
-          val movedPiece = promotedPiece(piece, move)
-          GameState(
-            board = updatedBoard(state, move, movedPiece),
-            activeColor = state.activeColor.opposite,
-            enPassantTarget = nextEnPassantTarget(move, piece)
-          )
+  ): Either[GameError, GameState] =
+    for
+      _ <- MoveValidator.validate(state, move)
+      piece = state.board(move.from)
+      _ <- validatePromotion(piece, move)
+      movedPiece = promotedPiece(piece, move)
+    yield GameState(
+      board = updatedBoard(state, move, movedPiece),
+      activeColor = state.activeColor.opposite,
+      enPassantTarget = nextEnPassantTarget(move, piece)
+    )
 
   private def isPromotionRank(piece: Piece, row: Int): Boolean =
     piece.pieceType == PieceType.Pawn &&
@@ -31,24 +34,24 @@ object Game:
   private def validatePromotion(
       piece: Piece,
       move: Move
-  ): Either[chess.model.GameError, Unit] =
+  ): Either[GameError, Unit] =
     val reachesBackRank = isPromotionRank(piece, move.to.row)
     move.promotion match
       case Some(pt) if !reachesBackRank =>
         Left(
-          chess.model.GameError.InvalidMove(
+          GameError.InvalidMove(
             "Promotion is only allowed when a pawn reaches the back rank"
           )
         )
       case Some(pt) if !promotionPieces.contains(pt) =>
         Left(
-          chess.model.GameError.InvalidMove(
+          GameError.InvalidMove(
             "Pawn must promote to Queen, Rook, Bishop, or Knight"
           )
         )
       case None if reachesBackRank =>
         Left(
-          chess.model.GameError.InvalidMove(
+          GameError.InvalidMove(
             "Pawn reaching the back rank must promote (e.g. e8=Q)"
           )
         )

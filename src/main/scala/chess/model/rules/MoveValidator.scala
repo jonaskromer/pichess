@@ -2,6 +2,7 @@ package chess.model.rules
 
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.model.board.{Board, GameState, Move, Position}
+import chess.model.GameError
 
 object MoveValidator:
 
@@ -30,37 +31,67 @@ object MoveValidator:
     PieceType.King -> Set(Shape.Horizontal, Shape.Vertical, Shape.Diagonal)
   )
 
-  // ─── Validation entry point ─────────────────────────────────────────────────
+  // ─── Validation entry point (monadic Either chain) ──────────────────────────
+  //
+  // Each step in the for-comprehension depends on the previous:
+  //   1. resolve the piece at `from`       → need it for step 2
+  //   2. check it belongs to active color  → need piece.color
+  //   3. check destination isn't friendly  → need piece.color + move.to
+  //   4. validate piece-specific rules     → need piece.pieceType
+  //
+  // If any step produces Left, the remaining steps are skipped (short-circuit).
 
   def validate(
       state: GameState,
       move: Move
-  ): Either[chess.model.GameError, Unit] =
-    state.board.get(move.from) match
-      case None =>
-        Left(chess.model.GameError.InvalidMove(s"No piece at ${move.from}"))
-      case Some(piece) if piece.color != state.activeColor =>
-        Left(
-          chess.model.GameError.InvalidMove(
-            s"Cannot move ${piece.color} piece on ${state.activeColor}'s turn"
-          )
-        )
-      case Some(piece) =>
-        if isOccupiedBySameColor(state.board, move.to, piece.color) then
-          Left(
-            chess.model.GameError
-              .InvalidMove(s"Cannot capture own piece at ${move.to}")
-          )
-        else
-          piece.pieceType match
-            case PieceType.Pawn =>
-              validatePawn(
-                state.board,
-                move,
-                piece.color,
-                state.enPassantTarget
-              )
-            case pt => validateByShape(state.board, move, pt)
+  ): Either[GameError, Unit] =
+    requirePieceAt(state, move.from)
+      .flatMap(piece =>
+        requireActiveColor(piece, state.activeColor)
+          .flatMap(_ => requireNotFriendly(state.board, move.to, piece.color))
+          .flatMap(_ => validatePieceRules(state, move, piece))
+      )
+
+  private def requirePieceAt(
+      state: GameState,
+      pos: Position
+  ): Either[GameError, Piece] =
+    state.board
+      .get(pos)
+      .toRight(GameError.InvalidMove(s"No piece at $pos"))
+
+  private def requireActiveColor(
+      piece: Piece,
+      activeColor: Color
+  ): Either[GameError, Unit] =
+    Either.cond(
+      piece.color == activeColor,
+      (),
+      GameError.InvalidMove(
+        s"Cannot move ${piece.color} piece on ${activeColor}'s turn"
+      )
+    )
+
+  private def requireNotFriendly(
+      board: Board,
+      pos: Position,
+      color: Color
+  ): Either[GameError, Unit] =
+    Either.cond(
+      !isOccupiedBySameColor(board, pos, color),
+      (),
+      GameError.InvalidMove(s"Cannot capture own piece at $pos")
+    )
+
+  private def validatePieceRules(
+      state: GameState,
+      move: Move,
+      piece: Piece
+  ): Either[GameError, Unit] =
+    piece.pieceType match
+      case PieceType.Pawn =>
+        validatePawn(state.board, move, piece.color, state.enPassantTarget)
+      case pt => validateByShape(state.board, move, pt)
 
   // ─── Shape-based pipeline (all non-pawn pieces) ─────────────────────────────
 
@@ -68,18 +99,41 @@ object MoveValidator:
       board: Board,
       move: Move,
       pt: PieceType
-  ): Either[chess.model.GameError, Unit] =
-    val shape = classifyShape(move)
-    if !allowedShapes(pt).contains(shape) then
-      Left(chess.model.GameError.InvalidMove(s"Illegal move for $pt"))
-    else if pt == PieceType.King && chebyshevDistance(move) > 1 then
-      Left(
-        chess.model.GameError
-          .InvalidMove("King can only move one square in any direction")
-      )
-    else if shape != Shape.KnightLeap && !isPathClear(board, move) then
-      Left(chess.model.GameError.InvalidMove(s"${pt} path is blocked"))
-    else Right(())
+  ): Either[GameError, Unit] =
+    requireAllowedShape(move, pt)
+      .flatMap(_ => requireKingDistance(move, pt))
+      .flatMap(_ => requireClearPath(board, move, pt))
+
+  private def requireAllowedShape(
+      move: Move,
+      pt: PieceType
+  ): Either[GameError, Unit] =
+    Either.cond(
+      allowedShapes(pt).contains(classifyShape(move)),
+      (),
+      GameError.InvalidMove(s"Illegal move for $pt")
+    )
+
+  private def requireKingDistance(
+      move: Move,
+      pt: PieceType
+  ): Either[GameError, Unit] =
+    Either.cond(
+      pt != PieceType.King || chebyshevDistance(move) <= 1,
+      (),
+      GameError.InvalidMove("King can only move one square in any direction")
+    )
+
+  private def requireClearPath(
+      board: Board,
+      move: Move,
+      pt: PieceType
+  ): Either[GameError, Unit] =
+    Either.cond(
+      classifyShape(move) == Shape.KnightLeap || isPathClear(board, move),
+      (),
+      GameError.InvalidMove(s"${pt} path is blocked")
+    )
 
   // ─── Pawn (special: direction, double-step, diagonal-capture-only) ──────────
 
@@ -88,7 +142,7 @@ object MoveValidator:
       move: Move,
       color: Color,
       enPassantTarget: Option[Position]
-  ): Either[chess.model.GameError, Unit] =
+  ): Either[GameError, Unit] =
     val direction = if color == Color.White then 1 else -1
     val startRank = if color == Color.White then 2 else 7
     val colDiff = move.to.col - move.from.col
@@ -98,7 +152,7 @@ object MoveValidator:
       validatePawnForward(board, move, direction, startRank, rowDiff)
     else if Math.abs(colDiff) == 1 && rowDiff == direction then
       validatePawnCapture(board, move.to, enPassantTarget)
-    else Left(chess.model.GameError.InvalidMove("Illegal pawn move"))
+    else Left(GameError.InvalidMove("Illegal pawn move"))
 
   private def validatePawnForward(
       board: Board,
@@ -106,41 +160,46 @@ object MoveValidator:
       direction: Int,
       startRank: Int,
       rowDiff: Int
-  ): Either[chess.model.GameError, Unit] =
+  ): Either[GameError, Unit] =
     if rowDiff == direction then
-      if board.contains(move.to) then
-        Left(
-          chess.model.GameError
-            .InvalidMove("Pawn cannot move forward: destination is occupied")
+      Either.cond(
+        !board.contains(move.to),
+        (),
+        GameError.InvalidMove(
+          "Pawn cannot move forward: destination is occupied"
         )
-      else Right(())
+      )
     else if rowDiff == 2 * direction && move.from.row == startRank then
       val intermediate = Position(move.from.col, move.from.row + direction)
-      if board.contains(intermediate) then
-        Left(
-          chess.model.GameError
-            .InvalidMove("Pawn cannot move forward: path is blocked")
+      Either
+        .cond(
+          !board.contains(intermediate),
+          (),
+          GameError.InvalidMove("Pawn cannot move forward: path is blocked")
         )
-      else if board.contains(move.to) then
-        Left(
-          chess.model.GameError
-            .InvalidMove("Pawn cannot move forward: destination is occupied")
+        .flatMap(_ =>
+          Either.cond(
+            !board.contains(move.to),
+            (),
+            GameError.InvalidMove(
+              "Pawn cannot move forward: destination is occupied"
+            )
+          )
         )
-      else Right(())
-    else Left(chess.model.GameError.InvalidMove("Illegal pawn move"))
+    else Left(GameError.InvalidMove("Illegal pawn move"))
 
   private def validatePawnCapture(
       board: Board,
       target: Position,
       enPassantTarget: Option[Position]
-  ): Either[chess.model.GameError, Unit] =
-    if board.contains(target) || enPassantTarget.contains(target) then Right(())
-    else
-      Left(
-        chess.model.GameError.InvalidMove(
-          "Pawn can only move diagonally to capture an enemy piece"
-        )
+  ): Either[GameError, Unit] =
+    Either.cond(
+      board.contains(target) || enPassantTarget.contains(target),
+      (),
+      GameError.InvalidMove(
+        "Pawn can only move diagonally to capture an enemy piece"
       )
+    )
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
 

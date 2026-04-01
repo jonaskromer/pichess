@@ -43,12 +43,13 @@ object WebBoardView:
     case Color.White => "white"
     case Color.Black => "black"
 
+  private val escapeTable: Map[Char, String] = Map(
+    '"' -> "\\\"",
+    '\\' -> "\\\\",
+    '\n' -> "\\n",
+    '\r' -> "\\r",
+    '\t' -> "\\t"
+  )
+
   def escapeJson(s: String): String =
-    s.flatMap {
-      case '"'  => "\\\""
-      case '\\' => "\\\\"
-      case '\n' => "\\n"
-      case '\r' => "\\r"
-      case '\t' => "\\t"
-      case c    => c.toString
-    }
+    s.flatMap(c => escapeTable.getOrElse(c, c.toString))

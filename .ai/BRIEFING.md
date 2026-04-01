@@ -31,6 +31,7 @@ Follow TDD strictly, in this order:
 3. **Implement** — minimum code to make tests pass.
 4. **Format** — run `sbt scalafmtAll` after every change to `.scala` files.
 5. **Verify coverage** — run `sbt coverage test coverageReport`. Coverage must be 100%; the build fails below that.
+6. **Diagnose coverage gaps** — if coverage is below 100%, run `python3 scripts/check-coverage.py` to see exactly which files and lines are uncovered.
 
 ---
 

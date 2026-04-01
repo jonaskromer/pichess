@@ -10,17 +10,20 @@ import chess.notation.{
 }
 
 object MoveParser:
-  private val resolvers: List[NotationResolver] = List(
-    CoordinateResolver,
-    CastlingResolver,
-    SanResolver
-  )
+
+  // Resolvers are composed monadically via Option's orElse:
+  // each resolver returns Option[Either[GameError, Move]].
+  // orElse chains them: try the first; if None, try the next.
+  // The first Some(...) wins — either as a successful parse or a matched error.
+
+  private val resolver: (String, GameState) => Option[Either[GameError, Move]] =
+    List[NotationResolver](CoordinateResolver, CastlingResolver, SanResolver)
+      .map(r => r.parse(_, _))
+      .reduceLeft: (combined, next) =>
+        (input, state) => combined(input, state).orElse(next(input, state))
 
   def parse(input: String, state: GameState): Either[GameError, Move] =
-    val trimmed = input.trim
-    resolvers.iterator
-      .flatMap(_.parse(trimmed, state))
-      .nextOption()
+    resolver(input.trim, state)
       .getOrElse(
         Left(
           GameError.ParseError("Invalid move. Type 'help' for notation guide")
