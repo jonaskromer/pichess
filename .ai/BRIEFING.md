@@ -79,6 +79,14 @@ The following addendum files are **required reading** for any AI agent working o
 
 ---
 
+## Multi-Agent Workflow
+
+This project supports multi-agent coding. Agent role definitions live in [`.ai/agents/`](agents/). See [`agents/README.md`](agents/README.md) for the full lineup and intended workflow order.
+
+When working as part of a multi-agent setup, each agent should read its own role file and follow the scope/constraints defined there. When working as a single agent, follow the TDD workflow below as before.
+
+---
+
 ## Future Phases
 
 These are known upcoming lecture phases. When suggesting any architectural change, check that it does not close off or complicate a future phase. Prefer thin traits, ZLayer wiring, and pure functions in the domain.
