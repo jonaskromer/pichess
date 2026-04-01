@@ -60,12 +60,66 @@ class MoveParserSpec extends AnyFlatSpec with Matchers:
 
   it should "parse a pawn capture with promotion suffix" in:
     MoveParser.parse("exd8=Q") shouldBe Right(
-      ParsedMove.San(PieceType.Pawn, Position('d', 8), Some('e'), None)
+      ParsedMove.San(
+        PieceType.Pawn,
+        Position('d', 8),
+        Some('e'),
+        None,
+        Some(PieceType.Queen)
+      )
     )
 
   it should "parse a pawn capture with check suffix" in:
     MoveParser.parse("cxb4+") shouldBe Right(
       ParsedMove.San(PieceType.Pawn, Position('b', 4), Some('c'), None)
+    )
+
+  // ─── Pawn promotion ───────────────────────────────────────────────────────
+
+  "MoveParser.parse pawn promotion" should "parse a pawn push with promotion" in:
+    MoveParser.parse("e8=Q") shouldBe Right(
+      ParsedMove.San(PieceType.Pawn, Position('e', 8), None, None, Some(PieceType.Queen))
+    )
+
+  it should "parse a pawn push with knight promotion" in:
+    MoveParser.parse("e8=N") shouldBe Right(
+      ParsedMove.San(PieceType.Pawn, Position('e', 8), None, None, Some(PieceType.Knight))
+    )
+
+  it should "parse a pawn push with rook promotion" in:
+    MoveParser.parse("a1=R") shouldBe Right(
+      ParsedMove.San(PieceType.Pawn, Position('a', 1), None, None, Some(PieceType.Rook))
+    )
+
+  it should "parse a pawn push with bishop promotion" in:
+    MoveParser.parse("d8=B") shouldBe Right(
+      ParsedMove.San(PieceType.Pawn, Position('d', 8), None, None, Some(PieceType.Bishop))
+    )
+
+  it should "parse a pawn capture with knight underpromotion" in:
+    MoveParser.parse("exd8=N") shouldBe Right(
+      ParsedMove.San(
+        PieceType.Pawn,
+        Position('d', 8),
+        Some('e'),
+        None,
+        Some(PieceType.Knight)
+      )
+    )
+
+  it should "parse coordinate notation with promotion (no separator)" in:
+    MoveParser.parse("e7e8=Q") shouldBe Right(
+      ParsedMove.Coordinate(Position('e', 7), Position('e', 8), Some(PieceType.Queen))
+    )
+
+  it should "parse coordinate notation with promotion (space separator)" in:
+    MoveParser.parse("e7 e8=Q") shouldBe Right(
+      ParsedMove.Coordinate(Position('e', 7), Position('e', 8), Some(PieceType.Queen))
+    )
+
+  it should "parse coordinate notation with promotion (dash separator)" in:
+    MoveParser.parse("e7-e8=Q") shouldBe Right(
+      ParsedMove.Coordinate(Position('e', 7), Position('e', 8), Some(PieceType.Queen))
     )
 
   // ─── Piece moves ───────────────────────────────────────────────────────────

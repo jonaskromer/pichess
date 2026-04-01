@@ -8,20 +8,21 @@ import chess.model.rules.MoveValidator
 object SanResolver:
   def resolve(parsed: ParsedMove, state: GameState): Either[GameError, Move] =
     parsed match
-      case ParsedMove.Coordinate(from, to) =>
-        Right(Move(from, to))
+      case ParsedMove.Coordinate(from, to, promotion) =>
+        Right(Move(from, to, promotion))
       case ParsedMove.Castling(kingside) =>
         val side = if kingside then "Kingside" else "Queenside"
         Left(GameError.InvalidMove(s"$side castling is not yet implemented"))
-      case ParsedMove.San(piece, dest, disambigFile, disambigRank) =>
-        resolveSan(piece, dest, disambigFile, disambigRank, state)
+      case ParsedMove.San(piece, dest, disambigFile, disambigRank, promotion) =>
+        resolveSan(piece, dest, disambigFile, disambigRank, state, promotion)
 
   private def resolveSan(
       piece: PieceType,
       dest: Position,
       disambigFile: Option[Char],
       disambigRank: Option[Int],
-      state: GameState
+      state: GameState,
+      promotion: Option[PieceType] = None
   ): Either[GameError, Move] =
     val candidates = state.board.toList
       .collect {
@@ -35,7 +36,7 @@ object SanResolver:
         MoveValidator.validate(state, Move(from, dest)).isRight
       }
     candidates match
-      case List(from) => Right(Move(from, dest))
+      case List(from) => Right(Move(from, dest, promotion))
       case Nil =>
         Left(GameError.InvalidMove(s"No ${piece} can move to $dest"))
       case _ =>

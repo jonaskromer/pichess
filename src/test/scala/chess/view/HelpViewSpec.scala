@@ -60,8 +60,8 @@ class HelpViewSpec extends AnyFlatSpec with Matchers:
   it should "list castling as not implemented" in:
     help should include("Castling")
 
-  it should "list pawn promotion as not implemented" in:
-    help should include("Pawn promotion")
+  it should "list pawn promotion in the notation section" in:
+    help should include("Promotion")
 
   it should "list check detection as not implemented" in:
     help should include("Check detection")

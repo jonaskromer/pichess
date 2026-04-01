@@ -1,3 +1,5 @@
 package chess.model.board
 
-case class Move(from: Position, to: Position)
+import chess.model.piece.PieceType
+
+case class Move(from: Position, to: Position, promotion: Option[PieceType] = None)

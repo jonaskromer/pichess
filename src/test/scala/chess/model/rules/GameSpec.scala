@@ -144,3 +144,97 @@ class GameSpec extends AnyFlatSpec with Matchers:
     val result =
       Game.applyMove(enPassantState, Move(Position('e', 5), Position('d', 6)))
     result.toOption.get.enPassantTarget shouldBe None
+
+  // ─── Pawn promotion ───────────────────────────────────────────────────────
+
+  private lazy val whitePromoState = GameState(
+    Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)),
+    Color.White
+  )
+
+  private lazy val blackPromoState = GameState(
+    Map(Position('d', 2) -> Piece(Color.Black, PieceType.Pawn)),
+    Color.Black
+  )
+
+  it should "promote a white pawn to queen on rank 8" in:
+    val result = Game.applyMove(
+      whitePromoState,
+      Move(Position('e', 7), Position('e', 8), Some(PieceType.Queen))
+    )
+    result.isRight shouldBe true
+    result.toOption.get.board(Position('e', 8)) shouldBe Piece(
+      Color.White,
+      PieceType.Queen
+    )
+
+  it should "promote a white pawn to knight (underpromotion)" in:
+    val result = Game.applyMove(
+      whitePromoState,
+      Move(Position('e', 7), Position('e', 8), Some(PieceType.Knight))
+    )
+    result.isRight shouldBe true
+    result.toOption.get.board(Position('e', 8)) shouldBe Piece(
+      Color.White,
+      PieceType.Knight
+    )
+
+  it should "promote a black pawn to queen on rank 1" in:
+    val result = Game.applyMove(
+      blackPromoState,
+      Move(Position('d', 2), Position('d', 1), Some(PieceType.Queen))
+    )
+    result.isRight shouldBe true
+    result.toOption.get.board(Position('d', 1)) shouldBe Piece(
+      Color.Black,
+      PieceType.Queen
+    )
+
+  it should "reject a pawn reaching the back rank without promotion" in:
+    val result = Game.applyMove(
+      whitePromoState,
+      Move(Position('e', 7), Position('e', 8))
+    )
+    result.isLeft shouldBe true
+    result.swap.toOption.get
+      .asInstanceOf[chess.model.GameError]
+      .message should include("must promote")
+
+  it should "reject promotion on a non-back-rank move" in:
+    val state = GameState(
+      Map(Position('e', 2) -> Piece(Color.White, PieceType.Pawn)),
+      Color.White
+    )
+    val result = Game.applyMove(
+      state,
+      Move(Position('e', 2), Position('e', 3), Some(PieceType.Queen))
+    )
+    result.isLeft shouldBe true
+    result.swap.toOption.get
+      .asInstanceOf[chess.model.GameError]
+      .message should include("back rank")
+
+  it should "remove the pawn from the source square after promotion" in:
+    val result = Game.applyMove(
+      whitePromoState,
+      Move(Position('e', 7), Position('e', 8), Some(PieceType.Queen))
+    )
+    result.toOption.get.board.get(Position('e', 7)) shouldBe None
+
+  it should "promote via capture" in:
+    val state = GameState(
+      Map(
+        Position('e', 7) -> Piece(Color.White, PieceType.Pawn),
+        Position('d', 8) -> Piece(Color.Black, PieceType.Rook)
+      ),
+      Color.White
+    )
+    val result = Game.applyMove(
+      state,
+      Move(Position('e', 7), Position('d', 8), Some(PieceType.Queen))
+    )
+    result.isRight shouldBe true
+    result.toOption.get.board(Position('d', 8)) shouldBe Piece(
+      Color.White,
+      PieceType.Queen
+    )
