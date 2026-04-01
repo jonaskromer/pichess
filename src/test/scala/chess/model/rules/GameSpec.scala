@@ -214,6 +214,16 @@ class GameSpec extends AnyFlatSpec with Matchers:
       .asInstanceOf[chess.model.GameError]
       .message should include("back rank")
 
+  it should "reject promotion to King" in:
+    val result = Game.applyMove(
+      whitePromoState,
+      Move(Position('e', 7), Position('e', 8), Some(PieceType.King))
+    )
+    result.isLeft shouldBe true
+    result.swap.toOption.get
+      .asInstanceOf[chess.model.GameError]
+      .message should include("Queen, Rook, Bishop, or Knight")
+
   it should "remove the pawn from the source square after promotion" in:
     val result = Game.applyMove(
       whitePromoState,

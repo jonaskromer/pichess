@@ -7,6 +7,7 @@ lazy val root = (project in file("."))
     name := "pichess",
     libraryDependencies ++= Seq(
       "dev.zio"       %% "zio"       % "2.1.14",
+      "dev.zio"       %% "zio-http"  % "3.10.1",
       "org.scalatest" %% "scalatest" % "3.2.19" % Test,
     ),
     // Main is excluded: it is a pure ZIO wiring boundary with no testable logic

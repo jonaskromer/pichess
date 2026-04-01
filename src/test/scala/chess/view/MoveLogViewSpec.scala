@@ -20,7 +20,8 @@ class MoveLogViewSpec extends AnyFlatSpec with Matchers:
     result should include("e5")
 
   it should "render only the last two moves connected by an arrow" in:
-    val log = List((Color.White, "e4"), (Color.Black, "e5"), (Color.White, "Nf3"))
+    val log =
+      List((Color.White, "e4"), (Color.Black, "e5"), (Color.White, "Nf3"))
     val result = MoveLogView.render(log)
     result should include("e5")
     result should include("->")
