@@ -1,11 +1,12 @@
 package chess
 
+import chess.notation.SanSerializer
 import chess.model.GameId
 import chess.model.board.GameState
 import chess.repository.InMemoryGameRepository
 import chess.service.GameService
-import chess.view.BoardView
-import chess.view.HelpView
+import chess.view.{BoardView, HelpView, MoveLogView}
+import chess.model.piece.Color
 import zio.*
 import zio.Console.*
 
@@ -19,25 +20,29 @@ object Main extends ZIOAppDefault:
   private val app: ZIO[GameService, Throwable, Unit] =
     for
       event <- GameService.newGame()
-      _ <- loop(event.gameId, event.initialState, flipped = false)
+      _ <- loop(event.gameId, event.initialState, flipped = false, moveLog = Nil)
     yield ()
 
   private def loop(
       id: GameId,
       state: GameState,
-      flipped: Boolean
+      flipped: Boolean,
+      moveLog: List[(Color, String)]
   ): ZIO[GameService, Throwable, Unit] =
     for
       _ <- printLine(BoardView.render(state, flipped))
+      _ <- ZIO.when(moveLog.nonEmpty)(printLine(MoveLogView.render(moveLog)))
       _ <- printLine(
         s"${state.activeColor}'s turn — enter a move (e.g. e2 e4), 'help', 'flip', or 'quit':"
       )
       input <- readLine
       _ <- input.trim match
         case "quit" => printLine("Goodbye!")
-        case "help" => printLine(HelpView.render) *> loop(id, state, flipped)
-        case "flip" => loop(id, state, !flipped)
+        case "help" =>
+          printLine(HelpView.render) *> loop(id, state, flipped, moveLog)
+        case "flip" => loop(id, state, !flipped, moveLog)
         case raw =>
+          val color = state.activeColor
           GameService
             .makeMove(id, raw)
             .foldZIO(
@@ -45,8 +50,11 @@ object Main extends ZIOAppDefault:
                 printLine(s"Error: ${err.getMessage}") *> loop(
                   id,
                   state,
-                  flipped
+                  flipped,
+                  moveLog
                 ),
-              (newState, _) => loop(id, newState, flipped)
+              (newState, event) =>
+                val san = SanSerializer.toSan(event.move, state)
+                loop(id, newState, flipped, moveLog :+ (color, san))
             )
     yield ()
