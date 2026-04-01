@@ -96,6 +96,30 @@ object WebBoardViewSpec extends ZIOSpecDefault:
         assertTrue(result.contains(""""error":"Invalid move""""))
       }
     ),
+    suite("toJson with check")(
+      test("include inCheck and checkedKingPos when in check") {
+        val state = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 8) -> Piece(Color.Black, PieceType.Rook)
+          ),
+          Color.White,
+          inCheck = true
+        )
+        val result = WebBoardView.toJson(state, Nil, None)
+        assertTrue(
+          result.contains(""""inCheck":true"""),
+          result.contains(""""checkedKingPos":"e1"""")
+        )
+      },
+      test("have null checkedKingPos when not in check") {
+        val result = WebBoardView.toJson(GameState.initial, Nil, None)
+        assertTrue(
+          result.contains(""""inCheck":false"""),
+          result.contains(""""checkedKingPos":null""")
+        )
+      }
+    ),
     suite("escapeJson")(
       test("escape double quotes") {
         assertTrue(

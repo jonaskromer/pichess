@@ -1,6 +1,6 @@
 package chess
 
-import chess.controller.{GameController, WebController}
+import chess.controller.{GameController, TuiController, WebController}
 import chess.model.SessionState
 import chess.repository.InMemoryGameRepository
 import chess.service.GameService
@@ -11,6 +11,9 @@ import zio.http.*
 import zio.stream.SubscriptionRef
 
 object Main extends ZIOAppDefault:
+
+  override val bootstrap: ZLayer[ZIOAppArgs, Any, Any] =
+    Runtime.removeDefaultLoggers
 
   private enum TuiEvent:
     case Input(line: String)
@@ -25,11 +28,13 @@ object Main extends ZIOAppDefault:
         SessionState(event.gameId, event.initialState, Nil, None)
       )
       shutdown <- Promise.make[Nothing, Unit]
+      inputQueue <- Queue.unbounded[String]
+      _ <- readLine.flatMap(inputQueue.offer).forever.forkDaemon
       serverFiber <- Server
         .serve(WebController.routes(gs, session, shutdown))
         .fork
       _ <- openBrowser.delay(1.second).forkDaemon
-      _ <- tuiLoop(gs, session, shutdown, flipped = false)
+      _ <- tuiLoop(gs, session, shutdown, inputQueue, flipped = false)
       _ <- shutdown.await
       _ <- printLine("Goodbye!")
       _ <- ZIO.sleep(500.millis)
@@ -44,6 +49,7 @@ object Main extends ZIOAppDefault:
       gs: GameService,
       session: SubscriptionRef[SessionState],
       shutdown: Promise[Nothing, Unit],
+      inputQueue: Queue[String],
       flipped: Boolean
   ): ZIO[Any, Throwable, Unit] =
     for
@@ -52,10 +58,13 @@ object Main extends ZIOAppDefault:
       _ <- ZIO.when(s.moveLog.nonEmpty)(
         printLine(MoveLogView.render(s.moveLog))
       )
+      _ <- ZIO.when(s.error.isDefined)(
+        printLine(s"Error: ${s.error.get}")
+      )
       _ <- printLine(
         s"${s.state.activeColor}'s turn — enter a move (e.g. e2 e4), 'help', 'flip', or 'quit':"
       )
-      event <- readLine.map(TuiEvent.Input(_))
+      event <- inputQueue.take.map(TuiEvent.Input(_))
         .race(
           session.changes.drop(1).take(1).runHead.as(TuiEvent.ExternalChange)
         )
@@ -65,31 +74,21 @@ object Main extends ZIOAppDefault:
       _ <- event match
         case TuiEvent.Shutdown => ZIO.unit
         case TuiEvent.ExternalChange =>
-          tuiLoop(gs, session, shutdown, flipped)
+          tuiLoop(gs, session, shutdown, inputQueue, flipped)
         case TuiEvent.Input(input) =>
-          input.trim match
-            case "quit" => shutdown.succeed(())
-            case "help" =>
-              printLine(HelpView.render) *> tuiLoop(
-                gs,
-                session,
-                shutdown,
-                flipped
-              )
-            case "flip" => tuiLoop(gs, session, shutdown, !flipped)
-            case raw =>
-              GameController
-                .makeMove(gs, session, raw)
-                .foldZIO(
-                  err =>
-                    printLine(s"Error: ${err.message}") *> tuiLoop(
-                      gs,
-                      session,
-                      shutdown,
-                      flipped
-                    ),
-                  _ => tuiLoop(gs, session, shutdown, flipped)
-                )
+          val command = TuiController.parseCommand(input)
+          for
+            _ <- ZIO.when(command == TuiController.Command.Help)(
+              printLine(HelpView.render)
+            )
+            result <- TuiController.handleCommand(
+              command, gs, session, shutdown, flipped
+            )
+            _ <- result match
+              case TuiController.Result.Shutdown  => ZIO.unit
+              case TuiController.Result.Continue(f) =>
+                tuiLoop(gs, session, shutdown, inputQueue, f)
+          yield ()
     yield ()
 
   private def openBrowser: Task[Unit] = ZIO.attempt {

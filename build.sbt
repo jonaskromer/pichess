@@ -12,7 +12,9 @@ lazy val root = (project in file("."))
       "dev.zio"       %% "zio-test-sbt" % "2.1.24" % Test,
     ),
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
-    // Main and WebController are excluded: ZIO/HTTP wiring boundaries with no pure testable logic
+    // Main is excluded: ZIO wiring with console I/O and server lifecycle
+    // WebController route definitions/handlers are tested via WebControllerRoutesSpec
+    // but scoverage doesn't instrument zio-http structural wiring (given, Routes, handler)
     coverageExcludedFiles := ".*Main.*|.*WebController.*",
     coverageEnabled := true,
     coverageMinimumStmtTotal := 100,

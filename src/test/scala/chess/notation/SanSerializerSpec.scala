@@ -126,5 +126,23 @@ object SanSerializerSpec extends ZIOSpecDefault:
         for san <- SanSerializer.toSan(Move(Position('g', 1), Position('f', 3)), initial)
         yield assertTrue(san == "Nf3")
       }
+    ),
+    suite("check suffix")(
+      test("append + when move gives check") {
+        val state = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('a', 1) -> Piece(Color.White, PieceType.Rook),
+            Position('a', 8) -> Piece(Color.Black, PieceType.King)
+          ),
+          Color.White
+        )
+        for san <- SanSerializer.toSan(Move(Position('a', 1), Position('a', 5)), state)
+        yield assertTrue(san == "Ra5+")
+      },
+      test("no suffix when move does not give check") {
+        for san <- SanSerializer.toSan(Move(Position('e', 2), Position('e', 4)), initial)
+        yield assertTrue(san == "e4")
+      }
     )
   )

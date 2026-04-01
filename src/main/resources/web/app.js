@@ -49,6 +49,9 @@ function renderBoard() {
   gameState.squares.forEach(sq => {
     const div = document.createElement('div');
     div.className = 'square ' + sq.squareColor;
+    if (gameState.checkedKingPos && sq.pos === gameState.checkedKingPos) {
+      div.classList.add('in-check');
+    }
     div.dataset.pos = sq.pos;
     if (sq.piece) {
       const span = document.createElement('span');

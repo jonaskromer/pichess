@@ -65,6 +65,15 @@ body {
 .square.drag-over.light { background: #fdd8b5; box-shadow: inset 0 0 0 3px rgba(200,120,80,0.5); }
 .square.drag-over.dark { background: #d4804e; box-shadow: inset 0 0 0 3px rgba(200,120,80,0.5); }
 .square.drag-source { opacity: 0.4; }
+.square.in-check { box-shadow: inset 0 0 0 5px rgba(220, 40, 40, 0.6); }
+.square.in-check::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 5px solid rgba(220, 40, 40, 0.6);
+  border-radius: 6px;
+  pointer-events: none;
+}
 .square.last-move-from.light { background: #fcc89e; }
 .square.last-move-from.dark { background: #d4804e; }
 .square.last-move-to.light { background: #fcc89e; }

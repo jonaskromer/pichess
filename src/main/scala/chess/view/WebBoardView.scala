@@ -1,7 +1,7 @@
 package chess.view
 
 import chess.model.board.{GameState, Position}
-import chess.model.piece.{Color, Piece}
+import chess.model.piece.{Color, Piece, PieceType}
 
 object WebBoardView:
 
@@ -14,7 +14,13 @@ object WebBoardView:
     val activeColor = colorStr(state.activeColor)
     val moveLogJson = buildMoveLogJson(moveLog)
     val errorJson = error.map(e => s""""${escapeJson(e)}"""").getOrElse("null")
-    s"""{"squares":[$squaresJson],"activeColor":"$activeColor","moveLog":[$moveLogJson],"error":$errorJson}"""
+    val checkedKingJson =
+      if state.inCheck then
+        state.board.collectFirst {
+          case (pos, Piece(state.activeColor, PieceType.King)) => pos
+        }.map(p => s""""$p"""").getOrElse("null")
+      else "null"
+    s"""{"squares":[$squaresJson],"activeColor":"$activeColor","moveLog":[$moveLogJson],"error":$errorJson,"inCheck":${state.inCheck},"checkedKingPos":$checkedKingJson}"""
 
   private def buildSquaresJson(state: GameState): String =
     val entries = for

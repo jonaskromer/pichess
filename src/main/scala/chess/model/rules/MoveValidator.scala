@@ -13,18 +13,16 @@ object MoveValidator:
   // ─── Validation entry point ────────────────────────────────────────────────
 
   def validate(state: GameState, move: Move): IO[GameError, Unit] =
-    for
-      piece <- ZIO
-        .fromOption(state.board.get(move.from))
-        .orElseFail(GameError.InvalidMove(s"No piece at ${move.from}"))
-      _ <- guard(piece.color == state.activeColor)(
-        s"${piece.color} piece cannot move on ${state.activeColor}'s turn"
-      )
-      _ <- guard(!state.board.get(move.to).exists(_.color == piece.color))(
-        s"Cannot capture own piece at ${move.to}"
-      )
-      _ <- validatePieceRules(state, move, piece)
-    yield ()
+    ZIO
+      .fromOption(state.board.get(move.from))
+      .orElseFail(GameError.InvalidMove(s"No piece at ${move.from}"))
+      .flatMap { piece =>
+        guard(piece.color == state.activeColor)(
+          s"${piece.color} piece cannot move on ${state.activeColor}'s turn"
+        ) *> guard(!state.board.get(move.to).exists(_.color == piece.color))(
+          s"Cannot capture own piece at ${move.to}"
+        ) *> validatePieceRules(state, move, piece)
+      }
 
   private def validatePieceRules(
       state: GameState,

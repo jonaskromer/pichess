@@ -1,6 +1,6 @@
 package chess.view
 
-import chess.model.piece.{Color, Piece}
+import chess.model.piece.{Color, Piece, PieceType}
 import chess.model.board.{GameState, Position}
 
 object BoardView:
@@ -10,9 +10,16 @@ object BoardView:
   // Bold bright white for White pieces, bold near-black for Black pieces
   private val whiteFg = "\u001b[1;97m"
   private val blackFg = "\u001b[1;30m"
+  private val checkFg = "\u001b[1;91m"
   private val reset = "\u001b[0m"
 
   def render(state: GameState, flipped: Boolean = false): String =
+    val checkedKingPos =
+      if state.inCheck then
+        state.board.collectFirst {
+          case (pos, Piece(state.activeColor, PieceType.King)) => pos
+        }
+      else None
     val cols: Seq[Char] =
       if flipped then ('a' to 'h').toList.reverse else ('a' to 'h').toList
     val rows = if flipped then (1 to 8) else (8 to 1 by -1)
@@ -25,7 +32,10 @@ object BoardView:
         state.board.get(pos) match
           case None => s"$bg   $reset"
           case Some(piece) =>
-            val fg = if piece.color == Color.White then whiteFg else blackFg
+            val fg =
+              if checkedKingPos.contains(pos) then checkFg
+              else if piece.color == Color.White then whiteFg
+              else blackFg
             s"$bg$fg ${PieceUnicode(piece)} $reset"
       s"$row${squares.mkString} $row"
     colLabels + ranks.mkString("\n") + "\n" + colLabels

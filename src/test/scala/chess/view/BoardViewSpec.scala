@@ -1,6 +1,7 @@
 package chess.view
 
-import chess.model.board.GameState
+import chess.model.board.{GameState, Position}
+import chess.model.piece.{Color, Piece, PieceType}
 import zio.test.*
 
 object BoardViewSpec extends ZIOSpecDefault:
@@ -98,6 +99,25 @@ object BoardViewSpec extends ZIOSpecDefault:
       },
       test("show column h first") {
         assertTrue(flippedRendered.linesIterator.next().trim.startsWith("h"))
+      }
+    ),
+    suite("check highlight")(
+      test("use red foreground for checked king") {
+        val state = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 8) -> Piece(Color.Black, PieceType.Rook)
+          ),
+          Color.White,
+          inCheck = true
+        )
+        val raw = BoardView.render(state)
+        // Red bold ANSI: \u001b[1;91m
+        assertTrue(raw.contains("\u001b[1;91m"))
+      },
+      test("not use red foreground when not in check") {
+        val raw = BoardView.render(GameState.initial)
+        assertTrue(!raw.contains("\u001b[1;91m"))
       }
     )
   )
