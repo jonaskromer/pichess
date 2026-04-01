@@ -34,11 +34,12 @@ object HelpView:
        |  Queen   — any distance in any direction; blocked by pieces
        |  Knight  — L-shape (2+1 squares); jumps over pieces
        |  King    — one square in any direction
+       |  Check   — moves leaving own king in check are rejected;
+       |            checked king is highlighted in both TUI and GUI
        |  Turn order: White moves first, then alternates
        |
        |NOT YET IMPLEMENTED
        |  Castling         (kingside and queenside)
-       |  Check detection  (moves leaving own king in check are not rejected)
        |  Checkmate        (game does not end on checkmate)
        |  Stalemate        (game does not end on stalemate)
        |  Draw conditions  (50-move rule, threefold repetition, insufficient material)

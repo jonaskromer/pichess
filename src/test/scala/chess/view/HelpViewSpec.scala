@@ -61,8 +61,8 @@ object HelpViewSpec extends ZIOSpecDefault:
     test("list pawn promotion in the notation section") {
       assertTrue(help.contains("Promotion"))
     },
-    test("list check detection as not implemented") {
-      assertTrue(help.contains("Check detection"))
+    test("list check as implemented") {
+      assertTrue(help.contains("Check"))
     },
     test("list checkmate as not implemented") {
       assertTrue(help.contains("Checkmate"))
