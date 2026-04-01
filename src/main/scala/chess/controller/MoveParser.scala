@@ -2,7 +2,12 @@ package chess.controller
 
 import chess.model.GameError
 import chess.model.board.{GameState, Move}
-import chess.notation.{CoordinateResolver, CastlingResolver, NotationResolver, SanResolver}
+import chess.notation.{
+  CoordinateResolver,
+  CastlingResolver,
+  NotationResolver,
+  SanResolver
+}
 
 object MoveParser:
   private val resolvers: List[NotationResolver] = List(
@@ -17,5 +22,7 @@ object MoveParser:
       .flatMap(_.parse(trimmed, state))
       .nextOption()
       .getOrElse(
-        Left(GameError.ParseError("Invalid move. Type 'help' for notation guide"))
+        Left(
+          GameError.ParseError("Invalid move. Type 'help' for notation guide")
+        )
       )

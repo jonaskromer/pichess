@@ -52,7 +52,14 @@ object SanResolver extends NotationResolver:
         )
       case pawnPushPattern(dest, promo) =>
         Some(
-          resolveSan(PieceType.Pawn, pos(dest), None, None, state, promoType(promo))
+          resolveSan(
+            PieceType.Pawn,
+            pos(dest),
+            None,
+            None,
+            state,
+            promoType(promo)
+          )
         )
       case _ => None
 

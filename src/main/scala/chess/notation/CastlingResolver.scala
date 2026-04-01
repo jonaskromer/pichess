@@ -12,5 +12,7 @@ object CastlingResolver extends NotationResolver:
     input match
       case pattern(suffix) =>
         val side = if suffix == null then "Kingside" else "Queenside"
-        Some(Left(GameError.InvalidMove(s"$side castling is not yet implemented")))
+        Some(
+          Left(GameError.InvalidMove(s"$side castling is not yet implemented"))
+        )
       case _ => None

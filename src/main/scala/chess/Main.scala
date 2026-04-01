@@ -20,7 +20,12 @@ object Main extends ZIOAppDefault:
   private val app: ZIO[GameService, Throwable, Unit] =
     for
       event <- GameService.newGame()
-      _ <- loop(event.gameId, event.initialState, flipped = false, moveLog = Nil)
+      _ <- loop(
+        event.gameId,
+        event.initialState,
+        flipped = false,
+        moveLog = Nil
+      )
     yield ()
 
   private def loop(

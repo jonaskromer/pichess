@@ -8,8 +8,8 @@
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                     Main.scala                      │
-│          (ZLayer wiring + TUI game loop)            │
+│             Main.scala / GuiMain.scala              │
+│       (ZLayer wiring + TUI / GUI application)       │
 └──────────┬─────────────────────────────┬────────────┘
            │ uses                        │ uses
 ┌──────────▼──────────────────┐  ┌───────▼────────────┐

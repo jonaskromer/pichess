@@ -12,6 +12,7 @@
 | Command | Purpose |
 |---|---|
 | `sbt run` | Start the TUI chess game |
+| `sbt "runMain chess.GuiMain"` | Start the ScalaFX GUI chess game |
 | `sbt test` | Run all tests |
 | `sbt scalafmtAll` | Format all source files (required before committing) |
 | `sbt coverage test coverageReport` | Run tests with coverage report |
