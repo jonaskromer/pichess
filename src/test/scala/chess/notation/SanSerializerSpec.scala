@@ -171,7 +171,7 @@ object SanSerializerSpec extends ZIOSpecDefault:
       }
     ),
     suite("check suffix")(
-      test("append + when move gives check") {
+      test("append + when move gives check but not checkmate") {
         val state = GameState(
           Map(
             Position('e', 1) -> Piece(Color.White, PieceType.King),
@@ -183,6 +183,23 @@ object SanSerializerSpec extends ZIOSpecDefault:
         for san <- SanSerializer
             .toSan(Move(Position('a', 1), Position('a', 5)), state)
         yield assertTrue(san == "Ra5+")
+      },
+      test("append # when move delivers checkmate") {
+        // Back-rank mate: white rook to e8, black king on g8 boxed in by own pawns
+        val state = GameState(
+          Map(
+            Position('a', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 1) -> Piece(Color.White, PieceType.Rook),
+            Position('g', 8) -> Piece(Color.Black, PieceType.King),
+            Position('f', 7) -> Piece(Color.Black, PieceType.Pawn),
+            Position('g', 7) -> Piece(Color.Black, PieceType.Pawn),
+            Position('h', 7) -> Piece(Color.Black, PieceType.Pawn)
+          ),
+          Color.White
+        )
+        for san <- SanSerializer
+            .toSan(Move(Position('e', 1), Position('e', 8)), state)
+        yield assertTrue(san == "Re8#")
       },
       test("no suffix when move does not give check") {
         for san <- SanSerializer

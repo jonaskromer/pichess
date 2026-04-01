@@ -697,5 +697,78 @@ object MoveValidatorSpec extends ZIOSpecDefault:
         val board = Map(pos('e', 8) -> BK, pos('e', 1) -> WR).toMap
         assertTrue(MoveValidator.isInCheck(board, Color.Black))
       }
+    ),
+    // ─── hasLegalMove ───────────────────────────────────────────────────────────
+    suite("hasLegalMove")(
+      test("return true for initial board") {
+        for result <- MoveValidator.hasLegalMove(GameState.initial)
+        yield assertTrue(result)
+      },
+      test("return false for back-rank mate position") {
+        // Black king on g8, black pawns on f7/g7/h7, white rook delivers mate on e8
+        val s = GameState(
+          Map(
+            pos('g', 8) -> BK,
+            pos('f', 7) -> BP,
+            pos('g', 7) -> BP,
+            pos('h', 7) -> BP,
+            pos('e', 8) -> WR,
+            pos('a', 1) -> WK
+          ),
+          Color.Black,
+          inCheck = true
+        )
+        for result <- MoveValidator.hasLegalMove(s)
+        yield assertTrue(!result)
+      },
+      test("return true when in check but king can escape") {
+        // Black king on e8, white rook on e1 giving check, but king can move to d8/f8
+        val s = GameState(
+          Map(
+            pos('e', 8) -> BK,
+            pos('e', 1) -> WR,
+            pos('a', 1) -> WK
+          ),
+          Color.Black,
+          inCheck = true
+        )
+        for result <- MoveValidator.hasLegalMove(s)
+        yield assertTrue(result)
+      },
+      test("return false for smothered mate") {
+        // Black king on h8, black rook on g8, black pawn on g7/h7, white knight on f7
+        val s = GameState(
+          Map(
+            pos('h', 8) -> BK,
+            pos('g', 8) -> BR,
+            pos('g', 7) -> BP,
+            pos('h', 7) -> BP,
+            pos('f', 7) -> WN,
+            pos('a', 1) -> WK
+          ),
+          Color.Black,
+          inCheck = true
+        )
+        for result <- MoveValidator.hasLegalMove(s)
+        yield assertTrue(!result)
+      },
+      test("return true when only legal move is a pawn promotion") {
+        // White king on h1, hemmed in by own pawns on g2/h2 which are blocked
+        // by black pawns on g3/h3. Only legal move is pawn on a7 promoting to a8.
+        val s = GameState(
+          Map(
+            pos('h', 1) -> WK,
+            pos('g', 2) -> WP,
+            pos('h', 2) -> WP,
+            pos('g', 3) -> BP,
+            pos('h', 3) -> BP,
+            pos('a', 7) -> WP,
+            pos('e', 8) -> BK
+          ),
+          Color.White
+        )
+        for result <- MoveValidator.hasLegalMove(s)
+        yield assertTrue(result)
+      }
     )
   )

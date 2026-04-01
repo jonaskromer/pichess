@@ -9,9 +9,15 @@ object HelpViewSpec extends ZIOSpecDefault:
   private val commandsSection =
     help.substring(help.indexOf("COMMANDS"), help.indexOf("MOVE NOTATION"))
   private val notationSection =
-    help.substring(help.indexOf("MOVE NOTATION"), help.indexOf("IMPLEMENTED RULES"))
+    help.substring(
+      help.indexOf("MOVE NOTATION"),
+      help.indexOf("IMPLEMENTED RULES")
+    )
   private val implementedSection =
-    help.substring(help.indexOf("IMPLEMENTED RULES"), help.indexOf("NOT YET IMPLEMENTED"))
+    help.substring(
+      help.indexOf("IMPLEMENTED RULES"),
+      help.indexOf("NOT YET IMPLEMENTED")
+    )
   private val notYetSection =
     help.substring(help.indexOf("NOT YET IMPLEMENTED"))
 
@@ -41,10 +47,14 @@ object HelpViewSpec extends ZIOSpecDefault:
         assertTrue(notationSection.contains("e2 e4"))
       },
       test("explain column range") {
-        assertTrue(notationSection.contains("a") && notationSection.contains("h"))
+        assertTrue(
+          notationSection.contains("a") && notationSection.contains("h")
+        )
       },
       test("explain row range") {
-        assertTrue(notationSection.contains("1") && notationSection.contains("8"))
+        assertTrue(
+          notationSection.contains("1") && notationSection.contains("8")
+        )
       },
       test("list pawn promotion notation") {
         assertTrue(notationSection.contains("e8=Q"))
@@ -103,20 +113,20 @@ object HelpViewSpec extends ZIOSpecDefault:
       },
       test("check is not in the not-yet-implemented section") {
         assertTrue(!notYetSection.contains("Check "))
+      },
+      test("list checkmate as implemented") {
+        assertTrue(implementedSection.contains("Checkmate"))
+      },
+      test("checkmate is not in the not-yet-implemented section") {
+        assertTrue(!notYetSection.contains("Checkmate"))
       }
     ),
     suite("not yet implemented")(
-      test("list checkmate") {
-        assertTrue(notYetSection.contains("Checkmate"))
-      },
       test("list stalemate") {
         assertTrue(notYetSection.contains("Stalemate"))
       },
       test("list draw conditions") {
         assertTrue(notYetSection.contains("Draw conditions"))
-      },
-      test("checkmate is not in the implemented section") {
-        assertTrue(!implementedSection.contains("Checkmate"))
       }
     )
   )

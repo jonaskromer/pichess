@@ -22,7 +22,7 @@ object HelpView:
        |  Disambiguation:  Nbd2    N1f3   Raxd5  (file, rank, or both)
        |  Promotion:       e8=Q    exd8=R  (=Q, =R, =B, or =N)
        |  Castling:        O-O (kingside)   O-O-O (queenside)
-       |  Check/mate:      Nf3+    Qxf7#  (accepted and ignored)
+       |  Check/mate:      Nf3+    Qxf7#  (+ for check, # for checkmate)
        |  Piece letters:   N=Knight  B=Bishop  R=Rook  Q=Queen  K=King
        |
        |IMPLEMENTED RULES
@@ -37,10 +37,11 @@ object HelpView:
        |            checked king is highlighted in both TUI and GUI
        |  Castling — king moves two squares toward rook; rook jumps over;
        |             requires: neither piece moved, path clear, no check
+       |  Checkmate — detected automatically; game ends with winner announced;
+       |              # suffix appended to the mating move in SAN
        |  Turn order: White moves first, then alternates
        |
        |NOT YET IMPLEMENTED
-       |  Checkmate        (game does not end on checkmate)
        |  Stalemate        (game does not end on stalemate)
        |  Draw conditions  (50-move rule, threefold repetition, insufficient material)
        |""".stripMargin

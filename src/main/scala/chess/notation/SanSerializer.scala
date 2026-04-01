@@ -24,11 +24,19 @@ object SanSerializer:
         ZIO.succeed(san)
       case PieceType.Pawn => ZIO.succeed(pawnSan(move, state))
       case pt             => pieceSan(move, state, piece, pt)
-    baseSan.map { san =>
+    baseSan.flatMap { san =>
       val newBoard = Game.applyMoveToBoard(state, move, piece)
       val opponent = state.activeColor.opposite
-      if MoveValidator.isInCheck(newBoard, opponent) then s"$san+"
-      else san
+      if MoveValidator.isInCheck(newBoard, opponent) then
+        val postMoveState = GameState(
+          board = newBoard,
+          activeColor = opponent,
+          inCheck = true
+        )
+        MoveValidator.hasLegalMove(postMoveState).map { hasMove =>
+          if hasMove then s"$san+" else s"$san#"
+        }
+      else ZIO.succeed(san)
     }
 
   private def isCastling(move: Move): Boolean =

@@ -37,14 +37,14 @@ The project is currently in **Phase 3** (Parser Combinators). Phase 1 (TUI Chess
 
 **What works:**
 - Full piece movement validation (all piece types)
-- En passant, pawn promotion, check detection, and castling
+- En passant, pawn promotion, check detection, castling, and checkmate
 - Coordinate notation and Standard Algebraic Notation (SAN) with disambiguation
 - ANSI-colored TUI with board flipping and move log
 - Browser GUI with drag-and-drop, promotion dialog, and live sync via SSE
 - Typed error handling with `IO[GameError, A]` throughout
 - 100% test coverage with zio-test
 
-**What's next:** FEN/PGN parsers using `scala-parser-combinators`, and the remaining chess rules (checkmate, stalemate, draw conditions).
+**What's next:** FEN/PGN parsers using `scala-parser-combinators`, and the remaining chess rules (stalemate, draw conditions).
 
 ---
 *Built with pure functions, immutability, and plenty of 🍑.*

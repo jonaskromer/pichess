@@ -61,15 +61,20 @@ To quit the game, type `quit`. To flip the board, type `flip`. To see help, type
 - The checked king is highlighted in both the TUI (red) and the web GUI.
 - The `+` suffix is appended to SAN output when a move gives check.
 
+### Checkmate
+- After each move, the game checks whether the opponent has any legal move. If the opponent's king is in check and no legal move exists, the position is checkmate.
+- The game status changes to `Checkmate(winner)` and no further moves are accepted.
+- The `#` suffix is appended to SAN output when a move delivers checkmate (instead of `+`).
+
 ---
 
 ## Not Yet Implemented
 
 | Rule | Status |
 |---|---|
-| Checkmate / stalemate detection | Not implemented |
+| Stalemate detection | Not implemented |
 | Draw conditions (50-move rule, threefold repetition, insufficient material) | Not implemented |
 
-Illegal moves are rejected with an error message and the player is prompted to retry. The game does not currently end automatically — it runs until the user types `quit`.
+Illegal moves are rejected with an error message and the player is prompted to retry.
 
 > Implementation of the missing rules is tracked in [roadmap.md — Phase 2](roadmap.md#phase-2--missing-chess-rules).

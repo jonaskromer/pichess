@@ -1,7 +1,14 @@
 package chess.model.rules
 
 import chess.model.piece.{Color, Piece, PieceType}
-import chess.model.board.{Board, CastlingRights, GameState, Move, Position}
+import chess.model.board.{
+  Board,
+  CastlingRights,
+  GameState,
+  GameStatus,
+  Move,
+  Position
+}
 import chess.model.GameError
 import zio.*
 
@@ -14,6 +21,9 @@ object Game:
       move: Move
   ): IO[GameError, GameState] =
     for
+      _ <- ZIO.when(state.status != GameStatus.Playing)(
+        ZIO.fail(GameError.InvalidMove("Game is over"))
+      )
       _ <- MoveValidator.validate(state, move)
       piece = state.board(move.from)
       _ <- validatePromotion(piece, move)
@@ -22,13 +32,25 @@ object Game:
       _ <- ZIO.when(MoveValidator.isInCheck(newBoard, state.activeColor))(
         ZIO.fail(GameError.InvalidMove("King cannot be left in check"))
       )
-    yield GameState(
-      board = newBoard,
-      activeColor = state.activeColor.opposite,
-      enPassantTarget = nextEnPassantTarget(move, piece),
-      inCheck = MoveValidator.isInCheck(newBoard, state.activeColor.opposite),
-      castlingRights = updatedCastlingRights(state, move)
-    )
+      opponentInCheck = MoveValidator.isInCheck(
+        newBoard,
+        state.activeColor.opposite
+      )
+      newState = GameState(
+        board = newBoard,
+        activeColor = state.activeColor.opposite,
+        enPassantTarget = nextEnPassantTarget(move, piece),
+        inCheck = opponentInCheck,
+        castlingRights = updatedCastlingRights(state, move)
+      )
+      status <-
+        if opponentInCheck then
+          MoveValidator.hasLegalMove(newState).map { hasMove =>
+            if hasMove then GameStatus.Playing
+            else GameStatus.Checkmate(state.activeColor)
+          }
+        else ZIO.succeed(GameStatus.Playing)
+    yield newState.copy(status = status)
 
   private def isPromotionRank(piece: Piece, row: Int): Boolean =
     piece.pieceType == PieceType.Pawn &&

@@ -26,7 +26,8 @@ Console chess game with full move validation, en passant, pawn promotion, ANSI b
 |---|---|---|
 | Pawn promotion | `Game.applyMove` — validate and replace pawn with chosen piece | Done |
 | Check detection | `MoveValidator` — reject moves that leave own king in check; checked king highlighted in TUI and GUI | Done |
-| Checkmate / stalemate | `Game.applyMove` — return a terminal `GameState` variant | Not started |
+| Checkmate | `Game.applyMove` — game-over guard + checkmate detection via `MoveValidator.hasLegalMove`; `GameStatus` enum (`Playing`, `Checkmate(winner)`) | Done |
+| Stalemate | `Game.applyMove` — detect no legal moves when not in check | Not started |
 | Castling | `MoveValidator` (path clear, rights exist, no check/attacked squares) + `Game.updatedBoard` (king+rook movement, rights tracking) + `CastlingResolver` (O-O / O-O-O parsing) | Done |
 | Draw conditions | `Game.applyMove` — track move history for 50-move / threefold | Not started |
 

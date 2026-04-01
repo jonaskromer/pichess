@@ -149,3 +149,82 @@ object MoveValidator:
         ) == 1 && (target.row - from.row) == direction
       case pt =>
         Ray.canReach(board, from, pt, target)
+
+  // ─── Legal move detection ─────────────────────────────────────────────────
+
+  def hasLegalMove(state: GameState): IO[GameError, Boolean] =
+    val color = state.activeColor
+    val pieces = state.board.toList.collect {
+      case (pos, piece) if piece.color == color => (pos, piece)
+    }
+    ZIO
+      .exists(pieces) { case (from, piece) =>
+        val candidates = candidateMoves(state, from, piece)
+        ZIO.exists(candidates) { move =>
+          Game
+            .applyMove(state, move)
+            .as(true)
+            .catchAll(_ => ZIO.succeed(false))
+        }
+      }
+
+  private def candidateMoves(
+      state: GameState,
+      from: Position,
+      piece: Piece
+  ): List[Move] =
+    piece.pieceType match
+      case PieceType.Pawn => pawnCandidates(from, piece.color, state)
+      case PieceType.King => kingCandidates(state, from, piece)
+      case pt =>
+        Ray
+          .table(pt)
+          .flatMap(ray => Ray.walk(state.board, from, ray))
+          .map(to => Move(from, to))
+
+  private def pawnCandidates(
+      from: Position,
+      color: Color,
+      state: GameState
+  ): List[Move] =
+    val direction = if color == Color.White then 1 else -1
+    val startRank = if color == Color.White then 2 else 7
+    val promoRank = if color == Color.White then 8 else 1
+
+    val forward1 = Option
+      .when(from.row + direction >= 1 && from.row + direction <= 8)(
+        Position(from.col, from.row + direction)
+      )
+      .toList
+    val forward2 = Option
+      .when(from.row == startRank)(
+        Position(from.col, from.row + 2 * direction)
+      )
+      .toList
+    val captures = List(-1, 1).flatMap { dc =>
+      val c = from.col + dc
+      val r = from.row + direction
+      Option
+        .when(c >= 'a' && c <= 'h' && r >= 1 && r <= 8)(Position(c.toChar, r))
+    }
+    val targets = forward1 ++ forward2 ++ captures
+    targets.flatMap { to =>
+      if to.row == promoRank then List(Move(from, to, Some(PieceType.Queen)))
+      else List(Move(from, to))
+    }
+
+  private def kingCandidates(
+      state: GameState,
+      from: Position,
+      piece: Piece
+  ): List[Move] =
+    val normalMoves = Ray
+      .table(PieceType.King)
+      .flatMap(ray => Ray.walk(state.board, from, ray))
+      .map(to => Move(from, to))
+    val rank = if piece.color == Color.White then 1 else 8
+    val castlingMoves = List(
+      Move(from, Position('g', rank)),
+      Move(from, Position('c', rank))
+    )
+    normalMoves ++ castlingMoves

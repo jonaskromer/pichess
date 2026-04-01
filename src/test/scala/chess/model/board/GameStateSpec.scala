@@ -17,6 +17,17 @@ object GameStateSpec extends ZIOSpecDefault:
         assertTrue(GameState.initial.enPassantTarget == None)
       }
     ),
+    // ─── Game status ───────────────────────────────────────────────────────────
+    suite("game status")(
+      test("initial state has status Playing") {
+        assertTrue(GameState.initial.status == GameStatus.Playing)
+      },
+      test("GameState preserves status through copy") {
+        val s =
+          GameState.initial.copy(status = GameStatus.Checkmate(Color.White))
+        assertTrue(s.status == GameStatus.Checkmate(Color.White))
+      }
+    ),
     // ─── Castling rights ──────────────────────────────────────────────────────
     suite("castling rights")(
       test("initial state has all four castling rights") {

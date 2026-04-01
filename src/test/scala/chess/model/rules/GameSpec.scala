@@ -2,7 +2,7 @@ package chess.model.rules
 
 import chess.model.GameError
 import chess.model.piece.{Color, Piece, PieceType}
-import chess.model.board.{CastlingRights, GameState, Move, Position}
+import chess.model.board.{CastlingRights, GameState, GameStatus, Move, Position}
 import zio.*
 import zio.test.*
 
@@ -598,6 +598,88 @@ object GameSpec extends ZIOSpecDefault:
           result.castlingRights.blackKingSide,
           result.castlingRights.blackQueenSide
         )
+      }
+    ),
+    // ─── Checkmate detection ────────────────────────────────────────────────────
+    suite("checkmate detection")(
+      test(
+        "set Checkmate status when move delivers checkmate (back-rank mate)"
+      ) {
+        // Black king on g8 boxed in by own pawns, white rook delivers mate on 8th rank
+        val s = GameState(
+          Map(
+            Position('a', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 1) -> Piece(Color.White, PieceType.Rook),
+            Position('g', 8) -> Piece(Color.Black, PieceType.King),
+            Position('f', 7) -> Piece(Color.Black, PieceType.Pawn),
+            Position('g', 7) -> Piece(Color.Black, PieceType.Pawn),
+            Position('h', 7) -> Piece(Color.Black, PieceType.Pawn)
+          ),
+          Color.White
+        )
+        for result <- Game
+            .applyMove(s, Move(Position('e', 1), Position('e', 8)))
+        yield assertTrue(result.status == GameStatus.Checkmate(Color.White))
+      },
+      test(
+        "set Checkmate status when move delivers checkmate (scholar's mate)"
+      ) {
+        // White queen takes f7 with bishop supporting from c4, black king on e8
+        val s = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('h', 5) -> Piece(Color.White, PieceType.Queen),
+            Position('c', 4) -> Piece(Color.White, PieceType.Bishop),
+            Position('e', 8) -> Piece(Color.Black, PieceType.King),
+            Position('f', 7) -> Piece(Color.Black, PieceType.Pawn),
+            Position('d', 8) -> Piece(Color.Black, PieceType.Queen),
+            Position('f', 8) -> Piece(Color.Black, PieceType.Bishop),
+            Position('d', 7) -> Piece(Color.Black, PieceType.Pawn),
+            Position('e', 7) -> Piece(Color.Black, PieceType.Pawn)
+          ),
+          Color.White
+        )
+        for result <- Game.applyMove(
+            s,
+            Move(Position('h', 5), Position('f', 7))
+          )
+        yield assertTrue(result.status == GameStatus.Checkmate(Color.White))
+      },
+      test("keep Playing status when move gives check but not checkmate") {
+        // White rook gives check but black king can escape
+        val s = GameState(
+          Map(
+            Position('a', 1) -> Piece(Color.White, PieceType.King),
+            Position('a', 2) -> Piece(Color.White, PieceType.Rook),
+            Position('e', 8) -> Piece(Color.Black, PieceType.King)
+          ),
+          Color.White
+        )
+        for result <- Game
+            .applyMove(s, Move(Position('a', 2), Position('e', 2)))
+        yield assertTrue(
+          result.inCheck,
+          result.status == GameStatus.Playing
+        )
+      },
+      test("keep Playing status on a normal move (no check)") {
+        for result <- Game
+            .applyMove(initial, Move(Position('e', 2), Position('e', 4)))
+        yield assertTrue(result.status == GameStatus.Playing)
+      },
+      test("reject move when game is already over") {
+        val s = GameState(
+          Map(
+            Position('a', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 8) -> Piece(Color.Black, PieceType.King)
+          ),
+          Color.White,
+          status = GameStatus.Checkmate(Color.Black)
+        )
+        for err <- Game
+            .applyMove(s, Move(Position('a', 1), Position('a', 2)))
+            .flip
+        yield assertTrue(err.message.contains("Game is over"))
       }
     )
   )

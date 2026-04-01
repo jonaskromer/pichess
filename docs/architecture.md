@@ -64,7 +64,8 @@ Domain types. No I/O, no dependencies on other packages.
 | `SessionState.scala` | Shared mutable state: `gameId`, `GameState`, `moveLog`, `error` — held in a `SubscriptionRef` |
 | `board/Board.scala` | `type Board = Map[Position, Piece]` + initial board setup |
 | `board/CastlingRights.scala` | Case class with four booleans tracking kingside/queenside castling rights for each color |
-| `board/GameState.scala` | Immutable game snapshot: board, active color, en passant target, castling rights, in-check flag |
+| `board/GameState.scala` | Immutable game snapshot: board, active color, en passant target, castling rights, in-check flag, game status |
+| `board/GameStatus.scala` | `enum GameStatus` — `Playing` or `Checkmate(winner: Color)` |
 | `board/Move.scala` | A move from one `Position` to another, with optional promotion piece |
 | `board/Position.scala` | A board square identified by column (`Char`) and row (`Int`) |
 | `piece/Color.scala` | `White` / `Black` with `.opposite` |

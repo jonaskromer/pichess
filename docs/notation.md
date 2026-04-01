@@ -73,12 +73,12 @@ When two pieces of the same type can both reach the destination, add the source 
 
 ### Check and checkmate suffixes
 
-`+` (check) and `#` (checkmate) suffixes are accepted after any move. The `+` suffix is also appended automatically when a move gives check.
+`+` (check) and `#` (checkmate) suffixes are accepted in input and also appended automatically to SAN output: `+` when a move gives check, `#` when a move delivers checkmate.
 
-| Input | Treated as |
+| Input | Meaning |
 |---|---|
-| `Nf3+` | `Nf3` |
-| `Qxf7#` | `Qxf7` |
+| `Nf3+` | Knight to f3 (check suffix accepted) |
+| `Qxf7#` | Queen captures on f7 (checkmate suffix accepted) |
 
 ---
 

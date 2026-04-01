@@ -7,7 +7,8 @@ case class GameState(
     activeColor: Color,
     enPassantTarget: Option[Position] = None,
     inCheck: Boolean = false,
-    castlingRights: CastlingRights = CastlingRights()
+    castlingRights: CastlingRights = CastlingRights(),
+    status: GameStatus = GameStatus.Playing
 )
 
 object GameState:
