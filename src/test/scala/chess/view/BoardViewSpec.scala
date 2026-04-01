@@ -38,5 +38,7 @@ class BoardViewSpec extends AnyFlatSpec with Matchers:
 
   it should "show 8 ranks in the output" in:
     // Each rank is rendered as a line starting with the rank number
-    val rankLines = rendered.linesIterator.filter(l => l.trim.headOption.exists(_.isDigit)).toList
+    val rankLines = rendered.linesIterator
+      .filter(l => l.trim.headOption.exists(_.isDigit))
+      .toList
     rankLines.size shouldBe 8

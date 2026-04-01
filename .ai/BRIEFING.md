@@ -46,6 +46,14 @@ Always keep `docs/` in sync with the code. After any change:
 | Phase completed or plan changed | [`docs/roadmap.md`](docs/roadmap.md) |
 | Significant new design decision | New ADR in [`docs/adr/`](docs/adr/) |
 
+The in-game help screen (`src/main/scala/chess/view/HelpView.scala`) must also be kept in sync:
+
+| Change type | Update HelpView when… |
+|---|---|
+| New command added to `Main.scala` | Add it to the COMMANDS section |
+| Chess rule implemented | Move it from NOT YET IMPLEMENTED to IMPLEMENTED RULES |
+| Move notation changed | Update the MOVE NOTATION section |
+
 ---
 
 ## Required Reading — Addendums

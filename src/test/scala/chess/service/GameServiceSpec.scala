@@ -20,7 +20,9 @@ class GameServiceSpec extends AnyFlatSpec with Matchers:
         .getOrThrowFiberFailure()
     }
 
-  private def runFailing[A](task: ZIO[GameService, Throwable, A]): Exit[Throwable, A] =
+  private def runFailing[A](
+      task: ZIO[GameService, Throwable, A]
+  ): Exit[Throwable, A] =
     Unsafe.unsafe { implicit unsafe =>
       Runtime.default.unsafe.run(task.provide(appLayer))
     }
@@ -47,7 +49,9 @@ class GameServiceSpec extends AnyFlatSpec with Matchers:
       yield stateAndEvent
     )
     event shouldBe a[GameEvent.MoveMade]
-    state.board.get(Position('e', 4)) shouldBe Some(Piece(Color.White, PieceType.Pawn))
+    state.board.get(Position('e', 4)) shouldBe Some(
+      Piece(Color.White, PieceType.Pawn)
+    )
 
   it should "persist the updated state after a valid move" in:
     val stored = run(
@@ -57,7 +61,9 @@ class GameServiceSpec extends AnyFlatSpec with Matchers:
         state <- GameService.getState(started.gameId)
       yield state
     )
-    stored.get.board.get(Position('e', 4)) shouldBe Some(Piece(Color.White, PieceType.Pawn))
+    stored.get.board.get(Position('e', 4)) shouldBe Some(
+      Piece(Color.White, PieceType.Pawn)
+    )
 
   it should "fail for an illegal move" in:
     val exit = runFailing(
@@ -78,7 +84,9 @@ class GameServiceSpec extends AnyFlatSpec with Matchers:
     exit.isFailure shouldBe true
 
   it should "fail when the game id does not exist" in:
-    runFailing(GameService.makeMove("nonexistent", "e2 e4")).isFailure shouldBe true
+    runFailing(
+      GameService.makeMove("nonexistent", "e2 e4")
+    ).isFailure shouldBe true
 
   "GameService.getState" should "return None for an unknown game id" in:
     run(GameService.getState("unknown")) shouldBe None

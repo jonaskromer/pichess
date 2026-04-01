@@ -22,6 +22,7 @@ class GameEventSpec extends AnyFlatSpec with Matchers:
     event.resultingState shouldBe state
 
   "GameEvent.InvalidMoveAttempted" should "hold the game id and reason" in:
-    val event: GameEvent.InvalidMoveAttempted = GameEvent.InvalidMoveAttempted(id, "No piece at e4")
+    val event: GameEvent.InvalidMoveAttempted =
+      GameEvent.InvalidMoveAttempted(id, "No piece at e4")
     event.gameId shouldBe id
     event.reason should include("e4")

@@ -16,7 +16,10 @@ final class GameServiceLive(repo: GameRepository) extends GameService:
       _ <- repo.save(id, state)
     yield GameEvent.GameStarted(id, state)
 
-  def makeMove(id: GameId, rawInput: String): Task[(GameState, GameEvent.MoveMade)] =
+  def makeMove(
+      id: GameId,
+      rawInput: String
+  ): Task[(GameState, GameEvent.MoveMade)] =
     for
       stateOpt <- repo.load(id)
       state <- ZIO

@@ -20,7 +20,9 @@ class GameRepositorySpec extends AnyFlatSpec with Matchers:
 
   it should "save and load a game state" in:
     val state = GameState.initial
-    run(GameRepository.save("g1", state) *> GameRepository.load("g1")) shouldBe Some(state)
+    run(
+      GameRepository.save("g1", state) *> GameRepository.load("g1")
+    ) shouldBe Some(state)
 
   it should "overwrite an existing game on save" in:
     val s1 = GameState.initial

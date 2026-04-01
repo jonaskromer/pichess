@@ -7,7 +7,10 @@ import zio.*
 
 trait GameService:
   def newGame(): Task[GameEvent.GameStarted]
-  def makeMove(id: GameId, rawInput: String): Task[(GameState, GameEvent.MoveMade)]
+  def makeMove(
+      id: GameId,
+      rawInput: String
+  ): Task[(GameState, GameEvent.MoveMade)]
   def getState(id: GameId): Task[Option[GameState]]
 
 object GameService:
