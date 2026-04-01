@@ -13,7 +13,8 @@ object GameController:
       case in =>
         Some(
           for
-            move <- MoveParser.parse(in)
+            parsed <- MoveParser.parse(in)
+            move <- SanResolver.resolve(parsed, state)
             newState <- Game.applyMove(state, move)
           yield newState
         )

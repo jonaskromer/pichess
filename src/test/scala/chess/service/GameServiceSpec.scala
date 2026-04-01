@@ -83,6 +83,47 @@ class GameServiceSpec extends AnyFlatSpec with Matchers:
     )
     exit.isFailure shouldBe true
 
+  it should "accept SAN pawn push notation" in:
+    val (state, _) = run(
+      for
+        started <- GameService.newGame()
+        result <- GameService.makeMove(started.gameId, "e4")
+      yield result
+    )
+    state.board.get(Position('e', 4)) shouldBe Some(
+      Piece(Color.White, PieceType.Pawn)
+    )
+
+  it should "accept SAN knight move notation" in:
+    val (state, _) = run(
+      for
+        started <- GameService.newGame()
+        result <- GameService.makeMove(started.gameId, "Nf3")
+      yield result
+    )
+    state.board.get(Position('f', 3)) shouldBe Some(
+      Piece(Color.White, PieceType.Knight)
+    )
+
+  it should "accept coordinate notation without separator" in:
+    val (state, _) = run(
+      for
+        started <- GameService.newGame()
+        result <- GameService.makeMove(started.gameId, "e2e4")
+      yield result
+    )
+    state.board.get(Position('e', 4)) shouldBe Some(
+      Piece(Color.White, PieceType.Pawn)
+    )
+
+  it should "fail for SAN castling since it is not yet implemented" in:
+    runFailing(
+      for
+        started <- GameService.newGame()
+        result <- GameService.makeMove(started.gameId, "O-O")
+      yield result
+    ).isFailure shouldBe true
+
   it should "fail when the game id does not exist" in:
     runFailing(
       GameService.makeMove("nonexistent", "e2 e4")

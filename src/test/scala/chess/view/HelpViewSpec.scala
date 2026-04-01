@@ -27,7 +27,13 @@ class HelpViewSpec extends AnyFlatSpec with Matchers:
     help should include("1")
     help should include("8")
 
-  it should "include a move example" in:
+  it should "mention Standard Algebraic Notation" in:
+    help should include("Algebraic Notation")
+
+  it should "include a SAN piece move example" in:
+    help should include("Nf3")
+
+  it should "include a coordinate example" in:
     help should include("e2 e4")
 
   it should "list pawn as implemented" in:

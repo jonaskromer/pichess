@@ -1,6 +1,6 @@
 package chess.service
 
-import chess.controller.MoveParser
+import chess.controller.{MoveParser, SanResolver}
 import chess.model.{GameEvent, GameId}
 import chess.model.board.GameState
 import chess.model.rules.Game
@@ -25,7 +25,9 @@ final class GameServiceLive(repo: GameRepository) extends GameService:
       state <- ZIO
         .fromOption(stateOpt)
         .orElseFail(chess.model.GameError.GameNotFound(id))
-      move <- ZIO.fromEither(MoveParser.parse(rawInput))
+      move <- ZIO.fromEither(
+        MoveParser.parse(rawInput).flatMap(SanResolver.resolve(_, state))
+      )
       newState <- ZIO.fromEither(Game.applyMove(state, move))
       _ <- repo.save(id, newState)
     yield (newState, GameEvent.MoveMade(id, move, newState))

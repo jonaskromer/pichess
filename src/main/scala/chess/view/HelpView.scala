@@ -11,10 +11,19 @@ object HelpView:
        |  quit          Exit the game
        |
        |MOVE NOTATION
-       |  Squares are written as column (a–h) followed by row (1–8).
-       |  Enter the source square, a space, then the destination square.
-       |  Example:  e2 e4  moves the piece on e2 to e4
-       |            g1 f3  moves the piece on g1 to f3
+       |  Both coordinate and Standard Algebraic Notation (SAN) are accepted.
+       |  See docs/notation.md for the full guide.
+       |
+       |  Coordinate:      e2 e4   e2e4   e2-e4   (source then destination)
+       |  Pawn push:       e4      d5
+       |  Pawn capture:    exd5    cxb4
+       |  Piece move:      Nf3     Bc4    Rd1    Qd8    Ke2
+       |  Piece capture:   Nxf3    Bxc6
+       |  Disambiguation:  Nbd2    N1f3   Raxd5  (file, rank, or both)
+       |  Check/mate:      Nf3+    Qxf7#  (accepted and ignored)
+       |  Piece letters:   N=Knight  B=Bishop  R=Rook  Q=Queen  K=King
+       |
+       |  Not yet supported: castling (O-O / O-O-O), promotion (e8=Q)
        |
        |IMPLEMENTED RULES
        |  Pawn    — one square forward; two squares from starting rank;
