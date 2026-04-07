@@ -1,36 +1,93 @@
-# Addendum: SA-03 — Parser Combinators
+# Addendum: SA-03 — Internal and External Languages
 
-> Source: `docs/slides/SA-03-Parser.pdf`
-
----
-
-## Internal vs External DSL
-
-- **Internal DSL**: expressed within the host language (Scala) — uses Scala syntax, no separate parser needed
-- **External DSL**: its own grammar and syntax — requires a dedicated parser, but is more expressive and readable to non-programmers
-
-Parser combinators sit in between: the grammar is written in Scala, but it parses an external textual language.
+> Source: `SA-03-InternalExternalLang.pdf`
 
 ---
 
-## Dependency
+## Internal vs External DSLs
+
+- **Internal DSL**: Expressed within a host language (e.g., Scala). Leverages host language syntax and tooling. Supported by IDEs directly.
+- **External DSL**: Independent of any language environment. Has its own grammar and requires a dedicated parser and custom editor support.
+
+### Internal DSLs in Scala
+Scala provides excellent tools to build internal DSLs (Generic Types, Operator Overloading, and Implicit Conversions).
+Examples given in lecture:
+- **Scala Spec**: Natural language testing assertions (`cell.value must be_==(0)`).
+- **Scala Units**: Type-safe unit tracking (`val length: Length[Int] = (5 m) * 3`).
+- **Scala.Scalar**: Type-directed equations (`300 * nmi / (1.5 * hr) == 200 * kn`).
+- **Baysick**: BASIC programs acting as valid executable Scala code.
+- **Music DSL**: Encoding music melodies via strings and variables.
+
+---
+
+## Implicit Conversions
+
+Implicit conversions are heavily used to build intuitive syntax without polluting standard library definitions.
+
+**Problem:** Standard objects don't know your domain rules (e.g., `4,25 $ + 3,75 €`).
+**Solution:** `implicit def convertToEuro(value: Dollar): Euro {…}`
+
+### Rules for Implicits
+- Conversion methods must be explicitly marked as `implicit`.
+- They must be in scope.
+- They are applied *only* if the code cannot be compiled otherwise.
+- Only exactly one valid conversion can be applied.
+- The compiler will only apply one conversion step (no chaining).
+
+### Examples
+
+**Adding an `.acronym` method to `String`:**
+```scala
+class ExtendedString(str: String) {
+  def acronym = str.toCharArray.foldLeft("") { (t, c) =>
+    t + (if (c.isUpperCase) c.toString else "")
+  }
+}
+implicit def string2ExtendedString(str: String) = new ExtendedString(str)
+println("HyperText Transfer Protocol".acronym) // HTTP
+```
+
+**Adding a `!` (Factorial) method to `Int`:**
+```scala
+def fact(n: Int): BigInt = if (n <= 0) 1 else fact(n-1) * n
+
+class Factorizer(n: Int) {
+  def ! = fact(n)
+}
+implicit def int2fact(n: Int) = new Factorizer(n)
+println("10! = " + (10!)) // 3628800
+```
+
+---
+
+## Extendable Language Philosophy
+
+Guy Steele ("Growing a Language") argues that languages must grow via:
+- Generic Types
+- Operator Overloading
+- Community-built libraries
+Scala is highly extendable, allowing DSLs and custom logic to look indistinguishable from core language constructs.
+
+---
+
+## Parser Combinators for External DSLs
+
+Scala Parser Combinators acts as an *internal DSL* used for creating parsers that read *external DSLs*.
+
+### Dependency
 
 ```scala
 "org.scala-lang.modules" %% "scala-parser-combinators" % "2.1.1"
 ```
 
----
-
-## Parser Base Classes
+### Parser Base Classes
 
 ```scala
 class MyParser extends Parsers      // full parser, requires manual tokenization
-class MyParser extends RegexParsers // simpler; regex-based terminals, preferred
+class MyParser extends RegexParsers // regex-based terminals, preferred
 ```
 
----
-
-## Combinator Operator Reference
+### Combinator Operator Reference
 
 | Operator | Meaning |
 |----------|---------|
@@ -119,28 +176,11 @@ private def multiNumberChoice: Parser[List[Choice]] =
 
 ---
 
-## Post-Parse Transformer Pattern
+## Task 3: Parser
 
-Chain validation steps using `Either` + for-comprehension:
+Build 3 Parsers using different libraries/techniques:
+1. **ParserCombinators**
+2. **FastParse**
+3. **regex** (no library)
 
-```scala
-object TopicTransformer {
-  def apply(result: Either[String, Topic]): Either[String, Topic] =
-    for {
-      parsed  <- result
-      numbers <- checkChoiceNumber(parsed)   // returns Either[String, Topic]
-      choices <- checkDuplicateChoices(numbers)
-    } yield choices
-}
-```
-
-Each validator returns `Right(topic)` on success or `Left("error message")` on failure.
-
----
-
-## Task (SA-03)
-
-Implement a **FEN / PGN parser** for chess using Scala Parser Combinators:
-- Extend `RegexParsers`
-- Return `Either[String, ParsedResult]` from the public API
-- Apply the two-track (Either + for-comprehension) pattern for post-parse validation
+Use AI tools to generate the code. Guide the generation carefully and read the code and the tests. Bring test coverage to (or as close as possible to) 100%.
