@@ -33,18 +33,21 @@ Dive deeper into the project structure, our development workflow, and where the 
 
 ## 🛠️ Current Status (Phase 3)
 
-The project is currently in **Phase 3** (Parser Combinators). Phase 1 (TUI Chess) is complete, Phase 2 (Functional Style) is partially complete (functional patterns applied; some chess rules remain), and the web GUI from Phase 7 was built ahead of schedule.
+The project is currently in **Phase 3** (Parser Combinators). Phase 1 (TUI Chess) and Phase 2 (Functional Style) are complete, and the web GUI from Phase 7 was built ahead of schedule.
 
 **What works:**
 - Full piece movement validation (all piece types)
 - En passant, pawn promotion, check detection, castling, and checkmate
+- Stalemate, 50-move draw rule, insufficient material, threefold repetition (claim), and fivefold repetition (automatic)
+- Undo/redo support
 - Coordinate notation and Standard Algebraic Notation (SAN) with disambiguation
+- FEN, PGN, and JSON codecs for game state import/export
 - ANSI-colored TUI with board flipping and move log
 - Browser GUI with drag-and-drop, promotion dialog, and live sync via SSE
 - Typed error handling with `IO[GameError, A]` throughout
 - 100% test coverage with zio-test
 
-**What's next:** REST API (Phase 4) on top of the FEN codec, and the remaining chess rules (stalemate, draw conditions).
+**What's next:** REST API (Phase 4) on top of the FEN codec.
 
 ---
 *Built with pure functions, immutability, and plenty of 🍑.*

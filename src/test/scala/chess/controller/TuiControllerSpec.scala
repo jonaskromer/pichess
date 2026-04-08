@@ -25,7 +25,7 @@ object TuiControllerSpec extends ZIOSpecDefault:
       gs <- ZIO.service[GameService]
       event <- gs.newGame()
       session <- SubscriptionRef.make(
-        SessionState(GameSnapshot(event.gameId, event.initialState, Nil, Nil, event.initialState))
+        SessionState(GameSnapshot(event.gameId, event.initialState))
       )
       shutdown <- Promise.make[Nothing, Unit]
     yield (gs, session, shutdown)
@@ -458,12 +458,15 @@ object TuiControllerSpec extends ZIOSpecDefault:
           Color.White,
           halfmoveClock = 100
         )
+        val dummyMove = Move(Position('e', 1), Position('e', 1))
         for
           (gs, session, shutdown) <- withSession
           gameId <- session.get.map(_.gameId)
           _ <- gs.saveState(gameId, drawableState)
           _ <- session.update(st =>
-            st.copy(game = st.game.copy(state = drawableState))
+            st.copy(game = st.game.copy(
+              history = List((dummyMove, drawableState))
+            ))
           )
           result <- TuiController.handleCommand(
             TuiController.Command.Draw, gs, session, shutdown, false
@@ -485,7 +488,7 @@ object TuiControllerSpec extends ZIOSpecDefault:
         yield assertTrue(
           result == TuiController.Result.Continue(false),
           s.error.isDefined,
-          s.error.get.contains("need 50")
+          s.error.get.contains("Cannot claim draw")
         )
       }
     ),

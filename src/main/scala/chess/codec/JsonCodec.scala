@@ -1,6 +1,13 @@
 package chess.codec
 
-import chess.model.board.{Board, CastlingRights, DrawReason, GameState, GameStatus, Position}
+import chess.model.board.{
+  Board,
+  CastlingRights,
+  DrawReason,
+  GameState,
+  GameStatus,
+  Position
+}
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.model.rules.MoveValidator
 import zio.json.*
@@ -41,7 +48,7 @@ object JsonCodec:
       case Array(colorStr, typeStr) =>
         for
           color <- parseColor(colorStr)
-          pt    <- parsePieceType(typeStr)
+          pt <- parsePieceType(typeStr)
         yield Piece(color, pt)
       case _ => Left(s"Invalid piece '$s', expected 'color type'")
 
@@ -49,6 +56,8 @@ object JsonCodec:
     case DrawReason.Stalemate            => "stalemate"
     case DrawReason.FiftyMoveRule        => "fifty-move rule"
     case DrawReason.InsufficientMaterial => "insufficient material"
+    case DrawReason.ThreefoldRepetition  => "threefold repetition"
+    case DrawReason.FivefoldRepetition   => "fivefold repetition"
 
   // ─── Leaf types ────────────────────────────────────────────────────────────
 
@@ -62,7 +71,8 @@ object JsonCodec:
 
   // ─── Position ──────────────────────────────────────────────────────────────
 
-  given JsonEncoder[Position] = JsonEncoder.string.contramap(p => s"${p.col}${p.row}")
+  given JsonEncoder[Position] =
+    JsonEncoder.string.contramap(p => s"${p.col}${p.row}")
 
   given JsonDecoder[Position] = JsonDecoder.string.mapOrFail: s =>
     if s.length == 2 && s(0) >= 'a' && s(0) <= 'h' && s(1) >= '1' && s(1) <= '8'
@@ -74,7 +84,9 @@ object JsonCodec:
 
   given JsonFieldDecoder[Position] =
     JsonFieldDecoder.string.mapOrFail: s =>
-      if s.length == 2 && s(0) >= 'a' && s(0) <= 'h' && s(1) >= '1' && s(1) <= '8'
+      if s.length == 2 && s(0) >= 'a' && s(0) <= 'h' && s(1) >= '1' && s(
+          1
+        ) <= '8'
       then Right(Position(s(0), s(1).asDigit))
       else Left(s"Invalid position '$s'")
 
@@ -83,7 +95,9 @@ object JsonCodec:
   given boardEncoder: JsonEncoder[Board] =
     JsonEncoder[Json].contramap: board =>
       Json.Obj(zio.Chunk.fromIterable(board.map { case (pos, piece) =>
-        s"${pos.col}${pos.row}" -> Json.Str(s"${colorString(piece.color)} ${pieceTypeString(piece.pieceType)}")
+        s"${pos.col}${pos.row}" -> Json.Str(
+          s"${colorString(piece.color)} ${pieceTypeString(piece.pieceType)}"
+        )
       }))
 
   private def parsePosition(s: String): Either[String, Position] =
@@ -94,14 +108,15 @@ object JsonCodec:
   given boardDecoder: JsonDecoder[Board] =
     JsonDecoder[Json].mapOrFail:
       case obj: Json.Obj =>
-        obj.fields.foldLeft[Either[String, Board]](Right(Map.empty)) { case (acc, (key, value)) =>
-          for
-            board <- acc
-            pos <- parsePosition(key)
-            piece <- value match
-              case Json.Str(s) => parsePiece(s)
-              case other       => Left(s"Expected string for piece at '$key'")
-          yield board + (pos -> piece)
+        obj.fields.foldLeft[Either[String, Board]](Right(Map.empty)) {
+          case (acc, (key, value)) =>
+            for
+              board <- acc
+              pos <- parsePosition(key)
+              piece <- value match
+                case Json.Str(s) => parsePiece(s)
+                case other       => Left(s"Expected string for piece at '$key'")
+            yield board + (pos -> piece)
         }
       case _ => Left("Expected object for board")
 
@@ -110,7 +125,8 @@ object JsonCodec:
   given pieceEncoder: JsonEncoder[Piece] = JsonEncoder.string.contramap: p =>
     s"${colorString(p.color)} ${pieceTypeString(p.pieceType)}"
 
-  given pieceDecoder: JsonDecoder[Piece] = JsonDecoder.string.mapOrFail(parsePiece)
+  given pieceDecoder: JsonDecoder[Piece] =
+    JsonDecoder.string.mapOrFail(parsePiece)
 
   // ─── CastlingRights ────────────────────────────────────────────────────────
 
@@ -136,6 +152,8 @@ object JsonCodec:
     case "stalemate"             => Right(DrawReason.Stalemate)
     case "fifty-move rule"       => Right(DrawReason.FiftyMoveRule)
     case "insufficient material" => Right(DrawReason.InsufficientMaterial)
+    case "threefold repetition"  => Right(DrawReason.ThreefoldRepetition)
+    case "fivefold repetition"   => Right(DrawReason.FivefoldRepetition)
     case other                   => Left(s"Unknown draw reason '$other'")
 
   given JsonDecoder[GameStatus] = JsonDecoder[Json].mapOrFail:
@@ -157,10 +175,18 @@ object JsonCodec:
     Json.Obj(
       "board" -> boardEncoder.toJsonAST(s.board).toOption.get,
       "activeColor" -> Json.Str(colorString(s.activeColor)),
-      "castlingRights" -> summon[JsonEncoder[CastlingRights]].toJsonAST(s.castlingRights).toOption.get,
-      "enPassantTarget" -> s.enPassantTarget.fold(Json.Null)(p => Json.Str(s"${p.col}${p.row}")),
+      "castlingRights" -> summon[JsonEncoder[CastlingRights]]
+        .toJsonAST(s.castlingRights)
+        .toOption
+        .get,
+      "enPassantTarget" -> s.enPassantTarget.fold(Json.Null)(p =>
+        Json.Str(s"${p.col}${p.row}")
+      ),
       "inCheck" -> Json.Bool(s.inCheck),
-      "status" -> summon[JsonEncoder[GameStatus]].toJsonAST(s.status).toOption.get,
+      "status" -> summon[JsonEncoder[GameStatus]]
+        .toJsonAST(s.status)
+        .toOption
+        .get,
       "halfmoveClock" -> Json.Num(s.halfmoveClock),
       "fullmoveNumber" -> Json.Num(s.fullmoveNumber)
     )
@@ -168,28 +194,50 @@ object JsonCodec:
   given JsonDecoder[GameState] = JsonDecoder[Json].mapOrFail:
     case obj: Json.Obj =>
       for
-        board <- obj.get("board").toRight("Missing 'board'")
+        board <- obj
+          .get("board")
+          .toRight("Missing 'board'")
           .flatMap(boardDecoder.fromJsonAST(_).left.map(_.toString))
-        color <- obj.get("activeColor").toRight("Missing 'activeColor'").flatMap:
-          case Json.Str(s) => parseColor(s)
-          case _           => Left("Expected string for 'activeColor'")
-        rights <- obj.get("castlingRights").toRight("Missing 'castlingRights'")
-          .flatMap(summon[JsonDecoder[CastlingRights]].fromJsonAST(_).left.map(_.toString))
+        color <- obj
+          .get("activeColor")
+          .toRight("Missing 'activeColor'")
+          .flatMap:
+            case Json.Str(s) => parseColor(s)
+            case _           => Left("Expected string for 'activeColor'")
+        rights <- obj
+          .get("castlingRights")
+          .toRight("Missing 'castlingRights'")
+          .flatMap(
+            summon[JsonDecoder[CastlingRights]]
+              .fromJsonAST(_)
+              .left
+              .map(_.toString)
+          )
         ep <- obj.get("enPassantTarget") match
           case None | Some(Json.Null) => Right(None)
           case Some(Json.Str(s)) =>
-            if s.length == 2 && s(0) >= 'a' && s(0) <= 'h' && s(1) >= '1' && s(1) <= '8'
+            if s.length == 2 && s(0) >= 'a' && s(0) <= 'h' && s(1) >= '1' && s(
+                1
+              ) <= '8'
             then Right(Some(Position(s(0), s(1).asDigit)))
             else Left(s"Invalid en passant target '$s'")
           case _ => Left("Invalid en passant target")
-        status <- obj.get("status").toRight("Missing 'status'")
-          .flatMap(summon[JsonDecoder[GameStatus]].fromJsonAST(_).left.map(_.toString))
-        hm = obj.get("halfmoveClock").flatMap:
-          case Json.Num(n) => Some(n.intValue)
-          case _           => None
-        fm = obj.get("fullmoveNumber").flatMap:
-          case Json.Num(n) => Some(n.intValue)
-          case _           => None
+        status <- obj
+          .get("status")
+          .toRight("Missing 'status'")
+          .flatMap(
+            summon[JsonDecoder[GameStatus]].fromJsonAST(_).left.map(_.toString)
+          )
+        hm = obj
+          .get("halfmoveClock")
+          .flatMap:
+            case Json.Num(n) => Some(n.intValue)
+            case _           => None
+        fm = obj
+          .get("fullmoveNumber")
+          .flatMap:
+            case Json.Num(n) => Some(n.intValue)
+            case _           => None
       yield GameState(
         board = board,
         activeColor = color,

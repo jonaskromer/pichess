@@ -35,8 +35,8 @@ object Game:
           }
     yield newState.copy(status = status)
 
-  /** Applies a move without detecting checkmate/stalemate.
-    * Used by [[MoveValidator.hasLegalMove]] to avoid infinite recursion.
+  /** Applies a move without detecting checkmate/stalemate. Used by
+    * [[MoveValidator.hasLegalMove]] to avoid infinite recursion.
     */
   private[rules] def applyMoveCore(
       state: GameState,

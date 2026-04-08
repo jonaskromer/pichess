@@ -9,7 +9,7 @@ trait GameService:
   def newGame(): IO[GameError, GameEvent.GameStarted]
   def loadGame(
       input: String
-  ): IO[GameError, (GameEvent.GameStarted, List[Move], GameState)]
+  ): IO[GameError, (GameEvent.GameStarted, List[(Move, GameState)])]
   def makeMove(
       id: GameId,
       rawInput: String
@@ -23,7 +23,11 @@ object GameService:
 
   def loadGame(
       input: String
-  ): ZIO[GameService, GameError, (GameEvent.GameStarted, List[Move], GameState)] =
+  ): ZIO[
+    GameService,
+    GameError,
+    (GameEvent.GameStarted, List[(Move, GameState)])
+  ] =
     ZIO.serviceWithZIO[GameService](_.loadGame(input))
 
   def makeMove(

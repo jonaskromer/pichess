@@ -32,7 +32,8 @@ object TuiController:
 
   def parseCommand(input: String): Command =
     val trimmed = input.trim
-    if trimmed.startsWith(loadPrefix) then Command.Load(trimmed.drop(loadPrefix.length))
+    if trimmed.startsWith(loadPrefix) then
+      Command.Load(trimmed.drop(loadPrefix.length))
     else if trimmed.startsWith(exportPrefix) then
       trimmed.drop(exportPrefix.length) match
         case "fen"  => Command.Export(ExportFormat.Fen)
@@ -60,9 +61,13 @@ object TuiController:
       case Command.Quit =>
         shutdown.succeed(()).as(Result.Shutdown)
       case Command.Help =>
-        session.update(_.copy(error = None, output = None)).as(Result.Continue(flipped))
+        session
+          .update(_.copy(error = None, output = None))
+          .as(Result.Continue(flipped))
       case Command.Flip =>
-        session.update(_.copy(error = None, output = None)).as(Result.Continue(!flipped))
+        session
+          .update(_.copy(error = None, output = None))
+          .as(Result.Continue(!flipped))
       case Command.Undo =>
         GameController
           .undo(gs, session)
@@ -100,22 +105,30 @@ object TuiController:
               session
                 .update(_.copy(error = Some(err.message)))
                 .as(Result.Continue(flipped)),
-            { case (event, moves, currentState) =>
+            { case (event, history) =>
               session
-                .set(SessionState(
-                  GameSnapshot(event.gameId, event.initialState, moves, Nil, currentState)
-                ))
+                .set(
+                  SessionState(
+                    GameSnapshot(
+                      event.gameId,
+                      event.initialState,
+                      history = history.reverse
+                    )
+                  )
+                )
                 .as(Result.Continue(flipped))
             }
           )
       case Command.Export(format) =>
         session.get.flatMap { s =>
           val text = format match
-            case ExportFormat.Fen  => ZIO.succeed(FenSerializer.serialize(s.state))
-            case ExportFormat.Json => ZIO.succeed(JsonSerializer.serialize(s.state))
+            case ExportFormat.Fen =>
+              ZIO.succeed(FenSerializer.serialize(s.state))
+            case ExportFormat.Json =>
+              ZIO.succeed(JsonSerializer.serialize(s.state))
             case ExportFormat.Pgn =>
               SanSerializer
-                .deriveMoveLog(s.initialState, s.moves)
+                .deriveMoveLog(s.initialState, s.history)
                 .orDie
                 .map(log => PgnSerializer.serialize(log, s.state.status))
           text.flatMap(t =>

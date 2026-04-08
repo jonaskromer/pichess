@@ -31,7 +31,7 @@ object GameServiceSpec extends ZIOSpecDefault:
     suite("loadGame")(
       test("auto-detect FEN and return parsed state") {
         val fen = "4k3/8/8/8/8/8/8/4K3 w - - 0 1"
-        for (event, moves, currentState) <- GameService.loadGame(fen)
+        for (event, history) <- GameService.loadGame(fen)
         yield assertTrue(
           event.gameId.nonEmpty,
           event.initialState.board == Map(
@@ -39,26 +39,27 @@ object GameServiceSpec extends ZIOSpecDefault:
             Position('e', 8) -> Piece(Color.Black, PieceType.King)
           ),
           event.initialState.activeColor == Color.White,
-          moves.isEmpty,
-          currentState == event.initialState
+          history.isEmpty
         )
       },
       test("auto-detect PGN and return replayed state with moves") {
         val pgn = "1. e4 e5 2. Nf3 *"
-        for (event, moves, currentState) <- GameService.loadGame(pgn)
-        yield assertTrue(
-          event.gameId.nonEmpty,
-          moves.length == 3,
-          event.initialState == GameState.initial,
-          currentState.board(Position('f', 3)) == Piece(
-            Color.White,
-            PieceType.Knight
+        for (event, history) <- GameService.loadGame(pgn)
+        yield
+          val currentState = history.last._2
+          assertTrue(
+            event.gameId.nonEmpty,
+            history.length == 3,
+            event.initialState == GameState.initial,
+            currentState.board(Position('f', 3)) == Piece(
+              Color.White,
+              PieceType.Knight
+            )
           )
-        )
       },
       test("auto-detect JSON and return parsed state") {
         val json = """{"board": {"e1": "white king", "e8": "black king"}, "activeColor": "white", "castlingRights": {"whiteKingSide": false, "whiteQueenSide": false, "blackKingSide": false, "blackQueenSide": false}, "enPassantTarget": null, "inCheck": false, "status": "playing"}"""
-        for (event, moves, _) <- GameService.loadGame(json)
+        for (event, history) <- GameService.loadGame(json)
         yield assertTrue(
           event.gameId.nonEmpty,
           event.initialState.board == Map(
@@ -66,7 +67,7 @@ object GameServiceSpec extends ZIOSpecDefault:
             Position('e', 8) -> Piece(Color.Black, PieceType.King)
           ),
           event.initialState.activeColor == Color.White,
-          moves.isEmpty
+          history.isEmpty
         )
       },
       test("persist the loaded state") {
@@ -76,7 +77,7 @@ object GameServiceSpec extends ZIOSpecDefault:
           Position('e', 8) -> Piece(Color.Black, PieceType.King)
         )
         for
-          (event, _, _) <- GameService.loadGame(fen)
+          (event, _) <- GameService.loadGame(fen)
           state <- GameService.getState(event.gameId)
         yield assertTrue(
           state.isDefined,

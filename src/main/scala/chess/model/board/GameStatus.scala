@@ -6,6 +6,8 @@ enum DrawReason:
   case Stalemate
   case FiftyMoveRule
   case InsufficientMaterial
+  case ThreefoldRepetition
+  case FivefoldRepetition
 
 enum GameStatus:
   case Playing

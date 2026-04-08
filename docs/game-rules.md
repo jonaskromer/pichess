@@ -92,22 +92,21 @@ e8=Q    — SAN: pawn to e8, promote to queen
 - Detected cases: K vs K, K+B vs K, K+N vs K, K+B vs K+B (same-colored bishops).
 
 ### Undo / Redo
-- **Undo** (`undo`): reverts the last move. The game state is restored by replaying all moves except the last from the initial position. The undone move is pushed onto a redo stack.
-- **Redo** (`redo`): reapplies the most recently undone move. Making a new move clears the redo stack.
+- **Undo** (`undo`): reverts the last move. The previous state is restored from the state history stack (O(1)). The undone move and its state are pushed onto a redo stack.
+- **Redo** (`redo`): reapplies the most recently undone move from the redo stack (O(1)). Making a new move clears the redo stack.
 - Both commands are available in the TUI and via the web GUI (buttons and `/api/undo`, `/api/redo` endpoints).
 
 ### Move Counters
 - **Halfmove clock**: counts consecutive moves with no pawn advance and no capture. Resets to 0 on any pawn move or capture (including en passant). Used for the 50-move draw rule.
 - **Fullmove number**: starts at 1 and increments after each Black move. Both counters are preserved through FEN and JSON import/export.
 
----
+### Threefold Repetition (Claim-Based)
+- A player may claim a draw with the `draw` command when the current position has occurred **three or more times** during the game.
+- A "position" is defined by: piece placement, active color, castling rights, and en passant target (the first four FEN fields). Halfmove clock and fullmove number are not part of the position.
+- The position history includes the initial position and every position reached after a move.
 
-## Not Yet Implemented
-
-| Rule | Status |
-|---|---|
-| Threefold repetition | Not implemented |
+### Fivefold Repetition (Automatic)
+- The game is automatically drawn when the same position occurs **five times**. No claim is needed.
+- This is checked after every move.
 
 Illegal moves are rejected with an error message and the player is prompted to retry.
-
-> Implementation of the missing rules is tracked in [roadmap.md — Phase 2](roadmap.md#phase-2--missing-chess-rules).

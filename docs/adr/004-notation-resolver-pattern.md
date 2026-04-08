@@ -17,20 +17,20 @@ Extract notation parsing into a `chess.notation` package. Each notation style is
 
 ```scala
 trait NotationResolver:
-  def parse(input: String, state: GameState): Option[Either[GameError, Move]]
+  def parse(input: String, state: GameState): IO[GameError, Option[Move]]
 ```
 
-- Returns `None` if the input doesn't match this notation style.
-- Returns `Some(Right(move))` on a successful match and resolution.
-- Returns `Some(Left(error))` if the input matches but is invalid (e.g. ambiguous SAN, unimplemented castling).
+- Returns `None` (wrapped in ZIO) if the input doesn't match this notation style.
+- Returns `Some(move)` on a successful match and resolution.
+- Fails with `GameError` if the input matches but is invalid (e.g. ambiguous SAN, illegal castling).
 
 `MoveParser` becomes a thin orchestrator that chains the resolvers and returns the first match (Chain of Responsibility). The `ParsedMove` intermediate type is eliminated — resolvers produce `Move` directly.
 
-A `SanSerializer` was added in the same package, providing the inverse: `toSan(move, state): String`.
+A `SanSerializer` was added in the same package, providing the inverse: `toSan(move, state): IO[GameError, String]`.
 
-### Why `Option[Either[...]]` instead of just `Either`?
+### Why `IO[GameError, Option[Move]]` instead of just `IO[GameError, Move]`?
 
-A resolver needs to express three outcomes: "not my notation" (`None`), "my notation but invalid" (`Some(Left)`), and "success" (`Some(Right)`). Using `Either` alone would force every resolver to attempt parsing every input and produce error messages for notation styles they don't handle, which muddies error reporting.
+A resolver needs to express three outcomes: "not my notation" (`None`), "my notation but invalid" (ZIO failure with `GameError`), and "success" (`Some(move)`). Returning a plain `Move` would force every resolver to attempt parsing every input and produce error messages for notation styles they don't handle, which muddies error reporting.
 
 ### Why a separate `chess.notation` package?
 

@@ -134,7 +134,7 @@ object WebController:
     (for
       event <- gs.newGame()
       _ <- session.set(
-        SessionState(GameSnapshot(event.gameId, event.initialState, Nil, Nil, event.initialState))
+        SessionState(GameSnapshot(event.gameId, event.initialState))
       )
       s <- session.get
       resp <- stateResponse(s)
@@ -153,7 +153,7 @@ object WebController:
 
   private def deriveJson(s: SessionState): UIO[String] =
     SanSerializer
-      .deriveMoveLog(s.initialState, s.moves)
+      .deriveMoveLog(s.initialState, s.history)
       .map(log => WebBoardView.toJson(s.state, log, s.error))
       .orDie
 

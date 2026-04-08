@@ -20,7 +20,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
       gs <- ZIO.service[GameService]
       event <- gs.newGame()
       session <- SubscriptionRef.make(
-        SessionState(GameSnapshot(event.gameId, event.initialState, Nil, Nil, event.initialState))
+        SessionState(GameSnapshot(event.gameId, event.initialState))
       )
       shutdown <- Promise.make[Nothing, Unit]
       routes = WebController.routes(gs, session, shutdown)
@@ -142,10 +142,11 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         body <- response.body.asString
       yield assertTrue(
         response.status == Status.BadRequest,
-        body.contains("need 50")
+        body.contains("Cannot claim draw")
       )
     },
     test("POST /api/draw succeeds when clock is 100") {
+      import chess.model.board.Move
       val drawableState = GameState(
         Map(
           Position('e', 1) -> Piece(Color.White, PieceType.King),
@@ -154,13 +155,16 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         Color.White,
         halfmoveClock = 100
       )
+      val dummyMove = Move(Position('e', 1), Position('e', 1))
       for
         gs <- ZIO.service[GameService]
         (routes, session, _) <- withRoutes
         gameId <- session.get.map(_.gameId)
         _ <- gs.saveState(gameId, drawableState)
         _ <- session.update(st =>
-          st.copy(game = st.game.copy(state = drawableState))
+          st.copy(game = st.game.copy(
+            history = List((dummyMove, drawableState))
+          ))
         )
         response <- routes.runZIO(Request.post(url"/api/draw", Body.empty))
         s <- session.get

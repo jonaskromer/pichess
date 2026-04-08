@@ -19,28 +19,29 @@ final class GameServiceLive(repo: GameRepository) extends GameService:
 
   def loadGame(
       input: String
-  ): IO[GameError, (GameEvent.GameStarted, List[Move], GameState)] =
+  ): IO[GameError, (GameEvent.GameStarted, List[(Move, GameState)])] =
     val tryJson = ZIO
       .fromEither(JsonParser.parse(input))
       .mapError(GameError.ParseError(_))
-      .map(state => (state, List.empty[Move], state))
+      .map(state => (state, List.empty[(Move, GameState)]))
 
     val tryFen = ZIO
       .fromEither(FenParserRegex.parse(input))
       .mapError(GameError.ParseError(_))
-      .map(state => (state, List.empty[Move], state))
+      .map(state => (state, List.empty[(Move, GameState)]))
 
     val tryPgn = PgnParser
       .parse(input)
-      .map(pgn => (pgn.initialState, pgn.moves, pgn.state))
+      .map(pgn => (pgn.initialState, pgn.history))
 
     val parsed = tryJson.orElse(tryPgn).orElse(tryFen)
 
-    parsed.flatMap { case (initialState, moves, currentState) =>
+    parsed.flatMap { case (initialState, history) =>
+      val currentState = history.lastOption.map(_._2).getOrElse(initialState)
       for
         id <- Random.nextUUID.map(_.toString)
         _ <- repo.save(id, currentState)
-      yield (GameEvent.GameStarted(id, initialState), moves, currentState)
+      yield (GameEvent.GameStarted(id, initialState), history)
     }
 
   def makeMove(

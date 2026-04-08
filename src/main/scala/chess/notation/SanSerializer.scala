@@ -89,15 +89,14 @@ object SanSerializer:
 
   def deriveMoveLog(
       initialState: GameState,
-      moves: List[Move]
+      history: List[(Move, GameState)]
   ): IO[GameError, List[(Color, String)]] =
-    ZIO.foldLeft(moves)(
-      (initialState, List.empty[(Color, String)])
-    ) { case ((state, log), move) =>
-      for
-        san <- toSan(move, state)
-        newState <- Game.applyMove(state, move)
-      yield (newState, log :+ (state.activeColor, san))
-    }.map(_._2)
+    if history.isEmpty then ZIO.succeed(Nil)
+    else
+      val chronological = history.reverse
+      val preMoveStates = initialState :: chronological.init.map(_._2)
+      ZIO.foreach(preMoveStates.zip(chronological)) { case (pre, (move, _)) =>
+        toSan(move, pre).map(san => (pre.activeColor, san))
+      }
 
   private def squareStr(pos: Position): String = s"${pos.col}${pos.row}"

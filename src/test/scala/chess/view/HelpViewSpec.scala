@@ -20,12 +20,7 @@ object HelpViewSpec extends ZIOSpecDefault:
       help.indexOf("IMPLEMENTED RULES")
     )
   private val implementedSection =
-    help.substring(
-      help.indexOf("IMPLEMENTED RULES"),
-      help.indexOf("NOT YET IMPLEMENTED")
-    )
-  private val notYetSection =
-    help.substring(help.indexOf("NOT YET IMPLEMENTED"))
+    help.substring(help.indexOf("IMPLEMENTED RULES"))
 
   def spec = suite("HelpView.render")(
     suite("commands")(
@@ -171,17 +166,8 @@ object HelpViewSpec extends ZIOSpecDefault:
           implementedSection.contains("rook jumps over")
         )
       },
-      test("castling is not in the not-yet-implemented section") {
-        assertTrue(!notYetSection.contains("Castling"))
-      },
-      test("check is not in the not-yet-implemented section") {
-        assertTrue(!notYetSection.contains("Check "))
-      },
       test("list checkmate as implemented") {
         assertTrue(implementedSection.contains("Checkmate"))
-      },
-      test("checkmate is not in the not-yet-implemented section") {
-        assertTrue(!notYetSection.contains("Checkmate"))
       }
     ),
     suite("implemented draw rules")(
@@ -193,11 +179,12 @@ object HelpViewSpec extends ZIOSpecDefault:
       },
       test("list insufficient material as implemented") {
         assertTrue(implementedSection.contains("Insufficient material"))
-      }
-    ),
-    suite("not yet implemented")(
-      test("list threefold repetition") {
-        assertTrue(notYetSection.contains("Threefold repetition"))
+      },
+      test("list threefold repetition as implemented") {
+        assertTrue(implementedSection.contains("Threefold repetition"))
+      },
+      test("list fivefold repetition as implemented") {
+        assertTrue(implementedSection.contains("Fivefold repetition"))
       }
     )
   )

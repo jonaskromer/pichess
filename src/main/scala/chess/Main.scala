@@ -36,7 +36,7 @@ object Main extends ZIOAppDefault:
       gs <- ZIO.service[GameService]
       event <- gs.newGame()
       session <- SubscriptionRef.make(
-        SessionState(GameSnapshot(event.gameId, event.initialState, Nil, Nil, event.initialState))
+        SessionState(GameSnapshot(event.gameId, event.initialState))
       )
       shutdown <- Promise.make[Nothing, Unit]
       inputQueue <- Queue.unbounded[String]
@@ -74,7 +74,7 @@ object Main extends ZIOAppDefault:
     for
       s <- session.get
       moveLog <- SanSerializer
-        .deriveMoveLog(s.initialState, s.moves)
+        .deriveMoveLog(s.initialState, s.history)
         .orDie
       _ <- printLine(BoardView.render(s.state, flipped))
       _ <- ZIO.when(moveLog.nonEmpty)(

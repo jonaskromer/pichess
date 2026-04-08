@@ -10,9 +10,10 @@ object PgnParser:
   case class PgnGame(
       headers: Map[String, String],
       initialState: GameState,
-      moves: List[Move],
-      state: GameState
-  )
+      history: List[(Move, GameState)]
+  ):
+    def state: GameState = history.lastOption.map(_._2).getOrElse(initialState)
+    def moves: List[Move] = history.map(_._1)
 
   def parse(input: String): IO[GameError, PgnGame] =
     val lines = input.linesIterator.toList
@@ -23,11 +24,13 @@ object PgnParser:
     for
       initialState <- fenHeader match
         case Some(fen) =>
-          ZIO.fromEither(FenParserRegex.parse(fen)).mapError(GameError.ParseError(_))
+          ZIO
+            .fromEither(FenParserRegex.parse(fen))
+            .mapError(GameError.ParseError(_))
         case None => ZIO.succeed(GameState.initial)
       sanMoves = extractMoves(movetext)
-      result <- replayMoves(initialState, sanMoves)
-    yield PgnGame(headers, initialState, result._2, result._1)
+      history <- replayMoves(initialState, sanMoves)
+    yield PgnGame(headers, initialState, history)
 
   private val headerPattern = """\[(\w+)\s+"([^"]*)"\]""".r
 
@@ -54,11 +57,13 @@ object PgnParser:
   private def replayMoves(
       initial: GameState,
       sanMoves: List[String]
-  ): IO[GameError, (GameState, List[Move])] =
-    ZIO.foldLeft(sanMoves)((initial, List.empty[Move])) {
-      case ((state, moves), san) =>
-        for
-          move <- chess.controller.MoveParser.parse(san, state)
-          newState <- Game.applyMove(state, move)
-        yield (newState, moves :+ move)
-    }
+  ): IO[GameError, List[(Move, GameState)]] =
+    ZIO
+      .foldLeft(sanMoves)((initial, List.empty[(Move, GameState)])) {
+        case ((state, history), san) =>
+          for
+            move <- chess.controller.MoveParser.parse(san, state)
+            newState <- Game.applyMove(state, move)
+          yield (newState, history :+ (move, newState))
+      }
+      .map(_._2)

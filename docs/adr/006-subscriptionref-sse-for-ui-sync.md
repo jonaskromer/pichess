@@ -19,7 +19,7 @@ Options considered:
 
 Use `zio.stream.SubscriptionRef[SessionState]` as the single source of truth, with SSE for browser push.
 
-- **Shared state:** Both UIs read from and write to the same `SubscriptionRef`. Any update is immediately visible to all subscribers.
+- **Shared state:** Both UIs read from and write to the same `SubscriptionRef`. `SessionState` wraps a `GameSnapshot` (game ID, initial state, move history, redo stack, current state) plus optional error/output fields. Any update is immediately visible to all subscribers.
 - **Web → browser:** An `/api/events` SSE endpoint pipes `session.changes` into `ServerSentEvent` frames via `Response.fromServerSentEvents`. The browser listens with `EventSource`.
 - **TUI reactivity:** The TUI loop races `readLine` against `session.changes.drop(1).take(1)`. If the web GUI makes a move while the TUI is waiting for input, the race resolves to `ExternalChange` and the TUI re-renders immediately.
 - **Shutdown propagation:** A `quit` event type on the SSE stream tells the browser to show the goodbye screen, regardless of which UI initiated the quit.

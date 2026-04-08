@@ -10,7 +10,7 @@ object HelpView:
        |  export fen|pgn|json  Export the current game in the given format
        |  undo                 Undo the last move
        |  redo                 Redo the last undone move
-       |  draw                 Claim a draw (50-move rule)
+       |  draw                 Claim a draw (50-move rule or threefold repetition)
        |  flip                 Flip the board (toggle White/Black perspective)
        |  help                 Show this help screen
        |  quit                 Exit the game
@@ -87,8 +87,9 @@ object HelpView:
        |  Insufficient material — game drawn automatically when neither side
        |                          can checkmate (K vs K, K+B vs K, K+N vs K,
        |                          K+B vs K+B same-colored bishops)
+       |  Threefold repetition — claim a draw with 'draw' when the same
+       |                         position has occurred 3 or more times
+       |  Fivefold repetition — game drawn automatically when the same
+       |                        position occurs 5 times
        |  Turn order: White moves first, then alternates
-       |
-       |NOT YET IMPLEMENTED
-       |  Threefold repetition  (draw when same position occurs 3 times)
        |""".stripMargin

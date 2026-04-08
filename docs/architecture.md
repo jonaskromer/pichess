@@ -61,11 +61,11 @@ Domain types. No I/O, no dependencies on other packages.
 | `GameId.scala` | `type GameId = String` — single change point if stronger typing is needed later |
 | `GameError.scala` | Defines `enum GameError` representing typed failure tracks (e.g. `ParseError`, `InvalidMove`, `GameNotFound`) |
 | `GameEvent.scala` | Domain events: `GameStarted`, `MoveMade`, `InvalidMoveAttempted` |
-| `SessionState.scala` | Shared mutable state: `gameId`, `GameState`, `moveLog`, `error` — held in a `SubscriptionRef` |
+| `SessionState.scala` | `GameSnapshot` (game ID, initial state, history as `List[(Move, GameState)]` newest-first, redo stack) and `SessionState` (snapshot + optional error/output) — held in a `SubscriptionRef`. Current state is derived from `history.head` or `initialState`. |
 | `board/Board.scala` | `type Board = Map[Position, Piece]` + initial board setup |
 | `board/CastlingRights.scala` | Case class with four booleans tracking kingside/queenside castling rights for each color |
 | `board/GameState.scala` | Immutable game snapshot: board, active color, en passant target, castling rights, in-check flag, game status |
-| `board/GameStatus.scala` | `enum GameStatus` — `Playing` or `Checkmate(winner: Color)` |
+| `board/GameStatus.scala` | `enum DrawReason` (`Stalemate`, `FiftyMoveRule`, `InsufficientMaterial`, `ThreefoldRepetition`, `FivefoldRepetition`) and `enum GameStatus` — `Playing`, `Checkmate(winner: Color)`, or `Draw(reason: DrawReason)` |
 | `board/Move.scala` | A move from one `Position` to another, with optional promotion piece |
 | `board/Position.scala` | A board square identified by column (`Char`) and row (`Int`) |
 | `piece/Color.scala` | `White` / `Black` with `.opposite` |
@@ -79,7 +79,7 @@ Chess logic using ZIO's typed error channel. Takes `GameState` and `Move`, retur
 | File | Purpose |
 |---|---|
 | `MoveValidator.scala` | Validates a move against all chess rules for all piece types, including en passant |
-| `Game.scala` | Applies a validated move to produce a new `GameState`; handles en passant capture/target tracking and pawn promotion |
+| `Game.scala` | Applies a validated move to produce a new `GameState`; handles en passant, pawn promotion, stalemate, 50-move rule, and insufficient material detection |
 
 ### `chess.notation`
 
@@ -91,11 +91,11 @@ Notation parsing and serialization. Each notation style has its own resolver imp
 | `CoordinateResolver.scala` | Parses coordinate notation: `e2 e4`, `e2e4`, `e2-e4`, `e7e8=Q` |
 | `SanResolver.scala` | Parses SAN: piece moves (`Nf3`), pawn pushes (`e4`), pawn captures (`exd5`), promotion (`e8=Q`), disambiguation (`Nbd2`) |
 | `CastlingResolver.scala` | Parses castling notation (`O-O`, `O-O-O`); currently returns an error (not yet implemented) |
-| `SanSerializer.scala` | `toSan(move, state): IO[GameError, String]` — serializes a `Move` + pre-move `GameState` into SAN (with disambiguation, capture notation, and promotion) |
+| `SanSerializer.scala` | `toSan(move, state): IO[GameError, String]` — serializes a `Move` + pre-move `GameState` into SAN (with disambiguation, capture notation, and promotion). Also provides `deriveMoveLog(initialState, moves)` to replay and serialize an entire move history. |
 
 ### `chess.codec`
 
-FEN (Forsyth–Edwards Notation) parsing and serialization. Used for game import/export and as the persistence wire format for the REST API introduced in phase 4. Three parser implementations are provided side-by-side, each demonstrating a different parsing technique; they all share the same semantic validation through `FenBuilder`.
+Game state encoding and decoding in multiple formats: FEN (Forsyth–Edwards Notation), PGN (Portable Game Notation), and JSON. FEN is used for game import/export and as the persistence wire format for the REST API introduced in phase 4. Three FEN parser implementations are provided side-by-side, each demonstrating a different parsing technique; they all share the same semantic validation through `FenBuilder`. PGN support covers move-text import/export. JSON is used for web GUI communication.
 
 | File | Purpose |
 |---|---|
@@ -105,6 +105,11 @@ FEN (Forsyth–Edwards Notation) parsing and serialization. Used for game import
 | `FenParserRegex.scala` | Implementation built on `scala.util.matching.Regex` with no external parser library. |
 | `FenBuilder.scala` | Shared converter from the six tokenized FEN fields to a validated `GameState`. Computes `inCheck` via `MoveValidator.isInCheck`. |
 | `FenSerializer.scala` | `serialize(state: GameState): String` — emits the canonical FEN string for a game state. Halfmove/fullmove counters are emitted as `0 1` because `GameState` does not track them. |
+| `PgnParser.scala` | Parses PGN (Portable Game Notation) move text into a list of moves. |
+| `PgnSerializer.scala` | Serializes a game's move history into PGN format. |
+| `JsonParser.scala` | Parses a JSON representation of game state. |
+| `JsonSerializer.scala` | Serializes game state to JSON. |
+| `JsonCodec.scala` | Combines `JsonParser` and `JsonSerializer` for round-trip JSON encoding. |
 
 **Future:** The Phase 4 REST API will use this package to expose `GET /games/:id` (serializer) and `POST /games` with a FEN body (parser).
 
@@ -114,7 +119,7 @@ Input handling and shared move-processing logic.
 
 | File | Purpose |
 |---|---|
-| `GameController.scala` | `makeMove(gs, session, rawInput): IO[GameError, Unit]` — shared move-processing logic used by both TUI and web. Orchestrates `GameService.makeMove`, SAN serialization, and session state update. |
+| `GameController.scala` | Shared move-processing logic used by both TUI and web: `makeMove`, `undo`, `redo`, `claimDraw`. Orchestrates `GameService`, SAN serialization, session state updates, and repetition detection (`positionKey`, `countCurrentPosition`, `isFivefoldRepetition`). |
 | `TuiController.scala` | TUI command parsing (`quit`, `help`, `flip`, move) and dispatch. Returns `Result.Shutdown` or `Result.Continue(flipped)`. |
 | `MoveParser.scala` | Orchestrator: chains `CoordinateResolver`, `CastlingResolver`, `SanResolver` in order; `parse(input, state): IO[GameError, Move]` |
 | `WebController.scala` | HTTP route handlers (zio-http), SSE endpoint for state streaming, session management |
@@ -185,6 +190,7 @@ See [`docs/adr/`](adr/) for the full decision records:
 - [ADR 005 — ZIO effects throughout, including domain logic](adr/005-pure-domain-model-zio-at-boundaries.md)
 - [ADR 006 — SubscriptionRef + SSE for TUI/GUI synchronization](adr/006-subscriptionref-sse-for-ui-sync.md)
 - [ADR 007 — Promise for coordinated shutdown](adr/007-promise-for-coordinated-shutdown.md)
+- [ADR 008 — Undo/redo via full replay from initial state](adr/008-undo-redo-via-replay.md)
 
 ## Future Integration Points
 

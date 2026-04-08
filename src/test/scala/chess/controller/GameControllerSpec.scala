@@ -20,7 +20,7 @@ object GameControllerSpec extends ZIOSpecDefault:
       gs <- ZIO.service[GameService]
       event <- gs.newGame()
       session <- SubscriptionRef.make(
-        SessionState(GameSnapshot(event.gameId, event.initialState, Nil, Nil, event.initialState))
+        SessionState(GameSnapshot(event.gameId, event.initialState))
       )
     yield (gs, session)
 
@@ -53,7 +53,7 @@ object GameControllerSpec extends ZIOSpecDefault:
           (gs, session) <- withSession
           _ <- GameController.makeMove(gs, session, "e2 e4")
           s <- session.get
-          sanLog <- SanSerializer.deriveMoveLog(s.initialState, s.moves)
+          sanLog <- SanSerializer.deriveMoveLog(s.initialState, s.history)
         yield assertTrue(
           sanLog == List((Color.White, "e4"))
         )
@@ -92,7 +92,7 @@ object GameControllerSpec extends ZIOSpecDefault:
           (gs, session) <- withSession
           _ <- GameController.makeMove(gs, session, "Nf3")
           s <- session.get
-          sanLog <- SanSerializer.deriveMoveLog(s.initialState, s.moves)
+          sanLog <- SanSerializer.deriveMoveLog(s.initialState, s.history)
         yield assertTrue(
           s.state.board.get(Position('f', 3)) == Some(
             Piece(Color.White, PieceType.Knight)
@@ -106,7 +106,7 @@ object GameControllerSpec extends ZIOSpecDefault:
           _ <- GameController.makeMove(gs, session, "e4")
           _ <- GameController.makeMove(gs, session, "e5")
           s <- session.get
-          sanLog <- SanSerializer.deriveMoveLog(s.initialState, s.moves)
+          sanLog <- SanSerializer.deriveMoveLog(s.initialState, s.history)
         yield assertTrue(
           sanLog == List((Color.White, "e4"), (Color.Black, "e5")),
           s.state.activeColor == Color.White
@@ -132,7 +132,7 @@ object GameControllerSpec extends ZIOSpecDefault:
           _ <- GameController.undo(gs, session)
           s <- session.get
         yield assertTrue(
-          s.redoStack == List(Move(Position('e', 2), Position('e', 4)))
+          s.redoStack.map(_._1) == List(Move(Position('e', 2), Position('e', 4)))
         )
       },
       test("fail when no moves to undo") {
@@ -207,7 +207,7 @@ object GameControllerSpec extends ZIOSpecDefault:
         for
           (gs, session) <- withSession
           err <- GameController.claimDraw(gs, session).flip
-        yield assertTrue(err.message.contains("need 50"))
+        yield assertTrue(err.message.contains("Cannot claim draw"))
       },
       test("succeed when halfmove clock reaches 100") {
         val drawableState = GameState(
@@ -218,12 +218,15 @@ object GameControllerSpec extends ZIOSpecDefault:
           Color.White,
           halfmoveClock = 100
         )
+        val dummyMove = Move(Position('e', 1), Position('e', 1))
         for
           (gs, session) <- withSession
           gameId <- session.get.map(_.gameId)
           _ <- gs.saveState(gameId, drawableState)
           _ <- session.update(st =>
-            st.copy(game = st.game.copy(state = drawableState))
+            st.copy(game = st.game.copy(
+              history = List((dummyMove, drawableState))
+            ))
           )
           _ <- GameController.claimDraw(gs, session)
           s <- session.get
@@ -241,13 +244,72 @@ object GameControllerSpec extends ZIOSpecDefault:
           halfmoveClock = 100,
           status = GameStatus.Checkmate(Color.White)
         )
+        val dummyMove = Move(Position('e', 1), Position('e', 1))
         for
           (gs, session) <- withSession
           _ <- session.update(st =>
-            st.copy(game = st.game.copy(state = state))
+            st.copy(game = st.game.copy(
+              history = List((dummyMove, state))
+            ))
           )
           exit <- GameController.claimDraw(gs, session).exit
         yield assertTrue(exit.isFailure)
+      }
+    ),
+    suite("threefold repetition")(
+      test("claim draw after position occurs 3 times") {
+        // Initial → Nf3 → Nf6 → Ng1 → Ng8 (back to initial) → Nf3 → Nf6 → Ng1 → Ng8 (3rd time)
+        for
+          (gs, session) <- withSession
+          _ <- GameController.makeMove(gs, session, "Nf3")
+          _ <- GameController.makeMove(gs, session, "Nf6")
+          _ <- GameController.makeMove(gs, session, "Ng1")
+          _ <- GameController.makeMove(gs, session, "Ng8")
+          _ <- GameController.makeMove(gs, session, "Nf3")
+          _ <- GameController.makeMove(gs, session, "Nf6")
+          _ <- GameController.makeMove(gs, session, "Ng1")
+          _ <- GameController.makeMove(gs, session, "Ng8")
+          _ <- GameController.claimDraw(gs, session)
+          s <- session.get
+        yield assertTrue(
+          s.state.status == GameStatus.Draw(DrawReason.ThreefoldRepetition)
+        )
+      },
+      test("reject claim when position has not occurred 3 times") {
+        for
+          (gs, session) <- withSession
+          _ <- GameController.makeMove(gs, session, "Nf3")
+          _ <- GameController.makeMove(gs, session, "Nf6")
+          _ <- GameController.makeMove(gs, session, "Ng1")
+          _ <- GameController.makeMove(gs, session, "Ng8")
+          exit <- GameController.claimDraw(gs, session).exit
+        yield assertTrue(exit.isFailure)
+      }
+    ),
+    suite("fivefold repetition")(
+      test("automatic draw after position occurs 5 times") {
+        for
+          (gs, session) <- withSession
+          _ <- GameController.makeMove(gs, session, "Nf3")
+          _ <- GameController.makeMove(gs, session, "Nf6")
+          _ <- GameController.makeMove(gs, session, "Ng1")
+          _ <- GameController.makeMove(gs, session, "Ng8") // 2nd
+          _ <- GameController.makeMove(gs, session, "Nf3")
+          _ <- GameController.makeMove(gs, session, "Nf6")
+          _ <- GameController.makeMove(gs, session, "Ng1")
+          _ <- GameController.makeMove(gs, session, "Ng8") // 3rd
+          _ <- GameController.makeMove(gs, session, "Nf3")
+          _ <- GameController.makeMove(gs, session, "Nf6")
+          _ <- GameController.makeMove(gs, session, "Ng1")
+          _ <- GameController.makeMove(gs, session, "Ng8") // 4th
+          _ <- GameController.makeMove(gs, session, "Nf3")
+          _ <- GameController.makeMove(gs, session, "Nf6")
+          _ <- GameController.makeMove(gs, session, "Ng1")
+          _ <- GameController.makeMove(gs, session, "Ng8") // 5th
+          s <- session.get
+        yield assertTrue(
+          s.state.status == GameStatus.Draw(DrawReason.FivefoldRepetition)
+        )
       }
     )
   ).provide(appLayer)

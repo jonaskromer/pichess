@@ -14,11 +14,18 @@ import chess.model.piece.{Color, Piece, PieceType}
 object FenSerializer:
 
   def serialize(state: GameState): String =
+    val enPassant = state.enPassantTarget.map(_.toString).getOrElse("-")
+    s"${positionKey(state)} ${state.halfmoveClock} ${state.fullmoveNumber}"
+
+  /** First four FEN fields (placement, active color, castling, en passant).
+    * Used for position comparison in threefold/fivefold repetition detection.
+    */
+  def positionKey(state: GameState): String =
     val placement = serializeBoard(state.board)
     val active = if state.activeColor == Color.White then "w" else "b"
     val castling = serializeCastling(state.castlingRights)
     val enPassant = state.enPassantTarget.map(_.toString).getOrElse("-")
-    s"$placement $active $castling $enPassant ${state.halfmoveClock} ${state.fullmoveNumber}"
+    s"$placement $active $castling $enPassant"
 
   private def serializeBoard(board: Board): String =
     (8 to 1 by -1)

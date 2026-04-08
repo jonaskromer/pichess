@@ -18,7 +18,7 @@ Console chess game with full move validation, en passant, pawn promotion, ANSI b
 
 ## Phase 2 — Functional Style / Missing Chess Rules
 
-**Status:** Partially complete (functional style done; some chess rules remain)
+**Status:** Complete
 
 **Goal:** Apply functional patterns (Option, Either/ZIO errors, for-comprehension, two-track pattern) and complete the ruleset so the game can end naturally.
 
@@ -26,16 +26,20 @@ Console chess game with full move validation, en passant, pawn promotion, ANSI b
 |---|---|---|
 | Pawn promotion | `Game.applyMove` — validate and replace pawn with chosen piece | Done |
 | Check detection | `MoveValidator` — reject moves that leave own king in check; checked king highlighted in TUI and GUI | Done |
-| Checkmate | `Game.applyMove` — game-over guard + checkmate detection via `MoveValidator.hasLegalMove`; `GameStatus` enum (`Playing`, `Checkmate(winner)`) | Done |
-| Stalemate | `Game.applyMove` — detect no legal moves when not in check | Not started |
+| Checkmate | `Game.applyMove` — game-over guard + checkmate detection via `MoveValidator.hasLegalMove`; `GameStatus` enum (`Playing`, `Checkmate(winner)`, `Draw(reason)`) | Done |
+| Stalemate | `Game.applyMove` — detect no legal moves when not in check; `Draw(Stalemate)` | Done |
 | Castling | `MoveValidator` (path clear, rights exist, no check/attacked squares) + `Game.updatedBoard` (king+rook movement, rights tracking) + `CastlingResolver` (O-O / O-O-O parsing) | Done |
-| Draw conditions | `Game.applyMove` — track move history for 50-move / threefold | Not started |
+| 50-move rule | `Game.applyMove` — halfmove clock tracking; `GameController.claimDraw` command | Done |
+| Insufficient material | `Game.applyMove` — automatic draw when only kings remain (or K+B, K+N, K+B vs K+B same color) | Done |
+| Threefold repetition | `GameController.claimDraw` — claim-based; position key comparison via first 4 FEN fields | Done |
+| Fivefold repetition | `GameController.makeMove` — automatic draw when position occurs 5 times | Done |
 
 **Also completed (beyond core rules):**
 - Notation parsing refactored into `chess.notation` package with Strategy/Chain-of-Responsibility pattern (`NotationResolver` trait, `CoordinateResolver`, `SanResolver`, `CastlingResolver`)
-- SAN serialization (`SanSerializer`) for move display
+- SAN serialization (`SanSerializer`) for move display, including `deriveMoveLog` for replaying move history
 - Live move log in TUI showing last two moves with color-coded labels
 - ZIO typed error channel (`IO[GameError, A]`) throughout — two-track pattern via ZIO's error channel
+- Undo/redo support via `GameSnapshot` state history stack (O(1) undo/redo, no replay needed)
 
 ---
 
