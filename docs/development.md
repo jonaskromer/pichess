@@ -83,29 +83,35 @@ Register the new resolver in `MoveParser.resolvers` (order matters — first mat
 
 ## Adding a Parser (Phase 3)
 
-Parsers live in `chess.codec` and extend `RegexParsers`:
+Parsers live in `chess.codec` and implement the `FenParser` trait:
 
 ```scala
-import scala.util.parsing.combinator.RegexParsers
-
-class FenParser extends RegexParsers:
-  // terminals
-  private def rank: Parser[Int] = """\d""".r ^^ (_.toInt)
-  // ...
-
-  // public API always returns Either
-  def parse(input: String): Either[String, GameState] =
-    parseAll(fenRule, input) match
-      case Success(result, _)   => Right(result)
-      case NoSuccess(msg, next) => Left(s"[${next.pos}] $msg")
+trait FenParser:
+  def parse(input: String): Either[String, GameState]
 ```
 
+Three reference implementations exist side-by-side, one per parsing technique requested by SA-03:
+
+- `FenParserCombinator` — `scala-parser-combinators` / `RegexParsers`
+- `FenParserFastParse` — `fastparse` macro-based combinators
+- `FenParserRegex` — `scala.util.matching.Regex`, no external library
+
+All three tokenize into six raw FEN fields and then call **`FenBuilder.build`** for semantic validation. Add new parsers by following the same split: a thin grammar that produces token strings + a shared builder that converts tokens into the domain model.
+
 Key rules:
-- Extend `RegexParsers` (not bare `Parsers`)
-- Always use `parseAll` (not `parse`) so unconsumed input is an error
-- Public method returns `Either[String, T]` — never expose `ParseResult` directly
-- Chain post-parse validation with for-comprehension on `Either`
-- Dependency: `"org.scala-lang.modules" %% "scala-parser-combinators" % "2.1.1"`
+
+- Public method returns `Either[String, T]` — never expose `ParseResult` directly.
+- Combinator-style parsers must use `parseAll` (not `parse`) so trailing input is an error.
+- Match the parser result against `case ns: NoSuccess` (type binding), not `case NoSuccess(msg, next)` (extractor) — Scala 3's exhaustiveness checker only sees the first form as covering both `Failure` and `Error`.
+- For shared validation across parser implementations, factor it into a builder object so all parsers stay observationally equivalent.
+- New parsers must add a `behaviors` row in `FenParserBehaviors.scala` and a per-implementation spec object that calls `FenParserBehaviors.behaviors(parser)`.
+
+Dependencies (already in `build.sbt`):
+
+```scala
+"org.scala-lang.modules" %% "scala-parser-combinators" % "2.4.0"
+"com.lihaoyi"            %% "fastparse"                % "3.1.1"
+```
 
 ---
 

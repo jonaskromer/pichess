@@ -65,7 +65,7 @@ The following addendum files are **required reading** for any AI agent working o
 |----------|--------|
 | [`addendum-sa01-intro-architecture.md`](addendum-sa01-intro-architecture.md) | Architecture philosophy, 14-phase plan, tooling, architect role |
 | [`addendum-sa02-functional-style.md`](addendum-sa02-functional-style.md) | ScalaChess domain model, functional style rules, monads, two-track pattern |
-| [`addendum-sa03-parser-combinators.md`](addendum-sa03-parser-combinators.md) | Parser combinator operators, Either return pattern, FEN/PGN parser task |
+| [`addendum-sa03-parser-combinators.md`](addendum-sa03-parser-combinators.md) | Parser combinator operators, Either return pattern, three-parser task (combinators / fastparse / regex) |
 | [`addendum-sa04-microservices.md`](addendum-sa04-microservices.md) | 9 microservice characteristics, SBT multi-project, Docker, Task 3 |
 | [`addendum-sa05-rest.md`](addendum-sa05-rest.md) | REST principles, URL design rules, Akka HTTP routing DSL, Task 4 |
 | [`addendum-sa06-docker.md`](addendum-sa06-docker.md) | Docker containerization, Dockerfile, docker-compose |
@@ -93,7 +93,7 @@ These are known upcoming lecture phases. When suggesting any architectural chang
 
 | Phase | Lecture technology | Key integration point |
 |---|---|---|
-| 3 — Parser / FEN / PGN | `scala-parser-combinators`, `RegexParsers` | New `chess.codec` package; no domain changes |
+| 3 — Parsers (combinators / fastparse / regex) | `scala-parser-combinators`, `fastparse`, `scala.util.matching.Regex` | `chess.codec` package; FEN parsers + serializer; no domain changes |
 | 4 — HTTP / REST | **Akka HTTP** Routing DSL (or zio-http) | `GameService` trait is the seam; HTTP routes call it directly; also add module REST API for Docker IPC |
 | 5 — Microservices + Docker | SBT multi-project + **Docker Compose** | Each module in its own container; modules communicate via Phase 4 REST API |
 | 6 — Slick (PostgreSQL) | **Slick** FRM + DAO pattern | `GameRepository` trait is already the DAO; new Slick impl swaps via ZLayer |

@@ -44,7 +44,7 @@ The project is currently in **Phase 3** (Parser Combinators). Phase 1 (TUI Chess
 - Typed error handling with `IO[GameError, A]` throughout
 - 100% test coverage with zio-test
 
-**What's next:** FEN/PGN parsers using `scala-parser-combinators`, and the remaining chess rules (stalemate, draw conditions).
+**What's next:** REST API (Phase 4) on top of the FEN codec, and the remaining chess rules (stalemate, draw conditions).
 
 ---
 *Built with pure functions, immutability, and plenty of 🍑.*

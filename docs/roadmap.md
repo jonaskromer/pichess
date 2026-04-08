@@ -39,19 +39,24 @@ Console chess game with full move validation, en passant, pawn promotion, ANSI b
 
 ---
 
-## Phase 3 — Parser Combinators / FEN / PGN (current)
+## Phase 3 — Parser Combinators (current)
 
-**Lecture task:** Implement a parser combinator for the game's move notation or import format.
+**Lecture task (SA-03):** Build **three** parsers for the same input, each using a different library / technique: scala-parser-combinators, fastparse, and plain regex. Public API returns `Either[String, T]`.
+
+**Status:** Complete.
+
+The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural import/export format for the REST API in Phase 4 — `POST /games` with a FEN body, `GET /games/:id` returning a FEN string.
 
 - New package `chess.codec`
-- Implement **FEN** and **PGN** parsers using `scala-parser-combinators`:
-  ```
-  "org.scala-lang.modules" %% "scala-parser-combinators" % "2.1.1"
-  ```
-- Parser class extends `RegexParsers`; public API returns `Either[String, T]`
-- Post-parse validation chained via for-comprehension on `Either`
-- `JsonGameCodec` for JSON serialization of `GameState`
-- No changes to `chess.model`, `chess.service`, or `chess.repository`
+- Three implementations of the same `FenParser` trait:
+  - `FenParserCombinator` — `scala-parser-combinators` (`RegexParsers`)
+  - `FenParserFastParse` — `fastparse` (macro-based combinators)
+  - `FenParserRegex` — `scala.util.matching.Regex`, no external library
+- All three tokenize into six raw fields and share `FenBuilder` for semantic validation, so the implementations are observationally identical.
+- `FenSerializer` is the round-trip counterpart and emits the canonical FEN.
+- `inCheck` is recomputed on import via `MoveValidator.isInCheck` so imported positions render correctly.
+- Public API returns `Either[String, GameState]` per the SA-03 addendum's "return type" rule.
+- No changes to `chess.model`, `chess.service`, or `chess.repository`.
 
 ---
 

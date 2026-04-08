@@ -27,16 +27,16 @@ The application runs a TUI and a web GUI simultaneously, sharing game state via 
 │  GameServiceLive     │           │
 └───┬──────────┬───────┘           │
     │ uses     │ uses              │
-    │  ┌───────▼──────────────┐    │
-    │  │  chess.notation      │    │
-    │  │  NotationResolver    │    │
-    │  │  CoordinateResolver  │    │
-    │  │  SanResolver         │    │
-    │  │  CastlingResolver    │    │
-    │  │  SanSerializer       │    │
-    │  └───────┬──────────────┘    │
-    │ uses     │ uses              │
-┌───▼──────────▼───────────────────▼──────────────────────┐
+    │  ┌───────▼──────────────┐    │   ┌──────────────────────┐
+    │  │  chess.notation      │    │   │  chess.codec         │
+    │  │  NotationResolver    │    │   │  FenParser trait     │
+    │  │  CoordinateResolver  │    │   │  FenParserCombinator │
+    │  │  SanResolver         │    │   │  FenParserFastParse  │
+    │  │  CastlingResolver    │    │   │  FenParserRegex      │
+    │  │  SanSerializer       │    │   │  FenBuilder          │
+    │  └───────┬──────────────┘    │   │  FenSerializer       │
+    │ uses     │ uses              │   └───────┬──────────────┘
+┌───▼──────────▼───────────────────▼───────────▼──────────┐
 │                    chess.model                           │
 │  Board, GameState, Move, Position, Piece,               │
 │  Color, PieceType, GameId, GameEvent, GameError,        │
@@ -92,6 +92,21 @@ Notation parsing and serialization. Each notation style has its own resolver imp
 | `SanResolver.scala` | Parses SAN: piece moves (`Nf3`), pawn pushes (`e4`), pawn captures (`exd5`), promotion (`e8=Q`), disambiguation (`Nbd2`) |
 | `CastlingResolver.scala` | Parses castling notation (`O-O`, `O-O-O`); currently returns an error (not yet implemented) |
 | `SanSerializer.scala` | `toSan(move, state): IO[GameError, String]` — serializes a `Move` + pre-move `GameState` into SAN (with disambiguation, capture notation, and promotion) |
+
+### `chess.codec`
+
+FEN (Forsyth–Edwards Notation) parsing and serialization. Used for game import/export and as the persistence wire format for the REST API introduced in phase 4. Three parser implementations are provided side-by-side, each demonstrating a different parsing technique; they all share the same semantic validation through `FenBuilder`.
+
+| File | Purpose |
+|---|---|
+| `FenParser.scala` | Trait: `parse(input: String): Either[String, GameState]`. Common interface that all three parser implementations satisfy. |
+| `FenParserCombinator.scala` | Implementation built on `scala-parser-combinators` (`RegexParsers`). |
+| `FenParserFastParse.scala` | Implementation built on the `fastparse` library. |
+| `FenParserRegex.scala` | Implementation built on `scala.util.matching.Regex` with no external parser library. |
+| `FenBuilder.scala` | Shared converter from the six tokenized FEN fields to a validated `GameState`. Computes `inCheck` via `MoveValidator.isInCheck`. |
+| `FenSerializer.scala` | `serialize(state: GameState): String` — emits the canonical FEN string for a game state. Halfmove/fullmove counters are emitted as `0 1` because `GameState` does not track them. |
+
+**Future:** The Phase 4 REST API will use this package to expose `GET /games/:id` (serializer) and `POST /games` with a FEN body (parser).
 
 ### `chess.controller`
 
@@ -154,6 +169,7 @@ Main → controller → service → notation → model
                   → model.rules → model
                   → repository
      → view → model
+     → codec → model.rules → model
 ```
 
 No package imports from a layer above it. `chess.model` has no dependencies on any other package in this project (except ZIO itself for `IO` in `rules`).
@@ -176,7 +192,7 @@ See [`docs/roadmap.md`](roadmap.md) for the full phased plan.
 
 | Phase | Technology | Integration seam |
 |-------|-----------|-----------------|
-| 3 — Parser / FEN / PGN | `scala-parser-combinators` | New `chess.codec` package; no domain changes |
+| 3 — Parsers (combinators / fastparse / regex) | `scala-parser-combinators`, `fastparse`, `scala.util.matching.Regex` | `chess.codec` package: three FEN parsers + serializer |
 | 4 — HTTP / REST | **Akka HTTP** or zio-http (Routing DSL) | `GameService` trait; HTTP routes call it directly |
 | 5 — Microservices | SBT multi-project + **Docker Compose** | Module boundaries mirror existing package dependencies; REST IPC between containers |
 | 6 — Persistence (Slick) | **Slick** (PostgreSQL) + DAO pattern | `GameRepository` trait; new impl swaps in via a single ZLayer line |
@@ -195,6 +211,8 @@ See [`docs/roadmap.md`](roadmap.md) for the full phased plan.
 | Scala 3.8.2 | Language |
 | ZIO 2.1.24 | Effect system, dependency injection, concurrency |
 | zio-http 3.10.1 | HTTP server, SSE |
+| scala-parser-combinators 2.4.0 | Parser combinators (used in `chess.codec`) |
+| fastparse 3.1.1 | Macro-based parser library (used in `chess.codec`) |
 | zio-test 2.1.24 | Test framework |
 | sbt-scoverage 2.2.1 | Coverage instrumentation; build fails below 100% |
 | sbt-scalafmt 2.5.2 | Code formatting; run `sbt scalafmtAll` after any change |
