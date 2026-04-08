@@ -1,7 +1,7 @@
 package chess.controller
 
 import chess.model.{GameSnapshot, SessionState}
-import chess.model.board.{GameState, GameStatus, Position}
+import chess.model.board.{DrawReason, GameState, GameStatus, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.repository.InMemoryGameRepository
 import chess.service.{GameService, GameServiceLive}
@@ -166,7 +166,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         s <- session.get
       yield assertTrue(
         response.status == Status.Ok,
-        s.state.status == GameStatus.Draw("50-move rule")
+        s.state.status == GameStatus.Draw(DrawReason.FiftyMoveRule)
       )
     }
   ).provide(appLayer, Scope.default)

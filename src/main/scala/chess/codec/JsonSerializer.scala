@@ -1,6 +1,6 @@
 package chess.codec
 
-import chess.model.board.{Board, CastlingRights, GameState, GameStatus, Position}
+import chess.model.board.{Board, CastlingRights, DrawReason, GameState, GameStatus, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 
 object JsonSerializer:
@@ -15,7 +15,7 @@ object JsonSerializer:
     val status = state.status match
       case GameStatus.Playing          => """"playing""""
       case GameStatus.Checkmate(color) => s"""{"checkmate": "${colorToString(color)}"}"""
-      case GameStatus.Draw(reason)     => s"""{"draw": "${reason}"}"""
+      case GameStatus.Draw(reason)     => s"""{"draw": "${drawReasonString(reason)}"}"""
     s"""{
        |  "board": {
        |$board
@@ -48,6 +48,10 @@ object JsonSerializer:
     case PieceType.Bishop => "bishop"
     case PieceType.Knight => "knight"
     case PieceType.Pawn   => "pawn"
+
+  private def drawReasonString(reason: DrawReason): String = reason match
+    case DrawReason.Stalemate     => "stalemate"
+    case DrawReason.FiftyMoveRule => "fifty-move rule"
 
   private def serializeCastling(cr: CastlingRights): String =
     List(

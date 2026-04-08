@@ -83,6 +83,6 @@ object HelpView:
        |  Turn order: White moves first, then alternates
        |
        |NOT YET IMPLEMENTED
-       |  Stalemate        (game does not end on stalemate)
-       |  Draw conditions  (50-move rule, threefold repetition, insufficient material)
+       |  Threefold repetition  (draw when same position occurs 3 times)
+       |  Insufficient material (draw when neither side can checkmate)
        |""".stripMargin

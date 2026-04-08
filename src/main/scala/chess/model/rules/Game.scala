@@ -4,6 +4,7 @@ import chess.model.piece.{Color, Piece, PieceType}
 import chess.model.board.{
   Board,
   CastlingRights,
+  DrawReason,
   GameState,
   GameStatus,
   Move,
@@ -17,6 +18,24 @@ object Game:
     Set(PieceType.Queen, PieceType.Rook, PieceType.Bishop, PieceType.Knight)
 
   def applyMove(
+      state: GameState,
+      move: Move
+  ): IO[GameError, GameState] =
+    for
+      newState <- applyMoveCore(state, move)
+      status <-
+        MoveValidator.hasLegalMove(newState).map { hasMove =>
+          if !hasMove && newState.inCheck then
+            GameStatus.Checkmate(state.activeColor)
+          else if !hasMove then GameStatus.Draw(DrawReason.Stalemate)
+          else GameStatus.Playing
+        }
+    yield newState.copy(status = status)
+
+  /** Applies a move without detecting checkmate/stalemate.
+    * Used by [[MoveValidator.hasLegalMove]] to avoid infinite recursion.
+    */
+  private[rules] def applyMoveCore(
       state: GameState,
       move: Move
   ): IO[GameError, GameState] =
@@ -47,23 +66,15 @@ object Game:
       newFullmove =
         if state.activeColor == Color.Black then state.fullmoveNumber + 1
         else state.fullmoveNumber
-      newState = GameState(
-        board = newBoard,
-        activeColor = state.activeColor.opposite,
-        enPassantTarget = nextEnPassantTarget(move, piece),
-        inCheck = opponentInCheck,
-        castlingRights = updatedCastlingRights(state, move),
-        halfmoveClock = newHalfmove,
-        fullmoveNumber = newFullmove
-      )
-      status <-
-        if opponentInCheck then
-          MoveValidator.hasLegalMove(newState).map { hasMove =>
-            if hasMove then GameStatus.Playing
-            else GameStatus.Checkmate(state.activeColor)
-          }
-        else ZIO.succeed(GameStatus.Playing)
-    yield newState.copy(status = status)
+    yield GameState(
+      board = newBoard,
+      activeColor = state.activeColor.opposite,
+      enPassantTarget = nextEnPassantTarget(move, piece),
+      inCheck = opponentInCheck,
+      castlingRights = updatedCastlingRights(state, move),
+      halfmoveClock = newHalfmove,
+      fullmoveNumber = newFullmove
+    )
 
   private def isPromotionRank(piece: Piece, row: Int): Boolean =
     piece.pieceType == PieceType.Pawn &&

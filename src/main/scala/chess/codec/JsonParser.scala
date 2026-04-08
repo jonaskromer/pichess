@@ -1,6 +1,6 @@
 package chess.codec
 
-import chess.model.board.{Board, CastlingRights, GameState, GameStatus, Position}
+import chess.model.board.{Board, CastlingRights, DrawReason, GameState, GameStatus, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.model.rules.MoveValidator
 
@@ -100,9 +100,14 @@ object JsonParser:
         case Some(JValue.JString(c)) => parseColorString(c).map(GameStatus.Checkmate(_))
         case _ =>
           fields.get("draw") match
-            case Some(JValue.JString(reason)) => Right(GameStatus.Draw(reason))
+            case Some(JValue.JString(reason)) => parseDrawReason(reason).map(GameStatus.Draw(_))
             case _                            => Left("Invalid status object")
     case _ => Left("Invalid status")
+
+  private def parseDrawReason(s: String): Either[String, DrawReason] = s match
+    case "stalemate"       => Right(DrawReason.Stalemate)
+    case "fifty-move rule" => Right(DrawReason.FiftyMoveRule)
+    case _                 => Left(s"Unknown draw reason '$s'")
 
   // -- Minimal JSON AST and recursive-descent reader --
 

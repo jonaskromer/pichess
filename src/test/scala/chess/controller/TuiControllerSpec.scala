@@ -1,7 +1,7 @@
 package chess.controller
 
 import chess.model.{GameSnapshot, SessionState}
-import chess.model.board.{GameState, GameStatus, Move, Position}
+import chess.model.board.{DrawReason, GameState, GameStatus, Move, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.notation.SanSerializer
 import chess.repository.InMemoryGameRepository
@@ -468,7 +468,7 @@ object TuiControllerSpec extends ZIOSpecDefault:
           s <- session.get
         yield assertTrue(
           result == TuiController.Result.Continue(false),
-          s.state.status == GameStatus.Draw("50-move rule"),
+          s.state.status == GameStatus.Draw(DrawReason.FiftyMoveRule),
           s.error.isEmpty
         )
       },

@@ -1,6 +1,6 @@
 package chess.codec
 
-import chess.model.board.{CastlingRights, GameState, GameStatus, Position}
+import chess.model.board.{CastlingRights, DrawReason, GameState, GameStatus, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 import zio.test.*
 
@@ -30,6 +30,22 @@ object JsonCodecSpec extends ZIOSpecDefault:
           JsonParser.parse(json) == Right(state)
         )
       },
+      test("serializes stalemate status") {
+        val state = GameState(
+          board = Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 8) -> Piece(Color.Black, PieceType.King)
+          ),
+          activeColor = Color.White,
+          castlingRights = CastlingRights(false, false, false, false),
+          status = GameStatus.Draw(DrawReason.Stalemate)
+        )
+        val json = JsonSerializer.serialize(state)
+        assertTrue(
+          json.contains("stalemate"),
+          JsonParser.parse(json) == Right(state)
+        )
+      },
       test("serializes draw status") {
         val state = GameState(
           board = Map(
@@ -38,7 +54,7 @@ object JsonCodecSpec extends ZIOSpecDefault:
           ),
           activeColor = Color.White,
           castlingRights = CastlingRights(false, false, false, false),
-          status = GameStatus.Draw("50-move rule")
+          status = GameStatus.Draw(DrawReason.FiftyMoveRule)
         )
         val json = JsonSerializer.serialize(state)
         assertTrue(
@@ -150,6 +166,10 @@ object JsonCodecSpec extends ZIOSpecDefault:
       },
       test("rejects invalid status object") {
         val json = """{"board": {"e1": "white king"}, "activeColor": "white", "castlingRights": {"whiteKingSide": false, "whiteQueenSide": false, "blackKingSide": false, "blackQueenSide": false}, "enPassantTarget": null, "inCheck": false, "status": {"winner": "white"}}"""
+        assertTrue(JsonParser.parse(json).isLeft)
+      },
+      test("rejects unknown draw reason") {
+        val json = """{"board": {"e1": "white king"}, "activeColor": "white", "castlingRights": {"whiteKingSide": false, "whiteQueenSide": false, "blackKingSide": false, "blackQueenSide": false}, "enPassantTarget": null, "inCheck": false, "status": {"draw": "unknown reason"}}"""
         assertTrue(JsonParser.parse(json).isLeft)
       },
       test("rejects invalid status type") {

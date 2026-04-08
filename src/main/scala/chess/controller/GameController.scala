@@ -1,13 +1,16 @@
 package chess.controller
 
 import chess.model.{GameError, SessionState}
-import chess.model.board.{GameStatus}
+import chess.model.board.{DrawReason, GameStatus}
 import chess.model.rules.{Game, GameReplay}
 import chess.service.GameService
 import zio.*
 import zio.stream.SubscriptionRef
 
 object GameController:
+
+  /** Halfmove clock value at which the 50-move draw rule can be claimed. */
+  val FiftyMoveThreshold: Int = 100
 
   def makeMove(
       gs: GameService,
@@ -85,15 +88,15 @@ object GameController:
     session.get.flatMap { s =>
       if s.state.status != GameStatus.Playing then
         ZIO.fail(GameError.InvalidMove("Game is already over"))
-      else if s.state.halfmoveClock < 100 then
-        val movesLeft = (100 - s.state.halfmoveClock) / 2
+      else if s.state.halfmoveClock < FiftyMoveThreshold then
+        val movesLeft = (FiftyMoveThreshold - s.state.halfmoveClock) / 2
         ZIO.fail(
           GameError.InvalidMove(
-            s"Cannot claim draw: only ${s.state.halfmoveClock / 2} moves without a pawn move or capture (need 50, ${movesLeft} more to go)"
+            s"Cannot claim draw: only ${s.state.halfmoveClock / 2} moves without a pawn move or capture (need ${FiftyMoveThreshold / 2}, ${movesLeft} more to go)"
           )
         )
       else
-        val drawState = s.state.copy(status = GameStatus.Draw("50-move rule"))
+        val drawState = s.state.copy(status = GameStatus.Draw(DrawReason.FiftyMoveRule))
         gs.saveState(s.gameId, drawState) *>
           session.update(st =>
             st.copy(

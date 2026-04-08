@@ -162,7 +162,7 @@ object MoveValidator:
         val candidates = candidateMoves(state, from, piece)
         ZIO.exists(candidates) { move =>
           Game
-            .applyMove(state, move)
+            .applyMoveCore(state, move)
             .as(true)
             .catchAll(_ => ZIO.succeed(false))
         }

@@ -1,7 +1,7 @@
 package chess.controller
 
 import chess.model.{GameSnapshot, SessionState}
-import chess.model.board.{GameState, GameStatus, Move, Position}
+import chess.model.board.{DrawReason, GameState, GameStatus, Move, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.notation.SanSerializer
 import chess.repository.InMemoryGameRepository
@@ -228,7 +228,7 @@ object GameControllerSpec extends ZIOSpecDefault:
           _ <- GameController.claimDraw(gs, session)
           s <- session.get
         yield assertTrue(
-          s.state.status == GameStatus.Draw("50-move rule")
+          s.state.status == GameStatus.Draw(DrawReason.FiftyMoveRule)
         )
       },
       test("fail when game is already over") {

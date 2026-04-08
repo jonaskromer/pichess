@@ -185,11 +185,11 @@ object HelpViewSpec extends ZIOSpecDefault:
       }
     ),
     suite("not yet implemented")(
-      test("list stalemate") {
-        assertTrue(notYetSection.contains("Stalemate"))
+      test("list threefold repetition") {
+        assertTrue(notYetSection.contains("Threefold repetition"))
       },
-      test("list draw conditions") {
-        assertTrue(notYetSection.contains("Draw conditions"))
+      test("list insufficient material") {
+        assertTrue(notYetSection.contains("Insufficient material"))
       }
     )
   )

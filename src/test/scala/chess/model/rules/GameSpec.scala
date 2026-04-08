@@ -2,7 +2,7 @@ package chess.model.rules
 
 import chess.model.GameError
 import chess.model.piece.{Color, Piece, PieceType}
-import chess.model.board.{CastlingRights, GameState, GameStatus, Move, Position}
+import chess.model.board.{CastlingRights, DrawReason, GameState, GameStatus, Move, Position}
 import zio.*
 import zio.test.*
 
@@ -735,6 +735,25 @@ object GameSpec extends ZIOSpecDefault:
         )
       },
       test("keep Playing status on a normal move (no check)") {
+        for result <- Game
+            .applyMove(initial, Move(Position('e', 2), Position('e', 4)))
+        yield assertTrue(result.status == GameStatus.Playing)
+      },
+      test("set Draw(Stalemate) when opponent has no legal move but is not in check") {
+        // Black king on a8, white queen on b6 stalemates after Qb6 (king has no moves, not in check)
+        val s = GameState(
+          Map(
+            Position('a', 1) -> Piece(Color.White, PieceType.King),
+            Position('c', 7) -> Piece(Color.White, PieceType.Queen),
+            Position('a', 8) -> Piece(Color.Black, PieceType.King)
+          ),
+          Color.White
+        )
+        for result <- Game
+            .applyMove(s, Move(Position('c', 7), Position('b', 6)))
+        yield assertTrue(result.status == GameStatus.Draw(DrawReason.Stalemate))
+      },
+      test("keep Playing when opponent has legal moves and is not in check") {
         for result <- Game
             .applyMove(initial, Move(Position('e', 2), Position('e', 4)))
         yield assertTrue(result.status == GameStatus.Playing)

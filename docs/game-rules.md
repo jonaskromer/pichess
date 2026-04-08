@@ -90,7 +90,7 @@ To undo the last move, type `undo`. To redo an undone move, type `redo`.
 
 | Rule | Status |
 |---|---|
-| Stalemate detection | Not implemented |
+| ~~Stalemate detection~~ | **Implemented** — auto-detected after each move |
 | ~~50-move rule~~ | **Implemented** — claim via `draw` command |
 | Threefold repetition | Not implemented |
 | Insufficient material draw | Not implemented |

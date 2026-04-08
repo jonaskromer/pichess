@@ -1,6 +1,6 @@
 package chess.codec
 
-import chess.model.board.GameStatus
+import chess.model.board.{DrawReason, GameStatus}
 import chess.model.piece.Color
 import zio.test.*
 
@@ -59,7 +59,7 @@ object PgnSerializerSpec extends ZIOSpecDefault:
     },
     test("serializes draw result as 1/2-1/2") {
       val pgn =
-        PgnSerializer.serialize(Nil, GameStatus.Draw("50-move rule"))
+        PgnSerializer.serialize(Nil, GameStatus.Draw(DrawReason.FiftyMoveRule))
       assertTrue(
         pgn.contains("[Result \"1/2-1/2\"]"),
         pgn.endsWith("1/2-1/2")
