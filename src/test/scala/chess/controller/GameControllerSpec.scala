@@ -1,7 +1,7 @@
 package chess.controller
 
 import chess.model.{GameSnapshot, SessionState}
-import chess.model.board.{GameState, Move, Position}
+import chess.model.board.{GameState, GameStatus, Move, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.notation.SanSerializer
 import chess.repository.InMemoryGameRepository
@@ -194,6 +194,60 @@ object GameControllerSpec extends ZIOSpecDefault:
           s.moves.length == 2,
           s.state.activeColor == Color.White
         )
+      }
+    ),
+    suite("claimDraw")(
+      test("fail when halfmove clock is below 100") {
+        for
+          (gs, session) <- withSession
+          exit <- GameController.claimDraw(gs, session).exit
+        yield assertTrue(exit.isFailure)
+      },
+      test("fail with descriptive message about remaining moves") {
+        for
+          (gs, session) <- withSession
+          err <- GameController.claimDraw(gs, session).flip
+        yield assertTrue(err.message.contains("need 50"))
+      },
+      test("succeed when halfmove clock reaches 100") {
+        val drawableState = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 8) -> Piece(Color.Black, PieceType.King)
+          ),
+          Color.White,
+          halfmoveClock = 100
+        )
+        for
+          (gs, session) <- withSession
+          gameId <- session.get.map(_.gameId)
+          _ <- gs.saveState(gameId, drawableState)
+          _ <- session.update(st =>
+            st.copy(game = st.game.copy(state = drawableState))
+          )
+          _ <- GameController.claimDraw(gs, session)
+          s <- session.get
+        yield assertTrue(
+          s.state.status == GameStatus.Draw("50-move rule")
+        )
+      },
+      test("fail when game is already over") {
+        val state = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 8) -> Piece(Color.Black, PieceType.King)
+          ),
+          Color.White,
+          halfmoveClock = 100,
+          status = GameStatus.Checkmate(Color.White)
+        )
+        for
+          (gs, session) <- withSession
+          _ <- session.update(st =>
+            st.copy(game = st.game.copy(state = state))
+          )
+          exit <- GameController.claimDraw(gs, session).exit
+        yield assertTrue(exit.isFailure)
       }
     )
   ).provide(appLayer)

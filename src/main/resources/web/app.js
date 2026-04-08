@@ -202,6 +202,14 @@ function submitMove() {
   return false;
 }
 
+async function claimDraw() {
+  try {
+    const res = await fetch('/api/draw', { method: 'POST' });
+    const data = await res.json();
+    if (data.error) showToast(data.error);
+  } catch (err) { showToast('Connection error'); }
+}
+
 async function undoMove() {
   try {
     const res = await fetch('/api/undo', { method: 'POST' });

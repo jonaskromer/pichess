@@ -30,6 +30,22 @@ object JsonCodecSpec extends ZIOSpecDefault:
           JsonParser.parse(json) == Right(state)
         )
       },
+      test("serializes draw status") {
+        val state = GameState(
+          board = Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 8) -> Piece(Color.Black, PieceType.King)
+          ),
+          activeColor = Color.White,
+          castlingRights = CastlingRights(false, false, false, false),
+          status = GameStatus.Draw("50-move rule")
+        )
+        val json = JsonSerializer.serialize(state)
+        assertTrue(
+          json.contains("draw"),
+          JsonParser.parse(json) == Right(state)
+        )
+      },
       test("serializes checkmate status") {
         val state = GameState(
           board = Map(

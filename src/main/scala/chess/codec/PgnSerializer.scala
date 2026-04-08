@@ -21,9 +21,10 @@ object PgnSerializer:
     s"$header\n\n$movetext"
 
   private def resultString(status: GameStatus): String = status match
-    case GameStatus.Playing            => "*"
+    case GameStatus.Playing                => "*"
     case GameStatus.Checkmate(Color.White) => "1-0"
     case GameStatus.Checkmate(Color.Black) => "0-1"
+    case GameStatus.Draw(_)                => "1/2-1/2"
 
   private def formatMovetext(
       moveLog: List[(Color, String)],

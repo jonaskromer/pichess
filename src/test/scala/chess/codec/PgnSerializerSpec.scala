@@ -57,6 +57,14 @@ object PgnSerializerSpec extends ZIOSpecDefault:
         pgn.endsWith("0-1")
       )
     },
+    test("serializes draw result as 1/2-1/2") {
+      val pgn =
+        PgnSerializer.serialize(Nil, GameStatus.Draw("50-move rule"))
+      assertTrue(
+        pgn.contains("[Result \"1/2-1/2\"]"),
+        pgn.endsWith("1/2-1/2")
+      )
+    },
     test("includes standard PGN headers") {
       val pgn = PgnSerializer.serialize(Nil, GameStatus.Playing)
       assertTrue(

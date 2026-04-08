@@ -98,7 +98,10 @@ object JsonParser:
     case JValue.JObject(fields) =>
       fields.get("checkmate") match
         case Some(JValue.JString(c)) => parseColorString(c).map(GameStatus.Checkmate(_))
-        case _                       => Left("Invalid status object")
+        case _ =>
+          fields.get("draw") match
+            case Some(JValue.JString(reason)) => Right(GameStatus.Draw(reason))
+            case _                            => Left("Invalid status object")
     case _ => Left("Invalid status")
 
   // -- Minimal JSON AST and recursive-descent reader --

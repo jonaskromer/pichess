@@ -10,6 +10,7 @@ object HelpView:
        |  export fen|pgn|json  Export the current game in the given format
        |  undo                 Undo the last move
        |  redo                 Redo the last undone move
+       |  draw                 Claim a draw (50-move rule)
        |  flip                 Flip the board (toggle White/Black perspective)
        |  help                 Show this help screen
        |  quit                 Exit the game

@@ -18,6 +18,7 @@ object TuiController:
     case Flip
     case Undo
     case Redo
+    case Draw
     case Load(raw: String)
     case Export(format: ExportFormat)
     case Move(raw: String)
@@ -45,6 +46,7 @@ object TuiController:
         case "flip" => Command.Flip
         case "undo" => Command.Undo
         case "redo" => Command.Redo
+        case "draw" => Command.Draw
         case raw    => Command.Move(raw)
 
   def handleCommand(
@@ -74,6 +76,16 @@ object TuiController:
       case Command.Redo =>
         GameController
           .redo(gs, session)
+          .foldZIO(
+            err =>
+              session
+                .update(_.copy(error = Some(err.message)))
+                .as(Result.Continue(flipped)),
+            _ => ZIO.succeed(Result.Continue(flipped))
+          )
+      case Command.Draw =>
+        GameController
+          .claimDraw(gs, session)
           .foldZIO(
             err =>
               session

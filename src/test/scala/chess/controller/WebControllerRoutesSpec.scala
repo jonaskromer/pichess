@@ -1,7 +1,7 @@
 package chess.controller
 
 import chess.model.{GameSnapshot, SessionState}
-import chess.model.board.{GameState, Position}
+import chess.model.board.{GameState, GameStatus, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.repository.InMemoryGameRepository
 import chess.service.{GameService, GameServiceLive}
@@ -134,5 +134,39 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         (routes, _, _) <- withRoutes
         response <- routes.runZIO(Request.post(url"/api/undo", Body.empty))
       yield assertTrue(response.status == Status.BadRequest)
+    },
+    test("POST /api/draw returns error when clock is below 100") {
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.post(url"/api/draw", Body.empty))
+        body <- response.body.asString
+      yield assertTrue(
+        response.status == Status.BadRequest,
+        body.contains("need 50")
+      )
+    },
+    test("POST /api/draw succeeds when clock is 100") {
+      val drawableState = GameState(
+        Map(
+          Position('e', 1) -> Piece(Color.White, PieceType.King),
+          Position('e', 8) -> Piece(Color.Black, PieceType.King)
+        ),
+        Color.White,
+        halfmoveClock = 100
+      )
+      for
+        gs <- ZIO.service[GameService]
+        (routes, session, _) <- withRoutes
+        gameId <- session.get.map(_.gameId)
+        _ <- gs.saveState(gameId, drawableState)
+        _ <- session.update(st =>
+          st.copy(game = st.game.copy(state = drawableState))
+        )
+        response <- routes.runZIO(Request.post(url"/api/draw", Body.empty))
+        s <- session.get
+      yield assertTrue(
+        response.status == Status.Ok,
+        s.state.status == GameStatus.Draw("50-move rule")
+      )
     }
   ).provide(appLayer, Scope.default)

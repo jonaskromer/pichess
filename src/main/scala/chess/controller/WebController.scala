@@ -29,6 +29,7 @@ object WebController:
       },
       Method.POST / "api" / "undo" -> handler(handleUndo(gs, session)),
       Method.POST / "api" / "redo" -> handler(handleRedo(gs, session)),
+      Method.POST / "api" / "draw" -> handler(handleDraw(gs, session)),
       Method.POST / "api" / "new" -> handler(handleNewGame(gs, session)),
       Method.POST / "api" / "quit" -> handler(handleQuit(shutdown))
     )
@@ -108,6 +109,18 @@ object WebController:
   ): ZIO[Any, Nothing, Response] =
     (for
       _ <- GameController.redo(gs, session)
+      updated <- session.get
+      resp <- stateResponse(updated)
+    yield resp).catchAll(err =>
+      ZIO.succeed(errorResponse(err.message, Status.BadRequest))
+    )
+
+  private def handleDraw(
+      gs: GameService,
+      session: SubscriptionRef[SessionState]
+  ): ZIO[Any, Nothing, Response] =
+    (for
+      _ <- GameController.claimDraw(gs, session)
       updated <- session.get
       resp <- stateResponse(updated)
     yield resp).catchAll(err =>

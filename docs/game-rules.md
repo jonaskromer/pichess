@@ -69,6 +69,12 @@ To undo the last move, type `undo`. To redo an undone move, type `redo`.
 
 ---
 
+### Draw (50-Move Rule)
+- Either player can claim a draw by typing `draw` when the halfmove clock has reached 100 (50 full moves with no pawn advance and no capture).
+- If the clock hasn't reached 100, the command fails with a message explaining how many moves remain.
+- The draw is not automatic — the game continues unless a player explicitly claims it.
+- On the web GUI, use the `POST /api/draw` endpoint.
+
 ### Undo / Redo
 - **Undo** (`undo`): reverts the last move. The game state is restored by replaying all moves except the last from the initial position. The undone move is pushed onto a redo stack.
 - **Redo** (`redo`): reapplies the most recently undone move. Making a new move clears the redo stack.
@@ -85,7 +91,7 @@ To undo the last move, type `undo`. To redo an undone move, type `redo`.
 | Rule | Status |
 |---|---|
 | Stalemate detection | Not implemented |
-| 50-move rule enforcement (halfmove clock is tracked but draw is not auto-claimed) | Not implemented |
+| ~~50-move rule~~ | **Implemented** — claim via `draw` command |
 | Threefold repetition | Not implemented |
 | Insufficient material draw | Not implemented |
 

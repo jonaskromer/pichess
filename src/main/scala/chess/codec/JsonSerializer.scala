@@ -15,6 +15,7 @@ object JsonSerializer:
     val status = state.status match
       case GameStatus.Playing          => """"playing""""
       case GameStatus.Checkmate(color) => s"""{"checkmate": "${colorToString(color)}"}"""
+      case GameStatus.Draw(reason)     => s"""{"draw": "${reason}"}"""
     s"""{
        |  "board": {
        |$board

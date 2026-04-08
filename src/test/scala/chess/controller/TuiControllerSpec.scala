@@ -1,7 +1,7 @@
 package chess.controller
 
 import chess.model.{GameSnapshot, SessionState}
-import chess.model.board.{GameState, Move, Position}
+import chess.model.board.{GameState, GameStatus, Move, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.notation.SanSerializer
 import chess.repository.InMemoryGameRepository
@@ -90,6 +90,11 @@ object TuiControllerSpec extends ZIOSpecDefault:
       test("parse redo") {
         assertTrue(
           TuiController.parseCommand("redo") == TuiController.Command.Redo
+        )
+      },
+      test("parse draw") {
+        assertTrue(
+          TuiController.parseCommand("draw") == TuiController.Command.Draw
         )
       },
       test("parse move input") {
@@ -439,6 +444,45 @@ object TuiControllerSpec extends ZIOSpecDefault:
         yield assertTrue(
           result == TuiController.Result.Continue(false),
           s.error.isDefined
+        )
+      },
+      test("draw claim succeeds when halfmove clock is 100") {
+        val drawableState = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 8) -> Piece(Color.Black, PieceType.King)
+          ),
+          Color.White,
+          halfmoveClock = 100
+        )
+        for
+          (gs, session, shutdown) <- withSession
+          gameId <- session.get.map(_.gameId)
+          _ <- gs.saveState(gameId, drawableState)
+          _ <- session.update(st =>
+            st.copy(game = st.game.copy(state = drawableState))
+          )
+          result <- TuiController.handleCommand(
+            TuiController.Command.Draw, gs, session, shutdown, false
+          )
+          s <- session.get
+        yield assertTrue(
+          result == TuiController.Result.Continue(false),
+          s.state.status == GameStatus.Draw("50-move rule"),
+          s.error.isEmpty
+        )
+      },
+      test("draw claim fails with error when clock is below 100") {
+        for
+          (gs, session, shutdown) <- withSession
+          result <- TuiController.handleCommand(
+            TuiController.Command.Draw, gs, session, shutdown, false
+          )
+          s <- session.get
+        yield assertTrue(
+          result == TuiController.Result.Continue(false),
+          s.error.isDefined,
+          s.error.get.contains("need 50")
         )
       }
     ),
