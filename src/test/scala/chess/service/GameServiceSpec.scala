@@ -28,28 +28,50 @@ object GameServiceSpec extends ZIOSpecDefault:
         yield assertTrue(state == Some(GameState.initial))
       }
     ),
-    suite("newGameFromFen")(
-      test("return a GameStarted event with the parsed state") {
+    suite("loadGame")(
+      test("auto-detect FEN and return parsed state") {
         val fen = "4k3/8/8/8/8/8/8/4K3 w - - 0 1"
-        for event <- GameService.newGameFromFen(fen)
+        for (event, moveLog) <- GameService.loadGame(fen)
         yield assertTrue(
           event.gameId.nonEmpty,
           event.initialState.board.size == 2,
-          event.initialState.activeColor == Color.White
+          event.initialState.activeColor == Color.White,
+          moveLog.isEmpty
         )
       },
-      test("persist the parsed state so getState returns it") {
+      test("auto-detect PGN and return replayed state with move log") {
+        val pgn = "1. e4 e5 2. Nf3 *"
+        for (event, moveLog) <- GameService.loadGame(pgn)
+        yield assertTrue(
+          event.gameId.nonEmpty,
+          moveLog.length == 3,
+          event.initialState.board(Position('f', 3)) == Piece(
+            Color.White,
+            PieceType.Knight
+          )
+        )
+      },
+      test("auto-detect JSON and return parsed state") {
+        val json = """{"board": {"e1": "white king", "e8": "black king"}, "activeColor": "white", "castlingRights": {"whiteKingSide": false, "whiteQueenSide": false, "blackKingSide": false, "blackQueenSide": false}, "enPassantTarget": null, "inCheck": false, "status": "playing"}"""
+        for (event, moveLog) <- GameService.loadGame(json)
+        yield assertTrue(
+          event.gameId.nonEmpty,
+          event.initialState.board.size == 2,
+          moveLog.isEmpty
+        )
+      },
+      test("persist the loaded state") {
         val fen = "4k3/8/8/8/8/8/8/4K3 w - - 0 1"
         for
-          event <- GameService.newGameFromFen(fen)
+          (event, _) <- GameService.loadGame(fen)
           state <- GameService.getState(event.gameId)
         yield assertTrue(
           state.isDefined,
           state.get.board.size == 2
         )
       },
-      test("fail for an invalid FEN string") {
-        for exit <- GameService.newGameFromFen("not valid").exit
+      test("fail for completely invalid input") {
+        for exit <- GameService.loadGame("not valid anything").exit
         yield assertTrue(exit.isFailure)
       }
     ),

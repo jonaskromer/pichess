@@ -76,6 +76,9 @@ object Main extends ZIOAppDefault:
       _ <- ZIO.when(s.moveLog.nonEmpty)(
         printLine(MoveLogView.render(s.moveLog))
       )
+      _ <- ZIO.when(s.output.isDefined)(
+        printLine(s.output.get)
+      )
       _ <- ZIO.when(s.error.isDefined)(
         printLine(s"Error: ${s.error.get}")
       )

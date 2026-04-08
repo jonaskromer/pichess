@@ -7,5 +7,6 @@ case class SessionState(
     gameId: GameId,
     state: GameState,
     moveLog: List[(Color, String)],
-    error: Option[String]
+    error: Option[String],
+    output: Option[String] = None
 )

@@ -111,6 +111,10 @@ Key rules:
 
 `JsonSerializer` and `JsonParser` provide a human-readable JSON representation of `GameState`. The JSON format uses plain-English values (e.g. `"white rook"`) so positions are easy to verify by hand. `JsonCodecSpec` includes cross-validation tests that parse the same position from both FEN and JSON and assert the resulting `GameState` is identical.
 
+### PGN Codec
+
+`PgnSerializer` exports a move log and game status to PGN format with standard headers. `PgnParser` imports PGN by parsing headers, extracting SAN moves from the movetext (stripping comments, NAGs, move numbers, and result tokens), then replaying each move through `MoveParser` and `Game.applyMove`. The parser also supports a `[FEN "..."]` header for custom start positions.
+
 Dependencies (already in `build.sbt`):
 
 ```scala

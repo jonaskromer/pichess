@@ -107,10 +107,10 @@ Castling requires that neither the king nor the chosen rook has moved, all squar
 
 ## FEN (Forsyth-Edwards Notation)
 
-FEN encodes a complete chess position as a single line of text. Use the `fen` command in the TUI to load any position:
+FEN encodes a complete chess position as a single line of text:
 
 ```
-fen rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1
+load rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1
 ```
 
 A FEN string has six space-separated fields:
@@ -131,6 +131,39 @@ Common starting positions:
 | `rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1` | Standard initial position |
 | `4k3/8/8/8/8/8/8/4K3 w - - 0 1` | Kings only (endgame testing) |
 | `r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1` | Castling test position |
+
+---
+
+## PGN (Portable Game Notation)
+
+PGN records a full game as a sequence of SAN moves with metadata headers.
+
+### Import / Export
+
+Use the unified `load` and `export` commands:
+
+```
+load 1. e4 e5 2. Nf3 Nc6 *
+export pgn
+```
+
+The `load` command auto-detects the format (FEN, PGN, or JSON). The `export` command requires a format argument: `export fen`, `export pgn`, or `export json`.
+
+Full PGN with headers is also accepted:
+
+```
+load [Event "Test"] [Result "*"] 1. e4 e5 2. Nf3 Nc6 *
+```
+
+A `[FEN "..."]` header sets a custom starting position for the game.
+
+### PGN Movetext Rules
+
+- Move numbers (`1.`, `2.`, etc.) are parsed and stripped
+- Result tokens (`1-0`, `0-1`, `1/2-1/2`, `*`) mark the game result
+- Comments in braces (`{this is a comment}`) are ignored
+- Numeric Annotation Glyphs (`$1`, `$2`, etc.) are ignored
+- Each SAN move is replayed through the game engine and validated
 
 ---
 

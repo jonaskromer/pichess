@@ -95,22 +95,46 @@ object TuiControllerSpec extends ZIOSpecDefault:
           )
         )
       },
-      test("parse fen command") {
+      test("parse load command") {
         assertTrue(
           TuiController.parseCommand(
-            "fen rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-          ) == TuiController.Command.Fen(
+            "load rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+          ) == TuiController.Command.Load(
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
           )
         )
       },
-      test("parse fen command with leading whitespace") {
+      test("parse load command with leading whitespace") {
         assertTrue(
           TuiController.parseCommand(
-            "  fen 4k3/8/8/8/8/8/8/4K3 w - - 0 1"
-          ) == TuiController.Command.Fen(
+            "  load 4k3/8/8/8/8/8/8/4K3 w - - 0 1"
+          ) == TuiController.Command.Load(
             "4k3/8/8/8/8/8/8/4K3 w - - 0 1"
           )
+        )
+      },
+      test("parse export fen") {
+        assertTrue(
+          TuiController.parseCommand("export fen") ==
+            TuiController.Command.Export(TuiController.ExportFormat.Fen)
+        )
+      },
+      test("parse export pgn") {
+        assertTrue(
+          TuiController.parseCommand("export pgn") ==
+            TuiController.Command.Export(TuiController.ExportFormat.Pgn)
+        )
+      },
+      test("parse export json") {
+        assertTrue(
+          TuiController.parseCommand("export json") ==
+            TuiController.Command.Export(TuiController.ExportFormat.Json)
+        )
+      },
+      test("parse export with unknown format falls through to move") {
+        assertTrue(
+          TuiController.parseCommand("export xyz") ==
+            TuiController.Command.Move("export xyz")
         )
       }
     ),
@@ -154,13 +178,12 @@ object TuiControllerSpec extends ZIOSpecDefault:
           s.error.isDefined
         )
       },
-      test("fen command initializes game from FEN string") {
+      test("load auto-detects FEN and initializes game") {
         val fen = "4k3/4R3/8/8/8/8/8/4K3 b - - 0 1"
         for
           (gs, session, shutdown) <- withSession
-          command = TuiController.parseCommand(s"fen $fen")
           result <- TuiController.handleCommand(
-            command, gs, session, shutdown, false
+            TuiController.Command.Load(fen), gs, session, shutdown, false
           )
           s <- session.get
         yield assertTrue(
@@ -173,12 +196,57 @@ object TuiControllerSpec extends ZIOSpecDefault:
           s.error.isEmpty
         )
       },
-      test("fen command with invalid FEN sets error") {
+      test("load auto-detects PGN and replays moves") {
         for
           (gs, session, shutdown) <- withSession
-          command = TuiController.parseCommand("fen not a valid fen")
           result <- TuiController.handleCommand(
-            command, gs, session, shutdown, false
+            TuiController.Command.Load("1. e4 e5 2. Nf3 *"),
+            gs, session, shutdown, false
+          )
+          s <- session.get
+        yield assertTrue(
+          result == TuiController.Result.Continue(false),
+          s.moveLog.length == 3,
+          s.state.board(Position('f', 3)) == Piece(Color.White, PieceType.Knight),
+          s.error.isEmpty
+        )
+      },
+      test("load auto-detects JSON and initializes game") {
+        val json = """{
+          "board": {
+            "e1": "white king",
+            "e8": "black king"
+          },
+          "activeColor": "white",
+          "castlingRights": {
+            "whiteKingSide": false,
+            "whiteQueenSide": false,
+            "blackKingSide": false,
+            "blackQueenSide": false
+          },
+          "enPassantTarget": null,
+          "inCheck": false,
+          "status": "playing"
+        }"""
+        for
+          (gs, session, shutdown) <- withSession
+          result <- TuiController.handleCommand(
+            TuiController.Command.Load(json), gs, session, shutdown, false
+          )
+          s <- session.get
+        yield assertTrue(
+          result == TuiController.Result.Continue(false),
+          s.state.board.size == 2,
+          s.moveLog.isEmpty,
+          s.error.isEmpty
+        )
+      },
+      test("load with invalid input sets error") {
+        for
+          (gs, session, shutdown) <- withSession
+          result <- TuiController.handleCommand(
+            TuiController.Command.Load("not valid anything"),
+            gs, session, shutdown, false
           )
           s <- session.get
         yield assertTrue(
@@ -186,46 +254,83 @@ object TuiControllerSpec extends ZIOSpecDefault:
           s.error.isDefined
         )
       },
-      test("fen command resets move log") {
+      test("load resets move log for FEN") {
         for
           (gs, session, shutdown) <- withSession
-          // Make a move first
           _ <- TuiController.handleCommand(
             TuiController.Command.Move("e2 e4"), gs, session, shutdown, false
           )
-          beforeFen <- session.get
-          // Now load a FEN
+          beforeLoad <- session.get
           _ <- TuiController.handleCommand(
-            TuiController.Command.Fen(
+            TuiController.Command.Load(
               "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
             ),
             gs, session, shutdown, false
           )
-          afterFen <- session.get
+          afterLoad <- session.get
         yield assertTrue(
-          beforeFen.moveLog.nonEmpty,
-          afterFen.moveLog.isEmpty
+          beforeLoad.moveLog.nonEmpty,
+          afterLoad.moveLog.isEmpty
+        )
+      },
+      test("export fen puts FEN text into session output") {
+        for
+          (gs, session, shutdown) <- withSession
+          _ <- TuiController.handleCommand(
+            TuiController.Command.Export(TuiController.ExportFormat.Fen),
+            gs, session, shutdown, false
+          )
+          s <- session.get
+        yield assertTrue(
+          s.output.isDefined,
+          s.error.isEmpty,
+          s.output.get.contains("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
+        )
+      },
+      test("export pgn puts PGN text into session output") {
+        for
+          (gs, session, shutdown) <- withSession
+          _ <- TuiController.handleCommand(
+            TuiController.Command.Move("e2 e4"), gs, session, shutdown, false
+          )
+          _ <- TuiController.handleCommand(
+            TuiController.Command.Export(TuiController.ExportFormat.Pgn),
+            gs, session, shutdown, false
+          )
+          s <- session.get
+        yield assertTrue(
+          s.output.isDefined,
+          s.error.isEmpty,
+          s.output.get.contains("1. e4"),
+          s.output.get.contains("[Event")
+        )
+      },
+      test("export json puts JSON text into session output") {
+        for
+          (gs, session, shutdown) <- withSession
+          _ <- TuiController.handleCommand(
+            TuiController.Command.Export(TuiController.ExportFormat.Json),
+            gs, session, shutdown, false
+          )
+          s <- session.get
+        yield assertTrue(
+          s.output.isDefined,
+          s.error.isEmpty,
+          s.output.get.contains("\"board\""),
+          s.output.get.contains("\"activeColor\"")
         )
       },
       test("flip clears previous error from session") {
         for
           (gs, session, shutdown) <- withSession
-          // First: make an invalid move to set an error
           _ <- TuiController.handleCommand(
             TuiController.Command.Move("e2 e5"),
-            gs,
-            session,
-            shutdown,
-            false
+            gs, session, shutdown, false
           )
           withError <- session.get
-          // Then: flip should clear the error
           _ <- TuiController.handleCommand(
             TuiController.Command.Flip,
-            gs,
-            session,
-            shutdown,
-            false
+            gs, session, shutdown, false
           )
           s <- session.get
         yield assertTrue(
@@ -236,22 +341,14 @@ object TuiControllerSpec extends ZIOSpecDefault:
       test("help clears previous error from session") {
         for
           (gs, session, shutdown) <- withSession
-          // First: make an invalid move to set an error
           _ <- TuiController.handleCommand(
             TuiController.Command.Move("e2 e5"),
-            gs,
-            session,
-            shutdown,
-            false
+            gs, session, shutdown, false
           )
           withError <- session.get
-          // Then: help should clear the error
           _ <- TuiController.handleCommand(
             TuiController.Command.Help,
-            gs,
-            session,
-            shutdown,
-            false
+            gs, session, shutdown, false
           )
           s <- session.get
         yield assertTrue(
@@ -264,10 +361,7 @@ object TuiControllerSpec extends ZIOSpecDefault:
           (gs, session, shutdown) <- withSession
           result <- TuiController.handleCommand(
             TuiController.Command.Quit,
-            gs,
-            session,
-            shutdown,
-            false
+            gs, session, shutdown, false
           )
           isDone <- shutdown.isDone
         yield assertTrue(
@@ -278,23 +372,15 @@ object TuiControllerSpec extends ZIOSpecDefault:
     ),
     suite("TUI-GUI interaction")(
       test("queue-based input survives external session changes") {
-        // Core regression: with readLine-per-iteration, input was lost
-        // after an ExternalChange. With a queue, it's preserved.
         for
           (gs, session, shutdown) <- withSession
           inputQueue <- Queue.unbounded[String]
-          // 1. GUI makes a move, changing the session
           _ <- GameController.makeMove(gs, session, "e2 e4")
-          // 2. User types quit after the session change
           _ <- inputQueue.offer("quit")
-          // 3. Queue still delivers the input
           event <- inputQueue.take.map(TuiEvent.Input(_))
           result <- TuiController.handleCommand(
             TuiController.parseCommand("quit"),
-            gs,
-            session,
-            shutdown,
-            false
+            gs, session, shutdown, false
           )
           isDone <- shutdown.isDone
         yield assertTrue(
@@ -307,11 +393,9 @@ object TuiControllerSpec extends ZIOSpecDefault:
         for
           (_, session, shutdown) <- withSession
           inputQueue <- Queue.unbounded[String]
-          // Input is queued before and after a session change
           _ <- inputQueue.offer("e2 e4")
           _ <- session.update(_.copy(error = Some("external")))
           _ <- inputQueue.offer("quit")
-          // Both items are still in the queue
           size <- inputQueue.size
           first <- inputQueue.take
           second <- inputQueue.take

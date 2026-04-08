@@ -1,9 +1,10 @@
 package chess.service
 
-import chess.codec.FenParserRegex
+import chess.codec.{FenParserRegex, JsonParser, PgnParser}
 import chess.controller.MoveParser
 import chess.model.{GameError, GameEvent, GameId}
 import chess.model.board.GameState
+import chess.model.piece.Color
 import chess.model.rules.Game
 import chess.repository.GameRepository
 import zio.*
@@ -17,12 +18,31 @@ final class GameServiceLive(repo: GameRepository) extends GameService:
       _ <- repo.save(id, state)
     yield GameEvent.GameStarted(id, state)
 
-  def newGameFromFen(fen: String): IO[GameError, GameEvent.GameStarted] =
-    for
-      state <- ZIO.fromEither(FenParserRegex.parse(fen)).mapError(GameError.ParseError(_))
-      id <- Random.nextUUID.map(_.toString)
-      _ <- repo.save(id, state)
-    yield GameEvent.GameStarted(id, state)
+  def loadGame(
+      input: String
+  ): IO[GameError, (GameEvent.GameStarted, List[(Color, String)])] =
+    val tryJson = ZIO
+      .fromEither(JsonParser.parse(input))
+      .mapError(GameError.ParseError(_))
+      .map(state => (state, List.empty[(Color, String)]))
+
+    val tryFen = ZIO
+      .fromEither(FenParserRegex.parse(input))
+      .mapError(GameError.ParseError(_))
+      .map(state => (state, List.empty[(Color, String)]))
+
+    val tryPgn = PgnParser
+      .parse(input)
+      .map(pgn => (pgn.state, pgn.moveLog))
+
+    val parsed = tryJson.orElse(tryPgn).orElse(tryFen)
+
+    parsed.flatMap { case (state, moveLog) =>
+      for
+        id <- Random.nextUUID.map(_.toString)
+        _ <- repo.save(id, state)
+      yield (GameEvent.GameStarted(id, state), moveLog)
+    }
 
   def makeMove(
       id: GameId,

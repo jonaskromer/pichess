@@ -5,15 +5,26 @@ object HelpView:
     """|=== πChess Help ===
        |
        |COMMANDS
-       |  <from> <to>   Move a piece  (e.g. e2 e4)
-       |  fen <FEN>     Start a new game from a FEN string
-       |  flip          Flip the board (toggle White/Black perspective)
-       |  help          Show this help screen
-       |  quit          Exit the game
+       |  <from> <to>          Move a piece  (e.g. e2 e4)
+       |  load <FEN|PGN|JSON>  Load a game (format is auto-detected)
+       |  export fen|pgn|json  Export the current game in the given format
+       |  flip                 Flip the board (toggle White/Black perspective)
+       |  help                 Show this help screen
+       |  quit                 Exit the game
+       |
+       |IMPORT / EXPORT
+       |  The 'load' command accepts FEN, PGN, or JSON — the format is detected
+       |  automatically. The 'export' command requires a format argument.
+       |
+       |  load rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1
+       |  load 1. e4 e5 2. Nf3 Nc6 *
+       |  load {"board": {...}, "activeColor": "white", ...}
+       |  export fen
+       |  export pgn
+       |  export json
        |
        |FEN (FORSYTH-EDWARDS NOTATION)
        |  FEN encodes a complete board position as a single line of text.
-       |  Use the 'fen' command to load any position.
        |
        |  Format:  <placement> <active> <castling> <en-passant> <halfmove> <fullmove>
        |
@@ -28,6 +39,14 @@ object HelpView:
        |  En passant — target square (e.g. e3) or '-'
        |  Halfmove   — moves since last pawn push or capture (for 50-move rule)
        |  Fullmove   — incremented after Black's move (starts at 1)
+       |
+       |PGN (PORTABLE GAME NOTATION)
+       |  PGN records a full game as a sequence of SAN moves.
+       |
+       |  Example: 1. e4 e5 2. Nf3 Nc6 *
+       |
+       |  Move numbers (1. 2. ...) and result tokens (1-0, 0-1, *) are handled.
+       |  Comments in {braces} and NAG annotations ($1, $2) are ignored.
        |
        |MOVE NOTATION
        |  Both coordinate and Standard Algebraic Notation (SAN) are accepted.

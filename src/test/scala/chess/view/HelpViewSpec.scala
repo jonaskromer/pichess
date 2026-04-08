@@ -7,9 +7,13 @@ object HelpViewSpec extends ZIOSpecDefault:
   private val help = HelpView.render
 
   private val commandsSection =
-    help.substring(help.indexOf("COMMANDS"), help.indexOf("\nFEN"))
+    help.substring(help.indexOf("COMMANDS"), help.indexOf("\nIMPORT"))
+  private val importExportSection =
+    help.substring(help.indexOf("\nIMPORT"), help.indexOf("\nFEN"))
   private val fenSection =
-    help.substring(help.indexOf("\nFEN"), help.indexOf("MOVE NOTATION"))
+    help.substring(help.indexOf("\nFEN"), help.indexOf("\nPGN"))
+  private val pgnSection =
+    help.substring(help.indexOf("\nPGN"), help.indexOf("MOVE NOTATION"))
   private val notationSection =
     help.substring(
       help.indexOf("MOVE NOTATION"),
@@ -37,8 +41,30 @@ object HelpViewSpec extends ZIOSpecDefault:
       test("list the quit command") {
         assertTrue(commandsSection.contains("quit"))
       },
-      test("list the fen command") {
-        assertTrue(commandsSection.contains("fen"))
+      test("list the load command") {
+        assertTrue(commandsSection.contains("load"))
+      },
+      test("list the export command") {
+        assertTrue(commandsSection.contains("export"))
+      }
+    ),
+    suite("import / export")(
+      test("explain auto-detection for load") {
+        assertTrue(importExportSection.contains("automatically"))
+      },
+      test("show load examples for all three formats") {
+        assertTrue(
+          importExportSection.contains("load rnbqkbnr"),
+          importExportSection.contains("load 1. e4"),
+          importExportSection.contains("load {")
+        )
+      },
+      test("show export format options") {
+        assertTrue(
+          importExportSection.contains("export fen"),
+          importExportSection.contains("export pgn"),
+          importExportSection.contains("export json")
+        )
       }
     ),
     suite("FEN notation")(
@@ -59,6 +85,17 @@ object HelpViewSpec extends ZIOSpecDefault:
         assertTrue(
           fenSection.contains("Uppercase = White"),
           fenSection.contains("lowercase = Black")
+        )
+      }
+    ),
+    suite("PGN notation")(
+      test("include a PGN example") {
+        assertTrue(pgnSection.contains("1. e4 e5"))
+      },
+      test("mention comments and NAGs") {
+        assertTrue(
+          pgnSection.contains("Comments"),
+          pgnSection.contains("NAG")
         )
       }
     ),
