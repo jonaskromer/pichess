@@ -96,13 +96,16 @@ object Main extends ZIOAppDefault:
           yield ()
     yield ()
 
-  private def openBrowser: Task[Unit] = ZIO.attempt {
-    val os = java.lang.System.getProperty("os.name").toLowerCase
-    val cmd =
-      if os.contains("mac") then Array("open", "http://localhost:8090")
-      else if os.contains("win") then
-        Array("cmd", "/c", "start", "http://localhost:8090")
-      else Array("xdg-open", "http://localhost:8090")
-    java.lang.Runtime.getRuntime.exec(cmd)
-    ()
-  }
+  private def openBrowser: Task[Unit] =
+    for
+      os <- zio.System
+        .property("os.name")
+        .orDie
+        .map(_.getOrElse("").toLowerCase)
+      cmd =
+        if os.contains("mac") then List("open", "http://localhost:8090")
+        else if os.contains("win") then
+          List("cmd", "/c", "start", "http://localhost:8090")
+        else List("xdg-open", "http://localhost:8090")
+      _ <- zio.process.Command(cmd.head, cmd.tail*).run.orDie
+    yield ()

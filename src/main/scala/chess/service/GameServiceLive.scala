@@ -11,7 +11,7 @@ final class GameServiceLive(repo: GameRepository) extends GameService:
 
   def newGame(): IO[GameError, GameEvent.GameStarted] =
     for
-      id <- ZIO.succeed(java.util.UUID.randomUUID().toString)
+      id <- Random.nextUUID.map(_.toString)
       state = GameState.initial
       _ <- repo.save(id, state)
     yield GameEvent.GameStarted(id, state)

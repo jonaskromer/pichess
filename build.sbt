@@ -8,6 +8,7 @@ lazy val root = (project in file("."))
     libraryDependencies ++= Seq(
       "dev.zio"                %% "zio"                       % "2.1.24",
       "dev.zio"                %% "zio-http"                  % "3.10.1",
+      "dev.zio"                %% "zio-process"               % "0.7.2",
       "org.scala-lang.modules" %% "scala-parser-combinators"  % "2.4.0",
       "com.lihaoyi"            %% "fastparse"                 % "3.1.1",
       "dev.zio"                %% "zio-test"                  % "2.1.24" % Test,

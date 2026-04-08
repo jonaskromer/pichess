@@ -35,9 +35,9 @@ object TuiController:
       case Command.Quit =>
         shutdown.succeed(()).as(Result.Shutdown)
       case Command.Help =>
-        ZIO.succeed(Result.Continue(flipped))
+        session.update(_.copy(error = None)).as(Result.Continue(flipped))
       case Command.Flip =>
-        ZIO.succeed(Result.Continue(!flipped))
+        session.update(_.copy(error = None)).as(Result.Continue(!flipped))
       case Command.Move(raw) =>
         GameController
           .makeMove(gs, session, raw)

@@ -136,6 +136,58 @@ object TuiControllerSpec extends ZIOSpecDefault:
           s.error.isDefined
         )
       },
+      test("flip clears previous error from session") {
+        for
+          (gs, session, shutdown) <- withSession
+          // First: make an invalid move to set an error
+          _ <- TuiController.handleCommand(
+            TuiController.Command.Move("e2 e5"),
+            gs,
+            session,
+            shutdown,
+            false
+          )
+          withError <- session.get
+          // Then: flip should clear the error
+          _ <- TuiController.handleCommand(
+            TuiController.Command.Flip,
+            gs,
+            session,
+            shutdown,
+            false
+          )
+          s <- session.get
+        yield assertTrue(
+          withError.error.isDefined,
+          s.error.isEmpty
+        )
+      },
+      test("help clears previous error from session") {
+        for
+          (gs, session, shutdown) <- withSession
+          // First: make an invalid move to set an error
+          _ <- TuiController.handleCommand(
+            TuiController.Command.Move("e2 e5"),
+            gs,
+            session,
+            shutdown,
+            false
+          )
+          withError <- session.get
+          // Then: help should clear the error
+          _ <- TuiController.handleCommand(
+            TuiController.Command.Help,
+            gs,
+            session,
+            shutdown,
+            false
+          )
+          s <- session.get
+        yield assertTrue(
+          withError.error.isDefined,
+          s.error.isEmpty
+        )
+      },
       test("quit does not recurse") {
         for
           (gs, session, shutdown) <- withSession
