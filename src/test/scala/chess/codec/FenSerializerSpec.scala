@@ -75,6 +75,21 @@ object FenSerializerSpec extends ZIOSpecDefault:
           "4k3/8/8/8/3N4/8/8/4K3 w - - 0 1"
       )
     },
+    test("emits halfmove clock and fullmove number from state") {
+      val state = GameState(
+        board = Map(
+          Position('e', 1) -> Piece(Color.White, PieceType.King),
+          Position('e', 8) -> Piece(Color.Black, PieceType.King)
+        ),
+        activeColor = Color.Black,
+        castlingRights = CastlingRights(false, false, false, false),
+        halfmoveClock = 12,
+        fullmoveNumber = 40
+      )
+      assertTrue(
+        FenSerializer.serialize(state) == "4k3/8/8/8/8/8/8/4K3 b - - 12 40"
+      )
+    },
     test("encodes every piece type with the correct letter") {
       val state = GameState(
         board = Map(

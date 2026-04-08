@@ -12,6 +12,7 @@ e8=Q    — SAN: pawn to e8, promote to queen
 ```
 
 To quit the game, type `quit`. To flip the board, type `flip`. To see help, type `help`.
+To undo the last move, type `undo`. To redo an undone move, type `redo`.
 
 ---
 
@@ -68,12 +69,25 @@ To quit the game, type `quit`. To flip the board, type `flip`. To see help, type
 
 ---
 
+### Undo / Redo
+- **Undo** (`undo`): reverts the last move. The game state is restored by replaying all moves except the last from the initial position. The undone move is pushed onto a redo stack.
+- **Redo** (`redo`): reapplies the most recently undone move. Making a new move clears the redo stack.
+- Both commands are available in the TUI and via the web GUI (buttons and `/api/undo`, `/api/redo` endpoints).
+
+### Move Counters
+- **Halfmove clock**: counts consecutive moves with no pawn advance and no capture. Resets to 0 on any pawn move or capture (including en passant). Used for the 50-move draw rule (not yet enforced).
+- **Fullmove number**: starts at 1 and increments after each Black move. Both counters are preserved through FEN import/export.
+
+---
+
 ## Not Yet Implemented
 
 | Rule | Status |
 |---|---|
 | Stalemate detection | Not implemented |
-| Draw conditions (50-move rule, threefold repetition, insufficient material) | Not implemented |
+| 50-move rule enforcement (halfmove clock is tracked but draw is not auto-claimed) | Not implemented |
+| Threefold repetition | Not implemented |
+| Insufficient material draw | Not implemented |
 
 Illegal moves are rejected with an error message and the player is prompted to retry.
 

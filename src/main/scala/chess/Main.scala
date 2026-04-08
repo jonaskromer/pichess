@@ -4,6 +4,7 @@ import chess.controller.{GameController, TuiController, WebController}
 import chess.model.{GameSnapshot, SessionState}
 import chess.repository.InMemoryGameRepository
 import chess.service.GameService
+import chess.notation.SanSerializer
 import chess.view.{BoardView, HelpView, MoveLogView}
 import zio.*
 import zio.Console.*
@@ -35,7 +36,7 @@ object Main extends ZIOAppDefault:
       gs <- ZIO.service[GameService]
       event <- gs.newGame()
       session <- SubscriptionRef.make(
-        SessionState(GameSnapshot(event.gameId, event.initialState, Nil))
+        SessionState(GameSnapshot(event.gameId, event.initialState, Nil, Nil, event.initialState))
       )
       shutdown <- Promise.make[Nothing, Unit]
       inputQueue <- Queue.unbounded[String]
@@ -72,9 +73,12 @@ object Main extends ZIOAppDefault:
   ): ZIO[Any, Throwable, Unit] =
     for
       s <- session.get
+      moveLog <- SanSerializer
+        .deriveMoveLog(s.initialState, s.moves)
+        .orDie
       _ <- printLine(BoardView.render(s.state, flipped))
-      _ <- ZIO.when(s.moveLog.nonEmpty)(
-        printLine(MoveLogView.render(s.moveLog))
+      _ <- ZIO.when(moveLog.nonEmpty)(
+        printLine(MoveLogView.render(moveLog))
       )
       _ <- ZIO.when(s.output.isDefined)(
         printLine(s.output.get)

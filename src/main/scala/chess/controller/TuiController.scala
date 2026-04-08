@@ -1,7 +1,8 @@
 package chess.controller
 
 import chess.codec.{FenSerializer, JsonSerializer, PgnSerializer}
-import chess.model.{GameSnapshot, SessionState}
+import chess.model.{GameError, GameSnapshot, SessionState}
+import chess.notation.SanSerializer
 import chess.service.GameService
 import zio.*
 import zio.stream.SubscriptionRef
@@ -15,6 +16,8 @@ object TuiController:
     case Quit
     case Help
     case Flip
+    case Undo
+    case Redo
     case Load(raw: String)
     case Export(format: ExportFormat)
     case Move(raw: String)
@@ -40,6 +43,8 @@ object TuiController:
         case "quit" => Command.Quit
         case "help" => Command.Help
         case "flip" => Command.Flip
+        case "undo" => Command.Undo
+        case "redo" => Command.Redo
         case raw    => Command.Move(raw)
 
   def handleCommand(
@@ -56,6 +61,26 @@ object TuiController:
         session.update(_.copy(error = None, output = None)).as(Result.Continue(flipped))
       case Command.Flip =>
         session.update(_.copy(error = None, output = None)).as(Result.Continue(!flipped))
+      case Command.Undo =>
+        GameController
+          .undo(gs, session)
+          .foldZIO(
+            err =>
+              session
+                .update(_.copy(error = Some(err.message)))
+                .as(Result.Continue(flipped)),
+            _ => ZIO.succeed(Result.Continue(flipped))
+          )
+      case Command.Redo =>
+        GameController
+          .redo(gs, session)
+          .foldZIO(
+            err =>
+              session
+                .update(_.copy(error = Some(err.message)))
+                .as(Result.Continue(flipped)),
+            _ => ZIO.succeed(Result.Continue(flipped))
+          )
       case Command.Load(raw) =>
         gs.loadGame(raw)
           .foldZIO(
@@ -63,19 +88,29 @@ object TuiController:
               session
                 .update(_.copy(error = Some(err.message)))
                 .as(Result.Continue(flipped)),
-            { case (event, moveLog) =>
+            { case (event, moves, currentState) =>
               session
-                .set(SessionState(GameSnapshot(event.gameId, event.initialState, moveLog)))
+                .set(SessionState(
+                  GameSnapshot(event.gameId, event.initialState, moves, Nil, currentState)
+                ))
                 .as(Result.Continue(flipped))
             }
           )
       case Command.Export(format) =>
         session.get.flatMap { s =>
           val text = format match
-            case ExportFormat.Fen  => FenSerializer.serialize(s.state)
-            case ExportFormat.Pgn  => PgnSerializer.serialize(s.moveLog, s.state.status)
-            case ExportFormat.Json => JsonSerializer.serialize(s.state)
-          session.update(_.copy(error = None, output = Some(text))).as(Result.Continue(flipped))
+            case ExportFormat.Fen  => ZIO.succeed(FenSerializer.serialize(s.state))
+            case ExportFormat.Json => ZIO.succeed(JsonSerializer.serialize(s.state))
+            case ExportFormat.Pgn =>
+              SanSerializer
+                .deriveMoveLog(s.initialState, s.moves)
+                .orDie
+                .map(log => PgnSerializer.serialize(log, s.state.status))
+          text.flatMap(t =>
+            session
+              .update(_.copy(error = None, output = Some(t)))
+              .as(Result.Continue(flipped))
+          )
         }
       case Command.Move(raw) =>
         GameController

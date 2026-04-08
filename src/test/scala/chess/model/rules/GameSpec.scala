@@ -600,6 +600,78 @@ object GameSpec extends ZIOSpecDefault:
         )
       }
     ),
+    // ─── Halfmove clock and fullmove number ────────────────────────────────────
+    suite("halfmove clock and fullmove number")(
+      test("halfmove clock starts at 0 and increments on a knight move") {
+        for result <- Game
+            .applyMove(initial, Move(Position('g', 1), Position('f', 3)))
+        yield assertTrue(result.halfmoveClock == 1)
+      },
+      test("halfmove clock resets to 0 on a pawn move") {
+        for result <- Game
+            .applyMove(initial, Move(Position('e', 2), Position('e', 4)))
+        yield assertTrue(result.halfmoveClock == 0)
+      },
+      test("halfmove clock resets to 0 on a capture") {
+        val s = GameState(
+          Map(
+            Position('d', 4) -> Piece(Color.White, PieceType.Queen),
+            Position('g', 7) -> Piece(Color.Black, PieceType.Pawn)
+          ),
+          Color.White,
+          halfmoveClock = 5
+        )
+        for result <- Game
+            .applyMove(s, Move(Position('d', 4), Position('g', 7)))
+        yield assertTrue(result.halfmoveClock == 0)
+      },
+      test("halfmove clock accumulates across multiple non-pawn non-capture moves") {
+        for
+          s1 <- Game.applyMove(initial, Move(Position('g', 1), Position('f', 3)))
+          s2 <- Game.applyMove(s1, Move(Position('g', 8), Position('f', 6)))
+        yield assertTrue(s1.halfmoveClock == 1, s2.halfmoveClock == 2)
+      },
+      test("fullmove number stays 1 after White's first move") {
+        for result <- Game
+            .applyMove(initial, Move(Position('e', 2), Position('e', 4)))
+        yield assertTrue(result.fullmoveNumber == 1)
+      },
+      test("fullmove number increments to 2 after Black's first move") {
+        for
+          afterWhite <- Game
+            .applyMove(initial, Move(Position('e', 2), Position('e', 4)))
+          result <- Game
+            .applyMove(afterWhite, Move(Position('e', 7), Position('e', 5)))
+        yield assertTrue(result.fullmoveNumber == 2)
+      },
+      test("fullmove number increments only after Black moves") {
+        for
+          s1 <- Game.applyMove(initial, Move(Position('e', 2), Position('e', 4)))
+          s2 <- Game.applyMove(s1, Move(Position('e', 7), Position('e', 5)))
+          s3 <- Game.applyMove(s2, Move(Position('g', 1), Position('f', 3)))
+          s4 <- Game.applyMove(s3, Move(Position('b', 8), Position('c', 6)))
+        yield assertTrue(
+          s1.fullmoveNumber == 1,
+          s2.fullmoveNumber == 2,
+          s3.fullmoveNumber == 2,
+          s4.fullmoveNumber == 3
+        )
+      },
+      test("halfmove clock resets on en passant capture") {
+        val s = GameState(
+          Map(
+            Position('e', 5) -> Piece(Color.White, PieceType.Pawn),
+            Position('d', 5) -> Piece(Color.Black, PieceType.Pawn)
+          ),
+          Color.White,
+          enPassantTarget = Some(Position('d', 6)),
+          halfmoveClock = 3
+        )
+        for result <- Game
+            .applyMove(s, Move(Position('e', 5), Position('d', 6)))
+        yield assertTrue(result.halfmoveClock == 0)
+      }
+    ),
     // ─── Checkmate detection ────────────────────────────────────────────────────
     suite("checkmate detection")(
       test(

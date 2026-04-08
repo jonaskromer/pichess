@@ -8,7 +8,9 @@ case class GameState(
     enPassantTarget: Option[Position] = None,
     inCheck: Boolean = false,
     castlingRights: CastlingRights = CastlingRights(),
-    status: GameStatus = GameStatus.Playing
+    status: GameStatus = GameStatus.Playing,
+    halfmoveClock: Int = 0,
+    fullmoveNumber: Int = 1
 )
 
 object GameState:

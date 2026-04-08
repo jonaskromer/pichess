@@ -36,12 +36,25 @@ object Game:
         newBoard,
         state.activeColor.opposite
       )
+      isCapture = state.board.contains(move.to) || isEnPassantCapture(
+        state,
+        move,
+        piece
+      )
+      isPawnMove = piece.pieceType == PieceType.Pawn
+      newHalfmove =
+        if isPawnMove || isCapture then 0 else state.halfmoveClock + 1
+      newFullmove =
+        if state.activeColor == Color.Black then state.fullmoveNumber + 1
+        else state.fullmoveNumber
       newState = GameState(
         board = newBoard,
         activeColor = state.activeColor.opposite,
         enPassantTarget = nextEnPassantTarget(move, piece),
         inCheck = opponentInCheck,
-        castlingRights = updatedCastlingRights(state, move)
+        castlingRights = updatedCastlingRights(state, move),
+        halfmoveClock = newHalfmove,
+        fullmoveNumber = newFullmove
       )
       status <-
         if opponentInCheck then

@@ -202,6 +202,22 @@ function submitMove() {
   return false;
 }
 
+async function undoMove() {
+  try {
+    const res = await fetch('/api/undo', { method: 'POST' });
+    const data = await res.json();
+    if (data.error) showToast(data.error);
+  } catch (err) { showToast('Connection error'); }
+}
+
+async function redoMove() {
+  try {
+    const res = await fetch('/api/redo', { method: 'POST' });
+    const data = await res.json();
+    if (data.error) showToast(data.error);
+  } catch (err) { showToast('Connection error'); }
+}
+
 async function newGame() {
   const res = await fetch('/api/new', { method: 'POST' });
 }

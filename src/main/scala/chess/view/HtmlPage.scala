@@ -37,6 +37,10 @@ $css
         <button type="submit">Move</button>
       </form>
       <div class="btn-row">
+        <button class="secondary-btn" onclick="undoMove()">Undo</button>
+        <button class="secondary-btn" onclick="redoMove()">Redo</button>
+      </div>
+      <div class="btn-row">
         <button class="secondary-btn" onclick="newGame()">New Game</button>
         <button class="quit-btn" onclick="quitGame()">Quit</button>
       </div>

@@ -1,12 +1,13 @@
 package chess.model
 
-import chess.model.board.GameState
-import chess.model.piece.Color
+import chess.model.board.{GameState, Move}
 
 case class GameSnapshot(
     gameId: GameId,
-    state: GameState,
-    moveLog: List[(Color, String)]
+    initialState: GameState,
+    moves: List[Move],
+    redoStack: List[Move],
+    state: GameState
 )
 
 case class SessionState(
@@ -14,4 +15,4 @@ case class SessionState(
     error: Option[String] = None,
     output: Option[String] = None
 ):
-  export game.{gameId, state, moveLog}
+  export game.{gameId, initialState, moves, redoStack, state}

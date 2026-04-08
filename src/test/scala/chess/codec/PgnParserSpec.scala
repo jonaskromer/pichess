@@ -1,7 +1,8 @@
 package chess.codec
 
-import chess.model.board.{GameState, Position}
+import chess.model.board.{GameState, Move, Position}
 import chess.model.piece.{Color, Piece, PieceType}
+import chess.notation.SanSerializer
 import zio.test.*
 
 object PgnParserSpec extends ZIOSpecDefault:
@@ -12,13 +13,15 @@ object PgnParserSpec extends ZIOSpecDefault:
                   |[Result "*"]
                   |
                   |1. e4 e5 2. Nf3 Nc6 *""".stripMargin
-      for result <- PgnParser.parse(pgn)
+      for
+        result <- PgnParser.parse(pgn)
+        sanLog <- SanSerializer.deriveMoveLog(result.initialState, result.moves)
       yield assertTrue(
-        result.moveLog.length == 4,
-        result.moveLog.head == (Color.White, "e4"),
-        result.moveLog(1) == (Color.Black, "e5"),
-        result.moveLog(2) == (Color.White, "Nf3"),
-        result.moveLog(3) == (Color.Black, "Nc6"),
+        result.moves.length == 4,
+        sanLog.head == (Color.White, "e4"),
+        sanLog(1) == (Color.Black, "e5"),
+        sanLog(2) == (Color.White, "Nf3"),
+        sanLog(3) == (Color.Black, "Nc6"),
         result.state.board(Position('e', 4)) == Piece(
           Color.White,
           PieceType.Pawn
@@ -47,7 +50,7 @@ object PgnParserSpec extends ZIOSpecDefault:
       val pgn = "1. e4 e5 *"
       for result <- PgnParser.parse(pgn)
       yield assertTrue(
-        result.moveLog.length == 2,
+        result.moves.length == 2,
         result.state.board(Position('e', 4)) == Piece(
           Color.White,
           PieceType.Pawn
@@ -57,17 +60,17 @@ object PgnParserSpec extends ZIOSpecDefault:
     test("ignores result tokens in movetext") {
       val pgn = "1. e4 e5 2. Nf3 1-0"
       for result <- PgnParser.parse(pgn)
-      yield assertTrue(result.moveLog.length == 3)
+      yield assertTrue(result.moves.length == 3)
     },
     test("ignores comments in braces") {
       val pgn = "1. e4 {best move} e5 {solid reply} *"
       for result <- PgnParser.parse(pgn)
-      yield assertTrue(result.moveLog.length == 2)
+      yield assertTrue(result.moves.length == 2)
     },
     test("ignores NAG annotations") {
       val pgn = "1. e4 $1 e5 $2 *"
       for result <- PgnParser.parse(pgn)
-      yield assertTrue(result.moveLog.length == 2)
+      yield assertTrue(result.moves.length == 2)
     },
     test("fails on illegal move in PGN") {
       val pgn = "1. e4 e5 2. e4 *"
@@ -89,20 +92,19 @@ object PgnParserSpec extends ZIOSpecDefault:
       for result <- PgnParser.parse(pgn)
       yield assertTrue(
         result.headers.size == 1,
-        result.moveLog.length == 1
+        result.moves.length == 1
       )
     },
     test("round-trips with PgnSerializer") {
       val pgn = "1. e4 e5 2. Nf3 Nc6 *"
       for
         result <- PgnParser.parse(pgn)
-        serialized = PgnSerializer.serialize(
-          result.moveLog,
-          result.state.status
-        )
+        sanLog <- SanSerializer.deriveMoveLog(result.initialState, result.moves)
+        serialized = PgnSerializer.serialize(sanLog, result.state.status)
         reparsed <- PgnParser.parse(serialized)
+        reparsedSan <- SanSerializer.deriveMoveLog(reparsed.initialState, reparsed.moves)
       yield assertTrue(
-        reparsed.moveLog == result.moveLog,
+        reparsedSan == sanLog,
         reparsed.state == result.state
       )
     },
@@ -111,10 +113,12 @@ object PgnParserSpec extends ZIOSpecDefault:
                   |[Result "*"]
                   |
                   |1. Kd7 *""".stripMargin
-      for result <- PgnParser.parse(pgn)
+      for
+        result <- PgnParser.parse(pgn)
+        sanLog <- SanSerializer.deriveMoveLog(result.initialState, result.moves)
       yield assertTrue(
-        result.moveLog.length == 1,
-        result.moveLog.head._1 == Color.Black,
+        result.moves.length == 1,
+        sanLog.head._1 == Color.Black,
         result.state.activeColor == Color.White
       )
     }

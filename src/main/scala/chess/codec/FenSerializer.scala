@@ -10,11 +10,6 @@ import chess.model.piece.{Color, Piece, PieceType}
   * {{{
   *   parser.parse(FenSerializer.serialize(state)) == Right(state)
   * }}}
-  *
-  * `GameState` does not track the half-move clock or full-move number, so those
-  * fields are emitted as `0 1`. When a FEN is parsed and immediately
-  * re-serialized those counters are lost, but every other field round-trips
-  * exactly.
   */
 object FenSerializer:
 
@@ -23,7 +18,7 @@ object FenSerializer:
     val active = if state.activeColor == Color.White then "w" else "b"
     val castling = serializeCastling(state.castlingRights)
     val enPassant = state.enPassantTarget.map(_.toString).getOrElse("-")
-    s"$placement $active $castling $enPassant 0 1"
+    s"$placement $active $castling $enPassant ${state.halfmoveClock} ${state.fullmoveNumber}"
 
   private def serializeBoard(board: Board): String =
     (8 to 1 by -1)

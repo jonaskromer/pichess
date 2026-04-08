@@ -110,6 +110,24 @@ object FenParserBehaviors:
           round.activeColor == state.activeColor
         )
       },
+      test("round-trips halfmove clock and fullmove number") {
+        val state = GameState(
+          board = Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 8) -> Piece(Color.Black, PieceType.King)
+          ),
+          activeColor = Color.Black,
+          castlingRights = CastlingRights(false, false, false, false),
+          halfmoveClock = 7,
+          fullmoveNumber = 23
+        )
+        val Right(round) =
+          parser.parse(FenSerializer.serialize(state)): @unchecked
+        assertTrue(
+          round.halfmoveClock == 7,
+          round.fullmoveNumber == 23
+        )
+      },
       test("rejects an empty input") {
         assertTrue(parser.parse("").isLeft)
       },

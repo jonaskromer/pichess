@@ -2,7 +2,7 @@ package chess.notation
 
 import chess.model.GameError
 import chess.model.board.{GameState, Move, Position}
-import chess.model.piece.{PieceType, Piece}
+import chess.model.piece.{Color, PieceType, Piece}
 import chess.model.rules.{Game, MoveValidator}
 import zio.*
 
@@ -86,5 +86,18 @@ object SanSerializer:
           move.from.row.toString
         else s"${move.from.col}${move.from.row}"
       }
+
+  def deriveMoveLog(
+      initialState: GameState,
+      moves: List[Move]
+  ): IO[GameError, List[(Color, String)]] =
+    ZIO.foldLeft(moves)(
+      (initialState, List.empty[(Color, String)])
+    ) { case ((state, log), move) =>
+      for
+        san <- toSan(move, state)
+        newState <- Game.applyMove(state, move)
+      yield (newState, log :+ (state.activeColor, san))
+    }.map(_._2)
 
   private def squareStr(pos: Position): String = s"${pos.col}${pos.row}"

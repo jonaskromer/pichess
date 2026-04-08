@@ -20,7 +20,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
       gs <- ZIO.service[GameService]
       event <- gs.newGame()
       session <- SubscriptionRef.make(
-        SessionState(GameSnapshot(event.gameId, event.initialState, Nil))
+        SessionState(GameSnapshot(event.gameId, event.initialState, Nil, Nil, event.initialState))
       )
       shutdown <- Promise.make[Nothing, Unit]
       routes = WebController.routes(gs, session, shutdown)
@@ -82,7 +82,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         s <- session.get
       yield assertTrue(
         s.state.activeColor == Color.White,
-        s.moveLog.isEmpty,
+        s.moves.isEmpty,
         s.state.board == GameState.initial.board
       )
     },
@@ -97,5 +97,42 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         body.contains(""""quit":true"""),
         isDone
       )
+    },
+    test("POST /api/undo reverts the last move") {
+      for
+        (routes, session, _) <- withRoutes
+        _ <- routes.runZIO(
+          Request.post(url"/api/move", Body.fromString("""{"move":"e2 e4"}"""))
+        )
+        response <- routes.runZIO(Request.post(url"/api/undo", Body.empty))
+        s <- session.get
+      yield assertTrue(
+        response.status == Status.Ok,
+        s.moves.isEmpty,
+        s.state == GameState.initial
+      )
+    },
+    test("POST /api/redo reapplies an undone move") {
+      for
+        (routes, session, _) <- withRoutes
+        _ <- routes.runZIO(
+          Request.post(url"/api/move", Body.fromString("""{"move":"e2 e4"}"""))
+        )
+        _ <- routes.runZIO(Request.post(url"/api/undo", Body.empty))
+        response <- routes.runZIO(Request.post(url"/api/redo", Body.empty))
+        s <- session.get
+      yield assertTrue(
+        response.status == Status.Ok,
+        s.moves.length == 1,
+        s.state.board.get(Position('e', 4)) == Some(
+          Piece(Color.White, PieceType.Pawn)
+        )
+      )
+    },
+    test("POST /api/undo returns error when nothing to undo") {
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.post(url"/api/undo", Body.empty))
+      yield assertTrue(response.status == Status.BadRequest)
     }
   ).provide(appLayer, Scope.default)

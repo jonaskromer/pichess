@@ -1,6 +1,7 @@
 package chess.controller
 
 import chess.model.{GameError, GameSnapshot, SessionState}
+import chess.notation.SanSerializer
 import chess.service.GameService
 import chess.view.{HtmlPage, WebBoardView}
 import zio.*
@@ -26,6 +27,8 @@ object WebController:
       Method.POST / "api" / "move" -> handler { (req: Request) =>
         handleMove(gs, session, req)
       },
+      Method.POST / "api" / "undo" -> handler(handleUndo(gs, session)),
+      Method.POST / "api" / "redo" -> handler(handleRedo(gs, session)),
       Method.POST / "api" / "new" -> handler(handleNewGame(gs, session)),
       Method.POST / "api" / "quit" -> handler(handleQuit(shutdown))
     )
@@ -42,18 +45,20 @@ object WebController:
   private def serveState(
       session: SubscriptionRef[SessionState]
   ): ZIO[Any, Nothing, Response] =
-    session.get.map(s => stateResponse(s))
+    session.get.flatMap(s => stateResponse(s))
 
   private def serveEvents(
       session: SubscriptionRef[SessionState],
       shutdown: Promise[Nothing, Unit]
   ): ZIO[Any, Nothing, Response] =
     ZIO.succeed {
-      val stateEvents = session.changes.map { s =>
-        ServerSentEvent(
-          data = WebBoardView.toJson(s.state, s.moveLog, s.error),
-          eventType = Some("state")
-        )
+      val stateEvents = session.changes.mapZIO { s =>
+        deriveJson(s).map { json =>
+          ServerSentEvent(
+            data = json,
+            eventType = Some("state")
+          )
+        }
       }
       val quitEvent = zio.stream.ZStream
         .fromZIO(shutdown.await)
@@ -80,7 +85,32 @@ object WebController:
         .orElseFail(GameError.ParseError("Missing move field"))
       _ <- GameController.makeMove(gs, session, move)
       updated <- session.get
-    yield stateResponse(updated)).catchAll(err =>
+      resp <- stateResponse(updated)
+    yield resp).catchAll(err =>
+      ZIO.succeed(errorResponse(err.message, Status.BadRequest))
+    )
+
+  private def handleUndo(
+      gs: GameService,
+      session: SubscriptionRef[SessionState]
+  ): ZIO[Any, Nothing, Response] =
+    (for
+      _ <- GameController.undo(gs, session)
+      updated <- session.get
+      resp <- stateResponse(updated)
+    yield resp).catchAll(err =>
+      ZIO.succeed(errorResponse(err.message, Status.BadRequest))
+    )
+
+  private def handleRedo(
+      gs: GameService,
+      session: SubscriptionRef[SessionState]
+  ): ZIO[Any, Nothing, Response] =
+    (for
+      _ <- GameController.redo(gs, session)
+      updated <- session.get
+      resp <- stateResponse(updated)
+    yield resp).catchAll(err =>
       ZIO.succeed(errorResponse(err.message, Status.BadRequest))
     )
 
@@ -91,10 +121,11 @@ object WebController:
     (for
       event <- gs.newGame()
       _ <- session.set(
-        SessionState(GameSnapshot(event.gameId, event.initialState, Nil))
+        SessionState(GameSnapshot(event.gameId, event.initialState, Nil, Nil, event.initialState))
       )
       s <- session.get
-    yield stateResponse(s)).catchAll(err =>
+      resp <- stateResponse(s)
+    yield resp).catchAll(err =>
       ZIO.succeed(errorResponse(err.message, Status.InternalServerError))
     )
 
@@ -104,8 +135,14 @@ object WebController:
     shutdown.succeed(()) *>
       ZIO.succeed(Response.json("""{"quit":true}"""))
 
-  private def stateResponse(s: SessionState): Response =
-    Response.json(WebBoardView.toJson(s.state, s.moveLog, s.error))
+  private def stateResponse(s: SessionState): UIO[Response] =
+    deriveJson(s).map(Response.json(_))
+
+  private def deriveJson(s: SessionState): UIO[String] =
+    SanSerializer
+      .deriveMoveLog(s.initialState, s.moves)
+      .map(log => WebBoardView.toJson(s.state, log, s.error))
+      .orDie
 
   private def errorResponse(message: String, status: Status): Response =
     Response

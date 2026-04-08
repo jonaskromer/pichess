@@ -47,14 +47,16 @@ private[codec] object FenBuilder:
       color <- parseActiveColor(activeColor)
       rights <- parseCastling(castling)
       epTarget <- parseEnPassant(enPassant)
-      _ <- parseNonNegativeInt(halfmove, "halfmove clock")
-      _ <- parsePositiveInt(fullmove, "fullmove number")
+      hm <- parseNonNegativeInt(halfmove, "halfmove clock")
+      fm <- parsePositiveInt(fullmove, "fullmove number")
     yield GameState(
       board = board,
       activeColor = color,
       enPassantTarget = epTarget,
       inCheck = MoveValidator.isInCheck(board, color),
-      castlingRights = rights
+      castlingRights = rights,
+      halfmoveClock = hm,
+      fullmoveNumber = fm
     )
 
   def parseBoard(placement: String): Either[String, Board] =

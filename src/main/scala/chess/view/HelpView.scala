@@ -8,6 +8,8 @@ object HelpView:
        |  <from> <to>          Move a piece  (e.g. e2 e4)
        |  load <FEN|PGN|JSON>  Load a game (format is auto-detected)
        |  export fen|pgn|json  Export the current game in the given format
+       |  undo                 Undo the last move
+       |  redo                 Redo the last undone move
        |  flip                 Flip the board (toggle White/Black perspective)
        |  help                 Show this help screen
        |  quit                 Exit the game

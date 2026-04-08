@@ -1,8 +1,9 @@
 package chess.controller
 
 import chess.model.{GameSnapshot, SessionState}
-import chess.model.board.{GameState, Position}
+import chess.model.board.{GameState, Move, Position}
 import chess.model.piece.{Color, Piece, PieceType}
+import chess.notation.SanSerializer
 import chess.repository.InMemoryGameRepository
 import chess.service.{GameService, GameServiceLive}
 import zio.*
@@ -24,7 +25,7 @@ object TuiControllerSpec extends ZIOSpecDefault:
       gs <- ZIO.service[GameService]
       event <- gs.newGame()
       session <- SubscriptionRef.make(
-        SessionState(GameSnapshot(event.gameId, event.initialState, Nil))
+        SessionState(GameSnapshot(event.gameId, event.initialState, Nil, Nil, event.initialState))
       )
       shutdown <- Promise.make[Nothing, Unit]
     yield (gs, session, shutdown)
@@ -79,6 +80,16 @@ object TuiControllerSpec extends ZIOSpecDefault:
       test("parse flip") {
         assertTrue(
           TuiController.parseCommand("flip") == TuiController.Command.Flip
+        )
+      },
+      test("parse undo") {
+        assertTrue(
+          TuiController.parseCommand("undo") == TuiController.Command.Undo
+        )
+      },
+      test("parse redo") {
+        assertTrue(
+          TuiController.parseCommand("redo") == TuiController.Command.Redo
         )
       },
       test("parse move input") {
@@ -168,7 +179,7 @@ object TuiControllerSpec extends ZIOSpecDefault:
           s.state.board.get(Position('e', 4)) == Some(
             Piece(Color.White, PieceType.Pawn)
           ),
-          s.moveLog.nonEmpty
+          s.moves.nonEmpty
         )
       },
       test("invalid move returns Continue with error in session") {
@@ -192,7 +203,7 @@ object TuiControllerSpec extends ZIOSpecDefault:
           s.state.board.size == 3,
           s.state.board(Position('e', 7)) == Piece(Color.White, PieceType.Rook),
           s.state.inCheck,
-          s.moveLog.isEmpty,
+          s.moves.isEmpty,
           s.error.isEmpty
         )
       },
@@ -206,7 +217,7 @@ object TuiControllerSpec extends ZIOSpecDefault:
           s <- session.get
         yield assertTrue(
           result == TuiController.Result.Continue(false),
-          s.moveLog.length == 3,
+          s.moves.length == 3,
           s.state.board(Position('f', 3)) == Piece(Color.White, PieceType.Knight),
           s.error.isEmpty
         )
@@ -237,7 +248,7 @@ object TuiControllerSpec extends ZIOSpecDefault:
         yield assertTrue(
           result == TuiController.Result.Continue(false),
           s.state.board.size == 2,
-          s.moveLog.isEmpty,
+          s.moves.isEmpty,
           s.error.isEmpty
         )
       },
@@ -254,7 +265,7 @@ object TuiControllerSpec extends ZIOSpecDefault:
           s.error.isDefined
         )
       },
-      test("load resets move log for FEN") {
+      test("load resets moves for FEN") {
         for
           (gs, session, shutdown) <- withSession
           _ <- TuiController.handleCommand(
@@ -269,8 +280,8 @@ object TuiControllerSpec extends ZIOSpecDefault:
           )
           afterLoad <- session.get
         yield assertTrue(
-          beforeLoad.moveLog.nonEmpty,
-          afterLoad.moveLog.isEmpty
+          beforeLoad.moves.nonEmpty,
+          afterLoad.moves.isEmpty
         )
       },
       test("export fen puts FEN text into session output") {
@@ -367,6 +378,67 @@ object TuiControllerSpec extends ZIOSpecDefault:
         yield assertTrue(
           result == TuiController.Result.Shutdown,
           isDone
+        )
+      },
+      test("undo reverts the last move") {
+        for
+          (gs, session, shutdown) <- withSession
+          _ <- TuiController.handleCommand(
+            TuiController.Command.Move("e2 e4"), gs, session, shutdown, false
+          )
+          result <- TuiController.handleCommand(
+            TuiController.Command.Undo, gs, session, shutdown, false
+          )
+          s <- session.get
+        yield assertTrue(
+          result == TuiController.Result.Continue(false),
+          s.moves.isEmpty,
+          s.state == GameState.initial
+        )
+      },
+      test("undo with no moves sets error") {
+        for
+          (gs, session, shutdown) <- withSession
+          result <- TuiController.handleCommand(
+            TuiController.Command.Undo, gs, session, shutdown, false
+          )
+          s <- session.get
+        yield assertTrue(
+          result == TuiController.Result.Continue(false),
+          s.error.isDefined
+        )
+      },
+      test("redo reapplies an undone move") {
+        for
+          (gs, session, shutdown) <- withSession
+          _ <- TuiController.handleCommand(
+            TuiController.Command.Move("e2 e4"), gs, session, shutdown, false
+          )
+          _ <- TuiController.handleCommand(
+            TuiController.Command.Undo, gs, session, shutdown, false
+          )
+          result <- TuiController.handleCommand(
+            TuiController.Command.Redo, gs, session, shutdown, false
+          )
+          s <- session.get
+        yield assertTrue(
+          result == TuiController.Result.Continue(false),
+          s.moves.length == 1,
+          s.state.board.get(Position('e', 4)) == Some(
+            Piece(Color.White, PieceType.Pawn)
+          )
+        )
+      },
+      test("redo with no redo stack sets error") {
+        for
+          (gs, session, shutdown) <- withSession
+          result <- TuiController.handleCommand(
+            TuiController.Command.Redo, gs, session, shutdown, false
+          )
+          s <- session.get
+        yield assertTrue(
+          result == TuiController.Result.Continue(false),
+          s.error.isDefined
         )
       }
     ),

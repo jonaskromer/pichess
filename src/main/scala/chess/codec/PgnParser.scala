@@ -1,18 +1,17 @@
 package chess.codec
 
 import chess.model.GameError
-import chess.model.board.GameState
-import chess.model.piece.Color
+import chess.model.board.{GameState, Move}
 import chess.model.rules.Game
-import chess.notation.SanSerializer
 import zio.*
 
 object PgnParser:
 
   case class PgnGame(
       headers: Map[String, String],
-      state: GameState,
-      moveLog: List[(Color, String)]
+      initialState: GameState,
+      moves: List[Move],
+      state: GameState
   )
 
   def parse(input: String): IO[GameError, PgnGame] =
@@ -28,7 +27,7 @@ object PgnParser:
         case None => ZIO.succeed(GameState.initial)
       sanMoves = extractMoves(movetext)
       result <- replayMoves(initialState, sanMoves)
-    yield PgnGame(headers, result._1, result._2)
+    yield PgnGame(headers, initialState, result._2, result._1)
 
   private val headerPattern = """\[(\w+)\s+"([^"]*)"\]""".r
 
@@ -55,12 +54,11 @@ object PgnParser:
   private def replayMoves(
       initial: GameState,
       sanMoves: List[String]
-  ): IO[GameError, (GameState, List[(Color, String)])] =
-    ZIO.foldLeft(sanMoves)((initial, List.empty[(Color, String)])) {
-      case ((state, log), san) =>
+  ): IO[GameError, (GameState, List[Move])] =
+    ZIO.foldLeft(sanMoves)((initial, List.empty[Move])) {
+      case ((state, moves), san) =>
         for
           move <- chess.controller.MoveParser.parse(san, state)
-          canonicalSan <- SanSerializer.toSan(move, state)
           newState <- Game.applyMove(state, move)
-        yield (newState, log :+ (state.activeColor, canonicalSan))
+        yield (newState, moves :+ move)
     }

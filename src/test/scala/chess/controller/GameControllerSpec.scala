@@ -1,8 +1,9 @@
 package chess.controller
 
 import chess.model.{GameSnapshot, SessionState}
-import chess.model.board.{GameState, Position}
+import chess.model.board.{GameState, Move, Position}
 import chess.model.piece.{Color, Piece, PieceType}
+import chess.notation.SanSerializer
 import chess.repository.InMemoryGameRepository
 import chess.service.{GameService, GameServiceLive}
 import zio.*
@@ -19,73 +20,180 @@ object GameControllerSpec extends ZIOSpecDefault:
       gs <- ZIO.service[GameService]
       event <- gs.newGame()
       session <- SubscriptionRef.make(
-        SessionState(GameSnapshot(event.gameId, event.initialState, Nil))
+        SessionState(GameSnapshot(event.gameId, event.initialState, Nil, Nil, event.initialState))
       )
     yield (gs, session)
 
-  def spec = suite("GameController.makeMove")(
-    test("update session state after a valid move") {
-      for
-        (gs, session) <- withSession
-        _ <- GameController.makeMove(gs, session, "e2 e4")
-        s <- session.get
-      yield assertTrue(
-        s.state.board.get(Position('e', 4)) == Some(
-          Piece(Color.White, PieceType.Pawn)
-        ),
-        s.state.activeColor == Color.Black
-      )
-    },
-    test("append SAN to the move log") {
-      for
-        (gs, session) <- withSession
-        _ <- GameController.makeMove(gs, session, "e2 e4")
-        s <- session.get
-      yield assertTrue(
-        s.moveLog == List((Color.White, "e4"))
-      )
-    },
-    test("clear error on successful move") {
-      for
-        (gs, session) <- withSession
-        _ <- session.update(_.copy(error = Some("previous error")))
-        _ <- GameController.makeMove(gs, session, "e2 e4")
-        s <- session.get
-      yield assertTrue(s.error.isEmpty)
-    },
-    test("fail for an illegal move") {
-      for
-        (gs, session) <- withSession
-        exit <- GameController.makeMove(gs, session, "e2 e5").exit
-      yield assertTrue(exit.isFailure)
-    },
-    test("fail for a parse error") {
-      for
-        (gs, session) <- withSession
-        exit <- GameController.makeMove(gs, session, "garbage").exit
-      yield assertTrue(exit.isFailure)
-    },
-    test("accept SAN notation") {
-      for
-        (gs, session) <- withSession
-        _ <- GameController.makeMove(gs, session, "Nf3")
-        s <- session.get
-      yield assertTrue(
-        s.state.board.get(Position('f', 3)) == Some(
-          Piece(Color.White, PieceType.Knight)
-        ),
-        s.moveLog == List((Color.White, "Nf3"))
-      )
-    },
-    test("chain multiple moves") {
-      for
-        (gs, session) <- withSession
-        _ <- GameController.makeMove(gs, session, "e4")
-        _ <- GameController.makeMove(gs, session, "e5")
-        s <- session.get
-      yield assertTrue(
-        s.moveLog == List((Color.White, "e4"), (Color.Black, "e5")),
-        s.state.activeColor == Color.White
-      )
-    }
+  def spec = suite("GameController")(
+    suite("makeMove")(
+      test("update session state after a valid move") {
+        for
+          (gs, session) <- withSession
+          _ <- GameController.makeMove(gs, session, "e2 e4")
+          s <- session.get
+        yield assertTrue(
+          s.state.board.get(Position('e', 4)) == Some(
+            Piece(Color.White, PieceType.Pawn)
+          ),
+          s.state.activeColor == Color.Black
+        )
+      },
+      test("append Move to the moves list") {
+        for
+          (gs, session) <- withSession
+          _ <- GameController.makeMove(gs, session, "e2 e4")
+          s <- session.get
+        yield assertTrue(
+          s.moves.length == 1,
+          s.moves.head == Move(Position('e', 2), Position('e', 4))
+        )
+      },
+      test("derive correct SAN from moves") {
+        for
+          (gs, session) <- withSession
+          _ <- GameController.makeMove(gs, session, "e2 e4")
+          s <- session.get
+          sanLog <- SanSerializer.deriveMoveLog(s.initialState, s.moves)
+        yield assertTrue(
+          sanLog == List((Color.White, "e4"))
+        )
+      },
+      test("clear error on successful move") {
+        for
+          (gs, session) <- withSession
+          _ <- session.update(_.copy(error = Some("previous error")))
+          _ <- GameController.makeMove(gs, session, "e2 e4")
+          s <- session.get
+        yield assertTrue(s.error.isEmpty)
+      },
+      test("clear redo stack on new move") {
+        for
+          (gs, session) <- withSession
+          _ <- GameController.makeMove(gs, session, "e2 e4")
+          _ <- GameController.undo(gs, session)
+          _ <- GameController.makeMove(gs, session, "d2 d4")
+          s <- session.get
+        yield assertTrue(s.redoStack.isEmpty)
+      },
+      test("fail for an illegal move") {
+        for
+          (gs, session) <- withSession
+          exit <- GameController.makeMove(gs, session, "e2 e5").exit
+        yield assertTrue(exit.isFailure)
+      },
+      test("fail for a parse error") {
+        for
+          (gs, session) <- withSession
+          exit <- GameController.makeMove(gs, session, "garbage").exit
+        yield assertTrue(exit.isFailure)
+      },
+      test("accept SAN notation") {
+        for
+          (gs, session) <- withSession
+          _ <- GameController.makeMove(gs, session, "Nf3")
+          s <- session.get
+          sanLog <- SanSerializer.deriveMoveLog(s.initialState, s.moves)
+        yield assertTrue(
+          s.state.board.get(Position('f', 3)) == Some(
+            Piece(Color.White, PieceType.Knight)
+          ),
+          sanLog == List((Color.White, "Nf3"))
+        )
+      },
+      test("chain multiple moves") {
+        for
+          (gs, session) <- withSession
+          _ <- GameController.makeMove(gs, session, "e4")
+          _ <- GameController.makeMove(gs, session, "e5")
+          s <- session.get
+          sanLog <- SanSerializer.deriveMoveLog(s.initialState, s.moves)
+        yield assertTrue(
+          sanLog == List((Color.White, "e4"), (Color.Black, "e5")),
+          s.state.activeColor == Color.White
+        )
+      }
+    ),
+    suite("undo")(
+      test("restore previous state") {
+        for
+          (gs, session) <- withSession
+          _ <- GameController.makeMove(gs, session, "e2 e4")
+          _ <- GameController.undo(gs, session)
+          s <- session.get
+        yield assertTrue(
+          s.state == GameState.initial,
+          s.moves.isEmpty
+        )
+      },
+      test("push undone move to redo stack") {
+        for
+          (gs, session) <- withSession
+          _ <- GameController.makeMove(gs, session, "e2 e4")
+          _ <- GameController.undo(gs, session)
+          s <- session.get
+        yield assertTrue(
+          s.redoStack == List(Move(Position('e', 2), Position('e', 4)))
+        )
+      },
+      test("fail when no moves to undo") {
+        for
+          (gs, session) <- withSession
+          exit <- GameController.undo(gs, session).exit
+        yield assertTrue(exit.isFailure)
+      },
+      test("undo multiple moves in sequence") {
+        for
+          (gs, session) <- withSession
+          _ <- GameController.makeMove(gs, session, "e2 e4")
+          _ <- GameController.makeMove(gs, session, "e7 e5")
+          _ <- GameController.undo(gs, session)
+          s1 <- session.get
+          _ <- GameController.undo(gs, session)
+          s2 <- session.get
+        yield assertTrue(
+          s1.moves.length == 1,
+          s1.state.activeColor == Color.Black,
+          s2.moves.isEmpty,
+          s2.state == GameState.initial
+        )
+      }
+    ),
+    suite("redo")(
+      test("reapply undone move") {
+        for
+          (gs, session) <- withSession
+          _ <- GameController.makeMove(gs, session, "e2 e4")
+          _ <- GameController.undo(gs, session)
+          _ <- GameController.redo(gs, session)
+          s <- session.get
+        yield assertTrue(
+          s.moves.length == 1,
+          s.state.board.get(Position('e', 4)) == Some(
+            Piece(Color.White, PieceType.Pawn)
+          ),
+          s.redoStack.isEmpty
+        )
+      },
+      test("fail when no moves to redo") {
+        for
+          (gs, session) <- withSession
+          exit <- GameController.redo(gs, session).exit
+        yield assertTrue(exit.isFailure)
+      },
+      test("redo multiple moves in sequence") {
+        for
+          (gs, session) <- withSession
+          _ <- GameController.makeMove(gs, session, "e2 e4")
+          _ <- GameController.makeMove(gs, session, "e7 e5")
+          _ <- GameController.undo(gs, session)
+          _ <- GameController.undo(gs, session)
+          _ <- GameController.redo(gs, session)
+          _ <- GameController.redo(gs, session)
+          s <- session.get
+        yield assertTrue(
+          s.moves.length == 2,
+          s.state.activeColor == Color.White
+        )
+      }
+    )
   ).provide(appLayer)
