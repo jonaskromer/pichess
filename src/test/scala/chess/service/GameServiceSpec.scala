@@ -34,7 +34,10 @@ object GameServiceSpec extends ZIOSpecDefault:
         for (event, moves, currentState) <- GameService.loadGame(fen)
         yield assertTrue(
           event.gameId.nonEmpty,
-          event.initialState.board.size == 2,
+          event.initialState.board == Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 8) -> Piece(Color.Black, PieceType.King)
+          ),
           event.initialState.activeColor == Color.White,
           moves.isEmpty,
           currentState == event.initialState
@@ -58,18 +61,26 @@ object GameServiceSpec extends ZIOSpecDefault:
         for (event, moves, _) <- GameService.loadGame(json)
         yield assertTrue(
           event.gameId.nonEmpty,
-          event.initialState.board.size == 2,
+          event.initialState.board == Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 8) -> Piece(Color.Black, PieceType.King)
+          ),
+          event.initialState.activeColor == Color.White,
           moves.isEmpty
         )
       },
       test("persist the loaded state") {
         val fen = "4k3/8/8/8/8/8/8/4K3 w - - 0 1"
+        val expectedBoard = Map(
+          Position('e', 1) -> Piece(Color.White, PieceType.King),
+          Position('e', 8) -> Piece(Color.Black, PieceType.King)
+        )
         for
           (event, _, _) <- GameService.loadGame(fen)
           state <- GameService.getState(event.gameId)
         yield assertTrue(
           state.isDefined,
-          state.get.board.size == 2
+          state.get.board == expectedBoard
         )
       },
       test("fail for completely invalid input") {
@@ -83,10 +94,12 @@ object GameServiceSpec extends ZIOSpecDefault:
           started <- GameService.newGame()
           (state, event) <- GameService.makeMove(started.gameId, "e2 e4")
         yield assertTrue(
-          event.isInstanceOf[GameEvent.MoveMade],
+          event.gameId == started.gameId,
+          event.move == chess.model.board.Move(Position('e', 2), Position('e', 4)),
           state.board.get(Position('e', 4)) == Some(
             Piece(Color.White, PieceType.Pawn)
-          )
+          ),
+          state.board.get(Position('e', 2)).isEmpty
         )
       },
       test("persist the updated state after a valid move") {

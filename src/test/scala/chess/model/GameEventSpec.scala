@@ -30,7 +30,7 @@ object GameEventSpec extends ZIOSpecDefault:
         GameEvent.InvalidMoveAttempted(id, "No piece at e4")
       assertTrue(
         event.gameId == id,
-        event.reason.contains("e4")
+        event.reason == "No piece at e4"
       )
     }
   )

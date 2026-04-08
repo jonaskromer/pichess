@@ -15,7 +15,9 @@ object FenSerializerSpec extends ZIOSpecDefault:
     },
     test("emits 'b' for an active black side") {
       val state = GameState.initial.copy(activeColor = Color.Black)
-      assertTrue(FenSerializer.serialize(state).contains(" b "))
+      val fen = FenSerializer.serialize(state)
+      val fields = fen.split(' ')
+      assertTrue(fields(1) == "b")
     },
     test("encodes a board with no castling rights as '-'") {
       val state = GameState(
@@ -42,7 +44,8 @@ object FenSerializerSpec extends ZIOSpecDefault:
         castlingRights = CastlingRights(false, false, false, false)
       )
       val fen = FenSerializer.serialize(state)
-      assertTrue(fen.contains(" e3 "))
+      val fields = fen.split(' ')
+      assertTrue(fields(3) == "e3")
     },
     test("emits each individual castling right correctly") {
       val state = GameState(
@@ -58,7 +61,9 @@ object FenSerializerSpec extends ZIOSpecDefault:
           blackQueenSide = true
         )
       )
-      assertTrue(FenSerializer.serialize(state).contains(" KQkq "))
+      val fen = FenSerializer.serialize(state)
+      val fields = fen.split(' ')
+      assertTrue(fields(2) == "KQkq")
     },
     test("emits a single piece on an otherwise empty rank correctly") {
       val state = GameState(

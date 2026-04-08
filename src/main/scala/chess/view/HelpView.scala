@@ -80,9 +80,15 @@ object HelpView:
        |             requires: neither piece moved, path clear, no check
        |  Checkmate — detected automatically; game ends with winner announced;
        |              # suffix appended to the mating move in SAN
+       |  Stalemate — detected automatically; game drawn when the player to
+       |              move has no legal move but is not in check
+       |  50-move rule — claim a draw with 'draw' after 50 moves with no
+       |                 pawn move or capture
+       |  Insufficient material — game drawn automatically when neither side
+       |                          can checkmate (K vs K, K+B vs K, K+N vs K,
+       |                          K+B vs K+B same-colored bishops)
        |  Turn order: White moves first, then alternates
        |
        |NOT YET IMPLEMENTED
        |  Threefold repetition  (draw when same position occurs 3 times)
-       |  Insufficient material (draw when neither side can checkmate)
        |""".stripMargin

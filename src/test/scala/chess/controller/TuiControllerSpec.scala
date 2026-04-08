@@ -184,14 +184,14 @@ object TuiControllerSpec extends ZIOSpecDefault:
           s.state.board.get(Position('e', 4)) == Some(
             Piece(Color.White, PieceType.Pawn)
           ),
-          s.moves.nonEmpty
+          s.moves == List(Move(Position('e', 2), Position('e', 4)))
         )
       },
       test("invalid move returns Continue with error in session") {
         for (result, _, s) <- handle("e2 e5")
         yield assertTrue(
           result == TuiController.Result.Continue(false),
-          s.error.isDefined
+          s.error.exists(_.contains("cannot move to"))
         )
       },
       test("load auto-detects FEN and initializes game") {
@@ -252,7 +252,10 @@ object TuiControllerSpec extends ZIOSpecDefault:
           s <- session.get
         yield assertTrue(
           result == TuiController.Result.Continue(false),
-          s.state.board.size == 2,
+          s.state.board == Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 8) -> Piece(Color.Black, PieceType.King)
+          ),
           s.moves.isEmpty,
           s.error.isEmpty
         )
@@ -267,7 +270,7 @@ object TuiControllerSpec extends ZIOSpecDefault:
           s <- session.get
         yield assertTrue(
           result == TuiController.Result.Continue(false),
-          s.error.isDefined
+          s.error.exists(_.nonEmpty)
         )
       },
       test("load resets moves for FEN") {
@@ -410,7 +413,7 @@ object TuiControllerSpec extends ZIOSpecDefault:
           s <- session.get
         yield assertTrue(
           result == TuiController.Result.Continue(false),
-          s.error.isDefined
+          s.error == Some("Nothing to undo")
         )
       },
       test("redo reapplies an undone move") {
@@ -443,7 +446,7 @@ object TuiControllerSpec extends ZIOSpecDefault:
           s <- session.get
         yield assertTrue(
           result == TuiController.Result.Continue(false),
-          s.error.isDefined
+          s.error == Some("Nothing to redo")
         )
       },
       test("draw claim succeeds when halfmove clock is 100") {

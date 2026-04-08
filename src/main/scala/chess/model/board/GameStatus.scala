@@ -5,6 +5,7 @@ import chess.model.piece.Color
 enum DrawReason:
   case Stalemate
   case FiftyMoveRule
+  case InsufficientMaterial
 
 enum GameStatus:
   case Playing

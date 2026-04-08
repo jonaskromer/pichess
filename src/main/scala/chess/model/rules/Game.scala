@@ -24,12 +24,15 @@ object Game:
     for
       newState <- applyMoveCore(state, move)
       status <-
-        MoveValidator.hasLegalMove(newState).map { hasMove =>
-          if !hasMove && newState.inCheck then
-            GameStatus.Checkmate(state.activeColor)
-          else if !hasMove then GameStatus.Draw(DrawReason.Stalemate)
-          else GameStatus.Playing
-        }
+        if isInsufficientMaterial(newState.board) then
+          ZIO.succeed(GameStatus.Draw(DrawReason.InsufficientMaterial))
+        else
+          MoveValidator.hasLegalMove(newState).map { hasMove =>
+            if !hasMove && newState.inCheck then
+              GameStatus.Checkmate(state.activeColor)
+            else if !hasMove then GameStatus.Draw(DrawReason.Stalemate)
+            else GameStatus.Playing
+          }
     yield newState.copy(status = status)
 
   /** Applies a move without detecting checkmate/stalemate.
@@ -75,6 +78,25 @@ object Game:
       halfmoveClock = newHalfmove,
       fullmoveNumber = newFullmove
     )
+
+  private def isInsufficientMaterial(board: Board): Boolean =
+    val pieces = board.values.toList
+    val nonKings = pieces.filterNot(_.pieceType == PieceType.King)
+    nonKings match
+      case Nil => true // K vs K
+      case List(p) =>
+        p.pieceType == PieceType.Bishop || p.pieceType == PieceType.Knight
+      case List(a, b)
+          if a.pieceType == PieceType.Bishop
+            && b.pieceType == PieceType.Bishop
+            && a.color != b.color =>
+        val posA = board.collectFirst { case (pos, p) if p == a => pos }.get
+        val posB = board.collectFirst { case (pos, p) if p == b => pos }.get
+        squareColor(posA) == squareColor(posB)
+      case _ => false
+
+  private def squareColor(pos: Position): Int =
+    (pos.col - 'a' + pos.row) % 2
 
   private def isPromotionRank(piece: Piece, row: Int): Boolean =
     piece.pieceType == PieceType.Pawn &&

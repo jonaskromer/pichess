@@ -61,7 +61,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         body <- response.body.asString
       yield assertTrue(
         response.status == Status.BadRequest,
-        body.contains(""""error":""")
+        body.contains("cannot move to")
       )
     },
     test("POST /api/move returns error for missing move field") {

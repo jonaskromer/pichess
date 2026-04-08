@@ -758,6 +758,90 @@ object GameSpec extends ZIOSpecDefault:
             .applyMove(initial, Move(Position('e', 2), Position('e', 4)))
         yield assertTrue(result.status == GameStatus.Playing)
       },
+      test("set Draw(InsufficientMaterial) when only kings remain") {
+        // White king captures black's last piece, leaving K vs K
+        val s = GameState(
+          Map(
+            Position('d', 2) -> Piece(Color.White, PieceType.King),
+            Position('h', 8) -> Piece(Color.Black, PieceType.King),
+            Position('e', 3) -> Piece(Color.Black, PieceType.Pawn)
+          ),
+          Color.White
+        )
+        for result <- Game.applyMove(s, Move(Position('d', 2), Position('e', 3)))
+        yield assertTrue(
+          result.status == GameStatus.Draw(DrawReason.InsufficientMaterial)
+        )
+      },
+      test("set Draw(InsufficientMaterial) for K+B vs K") {
+        val s = GameState(
+          Map(
+            Position('d', 2) -> Piece(Color.White, PieceType.King),
+            Position('c', 1) -> Piece(Color.White, PieceType.Bishop),
+            Position('h', 8) -> Piece(Color.Black, PieceType.King),
+            Position('e', 3) -> Piece(Color.Black, PieceType.Pawn)
+          ),
+          Color.White
+        )
+        for result <- Game.applyMove(s, Move(Position('d', 2), Position('e', 3)))
+        yield assertTrue(
+          result.status == GameStatus.Draw(DrawReason.InsufficientMaterial)
+        )
+      },
+      test("set Draw(InsufficientMaterial) for K+N vs K") {
+        val s = GameState(
+          Map(
+            Position('d', 2) -> Piece(Color.White, PieceType.King),
+            Position('b', 1) -> Piece(Color.White, PieceType.Knight),
+            Position('h', 8) -> Piece(Color.Black, PieceType.King),
+            Position('e', 3) -> Piece(Color.Black, PieceType.Pawn)
+          ),
+          Color.White
+        )
+        for result <- Game.applyMove(s, Move(Position('d', 2), Position('e', 3)))
+        yield assertTrue(
+          result.status == GameStatus.Draw(DrawReason.InsufficientMaterial)
+        )
+      },
+      test("set Draw(InsufficientMaterial) for K+B vs K+B same-colored bishops") {
+        // White bishop on c1 (c=2,1 -> sum 3 odd), black bishop on a3 (a=0,3 -> sum 3 odd) -> same
+        // White king captures black's last non-bishop piece (a pawn)
+        val s = GameState(
+          Map(
+            Position('b', 2) -> Piece(Color.White, PieceType.King),
+            Position('c', 1) -> Piece(Color.White, PieceType.Bishop),
+            Position('h', 8) -> Piece(Color.Black, PieceType.King),
+            Position('a', 3) -> Piece(Color.Black, PieceType.Bishop),
+            Position('c', 3) -> Piece(Color.Black, PieceType.Pawn)
+          ),
+          Color.White
+        )
+        for result <- Game.applyMove(s, Move(Position('b', 2), Position('c', 3)))
+        yield assertTrue(
+          result.status == GameStatus.Draw(DrawReason.InsufficientMaterial)
+        )
+      },
+      test("keep Playing for K+B vs K+B on opposite-colored squares") {
+        // White bishop on c1 (sum 3 odd), black bishop on c3 (sum 5 odd)...
+        // no, c=2,3 -> sum 5 odd. Same. Let me use d3: d=3,3 -> sum 6 even. Different!
+        val s = GameState(
+          Map(
+            Position('b', 2) -> Piece(Color.White, PieceType.King),
+            Position('c', 1) -> Piece(Color.White, PieceType.Bishop),
+            Position('h', 8) -> Piece(Color.Black, PieceType.King),
+            Position('d', 3) -> Piece(Color.Black, PieceType.Bishop),
+            Position('c', 3) -> Piece(Color.Black, PieceType.Pawn)
+          ),
+          Color.White
+        )
+        for result <- Game.applyMove(s, Move(Position('b', 2), Position('c', 3)))
+        yield assertTrue(result.status == GameStatus.Playing)
+      },
+      test("keep Playing when sufficient material exists") {
+        for result <- Game
+            .applyMove(initial, Move(Position('e', 2), Position('e', 4)))
+        yield assertTrue(result.status == GameStatus.Playing)
+      },
       test("reject move when game is already over") {
         val s = GameState(
           Map(

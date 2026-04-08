@@ -184,12 +184,20 @@ object HelpViewSpec extends ZIOSpecDefault:
         assertTrue(!notYetSection.contains("Checkmate"))
       }
     ),
+    suite("implemented draw rules")(
+      test("list stalemate as implemented") {
+        assertTrue(implementedSection.contains("Stalemate"))
+      },
+      test("list 50-move rule as implemented") {
+        assertTrue(implementedSection.contains("50-move rule"))
+      },
+      test("list insufficient material as implemented") {
+        assertTrue(implementedSection.contains("Insufficient material"))
+      }
+    ),
     suite("not yet implemented")(
       test("list threefold repetition") {
         assertTrue(notYetSection.contains("Threefold repetition"))
-      },
-      test("list insufficient material") {
-        assertTrue(notYetSection.contains("Insufficient material"))
       }
     )
   )

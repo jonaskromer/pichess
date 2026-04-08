@@ -11,8 +11,19 @@ exd5    — SAN: pawn on e-file captures on d5
 e8=Q    — SAN: pawn to e8, promote to queen
 ```
 
-To quit the game, type `quit`. To flip the board, type `flip`. To see help, type `help`.
-To undo the last move, type `undo`. To redo an undone move, type `redo`.
+## Commands
+
+| Command | Description |
+|---|---|
+| `<from> <to>` or SAN | Make a move (e.g. `e2 e4`, `Nf3`) |
+| `load <FEN\|PGN\|JSON>` | Load a game (format auto-detected) |
+| `export fen\|pgn\|json` | Export the current game |
+| `undo` | Undo the last move |
+| `redo` | Redo the last undone move |
+| `draw` | Claim a draw (50-move rule) |
+| `flip` | Flip the board perspective |
+| `help` | Show help |
+| `quit` | Exit the game |
 
 ---
 
@@ -67,13 +78,18 @@ To undo the last move, type `undo`. To redo an undone move, type `redo`.
 - The game status changes to `Checkmate(winner)` and no further moves are accepted.
 - The `#` suffix is appended to SAN output when a move delivers checkmate (instead of `+`).
 
----
+### Stalemate
+- After each move, if the opponent has no legal move but is **not** in check, the game is automatically drawn.
 
 ### Draw (50-Move Rule)
 - Either player can claim a draw by typing `draw` when the halfmove clock has reached 100 (50 full moves with no pawn advance and no capture).
 - If the clock hasn't reached 100, the command fails with a message explaining how many moves remain.
 - The draw is not automatic — the game continues unless a player explicitly claims it.
-- On the web GUI, use the `POST /api/draw` endpoint.
+- On the web GUI, use the Draw button or `POST /api/draw` endpoint.
+
+### Insufficient Material
+- The game is automatically drawn when neither side has enough material to deliver checkmate.
+- Detected cases: K vs K, K+B vs K, K+N vs K, K+B vs K+B (same-colored bishops).
 
 ### Undo / Redo
 - **Undo** (`undo`): reverts the last move. The game state is restored by replaying all moves except the last from the initial position. The undone move is pushed onto a redo stack.
@@ -81,8 +97,8 @@ To undo the last move, type `undo`. To redo an undone move, type `redo`.
 - Both commands are available in the TUI and via the web GUI (buttons and `/api/undo`, `/api/redo` endpoints).
 
 ### Move Counters
-- **Halfmove clock**: counts consecutive moves with no pawn advance and no capture. Resets to 0 on any pawn move or capture (including en passant). Used for the 50-move draw rule (not yet enforced).
-- **Fullmove number**: starts at 1 and increments after each Black move. Both counters are preserved through FEN import/export.
+- **Halfmove clock**: counts consecutive moves with no pawn advance and no capture. Resets to 0 on any pawn move or capture (including en passant). Used for the 50-move draw rule.
+- **Fullmove number**: starts at 1 and increments after each Black move. Both counters are preserved through FEN and JSON import/export.
 
 ---
 
@@ -90,10 +106,7 @@ To undo the last move, type `undo`. To redo an undone move, type `redo`.
 
 | Rule | Status |
 |---|---|
-| ~~Stalemate detection~~ | **Implemented** — auto-detected after each move |
-| ~~50-move rule~~ | **Implemented** — claim via `draw` command |
 | Threefold repetition | Not implemented |
-| Insufficient material draw | Not implemented |
 
 Illegal moves are rejected with an error message and the player is prompted to retry.
 

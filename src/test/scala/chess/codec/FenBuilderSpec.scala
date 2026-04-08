@@ -34,7 +34,7 @@ object FenBuilderSpec extends ZIOSpecDefault:
           initial._5,
           initial._6
         )
-      assertTrue(result.isLeft)
+      assertTrue(result == Left("Invalid active color 'x' (expected 'w' or 'b')"))
     },
     test("rejects an en passant target that is not '-' or a valid square") {
       val result =
@@ -46,7 +46,7 @@ object FenBuilderSpec extends ZIOSpecDefault:
           initial._5,
           initial._6
         )
-      assertTrue(result.isLeft)
+      assertTrue(result == Left("Invalid en passant target square 'zz'"))
     },
     test("rejects a halfmove clock that overflows Int") {
       val huge = "9" * 20
@@ -59,7 +59,7 @@ object FenBuilderSpec extends ZIOSpecDefault:
           huge,
           initial._6
         )
-      assertTrue(result.isLeft)
+      assertTrue(result == Left(s"Invalid halfmove clock '$huge'"))
     },
     test("rejects a fullmove number that overflows Int") {
       val huge = "9" * 20
@@ -72,7 +72,7 @@ object FenBuilderSpec extends ZIOSpecDefault:
           initial._5,
           huge
         )
-      assertTrue(result.isLeft)
+      assertTrue(result == Left(s"Invalid fullmove number '$huge'"))
     },
     test("accepts the standard initial position when called directly") {
       val result =
