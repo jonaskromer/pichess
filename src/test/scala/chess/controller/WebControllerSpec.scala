@@ -1,6 +1,6 @@
 package chess.controller
 
-import chess.model.SessionState
+import chess.model.{GameSnapshot, SessionState}
 import chess.model.board.GameState
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.model.board.Position
@@ -35,7 +35,7 @@ object WebControllerSpec extends ZIOSpecDefault:
     ),
     suite("SessionState")(
       test("hold game state with empty defaults") {
-        val state = SessionState("id", GameState.initial, Nil, None)
+        val state = SessionState(GameSnapshot("id", GameState.initial, Nil))
         assertTrue(
           state.gameId == "id",
           state.state == GameState.initial,
@@ -44,12 +44,12 @@ object WebControllerSpec extends ZIOSpecDefault:
         )
       },
       test("hold game state with error") {
-        val state = SessionState("id", GameState.initial, Nil, Some("oops"))
+        val state = SessionState(GameSnapshot("id", GameState.initial, Nil), error = Some("oops"))
         assertTrue(state.error == Some("oops"))
       },
       test("hold game state with move log") {
         val log = List((Color.White, "e4"), (Color.Black, "e5"))
-        val state = SessionState("id", GameState.initial, log, None)
+        val state = SessionState(GameSnapshot("id", GameState.initial, log))
         assertTrue(state.moveLog == log)
       }
     )

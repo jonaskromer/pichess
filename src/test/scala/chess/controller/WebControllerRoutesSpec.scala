@@ -1,6 +1,6 @@
 package chess.controller
 
-import chess.model.SessionState
+import chess.model.{GameSnapshot, SessionState}
 import chess.model.board.{GameState, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.repository.InMemoryGameRepository
@@ -20,7 +20,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
       gs <- ZIO.service[GameService]
       event <- gs.newGame()
       session <- SubscriptionRef.make(
-        SessionState(event.gameId, event.initialState, Nil, None)
+        SessionState(GameSnapshot(event.gameId, event.initialState, Nil))
       )
       shutdown <- Promise.make[Nothing, Unit]
       routes = WebController.routes(gs, session, shutdown)

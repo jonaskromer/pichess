@@ -1,6 +1,6 @@
 package chess.controller
 
-import chess.model.{GameError, SessionState}
+import chess.model.{GameError, GameSnapshot, SessionState}
 import chess.service.GameService
 import chess.view.{HtmlPage, WebBoardView}
 import zio.*
@@ -91,7 +91,7 @@ object WebController:
     (for
       event <- gs.newGame()
       _ <- session.set(
-        SessionState(event.gameId, event.initialState, Nil, None)
+        SessionState(GameSnapshot(event.gameId, event.initialState, Nil))
       )
       s <- session.get
     yield stateResponse(s)).catchAll(err =>

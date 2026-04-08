@@ -1,7 +1,7 @@
 package chess
 
 import chess.controller.{GameController, TuiController, WebController}
-import chess.model.SessionState
+import chess.model.{GameSnapshot, SessionState}
 import chess.repository.InMemoryGameRepository
 import chess.service.GameService
 import chess.view.{BoardView, HelpView, MoveLogView}
@@ -35,7 +35,7 @@ object Main extends ZIOAppDefault:
       gs <- ZIO.service[GameService]
       event <- gs.newGame()
       session <- SubscriptionRef.make(
-        SessionState(event.gameId, event.initialState, Nil, None)
+        SessionState(GameSnapshot(event.gameId, event.initialState, Nil))
       )
       shutdown <- Promise.make[Nothing, Unit]
       inputQueue <- Queue.unbounded[String]

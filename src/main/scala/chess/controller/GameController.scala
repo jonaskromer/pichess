@@ -18,8 +18,10 @@ object GameController:
         SanSerializer.toSan(event.move, s.state).flatMap { san =>
           session.update(st =>
             st.copy(
-              state = newState,
-              moveLog = st.moveLog :+ (s.state.activeColor, san),
+              game = st.game.copy(
+                state = newState,
+                moveLog = st.moveLog :+ (s.state.activeColor, san)
+              ),
               error = None
             )
           )

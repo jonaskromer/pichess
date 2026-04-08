@@ -1,7 +1,7 @@
 package chess.controller
 
 import chess.codec.{FenSerializer, JsonSerializer, PgnSerializer}
-import chess.model.SessionState
+import chess.model.{GameSnapshot, SessionState}
 import chess.service.GameService
 import zio.*
 import zio.stream.SubscriptionRef
@@ -65,7 +65,7 @@ object TuiController:
                 .as(Result.Continue(flipped)),
             { case (event, moveLog) =>
               session
-                .set(SessionState(event.gameId, event.initialState, moveLog, None))
+                .set(SessionState(GameSnapshot(event.gameId, event.initialState, moveLog)))
                 .as(Result.Continue(flipped))
             }
           )
