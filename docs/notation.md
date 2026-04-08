@@ -105,6 +105,35 @@ Castling requires that neither the king nor the chosen rook has moved, all squar
 
 ---
 
+## FEN (Forsyth-Edwards Notation)
+
+FEN encodes a complete chess position as a single line of text. Use the `fen` command in the TUI to load any position:
+
+```
+fen rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1
+```
+
+A FEN string has six space-separated fields:
+
+| Field | Example | Meaning |
+|---|---|---|
+| Placement | `rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR` | Piece positions, rank 8 to rank 1, separated by `/`. Letters are pieces (`KQRBNPkqrbnp`), digits are consecutive empty squares. Uppercase = White, lowercase = Black. |
+| Active color | `b` | Whose turn: `w` (White) or `b` (Black) |
+| Castling | `KQkq` | Available castling rights (`K`/`Q` = White king/queenside, `k`/`q` = Black), or `-` for none |
+| En passant | `e3` | Target square for en passant capture, or `-` |
+| Halfmove clock | `0` | Moves since last pawn push or capture (for the 50-move rule) |
+| Fullmove number | `1` | Incremented after Black moves, starts at 1 |
+
+Common starting positions:
+
+| FEN | Description |
+|---|---|
+| `rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1` | Standard initial position |
+| `4k3/8/8/8/8/8/8/4K3 w - - 0 1` | Kings only (endgame testing) |
+| `r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1` | Castling test position |
+
+---
+
 ## Board Coordinates
 
 ```

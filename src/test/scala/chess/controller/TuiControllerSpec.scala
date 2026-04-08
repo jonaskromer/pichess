@@ -94,6 +94,24 @@ object TuiControllerSpec extends ZIOSpecDefault:
             "Nf3"
           )
         )
+      },
+      test("parse fen command") {
+        assertTrue(
+          TuiController.parseCommand(
+            "fen rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+          ) == TuiController.Command.Fen(
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+          )
+        )
+      },
+      test("parse fen command with leading whitespace") {
+        assertTrue(
+          TuiController.parseCommand(
+            "  fen 4k3/8/8/8/8/8/8/4K3 w - - 0 1"
+          ) == TuiController.Command.Fen(
+            "4k3/8/8/8/8/8/8/4K3 w - - 0 1"
+          )
+        )
       }
     ),
     suite("handleCommand")(
@@ -134,6 +152,59 @@ object TuiControllerSpec extends ZIOSpecDefault:
         yield assertTrue(
           result == TuiController.Result.Continue(false),
           s.error.isDefined
+        )
+      },
+      test("fen command initializes game from FEN string") {
+        val fen = "4k3/4R3/8/8/8/8/8/4K3 b - - 0 1"
+        for
+          (gs, session, shutdown) <- withSession
+          command = TuiController.parseCommand(s"fen $fen")
+          result <- TuiController.handleCommand(
+            command, gs, session, shutdown, false
+          )
+          s <- session.get
+        yield assertTrue(
+          result == TuiController.Result.Continue(false),
+          s.state.activeColor == Color.Black,
+          s.state.board.size == 3,
+          s.state.board(Position('e', 7)) == Piece(Color.White, PieceType.Rook),
+          s.state.inCheck,
+          s.moveLog.isEmpty,
+          s.error.isEmpty
+        )
+      },
+      test("fen command with invalid FEN sets error") {
+        for
+          (gs, session, shutdown) <- withSession
+          command = TuiController.parseCommand("fen not a valid fen")
+          result <- TuiController.handleCommand(
+            command, gs, session, shutdown, false
+          )
+          s <- session.get
+        yield assertTrue(
+          result == TuiController.Result.Continue(false),
+          s.error.isDefined
+        )
+      },
+      test("fen command resets move log") {
+        for
+          (gs, session, shutdown) <- withSession
+          // Make a move first
+          _ <- TuiController.handleCommand(
+            TuiController.Command.Move("e2 e4"), gs, session, shutdown, false
+          )
+          beforeFen <- session.get
+          // Now load a FEN
+          _ <- TuiController.handleCommand(
+            TuiController.Command.Fen(
+              "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+            ),
+            gs, session, shutdown, false
+          )
+          afterFen <- session.get
+        yield assertTrue(
+          beforeFen.moveLog.nonEmpty,
+          afterFen.moveLog.isEmpty
         )
       },
       test("flip clears previous error from session") {

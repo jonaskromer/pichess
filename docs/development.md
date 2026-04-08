@@ -11,7 +11,8 @@
 
 | Command | Purpose |
 |---|---|
-| `sbt run` | Start the TUI chess game |
+| `sbt run` | Start TUI + GUI (opens browser on port 8090) |
+| `sbt "run --headless"` | Start TUI only (no web server, no browser) |
 | `sbt test` | Run all tests |
 | `sbt scalafmtAll` | Format all source files (required before committing) |
 | `sbt coverage test coverageReport` | Run tests with coverage report |
@@ -105,6 +106,10 @@ Key rules:
 - Match the parser result against `case ns: NoSuccess` (type binding), not `case NoSuccess(msg, next)` (extractor) — Scala 3's exhaustiveness checker only sees the first form as covering both `Failure` and `Error`.
 - For shared validation across parser implementations, factor it into a builder object so all parsers stay observationally equivalent.
 - New parsers must add a `behaviors` row in `FenParserBehaviors.scala` and a per-implementation spec object that calls `FenParserBehaviors.behaviors(parser)`.
+
+### JSON Codec
+
+`JsonSerializer` and `JsonParser` provide a human-readable JSON representation of `GameState`. The JSON format uses plain-English values (e.g. `"white rook"`) so positions are easy to verify by hand. `JsonCodecSpec` includes cross-validation tests that parse the same position from both FEN and JSON and assert the resulting `GameState` is identical.
 
 Dependencies (already in `build.sbt`):
 

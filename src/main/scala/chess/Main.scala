@@ -20,8 +20,18 @@ object Main extends ZIOAppDefault:
     case ExternalChange
     case Shutdown
 
-  def run: ZIO[Any, Throwable, Unit] =
-    (for
+  def run: ZIO[ZIOAppArgs, Throwable, Unit] =
+    for
+      args <- ZIOAppArgs.getArgs
+      headless = args.contains("--headless")
+      _ <- app(headless).provide(
+        GameService.layer,
+        InMemoryGameRepository.layer
+      )
+    yield ()
+
+  private def app(headless: Boolean): ZIO[GameService, Throwable, Unit] =
+    for
       gs <- ZIO.service[GameService]
       event <- gs.newGame()
       session <- SubscriptionRef.make(
@@ -30,20 +40,28 @@ object Main extends ZIOAppDefault:
       shutdown <- Promise.make[Nothing, Unit]
       inputQueue <- Queue.unbounded[String]
       _ <- readLine.flatMap(inputQueue.offer).forever.forkDaemon
-      serverFiber <- Server
-        .serve(WebController.routes(gs, session, shutdown))
-        .fork
-      _ <- openBrowser.delay(1.second).forkDaemon
+      serverFiber <-
+        if headless then ZIO.none
+        else startGui(gs, session, shutdown).map(Some(_))
       _ <- tuiLoop(gs, session, shutdown, inputQueue, flipped = false)
       _ <- shutdown.await
       _ <- printLine("Goodbye!")
-      _ <- ZIO.sleep(500.millis)
-      _ <- serverFiber.interrupt
-    yield ()).provide(
-      GameService.layer,
-      InMemoryGameRepository.layer,
-      Server.defaultWithPort(8090)
-    )
+      _ <- ZIO.foreachDiscard(serverFiber)(f =>
+        ZIO.sleep(500.millis) *> f.interrupt
+      )
+    yield ()
+
+  private def startGui(
+      gs: GameService,
+      session: SubscriptionRef[SessionState],
+      shutdown: Promise[Nothing, Unit]
+  ): Task[Fiber.Runtime[Throwable, Nothing]] =
+    (for
+      fiber <- Server
+        .serve(WebController.routes(gs, session, shutdown))
+        .fork
+      _ <- openBrowser.delay(1.second).forkDaemon
+    yield fiber).provide(Server.defaultWithPort(8090))
 
   private def tuiLoop(
       gs: GameService,

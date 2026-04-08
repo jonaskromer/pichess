@@ -7,7 +7,9 @@ object HelpViewSpec extends ZIOSpecDefault:
   private val help = HelpView.render
 
   private val commandsSection =
-    help.substring(help.indexOf("COMMANDS"), help.indexOf("MOVE NOTATION"))
+    help.substring(help.indexOf("COMMANDS"), help.indexOf("\nFEN"))
+  private val fenSection =
+    help.substring(help.indexOf("\nFEN"), help.indexOf("MOVE NOTATION"))
   private val notationSection =
     help.substring(
       help.indexOf("MOVE NOTATION"),
@@ -34,6 +36,30 @@ object HelpViewSpec extends ZIOSpecDefault:
       },
       test("list the quit command") {
         assertTrue(commandsSection.contains("quit"))
+      },
+      test("list the fen command") {
+        assertTrue(commandsSection.contains("fen"))
+      }
+    ),
+    suite("FEN notation")(
+      test("explain FEN format fields") {
+        assertTrue(
+          fenSection.contains("Placement"),
+          fenSection.contains("Active"),
+          fenSection.contains("Castling"),
+          fenSection.contains("En passant"),
+          fenSection.contains("Halfmove"),
+          fenSection.contains("Fullmove")
+        )
+      },
+      test("include an example FEN string") {
+        assertTrue(fenSection.contains("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR"))
+      },
+      test("explain piece letter casing") {
+        assertTrue(
+          fenSection.contains("Uppercase = White"),
+          fenSection.contains("lowercase = Black")
+        )
       }
     ),
     suite("move notation")(

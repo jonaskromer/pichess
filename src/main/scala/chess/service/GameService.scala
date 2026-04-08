@@ -7,6 +7,7 @@ import zio.*
 
 trait GameService:
   def newGame(): IO[GameError, GameEvent.GameStarted]
+  def newGameFromFen(fen: String): IO[GameError, GameEvent.GameStarted]
   def makeMove(
       id: GameId,
       rawInput: String
@@ -16,6 +17,11 @@ trait GameService:
 object GameService:
   def newGame(): ZIO[GameService, GameError, GameEvent.GameStarted] =
     ZIO.serviceWithZIO[GameService](_.newGame())
+
+  def newGameFromFen(
+      fen: String
+  ): ZIO[GameService, GameError, GameEvent.GameStarted] =
+    ZIO.serviceWithZIO[GameService](_.newGameFromFen(fen))
 
   def makeMove(
       id: GameId,

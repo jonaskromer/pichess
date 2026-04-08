@@ -6,9 +6,28 @@ object HelpView:
        |
        |COMMANDS
        |  <from> <to>   Move a piece  (e.g. e2 e4)
+       |  fen <FEN>     Start a new game from a FEN string
        |  flip          Flip the board (toggle White/Black perspective)
        |  help          Show this help screen
        |  quit          Exit the game
+       |
+       |FEN (FORSYTH-EDWARDS NOTATION)
+       |  FEN encodes a complete board position as a single line of text.
+       |  Use the 'fen' command to load any position.
+       |
+       |  Format:  <placement> <active> <castling> <en-passant> <halfmove> <fullmove>
+       |
+       |  Example: rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1
+       |           (position after 1. e4)
+       |
+       |  Placement  — 8 ranks separated by '/', from rank 8 (top) to rank 1.
+       |               Letters = pieces (KQRBNPkqrbnp), digits = empty squares.
+       |               Uppercase = White, lowercase = Black.
+       |  Active     — 'w' or 'b' (whose turn it is)
+       |  Castling   — combination of K Q k q, or '-' for none
+       |  En passant — target square (e.g. e3) or '-'
+       |  Halfmove   — moves since last pawn push or capture (for 50-move rule)
+       |  Fullmove   — incremented after Black's move (starts at 1)
        |
        |MOVE NOTATION
        |  Both coordinate and Standard Algebraic Notation (SAN) are accepted.
