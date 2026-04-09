@@ -32,37 +32,37 @@ object Main extends ZIOAppDefault:
     yield ()
 
   private def app(headless: Boolean): ZIO[GameService, Throwable, Unit] =
-    for
-      gs <- ZIO.service[GameService]
-      event <- gs.newGame()
-      session <- SubscriptionRef.make(
-        SessionState(GameSnapshot(event.gameId, event.initialState))
-      )
-      shutdown <- Promise.make[Nothing, Unit]
-      inputQueue <- Queue.unbounded[String]
-      _ <- readLine.flatMap(inputQueue.offer).forever.forkDaemon
-      serverFiber <-
-        if headless then ZIO.none
-        else startGui(gs, session, shutdown).map(Some(_))
-      _ <- tuiLoop(gs, session, shutdown, inputQueue, flipped = false)
-      _ <- shutdown.await
-      _ <- printLine("Goodbye!")
-      _ <- ZIO.foreachDiscard(serverFiber)(f =>
-        ZIO.sleep(500.millis) *> f.interrupt
-      )
-    yield ()
+    ZIO.scoped {
+      for
+        gs <- ZIO.service[GameService]
+        event <- gs.newGame()
+        session <- SubscriptionRef.make(
+          SessionState(GameSnapshot(event.gameId, event.initialState))
+        )
+        shutdown <- Promise.make[Nothing, Unit]
+        inputQueue <- Queue.unbounded[String]
+        _ <- readLine.flatMap(inputQueue.offer).forever.forkDaemon
+        _ <- ZIO.unless(headless)(startGui(gs, session, shutdown))
+        _ <- tuiLoop(gs, session, shutdown, inputQueue, flipped = false)
+        _ <- shutdown.await
+        _ <- printLine("Goodbye!")
+        _ <- ZIO.sleep(500.millis)
+      yield ()
+    }
 
   private def startGui(
       gs: GameService,
       session: SubscriptionRef[SessionState],
       shutdown: Promise[Nothing, Unit]
-  ): Task[Fiber.Runtime[Throwable, Nothing]] =
-    (for
-      fiber <- Server
+  ): ZIO[Scope, Throwable, Unit] =
+    for
+      serverEnv <- Server.defaultWithPort(8090).build
+      _ <- Server
         .serve(WebController.routes(gs, session, shutdown))
-        .fork
+        .provideEnvironment(serverEnv)
+        .forkScoped
       _ <- openBrowser.delay(1.second).forkDaemon
-    yield fiber).provide(Server.defaultWithPort(8090))
+    yield ()
 
   private def tuiLoop(
       gs: GameService,
