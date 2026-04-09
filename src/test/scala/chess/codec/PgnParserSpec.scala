@@ -15,7 +15,8 @@ object PgnParserSpec extends ZIOSpecDefault:
                   |1. e4 e5 2. Nf3 Nc6 *""".stripMargin
       for
         result <- PgnParser.parse(pgn)
-        sanLog <- SanSerializer.deriveMoveLog(result.initialState, result.history.reverse)
+        sanLog <- SanSerializer
+          .deriveMoveLog(result.initialState, result.history.reverse)
       yield assertTrue(
         result.moves.length == 4,
         sanLog.head == (Color.White, "e4"),
@@ -99,10 +100,16 @@ object PgnParserSpec extends ZIOSpecDefault:
       val pgn = "1. e4 e5 2. Nf3 Nc6 *"
       for
         result <- PgnParser.parse(pgn)
-        sanLog <- SanSerializer.deriveMoveLog(result.initialState, result.history.reverse)
+        sanLog <- SanSerializer.deriveMoveLog(
+          result.initialState,
+          result.history.reverse
+        )
         serialized = PgnSerializer.serialize(sanLog, result.state.status)
         reparsed <- PgnParser.parse(serialized)
-        reparsedSan <- SanSerializer.deriveMoveLog(reparsed.initialState, reparsed.history.reverse)
+        reparsedSan <- SanSerializer.deriveMoveLog(
+          reparsed.initialState,
+          reparsed.history.reverse
+        )
       yield assertTrue(
         reparsedSan == sanLog,
         reparsed.state == result.state
@@ -115,7 +122,8 @@ object PgnParserSpec extends ZIOSpecDefault:
                   |1. Kd7 *""".stripMargin
       for
         result <- PgnParser.parse(pgn)
-        sanLog <- SanSerializer.deriveMoveLog(result.initialState, result.history.reverse)
+        sanLog <- SanSerializer
+          .deriveMoveLog(result.initialState, result.history.reverse)
       yield assertTrue(
         result.moves.length == 1,
         sanLog.head._1 == Color.Black,

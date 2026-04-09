@@ -6,12 +6,9 @@ import chess.service.GameService
 import chess.view.{HtmlPage, WebBoardView}
 import zio.*
 import zio.http.*
-import zio.schema.Schema
 import zio.stream.SubscriptionRef
 
 object WebController:
-
-  private given Schema[String] = Schema[String]
 
   def routes(
       gs: GameService,

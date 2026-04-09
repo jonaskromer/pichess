@@ -22,28 +22,38 @@ object Main extends ZIOAppDefault:
     case Shutdown
 
   def run: ZIO[ZIOAppArgs, Throwable, Unit] =
-    for
-      args <- ZIOAppArgs.getArgs
-      headless = args.contains("--headless")
-      _ <- app(headless).provide(
+    ZIOAppArgs.getArgs.flatMap(args =>
+      app(args.contains("--headless")).provide(
         GameService.layer,
         InMemoryGameRepository.layer
       )
-    yield ()
+    )
 
   private[chess] def app(
       headless: Boolean,
       port: Int = 8090,
       onReady: Int => Task[Unit] = port => openBrowser(port).delay(1.second)
   ): ZIO[GameService, Throwable, Unit] =
+    for
+      gs <- ZIO.service[GameService]
+      event <- gs.newGame()
+      session <- SubscriptionRef.make(
+        SessionState(GameSnapshot(event.gameId, event.initialState))
+      )
+      shutdown <- Promise.make[Nothing, Unit]
+      done <- runWith(session, shutdown, headless, port, onReady)
+    yield done
+
+  private[chess] def runWith(
+      session: SubscriptionRef[SessionState],
+      shutdown: Promise[Nothing, Unit],
+      headless: Boolean,
+      port: Int,
+      onReady: Int => Task[Unit]
+  ): ZIO[GameService, Throwable, Unit] =
     ZIO.scoped {
       for
         gs <- ZIO.service[GameService]
-        event <- gs.newGame()
-        session <- SubscriptionRef.make(
-          SessionState(GameSnapshot(event.gameId, event.initialState))
-        )
-        shutdown <- Promise.make[Nothing, Unit]
         inputQueue <- Queue.unbounded[String]
         _ <- readLine.flatMap(inputQueue.offer).forever.forkDaemon
         _ <- ZIO.unless(headless)(
@@ -51,16 +61,16 @@ object Main extends ZIOAppDefault:
         )
         _ <- tuiLoop(gs, session, shutdown, inputQueue, flipped = false)
         _ <- shutdown.await
-        _ <- printLine("Goodbye!")
-      yield ()
+        done <- printLine("Goodbye!")
+      yield done
     }
 
   private[chess] def startGui(
       gs: GameService,
       session: SubscriptionRef[SessionState],
       shutdown: Promise[Nothing, Unit],
-      port: Int = 8090,
-      onReady: Int => Task[Unit] = port => openBrowser(port).delay(1.second)
+      port: Int,
+      onReady: Int => Task[Unit]
   ): ZIO[Scope, Throwable, Int] =
     for
       serverEnv <- Server.defaultWithPort(port).build
@@ -103,7 +113,7 @@ object Main extends ZIOAppDefault:
         .race(
           shutdown.await.as(TuiEvent.Shutdown)
         )
-      _ <- event match
+      done <- event match
         case TuiEvent.Shutdown => ZIO.unit
         case TuiEvent.ExternalChange =>
           tuiLoop(gs, session, shutdown, inputQueue, flipped)
@@ -120,12 +130,12 @@ object Main extends ZIOAppDefault:
               shutdown,
               flipped
             )
-            _ <- result match
+            next <- result match
               case TuiController.Result.Shutdown => ZIO.unit
               case TuiController.Result.Continue(f) =>
                 tuiLoop(gs, session, shutdown, inputQueue, f)
-          yield ()
-    yield ()
+          yield next
+    yield done
 
   private[chess] def browserCommandFor(
       osName: String,
@@ -146,8 +156,8 @@ object Main extends ZIOAppDefault:
         .property("os.name")
         .orDie
         .map(_.getOrElse(""))
-      _ <- runner(browserCommandFor(os, port))
-    yield ()
+      done <- runner(browserCommandFor(os, port))
+    yield done
 
-  private val runCommand: List[String] => Task[Unit] =
+  private[chess] val runCommand: List[String] => Task[Unit] =
     cmd => zio.process.Command(cmd.head, cmd.tail*).run.unit

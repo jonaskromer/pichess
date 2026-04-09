@@ -58,7 +58,8 @@ object GameServiceSpec extends ZIOSpecDefault:
           )
       },
       test("auto-detect JSON and return parsed state") {
-        val json = """{"board": {"e1": "white king", "e8": "black king"}, "activeColor": "white", "castlingRights": {"whiteKingSide": false, "whiteQueenSide": false, "blackKingSide": false, "blackQueenSide": false}, "enPassantTarget": null, "inCheck": false, "status": "playing"}"""
+        val json =
+          """{"board": {"e1": "white king", "e8": "black king"}, "activeColor": "white", "castlingRights": {"whiteKingSide": false, "whiteQueenSide": false, "blackKingSide": false, "blackQueenSide": false}, "enPassantTarget": null, "inCheck": false, "status": "playing"}"""
         for (event, history) <- GameService.loadGame(json)
         yield assertTrue(
           event.gameId.nonEmpty,
@@ -96,7 +97,8 @@ object GameServiceSpec extends ZIOSpecDefault:
           (state, event) <- GameService.makeMove(started.gameId, "e2 e4")
         yield assertTrue(
           event.gameId == started.gameId,
-          event.move == chess.model.board.Move(Position('e', 2), Position('e', 4)),
+          event.move == chess.model.board
+            .Move(Position('e', 2), Position('e', 4)),
           state.board.get(Position('e', 4)) == Some(
             Piece(Color.White, PieceType.Pawn)
           ),

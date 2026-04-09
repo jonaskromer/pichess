@@ -74,7 +74,9 @@ object HelpViewSpec extends ZIOSpecDefault:
         )
       },
       test("include an example FEN string") {
-        assertTrue(fenSection.contains("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR"))
+        assertTrue(
+          fenSection.contains("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR")
+        )
       },
       test("explain piece letter casing") {
         assertTrue(

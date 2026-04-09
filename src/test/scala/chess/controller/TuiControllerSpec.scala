@@ -199,7 +199,11 @@ object TuiControllerSpec extends ZIOSpecDefault:
         for
           (gs, session, shutdown) <- withSession
           result <- TuiController.handleCommand(
-            TuiController.Command.Load(fen), gs, session, shutdown, false
+            TuiController.Command.Load(fen),
+            gs,
+            session,
+            shutdown,
+            false
           )
           s <- session.get
         yield assertTrue(
@@ -217,13 +221,19 @@ object TuiControllerSpec extends ZIOSpecDefault:
           (gs, session, shutdown) <- withSession
           result <- TuiController.handleCommand(
             TuiController.Command.Load("1. e4 e5 2. Nf3 *"),
-            gs, session, shutdown, false
+            gs,
+            session,
+            shutdown,
+            false
           )
           s <- session.get
         yield assertTrue(
           result == TuiController.Result.Continue(false),
           s.moves.length == 3,
-          s.state.board(Position('f', 3)) == Piece(Color.White, PieceType.Knight),
+          s.state.board(Position('f', 3)) == Piece(
+            Color.White,
+            PieceType.Knight
+          ),
           s.error.isEmpty
         )
       },
@@ -247,7 +257,11 @@ object TuiControllerSpec extends ZIOSpecDefault:
         for
           (gs, session, shutdown) <- withSession
           result <- TuiController.handleCommand(
-            TuiController.Command.Load(json), gs, session, shutdown, false
+            TuiController.Command.Load(json),
+            gs,
+            session,
+            shutdown,
+            false
           )
           s <- session.get
         yield assertTrue(
@@ -265,7 +279,10 @@ object TuiControllerSpec extends ZIOSpecDefault:
           (gs, session, shutdown) <- withSession
           result <- TuiController.handleCommand(
             TuiController.Command.Load("not valid anything"),
-            gs, session, shutdown, false
+            gs,
+            session,
+            shutdown,
+            false
           )
           s <- session.get
         yield assertTrue(
@@ -277,14 +294,21 @@ object TuiControllerSpec extends ZIOSpecDefault:
         for
           (gs, session, shutdown) <- withSession
           _ <- TuiController.handleCommand(
-            TuiController.Command.Move("e2 e4"), gs, session, shutdown, false
+            TuiController.Command.Move("e2 e4"),
+            gs,
+            session,
+            shutdown,
+            false
           )
           beforeLoad <- session.get
           _ <- TuiController.handleCommand(
             TuiController.Command.Load(
               "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
             ),
-            gs, session, shutdown, false
+            gs,
+            session,
+            shutdown,
+            false
           )
           afterLoad <- session.get
         yield assertTrue(
@@ -297,7 +321,10 @@ object TuiControllerSpec extends ZIOSpecDefault:
           (gs, session, shutdown) <- withSession
           _ <- TuiController.handleCommand(
             TuiController.Command.Export(TuiController.ExportFormat.Fen),
-            gs, session, shutdown, false
+            gs,
+            session,
+            shutdown,
+            false
           )
           s <- session.get
         yield assertTrue(
@@ -310,11 +337,18 @@ object TuiControllerSpec extends ZIOSpecDefault:
         for
           (gs, session, shutdown) <- withSession
           _ <- TuiController.handleCommand(
-            TuiController.Command.Move("e2 e4"), gs, session, shutdown, false
+            TuiController.Command.Move("e2 e4"),
+            gs,
+            session,
+            shutdown,
+            false
           )
           _ <- TuiController.handleCommand(
             TuiController.Command.Export(TuiController.ExportFormat.Pgn),
-            gs, session, shutdown, false
+            gs,
+            session,
+            shutdown,
+            false
           )
           s <- session.get
         yield assertTrue(
@@ -329,7 +363,10 @@ object TuiControllerSpec extends ZIOSpecDefault:
           (gs, session, shutdown) <- withSession
           _ <- TuiController.handleCommand(
             TuiController.Command.Export(TuiController.ExportFormat.Json),
-            gs, session, shutdown, false
+            gs,
+            session,
+            shutdown,
+            false
           )
           s <- session.get
         yield assertTrue(
@@ -344,12 +381,18 @@ object TuiControllerSpec extends ZIOSpecDefault:
           (gs, session, shutdown) <- withSession
           _ <- TuiController.handleCommand(
             TuiController.Command.Move("e2 e5"),
-            gs, session, shutdown, false
+            gs,
+            session,
+            shutdown,
+            false
           )
           withError <- session.get
           _ <- TuiController.handleCommand(
             TuiController.Command.Flip,
-            gs, session, shutdown, false
+            gs,
+            session,
+            shutdown,
+            false
           )
           s <- session.get
         yield assertTrue(
@@ -362,12 +405,18 @@ object TuiControllerSpec extends ZIOSpecDefault:
           (gs, session, shutdown) <- withSession
           _ <- TuiController.handleCommand(
             TuiController.Command.Move("e2 e5"),
-            gs, session, shutdown, false
+            gs,
+            session,
+            shutdown,
+            false
           )
           withError <- session.get
           _ <- TuiController.handleCommand(
             TuiController.Command.Help,
-            gs, session, shutdown, false
+            gs,
+            session,
+            shutdown,
+            false
           )
           s <- session.get
         yield assertTrue(
@@ -380,7 +429,10 @@ object TuiControllerSpec extends ZIOSpecDefault:
           (gs, session, shutdown) <- withSession
           result <- TuiController.handleCommand(
             TuiController.Command.Quit,
-            gs, session, shutdown, false
+            gs,
+            session,
+            shutdown,
+            false
           )
           isDone <- shutdown.isDone
         yield assertTrue(
@@ -392,10 +444,18 @@ object TuiControllerSpec extends ZIOSpecDefault:
         for
           (gs, session, shutdown) <- withSession
           _ <- TuiController.handleCommand(
-            TuiController.Command.Move("e2 e4"), gs, session, shutdown, false
+            TuiController.Command.Move("e2 e4"),
+            gs,
+            session,
+            shutdown,
+            false
           )
           result <- TuiController.handleCommand(
-            TuiController.Command.Undo, gs, session, shutdown, false
+            TuiController.Command.Undo,
+            gs,
+            session,
+            shutdown,
+            false
           )
           s <- session.get
         yield assertTrue(
@@ -408,7 +468,11 @@ object TuiControllerSpec extends ZIOSpecDefault:
         for
           (gs, session, shutdown) <- withSession
           result <- TuiController.handleCommand(
-            TuiController.Command.Undo, gs, session, shutdown, false
+            TuiController.Command.Undo,
+            gs,
+            session,
+            shutdown,
+            false
           )
           s <- session.get
         yield assertTrue(
@@ -420,13 +484,25 @@ object TuiControllerSpec extends ZIOSpecDefault:
         for
           (gs, session, shutdown) <- withSession
           _ <- TuiController.handleCommand(
-            TuiController.Command.Move("e2 e4"), gs, session, shutdown, false
+            TuiController.Command.Move("e2 e4"),
+            gs,
+            session,
+            shutdown,
+            false
           )
           _ <- TuiController.handleCommand(
-            TuiController.Command.Undo, gs, session, shutdown, false
+            TuiController.Command.Undo,
+            gs,
+            session,
+            shutdown,
+            false
           )
           result <- TuiController.handleCommand(
-            TuiController.Command.Redo, gs, session, shutdown, false
+            TuiController.Command.Redo,
+            gs,
+            session,
+            shutdown,
+            false
           )
           s <- session.get
         yield assertTrue(
@@ -441,7 +517,11 @@ object TuiControllerSpec extends ZIOSpecDefault:
         for
           (gs, session, shutdown) <- withSession
           result <- TuiController.handleCommand(
-            TuiController.Command.Redo, gs, session, shutdown, false
+            TuiController.Command.Redo,
+            gs,
+            session,
+            shutdown,
+            false
           )
           s <- session.get
         yield assertTrue(
@@ -464,12 +544,18 @@ object TuiControllerSpec extends ZIOSpecDefault:
           gameId <- session.get.map(_.gameId)
           _ <- gs.saveState(gameId, drawableState)
           _ <- session.update(st =>
-            st.copy(game = st.game.copy(
-              history = List((dummyMove, drawableState))
-            ))
+            st.copy(game =
+              st.game.copy(
+                history = List((dummyMove, drawableState))
+              )
+            )
           )
           result <- TuiController.handleCommand(
-            TuiController.Command.Draw, gs, session, shutdown, false
+            TuiController.Command.Draw,
+            gs,
+            session,
+            shutdown,
+            false
           )
           s <- session.get
         yield assertTrue(
@@ -482,7 +568,11 @@ object TuiControllerSpec extends ZIOSpecDefault:
         for
           (gs, session, shutdown) <- withSession
           result <- TuiController.handleCommand(
-            TuiController.Command.Draw, gs, session, shutdown, false
+            TuiController.Command.Draw,
+            gs,
+            session,
+            shutdown,
+            false
           )
           s <- session.get
         yield assertTrue(
@@ -502,7 +592,10 @@ object TuiControllerSpec extends ZIOSpecDefault:
           event <- inputQueue.take.map(TuiEvent.Input(_))
           result <- TuiController.handleCommand(
             TuiController.parseCommand("quit"),
-            gs, session, shutdown, false
+            gs,
+            session,
+            shutdown,
+            false
           )
           isDone <- shutdown.isDone
         yield assertTrue(

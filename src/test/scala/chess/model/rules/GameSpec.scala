@@ -2,7 +2,14 @@ package chess.model.rules
 
 import chess.model.GameError
 import chess.model.piece.{Color, Piece, PieceType}
-import chess.model.board.{CastlingRights, DrawReason, GameState, GameStatus, Move, Position}
+import chess.model.board.{
+  CastlingRights,
+  DrawReason,
+  GameState,
+  GameStatus,
+  Move,
+  Position
+}
 import zio.*
 import zio.test.*
 
@@ -625,9 +632,12 @@ object GameSpec extends ZIOSpecDefault:
             .applyMove(s, Move(Position('d', 4), Position('g', 7)))
         yield assertTrue(result.halfmoveClock == 0)
       },
-      test("halfmove clock accumulates across multiple non-pawn non-capture moves") {
+      test(
+        "halfmove clock accumulates across multiple non-pawn non-capture moves"
+      ) {
         for
-          s1 <- Game.applyMove(initial, Move(Position('g', 1), Position('f', 3)))
+          s1 <- Game
+            .applyMove(initial, Move(Position('g', 1), Position('f', 3)))
           s2 <- Game.applyMove(s1, Move(Position('g', 8), Position('f', 6)))
         yield assertTrue(s1.halfmoveClock == 1, s2.halfmoveClock == 2)
       },
@@ -646,7 +656,10 @@ object GameSpec extends ZIOSpecDefault:
       },
       test("fullmove number increments only after Black moves") {
         for
-          s1 <- Game.applyMove(initial, Move(Position('e', 2), Position('e', 4)))
+          s1 <- Game.applyMove(
+            initial,
+            Move(Position('e', 2), Position('e', 4))
+          )
           s2 <- Game.applyMove(s1, Move(Position('e', 7), Position('e', 5)))
           s3 <- Game.applyMove(s2, Move(Position('g', 1), Position('f', 3)))
           s4 <- Game.applyMove(s3, Move(Position('b', 8), Position('c', 6)))
@@ -739,7 +752,9 @@ object GameSpec extends ZIOSpecDefault:
             .applyMove(initial, Move(Position('e', 2), Position('e', 4)))
         yield assertTrue(result.status == GameStatus.Playing)
       },
-      test("set Draw(Stalemate) when opponent has no legal move but is not in check") {
+      test(
+        "set Draw(Stalemate) when opponent has no legal move but is not in check"
+      ) {
         // Black king on a8, white queen on b6 stalemates after Qb6 (king has no moves, not in check)
         val s = GameState(
           Map(
@@ -768,7 +783,8 @@ object GameSpec extends ZIOSpecDefault:
           ),
           Color.White
         )
-        for result <- Game.applyMove(s, Move(Position('d', 2), Position('e', 3)))
+        for result <- Game
+            .applyMove(s, Move(Position('d', 2), Position('e', 3)))
         yield assertTrue(
           result.status == GameStatus.Draw(DrawReason.InsufficientMaterial)
         )
@@ -783,7 +799,8 @@ object GameSpec extends ZIOSpecDefault:
           ),
           Color.White
         )
-        for result <- Game.applyMove(s, Move(Position('d', 2), Position('e', 3)))
+        for result <- Game
+            .applyMove(s, Move(Position('d', 2), Position('e', 3)))
         yield assertTrue(
           result.status == GameStatus.Draw(DrawReason.InsufficientMaterial)
         )
@@ -798,12 +815,15 @@ object GameSpec extends ZIOSpecDefault:
           ),
           Color.White
         )
-        for result <- Game.applyMove(s, Move(Position('d', 2), Position('e', 3)))
+        for result <- Game
+            .applyMove(s, Move(Position('d', 2), Position('e', 3)))
         yield assertTrue(
           result.status == GameStatus.Draw(DrawReason.InsufficientMaterial)
         )
       },
-      test("set Draw(InsufficientMaterial) for K+B vs K+B same-colored bishops") {
+      test(
+        "set Draw(InsufficientMaterial) for K+B vs K+B same-colored bishops"
+      ) {
         // White bishop on c1 (c=2,1 -> sum 3 odd), black bishop on a3 (a=0,3 -> sum 3 odd) -> same
         // White king captures black's last non-bishop piece (a pawn)
         val s = GameState(
@@ -816,7 +836,8 @@ object GameSpec extends ZIOSpecDefault:
           ),
           Color.White
         )
-        for result <- Game.applyMove(s, Move(Position('b', 2), Position('c', 3)))
+        for result <- Game
+            .applyMove(s, Move(Position('b', 2), Position('c', 3)))
         yield assertTrue(
           result.status == GameStatus.Draw(DrawReason.InsufficientMaterial)
         )
@@ -834,7 +855,8 @@ object GameSpec extends ZIOSpecDefault:
           ),
           Color.White
         )
-        for result <- Game.applyMove(s, Move(Position('b', 2), Position('c', 3)))
+        for result <- Game
+            .applyMove(s, Move(Position('b', 2), Position('c', 3)))
         yield assertTrue(result.status == GameStatus.Playing)
       },
       test("keep Playing when sufficient material exists") {

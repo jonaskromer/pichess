@@ -98,6 +98,30 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         isDone
       )
     },
+    test("GET /api/events returns an SSE stream of state events") {
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.get(url"/api/events"))
+      yield assertTrue(
+        response.status == Status.Ok,
+        response.headers
+          .get(Header.ContentType)
+          .exists(_.mediaType == MediaType.text.`event-stream`)
+      )
+    },
+    test("POST /api/move surfaces a body-decode error as 400") {
+      val brokenBody = Body.fromStreamChunked(
+        zio.stream.ZStream.fail(new RuntimeException("body boom"))
+      )
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.post(url"/api/move", brokenBody))
+        body <- response.body.asString
+      yield assertTrue(
+        response.status == Status.BadRequest,
+        body.contains("body boom")
+      )
+    },
     test("POST /api/undo reverts the last move") {
       for
         (routes, session, _) <- withRoutes
@@ -162,9 +186,11 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         gameId <- session.get.map(_.gameId)
         _ <- gs.saveState(gameId, drawableState)
         _ <- session.update(st =>
-          st.copy(game = st.game.copy(
-            history = List((dummyMove, drawableState))
-          ))
+          st.copy(game =
+            st.game.copy(
+              history = List((dummyMove, drawableState))
+            )
+          )
         )
         response <- routes.runZIO(Request.post(url"/api/draw", Body.empty))
         s <- session.get

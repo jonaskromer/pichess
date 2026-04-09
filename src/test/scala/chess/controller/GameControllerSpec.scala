@@ -132,7 +132,9 @@ object GameControllerSpec extends ZIOSpecDefault:
           _ <- GameController.undo(gs, session)
           s <- session.get
         yield assertTrue(
-          s.redoStack.map(_._1) == List(Move(Position('e', 2), Position('e', 4)))
+          s.redoStack.map(_._1) == List(
+            Move(Position('e', 2), Position('e', 4))
+          )
         )
       },
       test("fail when no moves to undo") {
@@ -224,9 +226,11 @@ object GameControllerSpec extends ZIOSpecDefault:
           gameId <- session.get.map(_.gameId)
           _ <- gs.saveState(gameId, drawableState)
           _ <- session.update(st =>
-            st.copy(game = st.game.copy(
-              history = List((dummyMove, drawableState))
-            ))
+            st.copy(game =
+              st.game.copy(
+                history = List((dummyMove, drawableState))
+              )
+            )
           )
           _ <- GameController.claimDraw(gs, session)
           s <- session.get
@@ -248,9 +252,11 @@ object GameControllerSpec extends ZIOSpecDefault:
         for
           (gs, session) <- withSession
           _ <- session.update(st =>
-            st.copy(game = st.game.copy(
-              history = List((dummyMove, state))
-            ))
+            st.copy(game =
+              st.game.copy(
+                history = List((dummyMove, state))
+              )
+            )
           )
           exit <- GameController.claimDraw(gs, session).exit
         yield assertTrue(exit.isFailure)

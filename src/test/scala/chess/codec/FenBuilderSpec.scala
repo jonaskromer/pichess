@@ -34,7 +34,9 @@ object FenBuilderSpec extends ZIOSpecDefault:
           initial._5,
           initial._6
         )
-      assertTrue(result == Left("Invalid active color 'x' (expected 'w' or 'b')"))
+      assertTrue(
+        result == Left("Invalid active color 'x' (expected 'w' or 'b')")
+      )
     },
     test("rejects an en passant target that is not '-' or a valid square") {
       val result =

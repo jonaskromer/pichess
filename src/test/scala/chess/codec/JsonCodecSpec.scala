@@ -1,6 +1,12 @@
 package chess.codec
 
-import chess.model.board.{CastlingRights, DrawReason, GameState, GameStatus, Position}
+import chess.model.board.{
+  CastlingRights,
+  DrawReason,
+  GameState,
+  GameStatus,
+  Position
+}
 import chess.model.piece.{Color, Piece, PieceType}
 import zio.test.*
 
@@ -81,7 +87,8 @@ object JsonCodecSpec extends ZIOSpecDefault:
         )
       },
       test("defaults halfmove and fullmove when missing from JSON") {
-        val json = """{"board":{},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
+        val json =
+          """{"board":{},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
         val Right(state) = JsonParser.parse(json): @unchecked
         assertTrue(
           state.halfmoveClock == 0,
@@ -123,7 +130,8 @@ object JsonCodecSpec extends ZIOSpecDefault:
     ),
     suite("JsonParser")(
       test("parses a hand-written JSON position") {
-        val json = """{"board":{"e1":"white king","e8":"black king","d4":"white knight"},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
+        val json =
+          """{"board":{"e1":"white king","e8":"black king","d4":"white knight"},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
         val Right(state) = JsonParser.parse(json): @unchecked
         assertTrue(
           state.board.size == 3,
@@ -141,58 +149,71 @@ object JsonCodecSpec extends ZIOSpecDefault:
         assertTrue(JsonParser.parse(json).isLeft)
       },
       test("rejects invalid color in piece") {
-        val json = """{"board":{"e1":"purple king"},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
+        val json =
+          """{"board":{"e1":"purple king"},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
         assertTrue(JsonParser.parse(json).isLeft)
       },
       test("rejects invalid piece type") {
-        val json = """{"board":{"e1":"white dragon"},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
+        val json =
+          """{"board":{"e1":"white dragon"},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
         assertTrue(JsonParser.parse(json).isLeft)
       },
       test("rejects piece with no space separator") {
-        val json = """{"board":{"e1":"whiteking"},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
+        val json =
+          """{"board":{"e1":"whiteking"},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
         assertTrue(JsonParser.parse(json).isLeft)
       },
       test("rejects board value that is not a string") {
-        val json = """{"board":{"e1":true},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
+        val json =
+          """{"board":{"e1":true},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
         assertTrue(JsonParser.parse(json).isLeft)
       },
       test("rejects board that is not an object") {
-        val json = """{"board":"not an object","activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
+        val json =
+          """{"board":"not an object","activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
         assertTrue(JsonParser.parse(json).isLeft)
       },
       test("rejects invalid position key in board") {
-        val json = """{"board":{"zz":"white king"},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
+        val json =
+          """{"board":{"zz":"white king"},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
         assertTrue(JsonParser.parse(json).isLeft)
       },
       test("rejects invalid active color") {
-        val json = """{"board":{},"activeColor":"purple","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
+        val json =
+          """{"board":{},"activeColor":"purple","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
         assertTrue(JsonParser.parse(json).isLeft)
       },
       test("rejects activeColor that is not a string") {
-        val json = """{"board":{},"activeColor":true,"castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
+        val json =
+          """{"board":{},"activeColor":true,"castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
         assertTrue(JsonParser.parse(json).isLeft)
       },
       test("rejects invalid en passant target") {
-        val json = """{"board":{},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":"zz","inCheck":false,"status":"playing"}"""
+        val json =
+          """{"board":{},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":"zz","inCheck":false,"status":"playing"}"""
         assertTrue(JsonParser.parse(json).isLeft)
       },
       test("rejects invalid en passant type") {
-        val json = """{"board":{},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":true,"inCheck":false,"status":"playing"}"""
+        val json =
+          """{"board":{},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":true,"inCheck":false,"status":"playing"}"""
         assertTrue(JsonParser.parse(json).isLeft)
       },
       test("rejects invalid status type") {
-        val json = """{"board":{},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":true}"""
+        val json =
+          """{"board":{},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":true}"""
         assertTrue(JsonParser.parse(json).isLeft)
       },
       test("rejects invalid status object") {
-        val json = """{"board":{},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":{"winner":"white"}}"""
+        val json =
+          """{"board":{},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":{"winner":"white"}}"""
         assertTrue(JsonParser.parse(json).isLeft)
       },
       test("rejects top-level non-object") {
         assertTrue(JsonParser.parse("\"hello\"").isLeft)
       },
       test("rejects unknown draw reason") {
-        val json = """{"board":{"e1":"white king"},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":{"draw":"unknown reason"}}"""
+        val json =
+          """{"board":{"e1":"white king"},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":{"draw":"unknown reason"}}"""
         assertTrue(JsonParser.parse(json).isLeft)
       },
       test("rejects missing board field") {
