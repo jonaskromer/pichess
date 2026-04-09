@@ -31,6 +31,31 @@ Tests use **zio-test** (`ZIOSpecDefault`). Each test spec is an `object` extendi
 4. **Format** — run `sbt scalafmtAll`
 5. **Verify coverage** — run `sbt coverage test coverageReport`
 
+### Bug fixes — reproducer-first
+
+When fixing a bug, write a regression spec **before** touching production code:
+
+1. **Reproduce the bug in a failing spec.** Name the test
+   `regression: <summary>` and add a comment above it describing the symptom
+   and (if known) the commit/issue that introduced the bug.
+2. **Run it and confirm it fails for the right reason.** A spec that fails for
+   the wrong reason is not a reproducer — rewrite until the failure matches
+   the actual bug.
+3. **Then fix the bug.** The regression test going green is the definition of
+   "fixed".
+
+#### Regression test policy
+
+- All bug-reproducer tests must use the `regression:` prefix in the test name.
+  Grep for `"regression:` to find them.
+- **Never delete a `regression:` test.** If a refactor changes the shape of
+  the code it covers, *adapt* the test to the new API. The historical bug it
+  guards against is still real, and a passing regression test is the only
+  evidence that the bug stays fixed across refactors.
+- The only valid reason to remove a regression test is that the underlying
+  logic no longer exists at all (e.g. the entire subsystem was deleted). If
+  you remove one, explain why in the commit message.
+
 ---
 
 ## Adding a New Repository Implementation

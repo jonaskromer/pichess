@@ -33,6 +33,27 @@ Follow TDD strictly, in this order:
 5. **Verify coverage** — run `sbt coverage test coverageReport`. Coverage must be 100%; the build fails below that.
 6. **Diagnose coverage gaps** — if coverage is below 100%, run `python3 scripts/check-coverage.py` to see exactly which files and lines are uncovered.
 
+### Bug fixes — reproducer-first
+
+When fixing a bug, you **must** write a regression spec **before** touching the
+production code. This is non-negotiable:
+
+1. **Write a failing spec that reproduces the bug.** Name the test
+   `regression: <one-line summary>` and add a comment above it describing the
+   symptom and (if known) the commit or issue that introduced the bug.
+2. **Run the spec and verify it fails in the expected way** — the right
+   assertion must be the one that fails, with the right error message. A spec
+   that fails for the wrong reason is not a reproducer; rewrite it until the
+   failure mode matches the actual bug.
+3. **Only then fix the bug.** The regression spec going green is the
+   definition of "fixed".
+4. **Never delete a `regression:` test.** If a future refactor changes the API
+   it touches, *adapt* the test to the new shape — the historical bug it
+   guards against is still real. The only valid reason to delete a regression
+   test is that the underlying logic no longer exists at all (e.g. an entire
+   subsystem has been removed). If you do remove one, justify it in the commit
+   message.
+
 ---
 
 ## Docs

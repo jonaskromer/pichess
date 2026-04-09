@@ -60,4 +60,16 @@ You produce one of:
 - Do **not** modify docs.
 - Do **not** skip or ignore failing tests.
 - Always run the **full** suite (`sbt coverage test coverageReport`), not individual test files, to catch regressions.
-- `Main.scala` and `WebController.scala` are excluded from coverage — do not flag them.
+
+## Bug-fix verification
+
+When the task is a bug fix, additionally verify that the change set includes
+**at least one new test prefixed `regression:`**. If the Coder hands you a bug
+fix without a corresponding regression test, hand it back to the Spec Writer —
+no bug fix ships without a reproducer.
+
+Quick check:
+
+```bash
+git diff --name-only HEAD | grep -E '/test/.*Spec\.scala$' | xargs grep -l 'regression:'
+```

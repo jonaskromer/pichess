@@ -31,7 +31,11 @@ object Main extends ZIOAppDefault:
       )
     yield ()
 
-  private def app(headless: Boolean): ZIO[GameService, Throwable, Unit] =
+  private[chess] def app(
+      headless: Boolean,
+      port: Int = 8090,
+      onReady: Int => Task[Unit] = port => openBrowser(port).delay(1.second)
+  ): ZIO[GameService, Throwable, Unit] =
     ZIO.scoped {
       for
         gs <- ZIO.service[GameService]
@@ -42,27 +46,29 @@ object Main extends ZIOAppDefault:
         shutdown <- Promise.make[Nothing, Unit]
         inputQueue <- Queue.unbounded[String]
         _ <- readLine.flatMap(inputQueue.offer).forever.forkDaemon
-        _ <- ZIO.unless(headless)(startGui(gs, session, shutdown))
+        _ <- ZIO.unless(headless)(
+          startGui(gs, session, shutdown, port, onReady)
+        )
         _ <- tuiLoop(gs, session, shutdown, inputQueue, flipped = false)
         _ <- shutdown.await
         _ <- printLine("Goodbye!")
-        _ <- ZIO.sleep(500.millis)
       yield ()
     }
 
-  private def startGui(
+  private[chess] def startGui(
       gs: GameService,
       session: SubscriptionRef[SessionState],
-      shutdown: Promise[Nothing, Unit]
-  ): ZIO[Scope, Throwable, Unit] =
+      shutdown: Promise[Nothing, Unit],
+      port: Int = 8090,
+      onReady: Int => Task[Unit] = port => openBrowser(port).delay(1.second)
+  ): ZIO[Scope, Throwable, Int] =
     for
-      serverEnv <- Server.defaultWithPort(8090).build
-      _ <- Server
-        .serve(WebController.routes(gs, session, shutdown))
+      serverEnv <- Server.defaultWithPort(port).build
+      boundPort <- Server
+        .install(WebController.routes(gs, session, shutdown))
         .provideEnvironment(serverEnv)
-        .forkScoped
-      _ <- openBrowser.delay(1.second).forkDaemon
-    yield ()
+      _ <- onReady(boundPort).forkDaemon
+    yield boundPort
 
   private def tuiLoop(
       gs: GameService,
@@ -121,16 +127,27 @@ object Main extends ZIOAppDefault:
           yield ()
     yield ()
 
-  private def openBrowser: Task[Unit] =
+  private[chess] def browserCommandFor(
+      osName: String,
+      port: Int
+  ): List[String] =
+    val os = osName.toLowerCase
+    val url = s"http://localhost:$port"
+    if os.contains("mac") then List("open", url)
+    else if os.contains("win") then List("cmd", "/c", "start", url)
+    else List("xdg-open", url)
+
+  private[chess] def openBrowser(
+      port: Int,
+      runner: List[String] => Task[Unit] = runCommand
+  ): Task[Unit] =
     for
       os <- zio.System
         .property("os.name")
         .orDie
-        .map(_.getOrElse("").toLowerCase)
-      cmd =
-        if os.contains("mac") then List("open", "http://localhost:8090")
-        else if os.contains("win") then
-          List("cmd", "/c", "start", "http://localhost:8090")
-        else List("xdg-open", "http://localhost:8090")
-      _ <- zio.process.Command(cmd.head, cmd.tail*).run.orDie
+        .map(_.getOrElse(""))
+      _ <- runner(browserCommandFor(os, port))
     yield ()
+
+  private val runCommand: List[String] => Task[Unit] =
+    cmd => zio.process.Command(cmd.head, cmd.tail*).run.unit
