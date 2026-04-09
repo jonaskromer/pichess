@@ -240,10 +240,10 @@ object TuiControllerSpec extends ZIOSpecDefault:
       test("load auto-detects JSON and initializes game") {
         val json = """{
           "board": {
-            "e1": "white king",
-            "e8": "black king"
+            "e1": {"color":"White","pieceType":"King"},
+            "e8": {"color":"Black","pieceType":"King"}
           },
-          "activeColor": "white",
+          "activeColor": "White",
           "castlingRights": {
             "whiteKingSide": false,
             "whiteQueenSide": false,
@@ -252,7 +252,7 @@ object TuiControllerSpec extends ZIOSpecDefault:
           },
           "enPassantTarget": null,
           "inCheck": false,
-          "status": "playing"
+          "status": {"Playing": {}}
         }"""
         for
           (gs, session, shutdown) <- withSession

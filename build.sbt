@@ -16,9 +16,6 @@ lazy val root = (project in file("."))
       "dev.zio"                %% "zio-test-sbt"              % "2.1.24" % Test,
     ),
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
-    // JsonCodec is a thin one-liner shim around zio-json's derived encoders;
-    // scoverage cannot see through the macro-derived givens.
-    coverageExcludedFiles := ".*JsonCodec.*",
     coverageEnabled := true,
     coverageMinimumStmtTotal := 100,
     coverageFailOnMinimum := true,

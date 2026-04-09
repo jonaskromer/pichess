@@ -59,7 +59,7 @@ object GameServiceSpec extends ZIOSpecDefault:
       },
       test("auto-detect JSON and return parsed state") {
         val json =
-          """{"board": {"e1": "white king", "e8": "black king"}, "activeColor": "white", "castlingRights": {"whiteKingSide": false, "whiteQueenSide": false, "blackKingSide": false, "blackQueenSide": false}, "enPassantTarget": null, "inCheck": false, "status": "playing"}"""
+          """{"board": {"e1": {"color":"White","pieceType":"King"}, "e8": {"color":"Black","pieceType":"King"}}, "activeColor": "White", "castlingRights": {"whiteKingSide": false, "whiteQueenSide": false, "blackKingSide": false, "blackQueenSide": false}, "enPassantTarget": null, "inCheck": false, "status": {"Playing":{}}}"""
         for (event, history) <- GameService.loadGame(json)
         yield assertTrue(
           event.gameId.nonEmpty,

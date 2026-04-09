@@ -48,7 +48,7 @@ object JsonCodecSpec extends ZIOSpecDefault:
         )
         val json = JsonSerializer.serialize(state)
         assertTrue(
-          json.contains("stalemate"),
+          json.contains("Stalemate"),
           JsonParser.parse(json) == Right(state)
         )
       },
@@ -64,7 +64,7 @@ object JsonCodecSpec extends ZIOSpecDefault:
         )
         val json = JsonSerializer.serialize(state)
         assertTrue(
-          json.contains("insufficient material"),
+          json.contains("InsufficientMaterial"),
           JsonParser.parse(json) == Right(state)
         )
       },
@@ -88,7 +88,7 @@ object JsonCodecSpec extends ZIOSpecDefault:
       },
       test("defaults halfmove and fullmove when missing from JSON") {
         val json =
-          """{"board":{},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
+          """{"board":{},"activeColor":"White","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":{"Playing":{}}}"""
         val Right(state) = JsonParser.parse(json): @unchecked
         assertTrue(
           state.halfmoveClock == 0,
@@ -107,7 +107,7 @@ object JsonCodecSpec extends ZIOSpecDefault:
         )
         val json = JsonSerializer.serialize(state)
         assertTrue(
-          json.contains("checkmate"),
+          json.contains("Checkmate"),
           JsonParser.parse(json) == Right(state)
         )
       },
@@ -123,7 +123,39 @@ object JsonCodecSpec extends ZIOSpecDefault:
         )
         val json = JsonSerializer.serialize(state)
         assertTrue(
-          json.contains("fifty-move rule"),
+          json.contains("FiftyMoveRule"),
+          JsonParser.parse(json) == Right(state)
+        )
+      },
+      test("round-trips threefold repetition draw") {
+        val state = GameState(
+          board = Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 8) -> Piece(Color.Black, PieceType.King)
+          ),
+          activeColor = Color.White,
+          castlingRights = CastlingRights(false, false, false, false),
+          status = GameStatus.Draw(DrawReason.ThreefoldRepetition)
+        )
+        val json = JsonSerializer.serialize(state)
+        assertTrue(
+          json.contains("ThreefoldRepetition"),
+          JsonParser.parse(json) == Right(state)
+        )
+      },
+      test("round-trips fivefold repetition draw") {
+        val state = GameState(
+          board = Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 8) -> Piece(Color.Black, PieceType.King)
+          ),
+          activeColor = Color.White,
+          castlingRights = CastlingRights(false, false, false, false),
+          status = GameStatus.Draw(DrawReason.FivefoldRepetition)
+        )
+        val json = JsonSerializer.serialize(state)
+        assertTrue(
+          json.contains("FivefoldRepetition"),
           JsonParser.parse(json) == Right(state)
         )
       }
@@ -131,7 +163,18 @@ object JsonCodecSpec extends ZIOSpecDefault:
     suite("JsonParser")(
       test("parses a hand-written JSON position") {
         val json =
-          """{"board":{"e1":"white king","e8":"black king","d4":"white knight"},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
+          """{
+            "board": {
+              "e1": {"color":"White","pieceType":"King"},
+              "e8": {"color":"Black","pieceType":"King"},
+              "d4": {"color":"White","pieceType":"Knight"}
+            },
+            "activeColor": "White",
+            "castlingRights": {"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},
+            "enPassantTarget": null,
+            "inCheck": false,
+            "status": {"Playing":{}}
+          }"""
         val Right(state) = JsonParser.parse(json): @unchecked
         assertTrue(
           state.board.size == 3,
@@ -155,7 +198,7 @@ object JsonCodecSpec extends ZIOSpecDefault:
       },
       test("rejects invalid piece type") {
         val json =
-          """{"board":{"e1":"white dragon"},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing"}"""
+          """{"board":{"e1":{"color":"White","pieceType":"Dragon"}},"activeColor":"White","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":{"Playing":{}}}"""
         assertTrue(JsonParser.parse(json).isLeft)
       },
       test("rejects piece with no space separator") {
@@ -190,7 +233,7 @@ object JsonCodecSpec extends ZIOSpecDefault:
       },
       test("rejects invalid en passant target") {
         val json =
-          """{"board":{},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":"zz","inCheck":false,"status":"playing"}"""
+          """{"board":{},"activeColor":"White","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":"zz","inCheck":false,"status":{"Playing":{}}}"""
         assertTrue(JsonParser.parse(json).isLeft)
       },
       test("rejects invalid en passant type") {
@@ -213,7 +256,7 @@ object JsonCodecSpec extends ZIOSpecDefault:
       },
       test("rejects unknown draw reason") {
         val json =
-          """{"board":{"e1":"white king"},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":{"draw":"unknown reason"}}"""
+          """{"board":{},"activeColor":"White","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":{"Draw":{"reason":"forfeit"}}}"""
         assertTrue(JsonParser.parse(json).isLeft)
       },
       test("rejects missing board field") {
@@ -222,6 +265,28 @@ object JsonCodecSpec extends ZIOSpecDefault:
       },
       test("rejects empty input") {
         assertTrue(JsonParser.parse("").isLeft)
+      },
+      test("rejects malformed castlingRights") {
+        // castlingRights must be an object with the four boolean fields;
+        // a string here drives the JsonDecoder[CastlingRights] error path
+        // and exercises the .toString error mapping in the GameState decoder.
+        val json =
+          """{"board":{},"activeColor":"white","castlingRights":"none","enPassantTarget":null,"inCheck":false,"status":"playing"}"""
+        assertTrue(JsonParser.parse(json).isLeft)
+      },
+      test("rejects non-numeric halfmoveClock") {
+        // A type mismatch on a present field is a hard error — silently
+        // defaulting would hide client bugs. The "missing field → default"
+        // path is exercised by the "defaults halfmove and fullmove when
+        // missing from JSON" test above.
+        val json =
+          """{"board":{},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing","halfmoveClock":"oops","fullmoveNumber":7}"""
+        assertTrue(JsonParser.parse(json).isLeft)
+      },
+      test("rejects non-numeric fullmoveNumber") {
+        val json =
+          """{"board":{},"activeColor":"white","castlingRights":{"whiteKingSide":false,"whiteQueenSide":false,"blackKingSide":false,"blackQueenSide":false},"enPassantTarget":null,"inCheck":false,"status":"playing","halfmoveClock":3,"fullmoveNumber":"oops"}"""
+        assertTrue(JsonParser.parse(json).isLeft)
       }
     ),
     suite("FEN vs JSON cross-validation")(
