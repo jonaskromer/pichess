@@ -43,11 +43,11 @@ Console chess game with full move validation, en passant, pawn promotion, ANSI b
 
 ---
 
-## Phase 3 — Parser Combinators (current)
+## Phase 3 — Parser Combinators
 
 **Lecture task (SA-03):** Build **three** parsers for the same input, each using a different library / technique: scala-parser-combinators, fastparse, and plain regex. Public API returns `Either[String, T]`.
 
-**Status:** Complete.
+**Status:** Complete. JSON and PGN codecs were added in the same package alongside the three FEN parsers — see [ADR 009](adr/009-recompute-derived-state-on-import.md) for the import-validation strategy shared across all formats.
 
 The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural import/export format for the REST API in Phase 4 — `POST /games` with a FEN body, `GET /games/:id` returning a FEN string.
 

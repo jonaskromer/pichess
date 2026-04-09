@@ -17,7 +17,7 @@
 | `sbt scalafmtAll` | Format all source files (required before committing) |
 | `sbt coverage test coverageReport` | Run tests with coverage report |
 
-Coverage is enforced at 100%. The build fails if any line is uncovered. `Main.scala` and `WebController.scala` are excluded from coverage measurement.
+Coverage is enforced at 100%. The build fails if any line is uncovered — every file in `src/main/scala`, including `Main.scala` and `WebController.scala`, is measured. Use `scripts/check-coverage.py` after a `coverageReport` run to inspect uncovered lines per file.
 
 Tests use **zio-test** (`ZIOSpecDefault`). Each test spec is an `object` extending `ZIOSpecDefault` with a `def spec` that returns a `Spec` tree of `suite(...)` and `test(...)` blocks. Assertions use `assertTrue(...)`. Service/repository tests provide layers via `.provide(layer)` on the suite.
 
@@ -134,7 +134,14 @@ Key rules:
 
 ### JSON Codec
 
-`JsonSerializer` and `JsonParser` provide a human-readable JSON representation of `GameState`. The JSON format uses plain-English values (e.g. `"white rook"`) so positions are easy to verify by hand. `JsonCodecSpec` includes cross-validation tests that parse the same position from both FEN and JSON and assert the resulting `GameState` is identical.
+`JsonCodec` provides auto-derived `zio-json` codecs for `Piece`, `Board`, `CastlingRights`, `GameStatus`, and `GameState`. Enums are encoded as their case names (`"white"`, `"king"`, `"stalemate"`); positions are encoded as algebraic strings (`"e4"`); the board becomes a `Position → Piece` map. `JsonSerializer` / `JsonParser` are thin facades over the derived codecs.
+
+Two derived fields are deliberately *not* trusted from the wire format:
+
+- `inCheck` is recomputed on decode via `MoveValidator.isInCheck` — the wire field is overwritten.
+- `halfmoveClock` and `fullmoveNumber` are optional and default to `0` / `1` so older snapshots stay loadable.
+
+See [ADR 009](adr/009-recompute-derived-state-on-import.md) for the reasoning. `JsonCodecSpec` includes cross-validation tests that parse the same position from both FEN and JSON and assert the resulting `GameState` is identical.
 
 ### PGN Codec
 
@@ -151,27 +158,27 @@ Dependencies (already in `build.sbt`):
 
 ## Adding a REST Route (Phase 4)
 
-Routes live in `chess.http` and use the Akka HTTP Routing DSL:
+The web GUI already exposes a small JSON API through `WebController` (zio-http), but Phase 4 adds a true REST surface (`/games`, `/games/:id`, `/games/:id/moves`) intended for inter-service IPC and Gatling load testing. New routes will live in a `chess.http` package and use zio-http's `Routes` DSL — the same builder `WebController` uses today:
 
 ```scala
-import akka.http.scaladsl.server.Directives._
+import zio.http.*
 
-val gameRoutes =
-  path("games") {
-    post { /* GameService.newGame() */ }
-  } ~
-  path("games" / Segment) { id =>
-    get    { /* GameService.getState(id) */ } ~
-    delete { /* terminate game */ }
-  } ~
-  path("games" / Segment / "moves") { id =>
-    post {
-      entity(as[String]) { input =>
-        /* GameService.makeMove(id, input) */
-      }
+val gameRoutes: Routes[GameService, Response] =
+  Routes(
+    Method.POST   / "games"                      -> handler(/* GameService.newGame() */),
+    Method.GET    / "games" / string("id")       -> handler { (id: String, _: Request) =>
+      /* GameService.getState(id) */
+    },
+    Method.POST   / "games" / string("id") / "moves" -> handler { (id: String, req: Request) =>
+      /* req.body.asString → GameService.makeMove(id, _) */
+    },
+    Method.DELETE / "games" / string("id")       -> handler { (id: String, _: Request) =>
+      /* terminate game */
     }
-  }
+  )
 ```
+
+The lecture (SA-05) names Akka HTTP, but this project stays on zio-http for consistency with the existing ZIO stack — see the deviation note in `roadmap.md`.
 
 URL design rules (from lecture):
 - **Nouns not verbs** — `/games` not `/getGame`

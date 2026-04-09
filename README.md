@@ -31,9 +31,9 @@ Dive deeper into the project structure, our development workflow, and where the 
 - 🍑 **[Development Workflow](docs/development.md)**: Guidelines on our strict TDD rules, code formatting, and the `sbt` pipeline.
 - 🍑 **[Roadmap](docs/roadmap.md)**: The 14-phase evolution plan of this project, taking it from a TUI game to a fully-distributed reactive microservice architecture.
 
-## 🛠️ Current Status (Phase 3)
+## 🛠️ Current Status
 
-The project is currently in **Phase 3** (Parser Combinators). Phase 1 (TUI Chess) and Phase 2 (Functional Style) are complete, and the web GUI from Phase 7 was built ahead of schedule.
+Phases 1 (TUI Chess), 2 (Functional Style), and 3 (Parser Combinators — three FEN parsers + JSON + PGN codecs) are complete. The web GUI from Phase 7 was built ahead of schedule. **Phase 4 (REST API)** is the next milestone.
 
 **What works:**
 - Full piece movement validation (all piece types)

@@ -29,25 +29,28 @@ The application runs a TUI and a web GUI simultaneously, sharing game state via 
     │ uses     │ uses              │
     │  ┌───────▼──────────────┐    │   ┌──────────────────────┐
     │  │  chess.notation      │    │   │  chess.codec         │
-    │  │  NotationResolver    │    │   │  FenParser trait     │
-    │  │  CoordinateResolver  │    │   │  FenParserCombinator │
-    │  │  SanResolver         │    │   │  FenParserFastParse  │
-    │  │  CastlingResolver    │    │   │  FenParserRegex      │
-    │  │  SanSerializer       │    │   │  FenBuilder          │
-    │  └───────┬──────────────┘    │   │  FenSerializer       │
-    │ uses     │ uses              │   └───────┬──────────────┘
+    │  │  NotationResolver    │    │   │  FenParser trait +   │
+    │  │  CoordinateResolver  │    │   │   3 implementations  │
+    │  │  SanResolver         │    │   │  FenBuilder          │
+    │  │  CastlingResolver    │    │   │  FenSerializer       │
+    │  │  SanSerializer       │    │   │  JsonCodec / Parser  │
+    │  └───────┬──────────────┘    │   │   / Serializer       │
+    │          │                   │   │  PgnParser           │
+    │          │                   │   │  PgnSerializer       │
+    │          │                   │   └───────┬──────────────┘
+    │ uses     │ uses              │           │ uses
 ┌───▼──────────▼───────────────────▼───────────▼──────────┐
 │                    chess.model                           │
 │  Board, GameState, Move, Position, Piece,               │
 │  Color, PieceType, GameId, GameEvent, GameError,        │
-│  SessionState                                           │
+│  GameSnapshot, SessionState                             │
 └───────┬─────────────────────────────────────────────────┘
         │ uses
-┌───────▼──────────────┐   ┌──────────────────────────────┐
-│  chess.model.rules   │   │     chess.repository         │
-│  Game, MoveValidator │   │     GameRepository trait     │
-│                      │   │     InMemoryGameRepository   │
-└──────────────────────┘   └──────────────────────────────┘
+┌───────▼──────────────────┐   ┌──────────────────────────┐
+│  chess.model.rules       │   │     chess.repository     │
+│  Game, MoveValidator,    │   │     GameRepository trait │
+│  Ray                     │   │     InMemoryGameRepo     │
+└──────────────────────────┘   └──────────────────────────┘
 ```
 
 ## Packages
@@ -64,7 +67,7 @@ Domain types. No I/O, no dependencies on other packages.
 | `SessionState.scala` | `GameSnapshot` (game ID, initial state, history as `List[(Move, GameState)]` newest-first, redo stack) and `SessionState` (snapshot + optional error/output) — held in a `SubscriptionRef`. Current state is derived from `history.head` or `initialState`. |
 | `board/Board.scala` | `type Board = Map[Position, Piece]` + initial board setup |
 | `board/CastlingRights.scala` | Case class with four booleans tracking kingside/queenside castling rights for each color |
-| `board/GameState.scala` | Immutable game snapshot: board, active color, en passant target, castling rights, in-check flag, game status |
+| `board/GameState.scala` | Immutable game snapshot: board, active color, en passant target, castling rights, in-check flag, game status, halfmove clock, fullmove number |
 | `board/GameStatus.scala` | `enum DrawReason` (`Stalemate`, `FiftyMoveRule`, `InsufficientMaterial`, `ThreefoldRepetition`, `FivefoldRepetition`) and `enum GameStatus` — `Playing`, `Checkmate(winner: Color)`, or `Draw(reason: DrawReason)` |
 | `board/Move.scala` | A move from one `Position` to another, with optional promotion piece |
 | `board/Position.scala` | A board square identified by column (`Char`) and row (`Int`) |
@@ -78,8 +81,9 @@ Chess logic using ZIO's typed error channel. Takes `GameState` and `Move`, retur
 
 | File | Purpose |
 |---|---|
-| `MoveValidator.scala` | Validates a move against all chess rules for all piece types, including en passant |
-| `Game.scala` | Applies a validated move to produce a new `GameState`; handles en passant, pawn promotion, stalemate, 50-move rule, and insufficient material detection |
+| `MoveValidator.scala` | Validates a move against all chess rules for all piece types, including en passant and castling. Provides `isInCheck`, `hasLegalMove`, and the legal-move enumeration used for checkmate/stalemate detection. |
+| `Game.scala` | Applies a validated move to produce a new `GameState`; handles en passant, pawn promotion, castling, halfmove/fullmove counters, and detects checkmate, stalemate, and insufficient material. |
+| `Ray.scala` | Reusable piece-movement primitives: per-piece-type ray tables (king/queen/rook/bishop = sliding, knight = single-hop) plus `walk` and `canReach` helpers used by `MoveValidator`. |
 
 ### `chess.notation`
 
@@ -90,7 +94,7 @@ Notation parsing and serialization. Each notation style has its own resolver imp
 | `NotationResolver.scala` | Trait: `parse(input, state): IO[GameError, Option[Move]]` — returns `None` if the notation doesn't match, `Some(move)` on success, or fails with `GameError` if recognized but invalid |
 | `CoordinateResolver.scala` | Parses coordinate notation: `e2 e4`, `e2e4`, `e2-e4`, `e7e8=Q` |
 | `SanResolver.scala` | Parses SAN: piece moves (`Nf3`), pawn pushes (`e4`), pawn captures (`exd5`), promotion (`e8=Q`), disambiguation (`Nbd2`) |
-| `CastlingResolver.scala` | Parses castling notation (`O-O`, `O-O-O`); currently returns an error (not yet implemented) |
+| `CastlingResolver.scala` | Parses castling notation (`O-O`, `O-O-O`) into a king-move whose two-square horizontal step `MoveValidator` recognises as a castling attempt. |
 | `SanSerializer.scala` | `toSan(move, state): IO[GameError, String]` — serializes a `Move` + pre-move `GameState` into SAN (with disambiguation, capture notation, and promotion). Also provides `deriveMoveLog(initialState, moves)` to replay and serialize an entire move history. |
 
 ### `chess.codec`
@@ -104,7 +108,7 @@ Game state encoding and decoding in multiple formats: FEN (Forsyth–Edwards Not
 | `FenParserFastParse.scala` | Implementation built on the `fastparse` library. |
 | `FenParserRegex.scala` | Implementation built on `scala.util.matching.Regex` with no external parser library. |
 | `FenBuilder.scala` | Shared converter from the six tokenized FEN fields to a validated `GameState`. Computes `inCheck` via `MoveValidator.isInCheck`. |
-| `FenSerializer.scala` | `serialize(state: GameState): String` — emits the canonical FEN string for a game state. Halfmove/fullmove counters are emitted as `0 1` because `GameState` does not track them. |
+| `FenSerializer.scala` | `serialize(state: GameState): String` — emits the canonical FEN string for a game state, including the halfmove clock and fullmove number. Also exposes `positionKey` (the first four FEN fields) which `GameController` reuses for threefold/fivefold repetition detection. |
 | `PgnParser.scala` | Parses PGN (Portable Game Notation) move text into a list of moves. |
 | `PgnSerializer.scala` | Serializes a game's move history into PGN format. |
 | `JsonParser.scala` | Parses a JSON representation of game state. |
@@ -119,10 +123,10 @@ Input handling and shared move-processing logic.
 
 | File | Purpose |
 |---|---|
-| `GameController.scala` | Shared move-processing logic used by both TUI and web: `makeMove`, `undo`, `redo`, `claimDraw`. Orchestrates `GameService`, SAN serialization, session state updates, and repetition detection (`positionKey`, `countCurrentPosition`, `isFivefoldRepetition`). |
-| `TuiController.scala` | TUI command parsing (`quit`, `help`, `flip`, move) and dispatch. Returns `Result.Shutdown` or `Result.Continue(flipped)`. |
+| `GameController.scala` | Shared move-processing logic used by both TUI and web: `makeMove`, `undo`, `redo`, `claimDraw`. Owns the history/redo stack updates on the `SubscriptionRef[SessionState]`, persists each state via `GameService.saveState`, and runs repetition detection (`positionKey`, `countCurrentPosition`, `isFivefoldRepetition`) so a fivefold repetition is auto-promoted to a draw. |
+| `TuiController.scala` | TUI command parser + dispatcher. Recognises `quit`, `help`, `flip`, `undo`, `redo`, `draw`, `load <text>`, `export fen|pgn|json`, and free-form moves; returns `Result.Shutdown` or `Result.Continue(flipped)`. |
 | `MoveParser.scala` | Orchestrator: chains `CoordinateResolver`, `CastlingResolver`, `SanResolver` in order; `parse(input, state): IO[GameError, Move]` |
-| `WebController.scala` | HTTP route handlers (zio-http), SSE endpoint for state streaming, session management |
+| `WebController.scala` | zio-http route handlers for `GET /`, `GET /api/state`, `GET /api/events` (SSE), `POST /api/move`, `/undo`, `/redo`, `/draw`, `/new`, `/quit`. Delegates all game logic to `GameController` and converts `GameError` into JSON error responses. |
 
 ### `chess.repository`
 
@@ -141,8 +145,8 @@ Orchestration layer. Coordinates domain logic, parsing, and persistence. This is
 
 | File | Purpose |
 |---|---|
-| `GameService.scala` | Trait: `newGame()`, `makeMove(id, input)`, `getState(id)`. Returns `IO[GameError, A]`. Companion provides ZIO accessors and a `layer` alias. |
-| `GameServiceLive.scala` | Live implementation injected via `ZLayer.fromFunction`. Emits `GameEvent` alongside state on each move. |
+| `GameService.scala` | Trait: `newGame()`, `loadGame(input)` (auto-detects JSON / PGN / FEN), `makeMove(id, input)`, `getState(id)`, `saveState(id, state)`. Returns `IO[GameError, A]`. Companion provides ZIO accessors and a `layer` alias. |
+| `GameServiceLive.scala` | Live implementation injected via `ZLayer.fromFunction`. `makeMove` parses → validates → applies → persists, returning `(newState, GameEvent.MoveMade)`. `loadGame` tries `JsonParser`, then `PgnParser` (whose move history is preserved for undo/redo), then `FenParserRegex`. |
 
 **Future:** HTTP routes will call `GameService` directly. Kafka publishing will be added at the call site (`makeMove` returns the event — callers decide what to do with it).
 
@@ -163,18 +167,25 @@ Pure rendering. No I/O.
 
 | File | Purpose |
 |---|---|
-| `Main.scala` | ZIO app entry point. Wires layers, runs TUI loop + HTTP server in parallel with `SubscriptionRef` shared state, SSE, and coordinated shutdown via `Promise`. Excluded from test coverage. |
+| `Main.scala` | ZIO app entry point. Wires layers, runs the TUI loop + HTTP server in parallel with `SubscriptionRef` shared state, SSE, and coordinated shutdown via `Promise`. Honours `--headless` to skip the GUI. |
 
 ## Dependency Rules
 
 Dependencies only flow **downward**:
 
 ```
-Main → controller → service → notation → model
-                  → model.rules → model
-                  → repository
-     → view → model
-     → codec → model.rules → model
+Main → controller → service    → repository
+                              → notation
+                              → codec
+                              → model.rules
+                  → notation
+                  → codec
+                  → view
+                  → model
+codec → model.rules → model
+notation → model.rules → model
+view → model
+repository → model
 ```
 
 No package imports from a layer above it. `chess.model` has no dependencies on any other package in this project (except ZIO itself for `IO` in `rules`).
@@ -190,7 +201,8 @@ See [`docs/adr/`](adr/) for the full decision records:
 - [ADR 005 — ZIO effects throughout, including domain logic](adr/005-pure-domain-model-zio-at-boundaries.md)
 - [ADR 006 — SubscriptionRef + SSE for TUI/GUI synchronization](adr/006-subscriptionref-sse-for-ui-sync.md)
 - [ADR 007 — Promise for coordinated shutdown](adr/007-promise-for-coordinated-shutdown.md)
-- [ADR 008 — Undo/redo via full replay from initial state](adr/008-undo-redo-via-replay.md)
+- [ADR 008 — Undo/redo via state history](adr/008-undo-redo-via-replay.md)
+- [ADR 009 — Recompute derived state on import (`inCheck`, PGN replay)](adr/009-recompute-derived-state-on-import.md)
 
 ## Future Integration Points
 
@@ -217,6 +229,8 @@ See [`docs/roadmap.md`](roadmap.md) for the full phased plan.
 | Scala 3.8.2 | Language |
 | ZIO 2.1.24 | Effect system, dependency injection, concurrency |
 | zio-http 3.10.1 | HTTP server, SSE |
+| zio-json 0.9.0 | Auto-derived JSON codecs (used in `chess.codec.JsonCodec`) |
+| zio-process 0.7.2 | Spawning the system browser on startup (used in `Main.openBrowser`) |
 | scala-parser-combinators 2.4.0 | Parser combinators (used in `chess.codec`) |
 | fastparse 3.1.1 | Macro-based parser library (used in `chess.codec`) |
 | zio-test 2.1.24 | Test framework |
