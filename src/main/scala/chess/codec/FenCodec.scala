@@ -14,43 +14,54 @@ import chess.model.piece.{Color, Piece, PieceType}
 object FenCodec:
 
   // ─── Piece ↔ Char ──────────────────────────────────────────────────────────
+  //
+  // FEN convention: uppercase = White, lowercase = Black.
+  // Only the PieceType → letter mapping is listed; color is derived from case.
 
-  val pieceToChar: Map[Piece, Char] = Map(
-    Piece(Color.White, PieceType.King) -> 'K',
-    Piece(Color.White, PieceType.Queen) -> 'Q',
-    Piece(Color.White, PieceType.Rook) -> 'R',
-    Piece(Color.White, PieceType.Bishop) -> 'B',
-    Piece(Color.White, PieceType.Knight) -> 'N',
-    Piece(Color.White, PieceType.Pawn) -> 'P',
-    Piece(Color.Black, PieceType.King) -> 'k',
-    Piece(Color.Black, PieceType.Queen) -> 'q',
-    Piece(Color.Black, PieceType.Rook) -> 'r',
-    Piece(Color.Black, PieceType.Bishop) -> 'b',
-    Piece(Color.Black, PieceType.Knight) -> 'n',
-    Piece(Color.Black, PieceType.Pawn) -> 'p'
+  private val typeToChar: Map[PieceType, Char] = Map(
+    PieceType.King -> 'K',
+    PieceType.Queen -> 'Q',
+    PieceType.Rook -> 'R',
+    PieceType.Bishop -> 'B',
+    PieceType.Knight -> 'N',
+    PieceType.Pawn -> 'P'
   )
+  private val charToType: Map[Char, PieceType] = typeToChar.map(_.swap)
 
-  val charToPiece: Map[Char, Piece] = pieceToChar.map(_.swap)
+  def pieceToChar(piece: Piece): Char =
+    val c = typeToChar(piece.pieceType)
+    if piece.color == Color.White then c else c.toLower
+
+  def charToPiece(ch: Char): Option[Piece] =
+    val color = if ch.isUpper then Color.White else Color.Black
+    charToType.get(ch.toUpper).map(Piece(color, _))
 
   // ─── Color ─────────────────────────────────────────────────────────────────
 
-  def encodeColor(c: Color): String =
-    if c == Color.White then "w" else "b"
+  private val colorToFen: Map[Color, String] =
+    Map(Color.White -> "w", Color.Black -> "b")
+  private val fenToColor: Map[String, Color] =
+    colorToFen.map(_.swap)
 
-  def decodeColor(s: String): Either[String, Color] = s match
-    case "w" => Right(Color.White)
-    case "b" => Right(Color.Black)
-    case _   => Left(s"Invalid active color '$s' (expected 'w' or 'b')")
+  def encodeColor(c: Color): String = colorToFen(c)
+
+  def decodeColor(s: String): Either[String, Color] =
+    fenToColor
+      .get(s)
+      .toRight(s"Invalid active color '$s' (expected 'w' or 'b')")
 
   // ─── CastlingRights ────────────────────────────────────────────────────────
 
+  private val castlingFlags: List[(CastlingRights => Boolean, Char)] = List(
+    (_.whiteKingSide, 'K'),
+    (_.whiteQueenSide, 'Q'),
+    (_.blackKingSide, 'k'),
+    (_.blackQueenSide, 'q')
+  )
+
   def encodeCastling(rights: CastlingRights): String =
-    val sb = StringBuilder()
-    if rights.whiteKingSide then sb.append('K')
-    if rights.whiteQueenSide then sb.append('Q')
-    if rights.blackKingSide then sb.append('k')
-    if rights.blackQueenSide then sb.append('q')
-    if sb.isEmpty then "-" else sb.toString
+    val s = castlingFlags.collect { case (f, c) if f(rights) => c }.mkString
+    if s.isEmpty then "-" else s
 
   def decodeCastling(s: String): Either[String, CastlingRights] =
     if s == "-" then Right(CastlingRights(false, false, false, false))
@@ -69,7 +80,7 @@ object FenCodec:
   // ─── En passant ────────────────────────────────────────────────────────────
 
   def encodeEnPassant(ep: Option[Position]): String =
-    ep.map(_.toString).getOrElse("-")
+    ep.fold("-")(_.toString)
 
   private val squarePattern = """^([a-h])([1-8])$""".r
 
@@ -87,27 +98,27 @@ object FenCodec:
   def encodeBoard(board: Board): String =
     (8 to 1 by -1)
       .map { row =>
-        val rank = ('a' to 'h').toList.map(col => board.get(Position(col, row)))
-        encodeRank(rank)
+        val (out, empty) = ('a' to 'h')
+          .map(col => board.get(Position(col, row)))
+          .foldLeft(("", 0)) {
+            case ((out, empty), None) => (out, empty + 1)
+            case ((out, empty), Some(piece)) =>
+              (flushEmpty(out, empty) + pieceToChar(piece), 0)
+          }
+        flushEmpty(out, empty)
       }
       .mkString("/")
 
-  private def encodeRank(squares: List[Option[Piece]]): String =
-    val (acc, trailingEmpty) = squares.foldLeft(("", 0)) {
-      case ((out, empty), None) => (out, empty + 1)
-      case ((out, empty), Some(piece)) =>
-        val flushed = if empty > 0 then out + empty.toString else out
-        (flushed + pieceToChar(piece), 0)
-    }
-    if trailingEmpty > 0 then acc + trailingEmpty.toString else acc
+  private def flushEmpty(out: String, empty: Int): String =
+    if empty > 0 then out + empty.toString else out
 
   def decodeBoard(placement: String): Either[String, Board] =
     val ranks = placement.split('/')
     if ranks.length != 8 then
       Left(s"Piece placement must have 8 ranks, got ${ranks.length}")
     else
-      val rows = (8 to 1 by -1).toList.zip(ranks.toList)
-      rows
+      (8 to 1 by -1).toList
+        .zip(ranks.toList)
         .foldLeft[Either[String, Board]](Right(Map.empty)) {
           case (acc, (row, rank)) =>
             for
@@ -120,35 +131,32 @@ object FenCodec:
       rank: String,
       row: Int
   ): Either[String, Map[Position, Piece]] =
-    val initial: Either[String, (Int, Map[Position, Piece])] =
-      Right((0, Map.empty))
-    val folded = rank.foldLeft(initial) {
-      case (acc @ Left(_), _) => acc
-      case (Right((col, board)), ch) =>
-        if ch.isDigit then Right((col + ch.asDigit, board))
-        else
-          charToPiece.get(ch) match
-            case Some(piece) =>
-              val pos = Position(('a' + col).toChar, row)
-              Right((col + 1, board + (pos -> piece)))
-            case None =>
-              Left(s"Invalid piece character '$ch' on rank $row")
-    }
-    folded.flatMap { case (col, board) =>
-      if col != 8 then Left(s"Rank $row must describe 8 squares, got $col")
-      else Right(board)
-    }
+    rank
+      .foldLeft[Either[String, (Int, Map[Position, Piece])]](
+        Right((0, Map.empty))
+      ) {
+        case (Left(e), _) => Left(e)
+        case (Right((col, board)), ch) if ch.isDigit =>
+          Right((col + ch.asDigit, board))
+        case (Right((col, board)), ch) =>
+          charToPiece(ch)
+            .map { piece =>
+              (col + 1, board + (Position(('a' + col).toChar, row) -> piece))
+            }
+            .toRight(s"Invalid piece character '$ch' on rank $row")
+      }
+      .flatMap { case (col, board) =>
+        Either.cond(
+          col == 8,
+          board,
+          s"Rank $row must describe 8 squares, got $col"
+        )
+      }
 
   // ─── Integer fields ────────────────────────────────────────────────────────
 
-  def decodeNonNegativeInt(
-      s: String,
-      field: String
-  ): Either[String, Int] =
+  def decodeNonNegativeInt(s: String, field: String): Either[String, Int] =
     s.toIntOption.toRight(s"Invalid $field '$s'")
 
-  def decodePositiveInt(
-      s: String,
-      field: String
-  ): Either[String, Int] =
+  def decodePositiveInt(s: String, field: String): Either[String, Int] =
     s.toIntOption.filter(_ >= 1).toRight(s"Invalid $field '$s'")

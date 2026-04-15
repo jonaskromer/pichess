@@ -32,16 +32,14 @@ object PgnParser:
       history <- replayMoves(initialState, sanMoves)
     yield PgnGame(headers, initialState, history)
 
-  private val moveNumberPattern = """\d+\.""".r
-  private val commentPattern = """\{[^}]*\}""".r
-  private val nagPattern = """\$\d+""".r
+  // Single pattern strips comments, NAGs, and move numbers in one pass.
+  private val noisePattern = """\{[^}]*\}|\$\d+|\d+\.""".r
 
   private def extractMoves(movetext: String): List[String] =
-    val cleaned = commentPattern.replaceAllIn(movetext, " ")
-    val withoutNags = nagPattern.replaceAllIn(cleaned, " ")
-    val withoutNumbers = moveNumberPattern.replaceAllIn(withoutNags, " ")
-    withoutNumbers
+    noisePattern
+      .replaceAllIn(movetext, " ")
       .split("\\s+")
+      .iterator
       .map(_.trim)
       .filter(t => t.nonEmpty && !PgnCodec.resultTokens.contains(t))
       .toList
