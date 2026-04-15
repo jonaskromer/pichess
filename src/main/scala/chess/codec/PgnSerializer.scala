@@ -3,19 +3,26 @@ package chess.codec
 import chess.model.board.GameStatus
 import chess.model.piece.Color
 
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+
 object PgnSerializer:
+
+  private val pgnDateFormat = DateTimeFormatter.ofPattern("yyyy.MM.dd")
 
   def serialize(
       moveLog: List[(Color, String)],
       status: GameStatus
   ): String =
     val result = PgnCodec.encodeResult(status)
+    val date = LocalDate.now().format(pgnDateFormat)
     val header = List(
       PgnCodec.encodeHeader("Event", "πChess Game"),
-      PgnCodec.encodeHeader("Site", "?"),
-      PgnCodec.encodeHeader("Date", "????.??.??"),
-      PgnCodec.encodeHeader("White", "?"),
-      PgnCodec.encodeHeader("Black", "?"),
+      PgnCodec.encodeHeader("Site", "Local"),
+      PgnCodec.encodeHeader("Date", date),
+      PgnCodec.encodeHeader("Round", "1"),
+      PgnCodec.encodeHeader("White", "Player 1"),
+      PgnCodec.encodeHeader("Black", "Player 2"),
       PgnCodec.encodeHeader("Result", result)
     ).mkString("\n")
     val movetext = formatMovetext(moveLog, result)

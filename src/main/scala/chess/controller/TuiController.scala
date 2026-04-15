@@ -74,7 +74,7 @@ object TuiController:
           .foldZIO(
             err =>
               session
-                .update(_.copy(error = Some(err.message)))
+                .update(_.copy(error = Some(err.message), output = None))
                 .as(Result.Continue(flipped)),
             _ => ZIO.succeed(Result.Continue(flipped))
           )
@@ -84,7 +84,7 @@ object TuiController:
           .foldZIO(
             err =>
               session
-                .update(_.copy(error = Some(err.message)))
+                .update(_.copy(error = Some(err.message), output = None))
                 .as(Result.Continue(flipped)),
             _ => ZIO.succeed(Result.Continue(flipped))
           )
@@ -94,7 +94,7 @@ object TuiController:
           .foldZIO(
             err =>
               session
-                .update(_.copy(error = Some(err.message)))
+                .update(_.copy(error = Some(err.message), output = None))
                 .as(Result.Continue(flipped)),
             _ => ZIO.succeed(Result.Continue(flipped))
           )
@@ -103,7 +103,7 @@ object TuiController:
           .foldZIO(
             err =>
               session
-                .update(_.copy(error = Some(err.message)))
+                .update(_.copy(error = Some(err.message), output = None))
                 .as(Result.Continue(flipped)),
             { case (event, history) =>
               session
@@ -143,7 +143,7 @@ object TuiController:
           .foldZIO(
             err =>
               session
-                .update(_.copy(error = Some(err.message)))
+                .update(_.copy(error = Some(err.message), output = None))
                 .as(Result.Continue(flipped)),
             _ => ZIO.succeed(Result.Continue(flipped))
           )

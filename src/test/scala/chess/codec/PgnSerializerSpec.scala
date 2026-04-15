@@ -4,7 +4,13 @@ import chess.model.board.{DrawReason, GameStatus}
 import chess.model.piece.Color
 import zio.test.*
 
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+
 object PgnSerializerSpec extends ZIOSpecDefault:
+
+  private val today =
+    LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy.MM.dd"))
 
   def spec = suite("PgnSerializer")(
     test("serializes an empty game as header + result marker") {
@@ -65,14 +71,15 @@ object PgnSerializerSpec extends ZIOSpecDefault:
         pgn.endsWith("1/2-1/2")
       )
     },
-    test("includes standard PGN headers") {
+    test("includes all seven PGN tag roster headers") {
       val pgn = PgnSerializer.serialize(Nil, GameStatus.Playing)
       assertTrue(
-        pgn.contains("[Event"),
-        pgn.contains("[Site"),
-        pgn.contains("[Date"),
-        pgn.contains("[White"),
-        pgn.contains("[Black"),
+        pgn.contains("[Event \"πChess Game\"]"),
+        pgn.contains("[Site \"Local\"]"),
+        pgn.contains(s"""[Date "$today"]"""),
+        pgn.contains("[Round \"1\"]"),
+        pgn.contains("[White \"Player 1\"]"),
+        pgn.contains("[Black \"Player 2\"]"),
         pgn.contains("[Result")
       )
     }

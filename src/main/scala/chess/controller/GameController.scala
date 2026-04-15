@@ -42,7 +42,7 @@ object GameController:
             newGame.copy(history = (event.move, finalState) :: s.game.history)
           else newGame
         gs.saveState(s.gameId, finalState) *>
-          session.update(st => st.copy(game = finalGame, error = None))
+          session.update(st => st.copy(game = finalGame, error = None, output = None))
       }
     }
 
@@ -64,7 +64,8 @@ object GameController:
                   history = rest,
                   redoStack = head :: st.game.redoStack
                 ),
-                error = None
+                error = None,
+                output = None
               )
             )
     }
@@ -85,7 +86,8 @@ object GameController:
                   history = (move, state) :: st.game.history,
                   redoStack = rest
                 ),
-                error = None
+                error = None,
+                output = None
               )
             )
     }
@@ -121,7 +123,8 @@ object GameController:
             session.update(st =>
               st.copy(
                 game = st.game.copy(history = (m, drawState) :: rest),
-                error = None
+                error = None,
+                output = None
               )
             )
     }
