@@ -6,9 +6,13 @@ import chess.service.GameService
 import chess.view.{HtmlPage, WebBoardView}
 import zio.*
 import zio.http.*
+import zio.json.*
 import zio.stream.SubscriptionRef
 
 object WebController:
+
+  private case class MoveRequest(move: String)
+  private given JsonDecoder[MoveRequest] = DeriveJsonDecoder.gen[MoveRequest]
 
   def routes(
       gs: GameService,
@@ -43,7 +47,7 @@ object WebController:
   private def serveState(
       session: SubscriptionRef[SessionState]
   ): ZIO[Any, Nothing, Response] =
-    session.get.flatMap(s => stateResponse(s))
+    session.get.flatMap(stateResponse)
 
   private def serveEvents(
       session: SubscriptionRef[SessionState],
@@ -75,13 +79,10 @@ object WebController:
       req: Request
   ): ZIO[Any, Nothing, Response] =
     (for
-      body <- req.body.asString.mapError(e =>
-        GameError.ParseError(e.getMessage)
-      )
-      move <- ZIO
-        .fromOption(extractMove(body))
-        .orElseFail(GameError.ParseError("Missing move field"))
-      _ <- GameController.makeMove(gs, session, move)
+      moveReq <- req.body
+        .asJsonFromCodec[MoveRequest]
+        .mapError(e => GameError.ParseError(e.getMessage))
+      _ <- GameController.makeMove(gs, session, moveReq.move)
       updated <- session.get
       resp <- stateResponse(updated)
     yield resp).catchAll(err =>
@@ -160,7 +161,3 @@ object WebController:
         s"""{"error":"${WebBoardView.escapeJson(message)}"}"""
       )
       .status(status)
-
-  private[controller] def extractMove(jsonBody: String): Option[String] =
-    val pattern = """"move"\s*:\s*"([^"]*)"""".r
-    pattern.findFirstMatchIn(jsonBody).map(_.group(1))

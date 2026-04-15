@@ -96,12 +96,8 @@ object Main extends ZIOAppDefault:
       _ <- ZIO.when(moveLog.nonEmpty)(
         printLine(MoveLogView.render(moveLog))
       )
-      _ <- ZIO.when(s.output.isDefined)(
-        printLine(s.output.get)
-      )
-      _ <- ZIO.when(s.error.isDefined)(
-        printLine(s"Error: ${s.error.get}")
-      )
+      _ <- ZIO.foreachDiscard(s.output)(printLine(_))
+      _ <- ZIO.foreachDiscard(s.error)(e => printLine(s"Error: $e"))
       _ <- printLine(
         s"${s.state.activeColor}'s turn — enter a move (e.g. e2 e4), 'help', 'flip', or 'quit':"
       )
