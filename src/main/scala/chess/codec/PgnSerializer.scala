@@ -9,26 +9,21 @@ object PgnSerializer:
       moveLog: List[(Color, String)],
       status: GameStatus
   ): String =
+    val result = PgnCodec.encodeResult(status)
     val header = List(
-      """[Event "πChess Game"]""",
-      """[Site "?"]""",
-      """[Date "????.??.??"]""",
-      """[White "?"]""",
-      """[Black "?"]""",
-      s"""[Result "${resultString(status)}"]"""
+      PgnCodec.encodeHeader("Event", "πChess Game"),
+      PgnCodec.encodeHeader("Site", "?"),
+      PgnCodec.encodeHeader("Date", "????.??.??"),
+      PgnCodec.encodeHeader("White", "?"),
+      PgnCodec.encodeHeader("Black", "?"),
+      PgnCodec.encodeHeader("Result", result)
     ).mkString("\n")
-    val movetext = formatMovetext(moveLog, status)
+    val movetext = formatMovetext(moveLog, result)
     s"$header\n\n$movetext"
-
-  private def resultString(status: GameStatus): String = status match
-    case GameStatus.Playing                => "*"
-    case GameStatus.Checkmate(Color.White) => "1-0"
-    case GameStatus.Checkmate(Color.Black) => "0-1"
-    case GameStatus.Draw(_)                => "1/2-1/2"
 
   private def formatMovetext(
       moveLog: List[(Color, String)],
-      status: GameStatus
+      result: String
   ): String =
     val moves = moveLog
       .grouped(2)
@@ -40,5 +35,4 @@ object PgnSerializer:
           case List((_, white))             => s"$number. $white"
       }
       .mkString(" ")
-    val result = resultString(status)
     if moves.isEmpty then result else s"$moves $result"

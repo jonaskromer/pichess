@@ -18,7 +18,7 @@ object PgnParser:
   def parse(input: String): IO[GameError, PgnGame] =
     val lines = input.linesIterator.toList
     val (headerLines, rest) = lines.span(_.startsWith("["))
-    val headers = headerLines.flatMap(parseHeader).toMap
+    val headers = headerLines.flatMap(PgnCodec.decodeHeader).toMap
     val movetext = rest.mkString(" ").trim
     val fenHeader = headers.get("FEN")
     for
@@ -32,15 +32,7 @@ object PgnParser:
       history <- replayMoves(initialState, sanMoves)
     yield PgnGame(headers, initialState, history)
 
-  private val headerPattern = """\[(\w+)\s+"([^"]*)"\]""".r
-
-  private def parseHeader(line: String): Option[(String, String)] =
-    line match
-      case headerPattern(key, value) => Some(key -> value)
-      case _                         => None
-
   private val moveNumberPattern = """\d+\.""".r
-  private val resultTokens = Set("1-0", "0-1", "1/2-1/2", "*")
   private val commentPattern = """\{[^}]*\}""".r
   private val nagPattern = """\$\d+""".r
 
@@ -51,7 +43,7 @@ object PgnParser:
     withoutNumbers
       .split("\\s+")
       .map(_.trim)
-      .filter(t => t.nonEmpty && !resultTokens.contains(t))
+      .filter(t => t.nonEmpty && !PgnCodec.resultTokens.contains(t))
       .toList
 
   private def replayMoves(

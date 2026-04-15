@@ -1,7 +1,6 @@
 package chess.codec
 
-import chess.model.board.{Board, CastlingRights, GameState, Position}
-import chess.model.piece.{Color, Piece, PieceType}
+import chess.model.board.GameState
 
 /** Serializes a [[GameState]] to a FEN (Forsyth–Edwards Notation) string.
   *
@@ -10,54 +9,21 @@ import chess.model.piece.{Color, Piece, PieceType}
   * {{{
   *   parser.parse(FenSerializer.serialize(state)) == Right(state)
   * }}}
+  *
+  * All field-level encoding delegates to [[FenCodec]], which co-locates encode
+  * and decode for each field — the same pattern [[JsonCodec]] uses for JSON.
   */
 object FenSerializer:
 
   def serialize(state: GameState): String =
-    val enPassant = state.enPassantTarget.map(_.toString).getOrElse("-")
     s"${positionKey(state)} ${state.halfmoveClock} ${state.fullmoveNumber}"
 
   /** First four FEN fields (placement, active color, castling, en passant).
     * Used for position comparison in threefold/fivefold repetition detection.
     */
   def positionKey(state: GameState): String =
-    val placement = serializeBoard(state.board)
-    val active = if state.activeColor == Color.White then "w" else "b"
-    val castling = serializeCastling(state.castlingRights)
-    val enPassant = state.enPassantTarget.map(_.toString).getOrElse("-")
+    val placement = FenCodec.encodeBoard(state.board)
+    val active = FenCodec.encodeColor(state.activeColor)
+    val castling = FenCodec.encodeCastling(state.castlingRights)
+    val enPassant = FenCodec.encodeEnPassant(state.enPassantTarget)
     s"$placement $active $castling $enPassant"
-
-  private def serializeBoard(board: Board): String =
-    (8 to 1 by -1)
-      .map { row =>
-        val rank = ('a' to 'h').toList.map(col => board.get(Position(col, row)))
-        encodeRank(rank)
-      }
-      .mkString("/")
-
-  private def encodeRank(squares: List[Option[Piece]]): String =
-    val (acc, trailingEmpty) = squares.foldLeft(("", 0)) {
-      case ((out, empty), None) => (out, empty + 1)
-      case ((out, empty), Some(piece)) =>
-        val flushed = if empty > 0 then out + empty.toString else out
-        (flushed + pieceToChar(piece), 0)
-    }
-    if trailingEmpty > 0 then acc + trailingEmpty.toString else acc
-
-  private def pieceToChar(piece: Piece): Char =
-    val letter = piece.pieceType match
-      case PieceType.King   => 'K'
-      case PieceType.Queen  => 'Q'
-      case PieceType.Rook   => 'R'
-      case PieceType.Bishop => 'B'
-      case PieceType.Knight => 'N'
-      case PieceType.Pawn   => 'P'
-    if piece.color == Color.White then letter else letter.toLower
-
-  private def serializeCastling(rights: CastlingRights): String =
-    val sb = StringBuilder()
-    if rights.whiteKingSide then sb.append('K')
-    if rights.whiteQueenSide then sb.append('Q')
-    if rights.blackKingSide then sb.append('k')
-    if rights.blackQueenSide then sb.append('q')
-    if sb.isEmpty then "-" else sb.toString
