@@ -20,14 +20,12 @@ final class GameServiceLive(repo: GameRepository) extends GameService:
   def loadGame(
       input: String
   ): IO[GameError, (GameEvent.GameStarted, List[(Move, GameState)])] =
-    val tryJson = ZIO
-      .fromEither(JsonParser.parse(input))
-      .mapError(GameError.ParseError(_))
+    val tryJson = JsonParser
+      .parse(input)
       .map(state => (state, List.empty[(Move, GameState)]))
 
-    val tryFen = ZIO
-      .fromEither(FenParserRegex.parse(input))
-      .mapError(GameError.ParseError(_))
+    val tryFen = FenParserRegex
+      .parse(input)
       .map(state => (state, List.empty[(Move, GameState)]))
 
     val tryPgn = PgnParser

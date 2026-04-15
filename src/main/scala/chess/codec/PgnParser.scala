@@ -23,11 +23,8 @@ object PgnParser:
     val fenHeader = headers.get("FEN")
     for
       initialState <- fenHeader match
-        case Some(fen) =>
-          ZIO
-            .fromEither(FenParserRegex.parse(fen))
-            .mapError(GameError.ParseError(_))
-        case None => ZIO.succeed(GameState.initial)
+        case Some(fen) => FenParserRegex.parse(fen)
+        case None      => ZIO.succeed(GameState.initial)
       sanMoves = extractMoves(movetext)
       history <- replayMoves(initialState, sanMoves)
     yield PgnGame(headers, initialState, history)

@@ -1,6 +1,8 @@
 package chess.codec
 
+import chess.model.GameError
 import chess.model.board.GameState
+import zio.*
 
 import scala.util.parsing.combinator.RegexParsers
 
@@ -37,9 +39,9 @@ object FenParserCombinator extends FenParser with RegexParsers:
           (pp, ac, cr, ep, hm, fm)
       }
 
-  override def parse(input: String): Either[String, GameState] =
+  override def parse(input: String): IO[GameError, GameState] =
     parseAll(fen, input) match
       case Success((pp, ac, cr, ep, hm, fm), _) =>
         FenBuilder.build(pp, ac, cr, ep, hm, fm)
       case ns: NoSuccess =>
-        Left(s"[${ns.next.pos}] ${ns.msg}")
+        ZIO.fail(GameError.ParseError(s"[${ns.next.pos}] ${ns.msg}"))

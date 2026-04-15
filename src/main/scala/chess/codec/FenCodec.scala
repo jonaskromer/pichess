@@ -1,7 +1,9 @@
 package chess.codec
 
+import chess.model.GameError
 import chess.model.board.{Board, CastlingRights, Position}
 import chess.model.piece.{Color, Piece, PieceType}
+import zio.*
 
 /** Co-located encode/decode pairs for each FEN field.
   *
@@ -45,10 +47,12 @@ object FenCodec:
 
   def encodeColor(c: Color): String = colorToFen(c)
 
-  def decodeColor(s: String): Either[String, Color] =
-    fenToColor
-      .get(s)
-      .toRight(s"Invalid active color '$s' (expected 'w' or 'b')")
+  def decodeColor(s: String): IO[GameError, Color] =
+    ZIO
+      .fromOption(fenToColor.get(s))
+      .orElseFail(
+        GameError.ParseError(s"Invalid active color '$s' (expected 'w' or 'b')")
+      )
 
   // ─── CastlingRights ────────────────────────────────────────────────────────
 
@@ -63,12 +67,14 @@ object FenCodec:
     val s = castlingFlags.collect { case (f, c) if f(rights) => c }.mkString
     if s.isEmpty then "-" else s
 
-  def decodeCastling(s: String): Either[String, CastlingRights] =
-    if s == "-" then Right(CastlingRights(false, false, false, false))
+  def decodeCastling(s: String): IO[GameError, CastlingRights] =
+    if s == "-" then ZIO.succeed(CastlingRights(false, false, false, false))
     else if s.distinct.length != s.length then
-      Left(s"Duplicate castling character(s) in '$s'")
+      ZIO.fail(
+        GameError.ParseError(s"Duplicate castling character(s) in '$s'")
+      )
     else
-      Right(
+      ZIO.succeed(
         CastlingRights(
           whiteKingSide = s.contains('K'),
           whiteQueenSide = s.contains('Q'),
@@ -84,14 +90,16 @@ object FenCodec:
 
   private val squarePattern = """^([a-h])([1-8])$""".r
 
-  def decodeEnPassant(s: String): Either[String, Option[Position]] =
-    if s == "-" then Right(None)
+  def decodeEnPassant(s: String): IO[GameError, Option[Position]] =
+    if s == "-" then ZIO.succeed(None)
     else
       s match
         case squarePattern(col, row) =>
-          Right(Some(Position(col.head, row.toInt)))
+          ZIO.succeed(Some(Position(col.head, row.toInt)))
         case _ =>
-          Left(s"Invalid en passant target square '$s'")
+          ZIO.fail(
+            GameError.ParseError(s"Invalid en passant target square '$s'")
+          )
 
   // ─── Board placement ───────────────────────────────────────────────────────
 
@@ -112,51 +120,59 @@ object FenCodec:
   private def flushEmpty(out: String, empty: Int): String =
     if empty > 0 then out + empty.toString else out
 
-  def decodeBoard(placement: String): Either[String, Board] =
+  def decodeBoard(placement: String): IO[GameError, Board] =
     val ranks = placement.split('/')
     if ranks.length != 8 then
-      Left(s"Piece placement must have 8 ranks, got ${ranks.length}")
+      ZIO.fail(
+        GameError.ParseError(
+          s"Piece placement must have 8 ranks, got ${ranks.length}"
+        )
+      )
     else
-      (8 to 1 by -1).toList
-        .zip(ranks.toList)
-        .foldLeft[Either[String, Board]](Right(Map.empty)) {
-          case (acc, (row, rank)) =>
-            for
-              board <- acc
-              rankPart <- decodeRank(rank, row)
-            yield board ++ rankPart
-        }
+      ZIO.foldLeft((8 to 1 by -1).toList.zip(ranks.toList))(
+        Map.empty: Board
+      ) { case (board, (row, rank)) =>
+        decodeRank(rank, row).map(board ++ _)
+      }
 
   private def decodeRank(
       rank: String,
       row: Int
-  ): Either[String, Map[Position, Piece]] =
-    rank
-      .foldLeft[Either[String, (Int, Map[Position, Piece])]](
-        Right((0, Map.empty))
-      ) {
-        case (Left(e), _) => Left(e)
-        case (Right((col, board)), ch) if ch.isDigit =>
-          Right((col + ch.asDigit, board))
-        case (Right((col, board)), ch) =>
-          charToPiece(ch)
+  ): IO[GameError, Map[Position, Piece]] =
+    ZIO
+      .foldLeft(rank.toList)((0, Map.empty[Position, Piece])) {
+        case ((col, board), ch) if ch.isDigit =>
+          ZIO.succeed((col + ch.asDigit, board))
+        case ((col, board), ch) =>
+          ZIO
+            .fromOption(charToPiece(ch))
+            .orElseFail(
+              GameError.ParseError(
+                s"Invalid piece character '$ch' on rank $row"
+              )
+            )
             .map { piece =>
               (col + 1, board + (Position(('a' + col).toChar, row) -> piece))
             }
-            .toRight(s"Invalid piece character '$ch' on rank $row")
       }
       .flatMap { case (col, board) =>
-        Either.cond(
-          col == 8,
-          board,
-          s"Rank $row must describe 8 squares, got $col"
-        )
+        if col == 8 then ZIO.succeed(board)
+        else
+          ZIO.fail(
+            GameError.ParseError(
+              s"Rank $row must describe 8 squares, got $col"
+            )
+          )
       }
 
   // ─── Integer fields ────────────────────────────────────────────────────────
 
-  def decodeNonNegativeInt(s: String, field: String): Either[String, Int] =
-    s.toIntOption.toRight(s"Invalid $field '$s'")
+  def decodeNonNegativeInt(s: String, field: String): IO[GameError, Int] =
+    ZIO
+      .fromOption(s.toIntOption)
+      .orElseFail(GameError.ParseError(s"Invalid $field '$s'"))
 
-  def decodePositiveInt(s: String, field: String): Either[String, Int] =
-    s.toIntOption.filter(_ >= 1).toRight(s"Invalid $field '$s'")
+  def decodePositiveInt(s: String, field: String): IO[GameError, Int] =
+    ZIO
+      .fromOption(s.toIntOption.filter(_ >= 1))
+      .orElseFail(GameError.ParseError(s"Invalid $field '$s'"))

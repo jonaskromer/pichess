@@ -1,7 +1,9 @@
 package chess.codec
 
+import chess.model.GameError
 import chess.model.board.GameState
 import chess.model.rules.MoveValidator
+import zio.*
 
 /** Converts tokenized FEN fields into a [[GameState]].
   *
@@ -26,7 +28,7 @@ private[codec] object FenBuilder:
       enPassant: String,
       halfmove: String,
       fullmove: String
-  ): Either[String, GameState] =
+  ): IO[GameError, GameState] =
     for
       board <- FenCodec.decodeBoard(placement)
       color <- FenCodec.decodeColor(activeColor)

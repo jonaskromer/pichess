@@ -1,6 +1,8 @@
 package chess.codec
 
+import chess.model.GameError
 import chess.model.board.GameState
+import zio.*
 
 import fastparse.*
 import fastparse.NoWhitespace.*
@@ -37,9 +39,13 @@ object FenParserFastParse extends FenParser:
         enPassant ~ " " ~ integer ~ " " ~ integer ~ End
     )
 
-  override def parse(input: String): Either[String, GameState] =
+  override def parse(input: String): IO[GameError, GameState] =
     fastparse.parse(input, fen(using _)) match
       case Parsed.Success((pp, ac, cr, ep, hm, fm), _) =>
         FenBuilder.build(pp, ac, cr, ep, hm, fm)
       case f: Parsed.Failure =>
-        Left(s"Failed to parse FEN at index ${f.index}: expected ${f.label}")
+        ZIO.fail(
+          GameError.ParseError(
+            s"Failed to parse FEN at index ${f.index}: expected ${f.label}"
+          )
+        )

@@ -1,6 +1,8 @@
 package chess.codec
 
+import chess.model.GameError
 import chess.model.board.GameState
+import zio.*
 
 /** FEN parser built on `scala.util.matching.Regex` with no external parser
   * library.
@@ -15,7 +17,7 @@ object FenParserRegex extends FenParser:
   private val fenPattern =
     """^([pnbrqkPNBRQK1-8/]+) ([wb]) (-|[KQkq]+) (-|[a-h][1-8]) (\d+) (\d+)$""".r
 
-  override def parse(input: String): Either[String, GameState] =
+  override def parse(input: String): IO[GameError, GameState] =
     input match
       case fenPattern(
             placement,
@@ -34,4 +36,6 @@ object FenParserRegex extends FenParser:
           fullmove
         )
       case _ =>
-        Left(s"Input does not match FEN structure: '$input'")
+        ZIO.fail(
+          GameError.ParseError(s"Input does not match FEN structure: '$input'")
+        )
