@@ -500,5 +500,49 @@ object GameControllerSpec extends ZIOSpecDefault:
             GameStatus.Draw(DrawReason.FiftyMoveRule)
         )
       }
+    ),
+    suite("concurrency")(
+      test(
+        "parallel makeMove calls are serialized; only the first legal move lands"
+      ) {
+        // Fork ten concurrent attempts to play distinct white-side moves.
+        // All are legal from the initial position, but once any one commits,
+        // the active color flips to Black and the rest must fail validation.
+        //
+        // With `session.modifyZIO` the controller serializes these through
+        // the underlying semaphore: the first to acquire the lock commits,
+        // the rest see the updated state and their white-side moves are
+        // rejected. Without it, races can allow multiple commits or leave
+        // the session inconsistent with the repository.
+        val attempts = List(
+          "e4",
+          "d4",
+          "c4",
+          "a4",
+          "b4",
+          "f4",
+          "g4",
+          "h4",
+          "Nf3",
+          "Nc3"
+        )
+        for
+          (gs, session) <- withSession
+          outcomes <- ZIO.foreachPar(attempts)(m =>
+            GameController.makeMove(gs, session, m).either
+          )
+          s <- session.get
+          repoState <- gs.getState(s.gameId)
+        yield assertTrue(
+          // Exactly one attempt committed
+          outcomes.count(_.isRight) == 1,
+          // History records exactly that move
+          s.game.history.length == 1,
+          // Session and repository agree on the current state
+          repoState.contains(s.state),
+          // Active color flipped (confirms a move committed)
+          s.state.activeColor == Color.Black
+        )
+      }
     )
   ).provide(appLayer)

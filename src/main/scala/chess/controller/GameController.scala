@@ -1,11 +1,20 @@
 package chess.controller
 
 import chess.model.{GameError, GameSnapshot, SessionState}
-import chess.model.board.{DrawReason, GameState, GameStatus}
+import chess.model.board.{DrawReason, GameStatus}
 import chess.service.GameService
 import zio.*
 import zio.stream.SubscriptionRef
 
+/** Controller-level actions on a game session.
+  *
+  * Each action uses `session.modifyZIO` so that reading the session, mutating
+  * the repository, and committing the new session state happen as a single
+  * atomic step. `SubscriptionRef` extends `Ref.Synchronized`, which holds a
+  * semaphore during the effect — concurrent callers (e.g. TUI + Web) queue
+  * on it rather than racing. If the effect fails, the session is left
+  * unchanged, so a failed `makeMove` doesn't corrupt history.
+  */
 object GameController:
 
   /** Halfmove clock value at which the 50-move draw rule can be claimed. */
@@ -22,7 +31,7 @@ object GameController:
       session: SubscriptionRef[SessionState],
       rawInput: String
   ): IO[GameError, Unit] =
-    session.get.flatMap { s =>
+    session.modifyZIO { s =>
       gs.makeMove(s.gameId, rawInput).flatMap { (newState, event) =>
         val provisional = s.game.recordMove(event.move, newState)
         val finalGame =
@@ -36,10 +45,9 @@ object GameController:
               )
             )
           else provisional
-        gs.saveState(s.gameId, finalGame.state) *>
-          session.update(st =>
-            st.copy(game = finalGame, error = None, output = None)
-          )
+        gs.saveState(s.gameId, finalGame.state).as(
+          ((), s.copy(game = finalGame, error = None, output = None))
+        )
       }
     }
 
@@ -47,37 +55,35 @@ object GameController:
       gs: GameService,
       session: SubscriptionRef[SessionState]
   ): IO[GameError, Unit] =
-    session.get.flatMap { s =>
+    session.modifyZIO { s =>
       s.game.undoOnce match
         case None =>
           ZIO.fail(GameError.InvalidMove("Nothing to undo"))
         case Some(undone) =>
-          gs.saveState(s.gameId, undone.state) *>
-            session.update(st =>
-              st.copy(game = undone, error = None, output = None)
-            )
+          gs.saveState(s.gameId, undone.state).as(
+            ((), s.copy(game = undone, error = None, output = None))
+          )
     }
 
   def redo(
       gs: GameService,
       session: SubscriptionRef[SessionState]
   ): IO[GameError, Unit] =
-    session.get.flatMap { s =>
+    session.modifyZIO { s =>
       s.game.redoOnce match
         case None =>
           ZIO.fail(GameError.InvalidMove("Nothing to redo"))
         case Some(redone) =>
-          gs.saveState(s.gameId, redone.state) *>
-            session.update(st =>
-              st.copy(game = redone, error = None, output = None)
-            )
+          gs.saveState(s.gameId, redone.state).as(
+            ((), s.copy(game = redone, error = None, output = None))
+          )
     }
 
   def claimDraw(
       gs: GameService,
       session: SubscriptionRef[SessionState]
   ): IO[GameError, Unit] =
-    session.get.flatMap { s =>
+    session.modifyZIO { s =>
       if s.state.status != GameStatus.Playing then
         ZIO.fail(GameError.InvalidMove("Game is already over"))
       else
@@ -99,14 +105,16 @@ object GameController:
             if threefoldOk then DrawReason.ThreefoldRepetition
             else DrawReason.FiftyMoveRule
           val drawState = s.state.copy(status = GameStatus.Draw(reason))
-          gs.saveState(s.gameId, drawState) *>
-            session.update(st =>
-              st.copy(
-                game = st.game.replaceHead(drawState),
+          gs.saveState(s.gameId, drawState).as(
+            (
+              (),
+              s.copy(
+                game = s.game.replaceHead(drawState),
                 error = None,
                 output = None
               )
             )
+          )
     }
 
   /** Counts how many times the current position has occurred in this game,
