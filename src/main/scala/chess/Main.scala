@@ -38,7 +38,7 @@ object Main extends ZIOAppDefault:
       gs <- ZIO.service[GameService]
       event <- gs.newGame()
       session <- SubscriptionRef.make(
-        SessionState(GameSnapshot(event.gameId, event.initialState))
+        SessionState(GameSnapshot.fresh(event.gameId, event.initialState))
       )
       shutdown <- Promise.make[Nothing, Unit]
       done <- runWith(session, shutdown, headless, port, onReady)

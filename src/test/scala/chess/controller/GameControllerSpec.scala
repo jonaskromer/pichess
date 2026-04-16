@@ -20,7 +20,7 @@ object GameControllerSpec extends ZIOSpecDefault:
       gs <- ZIO.service[GameService]
       event <- gs.newGame()
       session <- SubscriptionRef.make(
-        SessionState(GameSnapshot(event.gameId, event.initialState))
+        SessionState(GameSnapshot.fresh(event.gameId, event.initialState))
       )
     yield (gs, session)
 
@@ -315,6 +315,189 @@ object GameControllerSpec extends ZIOSpecDefault:
           s <- session.get
         yield assertTrue(
           s.state.status == GameStatus.Draw(DrawReason.FivefoldRepetition)
+        )
+      }
+    ),
+    suite("repetition with en passant perturbation")(
+      test(
+        "threefold claim succeeds after early pawn moves precede knight cycle"
+      ) {
+        // 1.e4 e5 sets and clears ep targets, then pure knight cycling cycles
+        // through the same position (with e-pawns advanced, ep=None)
+        // three times. After ply 12, white claims threefold.
+        val moves = List(
+          "e4",
+          "e5",
+          "Nf3",
+          "Nc6", // position X: white to move, e-pawns on e4/e5, knights out
+          "Ng1",
+          "Nb8", // position Y: white to move, knights back
+          "Nf3",
+          "Nc6", // X again (2nd)
+          "Ng1",
+          "Nb8", // Y again (2nd)
+          "Nf3",
+          "Nc6" // X for the 3rd time
+        )
+        for
+          (gs, session) <- withSession
+          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, session, m))
+          _ <- GameController.claimDraw(gs, session)
+          s <- session.get
+        yield assertTrue(
+          s.state.status == GameStatus.Draw(DrawReason.ThreefoldRepetition)
+        )
+      },
+      test(
+        "countCurrentPosition returns 3 when initial position recurs twice"
+      ) {
+        // Knight shuffle with no pawn moves: position after each full cycle
+        // equals GameState.initial (same board, same active color, same
+        // castling, no ep target ever set).
+        val moves = List(
+          "Nf3",
+          "Nc6",
+          "Ng1",
+          "Nb8", // cycle 1: back to initial
+          "Nf3",
+          "Nc6",
+          "Ng1",
+          "Nb8" // cycle 2: back to initial, total 3 occurrences
+        )
+        for
+          (gs, session) <- withSession
+          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, session, m))
+          s <- session.get
+        yield assertTrue(
+          GameController.countCurrentPosition(s.game) == 3,
+          // Position-wise identical to initial (ignores halfmove/fullmove clocks)
+          chess.codec.FenSerializer.positionKey(s.state) ==
+            chess.codec.FenSerializer.positionKey(GameState.initial),
+          // Halfmove clock has advanced (8 non-pawn, non-capture moves)
+          s.state.halfmoveClock == 8
+        )
+      }
+    ),
+    suite("undo/redo interaction with repetition counter")(
+      test("claimDraw fails after undo, succeeds after redo") {
+        // 8-ply knight shuffle: initial position occurs 3 times (at start,
+        // after ply 4, after ply 8). claimDraw should succeed at ply 8.
+        // After undo, current position is ply 7 (C: white knight back, black
+        // knight on c6) which has occurred only twice → claim fails.
+        // Redo restores the threefold situation → claim succeeds.
+        val setup = List(
+          "Nf3",
+          "Nc6",
+          "Ng1",
+          "Nb8",
+          "Nf3",
+          "Nc6",
+          "Ng1",
+          "Nb8"
+        )
+        for
+          (gs, session) <- withSession
+          _ <- ZIO.foreach(setup)(m => GameController.makeMove(gs, session, m))
+          afterAll <- session.get
+          _ <- GameController.undo(gs, session)
+          afterUndo <- session.get
+          claimAfterUndo <- GameController.claimDraw(gs, session).exit
+          _ <- GameController.redo(gs, session)
+          afterRedo <- session.get
+          _ <- GameController.claimDraw(gs, session)
+          afterClaim <- session.get
+        yield assertTrue(
+          GameController.countCurrentPosition(afterAll.game) == 3,
+          GameController.countCurrentPosition(afterUndo.game) == 2,
+          claimAfterUndo.isFailure,
+          GameController.countCurrentPosition(afterRedo.game) == 3,
+          afterClaim.state.status ==
+            GameStatus.Draw(DrawReason.ThreefoldRepetition)
+        )
+      },
+      test("fivefold auto-draw reverts to Playing after undo") {
+        // Four full cycles of Nf3/Nf6/Ng1/Ng8 place initial position at 5×
+        // occurrence, triggering auto-draw on the final move. Undoing that
+        // move drops back to ply 15 — position C with 4 occurrences — where
+        // status is Playing and auto-draw is not set.
+        val cycles =
+          List.fill(4)(List("Nf3", "Nf6", "Ng1", "Ng8")).flatten
+        for
+          (gs, session) <- withSession
+          _ <- ZIO.foreach(cycles)(m => GameController.makeMove(gs, session, m))
+          afterAll <- session.get
+          _ <- GameController.undo(gs, session)
+          afterUndo <- session.get
+        yield assertTrue(
+          afterAll.state.status ==
+            GameStatus.Draw(DrawReason.FivefoldRepetition),
+          afterUndo.state.status == GameStatus.Playing,
+          // Position after undo is ply 15 (white played Ng1, black's turn).
+          // This position has occurred 4 times: plies 3, 7, 11, 15.
+          GameController.countCurrentPosition(afterUndo.game) == 4
+        )
+      }
+    ),
+    suite("50-move rule via halfmove accumulation")(
+      test(
+        "halfmove clock increments once per non-pawn, non-capture move"
+      ) {
+        // Four knight moves (no pawns, no captures) → halfmoveClock advances
+        // by one each ply.
+        val moves = List("Nf3", "Nc6", "Nc3", "Nf6")
+        for
+          (gs, session) <- withSession
+          _ <- ZIO.foreach(moves)(m =>
+            GameController.makeMove(gs, session, m)
+          )
+          s <- session.get
+        yield assertTrue(s.state.halfmoveClock == 4)
+      },
+      test("halfmove clock resets to zero on a pawn move") {
+        val moves = List("Nf3", "Nc6", "Nc3", "Nf6", "e4")
+        for
+          (gs, session) <- withSession
+          _ <- ZIO.foreach(moves)(m =>
+            GameController.makeMove(gs, session, m)
+          )
+          s <- session.get
+        yield assertTrue(s.state.halfmoveClock == 0)
+      },
+      test("halfmove clock resets to zero on a capturing move") {
+        // 1.Nf3 Nc6 2.Nc3 d5 3.Nxd5 captures the pawn → halfmove resets.
+        val moves = List("Nf3", "Nc6", "Nc3", "d5", "Nxd5")
+        for
+          (gs, session) <- withSession
+          _ <- ZIO.foreach(moves)(m =>
+            GameController.makeMove(gs, session, m)
+          )
+          s <- session.get
+        yield assertTrue(s.state.halfmoveClock == 0)
+      },
+      test(
+        "claimDraw(50-move) succeeds when clock accumulates to 100 across real moves"
+      ) {
+        // Start from a sparse endgame FEN with halfmoveClock = 95, play 5
+        // non-repeating knight moves to reach exactly 100.
+        val startFen = "4k3/4n3/8/8/8/8/4N3/4K3 w - - 95 50"
+        val moves = List("Nc3", "Nc6", "Ne4", "Ne5", "Nc5")
+        for
+          start <- chess.codec.FenParserRegex.parse(startFen)
+          (gs, session) <- withSession
+          gameId <- session.get.map(_.gameId)
+          _ <- gs.saveState(gameId, start)
+          _ <- session.set(SessionState(GameSnapshot.fresh(gameId, start)))
+          _ <- ZIO.foreach(moves)(m =>
+            GameController.makeMove(gs, session, m)
+          )
+          afterMoves <- session.get
+          _ <- GameController.claimDraw(gs, session)
+          afterClaim <- session.get
+        yield assertTrue(
+          afterMoves.state.halfmoveClock == 100,
+          afterMoves.state.status == GameStatus.Playing,
+          afterClaim.state.status ==
+            GameStatus.Draw(DrawReason.FiftyMoveRule)
         )
       }
     )

@@ -1,7 +1,6 @@
 package chess.controller
 
-import chess.codec.FenSerializer
-import chess.model.{GameError, SessionState}
+import chess.model.{GameError, GameSnapshot, SessionState}
 import chess.model.board.{DrawReason, GameState, GameStatus}
 import chess.service.GameService
 import zio.*
@@ -25,24 +24,22 @@ object GameController:
   ): IO[GameError, Unit] =
     session.get.flatMap { s =>
       gs.makeMove(s.gameId, rawInput).flatMap { (newState, event) =>
-        val newGame = s.game.copy(
-          history = (event.move, newState) :: s.game.history,
-          redoStack = Nil
-        )
-        val finalState =
+        val provisional = s.game.recordMove(event.move, newState)
+        val finalGame =
           if newState.status == GameStatus.Playing && isFivefoldRepetition(
-              newGame
+              provisional
             )
           then
-            newState
-              .copy(status = GameStatus.Draw(DrawReason.FivefoldRepetition))
-          else newState
-        val finalGame =
-          if finalState ne newState then
-            newGame.copy(history = (event.move, finalState) :: s.game.history)
-          else newGame
-        gs.saveState(s.gameId, finalState) *>
-          session.update(st => st.copy(game = finalGame, error = None, output = None))
+            provisional.replaceHead(
+              newState.copy(status =
+                GameStatus.Draw(DrawReason.FivefoldRepetition)
+              )
+            )
+          else provisional
+        gs.saveState(s.gameId, finalGame.state) *>
+          session.update(st =>
+            st.copy(game = finalGame, error = None, output = None)
+          )
       }
     }
 
@@ -51,22 +48,13 @@ object GameController:
       session: SubscriptionRef[SessionState]
   ): IO[GameError, Unit] =
     session.get.flatMap { s =>
-      s.game.history match
-        case Nil =>
+      s.game.undoOnce match
+        case None =>
           ZIO.fail(GameError.InvalidMove("Nothing to undo"))
-        case head :: rest =>
-          val prevState =
-            rest.headOption.map(_._2).getOrElse(s.game.initialState)
-          gs.saveState(s.gameId, prevState) *>
+        case Some(undone) =>
+          gs.saveState(s.gameId, undone.state) *>
             session.update(st =>
-              st.copy(
-                game = st.game.copy(
-                  history = rest,
-                  redoStack = head :: st.game.redoStack
-                ),
-                error = None,
-                output = None
-              )
+              st.copy(game = undone, error = None, output = None)
             )
     }
 
@@ -75,20 +63,13 @@ object GameController:
       session: SubscriptionRef[SessionState]
   ): IO[GameError, Unit] =
     session.get.flatMap { s =>
-      s.game.redoStack match
-        case Nil =>
+      s.game.redoOnce match
+        case None =>
           ZIO.fail(GameError.InvalidMove("Nothing to redo"))
-        case (move, state) :: rest =>
-          gs.saveState(s.gameId, state) *>
+        case Some(redone) =>
+          gs.saveState(s.gameId, redone.state) *>
             session.update(st =>
-              st.copy(
-                game = st.game.copy(
-                  history = (move, state) :: st.game.history,
-                  redoStack = rest
-                ),
-                error = None,
-                output = None
-              )
+              st.copy(game = redone, error = None, output = None)
             )
     }
 
@@ -118,32 +99,26 @@ object GameController:
             if threefoldOk then DrawReason.ThreefoldRepetition
             else DrawReason.FiftyMoveRule
           val drawState = s.state.copy(status = GameStatus.Draw(reason))
-          val (m, _) :: rest = s.game.history: @unchecked
           gs.saveState(s.gameId, drawState) *>
             session.update(st =>
               st.copy(
-                game = st.game.copy(history = (m, drawState) :: rest),
+                game = st.game.replaceHead(drawState),
                 error = None,
                 output = None
               )
             )
     }
 
-  /** Computes a position key for repetition comparison. Per FIDE rules, two
-    * positions are "the same" when: same pieces on same squares, same active
-    * color, same castling rights, same en passant rights. This is the first
-    * four FEN fields.
-    */
-  def positionKey(state: GameState): String =
-    FenSerializer.positionKey(state)
-
-  /** Counts how many times the current position has occurred in the game,
+  /** Counts how many times the current position has occurred in this game,
     * including the current position itself.
+    *
+    * Backed by [[GameSnapshot.positionCounts]], an incrementally-maintained
+    * Zobrist-keyed map. O(1). Equivalence with the FEN-based implementation
+    * is locked down by
+    * [[chess.model.rules.RepetitionEquivalenceSpec]] across the full corpus.
     */
   def countCurrentPosition(game: chess.model.GameSnapshot): Int =
-    val currentKey = positionKey(game.state)
-    val allStates = game.initialState :: game.history.map(_._2)
-    allStates.count(s => positionKey(s) == currentKey)
+    game.countOf(game.state)
 
   /** Checks whether the current position has occurred five or more times
     * (automatic draw per FIDE rules).

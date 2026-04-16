@@ -11,7 +11,7 @@ object WebControllerSpec extends ZIOSpecDefault:
   def spec = suite("WebController")(
     suite("SessionState")(
       test("hold game state with empty defaults") {
-        val state = SessionState(GameSnapshot("id", GameState.initial))
+        val state = SessionState(GameSnapshot.fresh("id", GameState.initial))
         assertTrue(
           state.gameId == "id",
           state.state == GameState.initial,
@@ -21,7 +21,7 @@ object WebControllerSpec extends ZIOSpecDefault:
       },
       test("hold game state with error") {
         val state = SessionState(
-          GameSnapshot("id", GameState.initial),
+          GameSnapshot.fresh("id", GameState.initial),
           error = Some("oops")
         )
         assertTrue(state.error == Some("oops"))
@@ -29,10 +29,10 @@ object WebControllerSpec extends ZIOSpecDefault:
       test("hold game state with moves") {
         val move = Move(Position('e', 2), Position('e', 4))
         val state = SessionState(
-          GameSnapshot(
+          GameSnapshot.fromHistory(
             "id",
             GameState.initial,
-            history = List((move, GameState.initial))
+            List((move, GameState.initial))
           )
         )
         assertTrue(state.moves == List(move))

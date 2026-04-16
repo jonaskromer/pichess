@@ -109,10 +109,10 @@ object TuiController:
               session
                 .set(
                   SessionState(
-                    GameSnapshot(
+                    GameSnapshot.fromHistory(
                       event.gameId,
                       event.initialState,
-                      history = history.reverse
+                      history.reverse
                     )
                   )
                 )

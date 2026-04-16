@@ -132,7 +132,7 @@ object WebController:
     (for
       event <- gs.newGame()
       _ <- session.set(
-        SessionState(GameSnapshot(event.gameId, event.initialState))
+        SessionState(GameSnapshot.fresh(event.gameId, event.initialState))
       )
       s <- session.get
       resp <- stateResponse(s)
