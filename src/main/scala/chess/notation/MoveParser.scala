@@ -22,18 +22,12 @@ object MoveParser:
 
   def parse(input: String, state: GameState): IO[GameError, Move] =
     val trimmed = input.trim
-    ZIO
-      .foldLeft(resolvers)(Option.empty[Move]) { (acc, resolver) =>
-        acc match
-          case some @ Some(_) => ZIO.succeed(some)
-          case None           => resolver.parse(trimmed, state)
-      }
-      .flatMap {
-        case Some(move) => ZIO.succeed(move)
-        case None =>
-          ZIO.fail(
-            GameError.ParseError(
-              "Invalid move. Type 'help' for notation guide"
-            )
+    ZIO.collectFirst(resolvers)(_.parse(trimmed, state)).flatMap {
+      case Some(move) => ZIO.succeed(move)
+      case None =>
+        ZIO.fail(
+          GameError.ParseError(
+            "Invalid move. Type 'help' for notation guide"
           )
-      }
+        )
+    }
