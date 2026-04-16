@@ -18,7 +18,7 @@ The application runs a TUI and a web GUI simultaneously, sharing game state via 
 │  chess.controller    │   │         chess.view            │
 │  GameController      │   │  BoardView, MoveLogView,     │
 │  WebController       │   │  HelpView, HtmlPage,         │
-│  MoveParser          │   │  WebBoardView, PieceUnicode   │
+│  TuiController       │   │  WebBoardView, PieceUnicode   │
 └───────┬──────────────┘   └───────┬──────────────────────┘
         │ uses                     │ uses
 ┌───────▼──────────────┐           │
@@ -34,8 +34,8 @@ The application runs a TUI and a web GUI simultaneously, sharing game state via 
     │  │  SanResolver         │    │   │  FenBuilder          │
     │  │  CastlingResolver    │    │   │  FenSerializer       │
     │  │  SanSerializer       │    │   │  JsonCodec / Parser  │
-    │  └───────┬──────────────┘    │   │   / Serializer       │
-    │          │                   │   │  PgnParser           │
+    │  │  MoveParser          │    │   │   / Serializer       │
+    │  └───────┬──────────────┘    │   │  PgnParser           │
     │          │                   │   │  PgnSerializer       │
     │          │                   │   └───────┬──────────────┘
     │ uses     │ uses              │           │ uses
@@ -95,6 +95,7 @@ Notation parsing and serialization. Each notation style has its own resolver imp
 | `CoordinateResolver.scala` | Parses coordinate notation: `e2 e4`, `e2e4`, `e2-e4`, `e7e8=Q` |
 | `SanResolver.scala` | Parses SAN: piece moves (`Nf3`), pawn pushes (`e4`), pawn captures (`exd5`), promotion (`e8=Q`), disambiguation (`Nbd2`) |
 | `CastlingResolver.scala` | Parses castling notation (`O-O`, `O-O-O`) into a king-move whose two-square horizontal step `MoveValidator` recognises as a castling attempt. |
+| `MoveParser.scala` | Orchestrator: chains `CoordinateResolver`, `CastlingResolver`, `SanResolver` in order; `parse(input, state): IO[GameError, Move]`. Lives here (not in `controller`) so `codec.PgnParser` can reuse it without inverting layering. |
 | `SanSerializer.scala` | `toSan(move, state): IO[GameError, String]` — serializes a `Move` + pre-move `GameState` into SAN (with disambiguation, capture notation, and promotion). Also provides `deriveMoveLog(initialState, moves)` to replay and serialize an entire move history. |
 
 ### `chess.codec`
@@ -125,7 +126,6 @@ Input handling and shared move-processing logic.
 |---|---|
 | `GameController.scala` | Shared move-processing logic used by both TUI and web: `makeMove`, `undo`, `redo`, `claimDraw`. Owns the history/redo stack updates on the `SubscriptionRef[SessionState]`, persists each state via `GameService.saveState`, and runs repetition detection (`positionKey`, `countCurrentPosition`, `isFivefoldRepetition`) so a fivefold repetition is auto-promoted to a draw. |
 | `TuiController.scala` | TUI command parser + dispatcher. Recognises `quit`, `help`, `flip`, `undo`, `redo`, `draw`, `load <text>`, `export fen|pgn|json`, and free-form moves; returns `Result.Shutdown` or `Result.Continue(flipped)`. |
-| `MoveParser.scala` | Orchestrator: chains `CoordinateResolver`, `CastlingResolver`, `SanResolver` in order; `parse(input, state): IO[GameError, Move]` |
 | `WebController.scala` | zio-http route handlers for `GET /`, `GET /api/state`, `GET /api/events` (SSE), `POST /api/move`, `/undo`, `/redo`, `/draw`, `/new`, `/quit`. Delegates all game logic to `GameController` and converts `GameError` into JSON error responses. |
 
 ### `chess.repository`
