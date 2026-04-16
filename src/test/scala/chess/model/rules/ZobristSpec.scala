@@ -1,7 +1,7 @@
 package chess.model.rules
 
 import chess.codec.{FenSerializer, PositionIdentityBehaviors}
-import chess.controller.MoveParser
+import chess.notation.MoveParser
 import chess.model.GameError
 import chess.model.board.GameState
 import zio.*

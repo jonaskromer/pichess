@@ -49,7 +49,7 @@ object PgnParser:
       .foldLeft(sanMoves)((initial, List.empty[(Move, GameState)])) {
         case ((state, history), san) =>
           for
-            move <- chess.controller.MoveParser.parse(san, state)
+            move <- chess.notation.MoveParser.parse(san, state)
             newState <- Game.applyMove(state, move)
           yield (newState, history :+ (move, newState))
       }

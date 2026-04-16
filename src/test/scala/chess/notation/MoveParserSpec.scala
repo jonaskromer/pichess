@@ -1,4 +1,4 @@
-package chess.controller
+package chess.notation
 
 import chess.model.board.{GameState, Move, Position}
 import chess.model.piece.{Color, Piece, PieceType}

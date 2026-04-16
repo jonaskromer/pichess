@@ -1,6 +1,6 @@
 package chess.codec
 
-import chess.controller.MoveParser
+import chess.notation.MoveParser
 import chess.model.GameError
 import chess.model.board.{CastlingRights, GameState, Position}
 import chess.model.piece.{Color, Piece, PieceType}

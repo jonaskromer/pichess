@@ -1,7 +1,7 @@
 package chess.service
 
 import chess.codec.{FenParserRegex, JsonParser, PgnParser}
-import chess.controller.MoveParser
+import chess.notation.MoveParser
 import chess.model.{GameError, GameEvent, GameId}
 import chess.model.board.{GameState, Move}
 import chess.model.rules.Game

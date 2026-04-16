@@ -1,7 +1,7 @@
 package chess.model.rules
 
 import chess.codec.FenSerializer
-import chess.controller.MoveParser
+import chess.notation.MoveParser
 import chess.model.{GameError, GameSnapshot}
 import chess.model.board.{GameState, Move}
 import zio.{IO, ZIO}

@@ -1,7 +1,7 @@
 package chess.model.rules
 
 import chess.codec.{FenParserRegex, FenSerializer}
-import chess.controller.MoveParser
+import chess.notation.MoveParser
 import chess.model.GameError
 import chess.model.board.{GameState, Move, Position}
 import chess.model.piece.{Color, Piece, PieceType}
