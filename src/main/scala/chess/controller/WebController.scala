@@ -14,6 +14,9 @@ object WebController:
   private case class MoveRequest(move: String)
   private given JsonDecoder[MoveRequest] = DeriveJsonDecoder.gen[MoveRequest]
 
+  private case class ErrorDto(error: String)
+  private given JsonEncoder[ErrorDto] = DeriveJsonEncoder.gen[ErrorDto]
+
   def routes(
       gs: GameService,
       session: SubscriptionRef[SessionState],
@@ -156,8 +159,4 @@ object WebController:
       .orDie
 
   private def errorResponse(message: String, status: Status): Response =
-    Response
-      .json(
-        s"""{"error":"${WebBoardView.escapeJson(message)}"}"""
-      )
-      .status(status)
+    Response.json(ErrorDto(message).toJson).status(status)

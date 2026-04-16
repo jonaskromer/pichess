@@ -2,6 +2,7 @@ package chess.view
 
 import chess.model.board.{GameState, Position}
 import chess.model.piece.{Color, Piece, PieceType}
+import zio.json.*
 import zio.test.*
 
 object WebBoardViewSpec extends ZIOSpecDefault:
@@ -120,26 +121,33 @@ object WebBoardViewSpec extends ZIOSpecDefault:
         )
       }
     ),
-    suite("escapeJson")(
-      test("escape double quotes") {
-        assertTrue(
-          WebBoardView.escapeJson("""say "hello"""") == """say \"hello\""""
-        )
+    suite("error-message escaping")(
+      test("escape embedded double quotes in error messages") {
+        val result =
+          WebBoardView.toJson(GameState.initial, Nil, Some("""say "hello""""))
+        // zio-json renders the escaped error inside the JSON string value.
+        assertTrue(result.contains("""\"hello\""""))
       },
-      test("escape backslashes") {
-        assertTrue(WebBoardView.escapeJson("""a\b""") == """a\\b""")
+      test("escape control characters that the previous hand-rolled escape missed") {
+        // Regression: the previous escapeJson did not escape \u0000–\u001f
+        // outside \n \r \t, so error messages containing such characters
+        // produced invalid JSON. zio-json emits a \uXXXX escape.
+        val result =
+          WebBoardView.toJson(GameState.initial, Nil, Some("a\u0001b"))
+        assertTrue(result.contains("\\u0001"))
       },
-      test("escape newlines") {
-        assertTrue(WebBoardView.escapeJson("a\nb") == """a\nb""")
-      },
-      test("escape carriage returns") {
-        assertTrue(WebBoardView.escapeJson("a\rb") == """a\rb""")
-      },
-      test("escape tabs") {
-        assertTrue(WebBoardView.escapeJson("a\tb") == """a\tb""")
-      },
-      test("leave normal characters unchanged") {
-        assertTrue(WebBoardView.escapeJson("hello world") == "hello world")
+      test("round-trip error message through a JSON parser") {
+        val message = "line1\nline2\ttab\"quote\\back"
+        val result =
+          WebBoardView.toJson(GameState.initial, Nil, Some(message))
+        // Using zio-json's parser to confirm the output is valid JSON
+        // and the error field decodes back to the original message.
+        val decoded = result.fromJson[zio.json.ast.Json]
+        val error = decoded.toOption
+          .flatMap(_.asObject)
+          .flatMap(_.get("error"))
+          .flatMap(_.asString)
+        assertTrue(error.contains(message))
       }
     )
   )
