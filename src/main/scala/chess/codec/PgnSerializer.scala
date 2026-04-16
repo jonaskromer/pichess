@@ -38,14 +38,16 @@ object PgnSerializer:
       moveLog: List[(Color, String)],
       result: String
   ): String =
+    // grouped(2) yields pairs of 1 or 2 entries. Join each pair's SAN strings
+    // with a space, prefix the move number, then concatenate all pairs. Avoids
+    // a pattern match whose "unreachable" branch would otherwise be needed to
+    // satisfy exhaustiveness without @unchecked.
     val moves = moveLog
       .grouped(2)
       .zipWithIndex
       .map { case (pair, idx) =>
-        val number = idx + 1
-        (pair: @unchecked) match
-          case List((_, white), (_, black)) => s"$number. $white $black"
-          case List((_, white))             => s"$number. $white"
+        val sans = pair.map(_._2).mkString(" ")
+        s"${idx + 1}. $sans"
       }
       .mkString(" ")
     if moves.isEmpty then result else s"$moves $result"
