@@ -104,7 +104,7 @@ object PgnParserSpec extends ZIOSpecDefault:
           result.initialState,
           result.history.reverse
         )
-        serialized = PgnSerializer.serialize(sanLog, result.state.status)
+        serialized <- PgnSerializer.serialize(sanLog, result.state.status)
         reparsed <- PgnParser.parse(serialized)
         reparsedSan <- SanSerializer.deriveMoveLog(
           reparsed.initialState,

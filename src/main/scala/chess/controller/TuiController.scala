@@ -116,7 +116,7 @@ object TuiController:
               SanSerializer
                 .deriveMoveLog(s.initialState, s.history)
                 .orDie
-                .map(log => PgnSerializer.serialize(log, s.state.status))
+                .flatMap(log => PgnSerializer.serialize(log, s.state.status))
           text.flatMap(t =>
             session
               .update(_.copy(error = None, output = Some(t)))
