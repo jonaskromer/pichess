@@ -57,6 +57,23 @@ object TuiController:
       shutdown: Promise[Nothing, Unit],
       flipped: Boolean
   ): IO[Throwable, Result] =
+    // Common error path: surface err.message in the session and continue.
+    // Closures capture `session` and `flipped`, so branches only supply the
+    // effect to run and optionally how to react to its success.
+    def withErrorHandling[A](action: IO[GameError, A])(
+        onSuccess: A => IO[Throwable, Any]
+    ): IO[Throwable, Result] =
+      action.foldZIO(
+        err =>
+          session
+            .update(_.copy(error = Some(err.message), output = None))
+            .as(Result.Continue(flipped)),
+        a => onSuccess(a).as(Result.Continue(flipped))
+      )
+
+    def runAndContinue(action: IO[GameError, Unit]): IO[Throwable, Result] =
+      withErrorHandling(action)(_ => ZIO.unit)
+
     command match
       case Command.Quit =>
         shutdown.succeed(()).as(Result.Shutdown)
@@ -69,56 +86,25 @@ object TuiController:
           .update(_.copy(error = None, output = None))
           .as(Result.Continue(!flipped))
       case Command.Undo =>
-        GameController
-          .undo(gs, session)
-          .foldZIO(
-            err =>
-              session
-                .update(_.copy(error = Some(err.message), output = None))
-                .as(Result.Continue(flipped)),
-            _ => ZIO.succeed(Result.Continue(flipped))
-          )
+        runAndContinue(GameController.undo(gs, session))
       case Command.Redo =>
-        GameController
-          .redo(gs, session)
-          .foldZIO(
-            err =>
-              session
-                .update(_.copy(error = Some(err.message), output = None))
-                .as(Result.Continue(flipped)),
-            _ => ZIO.succeed(Result.Continue(flipped))
-          )
+        runAndContinue(GameController.redo(gs, session))
       case Command.Draw =>
-        GameController
-          .claimDraw(gs, session)
-          .foldZIO(
-            err =>
-              session
-                .update(_.copy(error = Some(err.message), output = None))
-                .as(Result.Continue(flipped)),
-            _ => ZIO.succeed(Result.Continue(flipped))
-          )
+        runAndContinue(GameController.claimDraw(gs, session))
+      case Command.Move(raw) =>
+        runAndContinue(GameController.makeMove(gs, session, raw))
       case Command.Load(raw) =>
-        gs.loadGame(raw)
-          .foldZIO(
-            err =>
-              session
-                .update(_.copy(error = Some(err.message), output = None))
-                .as(Result.Continue(flipped)),
-            { case (event, history) =>
-              session
-                .set(
-                  SessionState(
-                    GameSnapshot.fromHistory(
-                      event.gameId,
-                      event.initialState,
-                      history.reverse
-                    )
-                  )
-                )
-                .as(Result.Continue(flipped))
-            }
+        withErrorHandling(gs.loadGame(raw)) { case (event, history) =>
+          session.set(
+            SessionState(
+              GameSnapshot.fromHistory(
+                event.gameId,
+                event.initialState,
+                history.reverse
+              )
+            )
           )
+        }
       case Command.Export(format) =>
         session.get.flatMap { s =>
           val text = format match
@@ -137,13 +123,3 @@ object TuiController:
               .as(Result.Continue(flipped))
           )
         }
-      case Command.Move(raw) =>
-        GameController
-          .makeMove(gs, session, raw)
-          .foldZIO(
-            err =>
-              session
-                .update(_.copy(error = Some(err.message), output = None))
-                .as(Result.Continue(flipped)),
-            _ => ZIO.succeed(Result.Continue(flipped))
-          )
