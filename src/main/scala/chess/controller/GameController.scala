@@ -26,6 +26,25 @@ object GameController:
   /** Number of times a position must occur for an automatic fivefold draw. */
   val FivefoldThreshold: Int = 5
 
+  /** Apply `rawInput` as a move against the current session state.
+    *
+    * Runs atomically under `session.modifyZIO`'s internal semaphore: reading
+    * the session, applying the move via [[GameService.makeMove]] (which
+    * parses, validates, and persists to the repository), detecting fivefold
+    * repetition, and committing the new session all happen as one indivisible
+    * step. Concurrent callers (TUI + Web) queue on the semaphore rather than
+    * racing; a failed effect leaves the session unchanged.
+    *
+    * Fivefold auto-draw: if the move-applied state is `Playing` and the
+    * resulting position has occurred `>= FivefoldThreshold` times in the
+    * session history, the state's status is promoted to
+    * `Draw(FivefoldRepetition)` via [[GameState.endWith]] before committing.
+    * The repository is saved with the final (post-promotion) state so
+    * subsequent loads reflect the auto-draw.
+    *
+    * Fails with any [[GameError]] from move parsing or validation; the
+    * session state is not modified on failure.
+    */
   def makeMove(
       gs: GameService,
       session: SubscriptionRef[SessionState],

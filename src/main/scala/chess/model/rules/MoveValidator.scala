@@ -12,6 +12,27 @@ object MoveValidator:
 
   // ─── Validation entry point ────────────────────────────────────────────────
 
+  /** Validate that a move is legal from `state` per the piece-specific rules.
+    *
+    * Checks, in order:
+    *   1. A piece exists at `move.from`.
+    *   2. That piece belongs to `state.activeColor`.
+    *   3. The destination is not occupied by a same-colored piece.
+    *   4. The piece-specific movement rules: pawn pushes / captures /
+    *      en passant; king castling (path clear, rook present, not through
+    *      an attacked square); sliding/leaping geometry for every other
+    *      piece (via [[Ray.canReach]]).
+    *
+    * Does '''not''' check:
+    *   - whether the move leaves the active king in check (this is done
+    *     inside [[Game.applyMoveCore]] after the move is materialised)
+    *   - whether the game is already over
+    *   - promotion correctness (also handled by [[Game.applyMoveCore]])
+    *   - repetition / 50-move draw conditions (those live at the controller
+    *     layer, which carries history)
+    *
+    * Fails with [[GameError.InvalidMove]] carrying a caller-facing message.
+    */
   def validate(state: GameState, move: Move): IO[GameError, Unit] =
     ZIO
       .fromOption(state.board.get(move.from))

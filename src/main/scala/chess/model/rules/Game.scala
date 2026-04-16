@@ -17,6 +17,34 @@ object Game:
   private val promotionPieces: Set[PieceType] =
     Set(PieceType.Queen, PieceType.Rook, PieceType.Bishop, PieceType.Knight)
 
+  /** Apply a move to `state`, returning the resulting [[GameState]].
+    *
+    * Orchestrates validation, board mutation, and status detection. The
+    * returned state reflects every consequence of the move: updated board,
+    * flipped active color, revoked castling rights, new or cleared
+    * en-passant target, incremented/reset halfmove clock, fullmove number,
+    * `inCheck` flag, and a resolved [[GameStatus]]:
+    *
+    *   - [[GameStatus.Checkmate]] if the opponent has no legal reply while
+    *     in check
+    *   - [[GameStatus.Draw]] with the appropriate [[DrawReason]] for
+    *     stalemate or insufficient material
+    *   - [[GameStatus.Playing]] otherwise
+    *
+    * Fails with [[GameError.InvalidMove]] when:
+    *   - the game is already over (`state.status.isOver`)
+    *   - no piece exists at `move.from`
+    *   - the piece belongs to the non-active color
+    *   - the move would capture an own-color piece
+    *   - the piece-specific rules reject the move (including castling path
+    *     checks and en-passant validity)
+    *   - the move would leave the active color's king in check
+    *   - promotion is missing, excess, or to an invalid piece type
+    *
+    * Threefold/fivefold repetition detection is **not** performed here —
+    * that requires history, which lives in [[chess.model.GameSnapshot]] and
+    * is handled by [[chess.controller.GameController.makeMove]].
+    */
   def applyMove(
       state: GameState,
       move: Move
