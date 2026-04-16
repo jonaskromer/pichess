@@ -80,18 +80,17 @@ object Game:
     )
 
   private def isInsufficientMaterial(board: Board): Boolean =
-    val pieces = board.values.toList
-    val nonKings = pieces.filterNot(_.pieceType == PieceType.King)
+    val nonKings = board.toList.collect {
+      case (pos, piece) if piece.pieceType != PieceType.King => (pos, piece)
+    }
     nonKings match
       case Nil => true // K vs K
-      case List(p) =>
+      case List((_, p)) =>
         p.pieceType == PieceType.Bishop || p.pieceType == PieceType.Knight
-      case List(a, b)
+      case List((posA, a), (posB, b))
           if a.pieceType == PieceType.Bishop
             && b.pieceType == PieceType.Bishop
             && a.color != b.color =>
-        val posA = board.collectFirst { case (pos, p) if p == a => pos }.get
-        val posB = board.collectFirst { case (pos, p) if p == b => pos }.get
         squareColor(posA) == squareColor(posB)
       case _ => false
 
