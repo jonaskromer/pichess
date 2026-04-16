@@ -26,6 +26,55 @@ object GameStateSpec extends ZIOSpecDefault:
         val s =
           GameState.initial.copy(status = GameStatus.Checkmate(Color.White))
         assertTrue(s.status == GameStatus.Checkmate(Color.White))
+      },
+      test("isPlaying / isOver reflect the current status") {
+        assertTrue(
+          GameStatus.Playing.isPlaying,
+          !GameStatus.Playing.isOver,
+          GameStatus.Checkmate(Color.White).isOver,
+          !GameStatus.Checkmate(Color.White).isPlaying,
+          GameStatus.Draw(DrawReason.Stalemate).isOver,
+          !GameStatus.Draw(DrawReason.Stalemate).isPlaying
+        )
+      }
+    ),
+    // ─── Terminal transition: endWith ──────────────────────────────────────────
+    suite("endWith")(
+      test("transitions from Playing to the supplied terminal status") {
+        val s = GameState.initial.endWith(GameStatus.Checkmate(Color.White))
+        assertTrue(s.status == GameStatus.Checkmate(Color.White))
+      },
+      test("transitions from Playing to a Draw status") {
+        val s = GameState.initial.endWith(
+          GameStatus.Draw(DrawReason.ThreefoldRepetition)
+        )
+        assertTrue(s.status == GameStatus.Draw(DrawReason.ThreefoldRepetition))
+      },
+      test(
+        "is a no-op when the game is already over (Checkmate → Draw is rejected)"
+      ) {
+        val finished =
+          GameState.initial.copy(status = GameStatus.Checkmate(Color.Black))
+        val attempted =
+          finished.endWith(GameStatus.Draw(DrawReason.Stalemate))
+        // Terminal states are sticky — Checkmate cannot be rewritten to Draw
+        assertTrue(
+          attempted.status == GameStatus.Checkmate(Color.Black),
+          attempted eq finished
+        )
+      },
+      test(
+        "is a no-op when the game is already Drawn (Draw → Checkmate is rejected)"
+      ) {
+        val finished = GameState.initial.copy(status =
+          GameStatus.Draw(DrawReason.InsufficientMaterial)
+        )
+        val attempted =
+          finished.endWith(GameStatus.Checkmate(Color.White))
+        assertTrue(
+          attempted.status == GameStatus.Draw(DrawReason.InsufficientMaterial),
+          attempted eq finished
+        )
       }
     ),
     // ─── Castling rights ──────────────────────────────────────────────────────

@@ -43,7 +43,7 @@ object Game:
       move: Move
   ): IO[GameError, GameState] =
     for
-      _ <- ZIO.when(state.status != GameStatus.Playing)(
+      _ <- ZIO.when(state.status.isOver)(
         ZIO.fail(GameError.InvalidMove("Game is over"))
       )
       _ <- MoveValidator.validate(state, move)

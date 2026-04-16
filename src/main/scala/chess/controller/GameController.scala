@@ -35,14 +35,10 @@ object GameController:
       gs.makeMove(s.gameId, rawInput).flatMap { (newState, event) =>
         val provisional = s.game.recordMove(event.move, newState)
         val finalGame =
-          if newState.status == GameStatus.Playing && isFivefoldRepetition(
-              provisional
-            )
+          if newState.status.isPlaying && isFivefoldRepetition(provisional)
           then
             provisional.replaceHead(
-              newState.copy(status =
-                GameStatus.Draw(DrawReason.FivefoldRepetition)
-              )
+              newState.endWith(GameStatus.Draw(DrawReason.FivefoldRepetition))
             )
           else provisional
         gs.saveState(s.gameId, finalGame.state).as(
@@ -84,7 +80,7 @@ object GameController:
       session: SubscriptionRef[SessionState]
   ): IO[GameError, Unit] =
     session.modifyZIO { s =>
-      if s.state.status != GameStatus.Playing then
+      if s.state.status.isOver then
         ZIO.fail(GameError.InvalidMove("Game is already over"))
       else
         val fiftyMoveOk = s.state.halfmoveClock >= FiftyMoveThreshold
@@ -104,7 +100,7 @@ object GameController:
           val reason =
             if threefoldOk then DrawReason.ThreefoldRepetition
             else DrawReason.FiftyMoveRule
-          val drawState = s.state.copy(status = GameStatus.Draw(reason))
+          val drawState = s.state.endWith(GameStatus.Draw(reason))
           gs.saveState(s.gameId, drawState).as(
             (
               (),
