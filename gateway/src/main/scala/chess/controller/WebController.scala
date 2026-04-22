@@ -1,5 +1,6 @@
 package chess.controller
 
+import chess.api.{ErrorDto, MoveRequest}
 import chess.model.{GameError, GameSnapshot, SessionState}
 import chess.notation.SanSerializer
 import chess.service.GameService
@@ -11,12 +12,6 @@ import zio.stream.SubscriptionRef
 
 object WebController:
 
-  private case class MoveRequest(move: String)
-  private given JsonDecoder[MoveRequest] = DeriveJsonDecoder.gen[MoveRequest]
-
-  private case class ErrorDto(error: String)
-  private given JsonEncoder[ErrorDto] = DeriveJsonEncoder.gen[ErrorDto]
-
   def routes(
       gs: GameService,
       session: SubscriptionRef[SessionState],
@@ -24,6 +19,7 @@ object WebController:
   ): Routes[Any, Response] =
     Routes(
       Method.GET / "" -> handler(servePage()),
+      Method.GET / "web" / "main.js" -> handler(serveJsBundle()),
       Method.GET / "api" / "state" -> handler(serveState(session)),
       Method.GET / "api" / "events" -> handler(
         serveEvents(session, shutdown)
@@ -46,6 +42,22 @@ object WebController:
         body = Body.fromString(HtmlPage.render)
       )
     )
+
+  private def serveJsBundle(): ZIO[Any, Nothing, Response] =
+    ZIO.succeed {
+      val stream = getClass.getClassLoader.getResourceAsStream("web/main.js")
+      if stream == null then Response(status = Status.NotFound)
+      else
+        val source = scala.io.Source.fromInputStream(stream)
+        val content = try source.mkString
+        finally source.close()
+        Response(
+          status = Status.Ok,
+          headers =
+            Headers(Header.ContentType(MediaType.application.`javascript`)),
+          body = Body.fromString(content)
+        )
+    }
 
   private def serveState(
       session: SubscriptionRef[SessionState]
