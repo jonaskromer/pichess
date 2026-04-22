@@ -2,7 +2,7 @@ package chess
 
 import chess.controller.{GameController, TuiController, WebController}
 import chess.model.{GameSnapshot, SessionState}
-import chess.repository.InMemoryGameRepository
+import chess.repository.{GameRepository, HttpGameRepository, InMemoryGameRepository}
 import chess.service.GameService
 import chess.notation.SanSerializer
 import chess.view.{BoardView, HelpView, MoveLogView}
@@ -25,9 +25,18 @@ object Main extends ZIOAppDefault:
     ZIOAppArgs.getArgs.flatMap(args =>
       app(args.contains("--headless")).provide(
         GameService.layer,
-        InMemoryGameRepository.layer
+        repositoryLayer,
       )
     )
+
+  /** Pick the repository implementation. If `REPOSITORY_URL` is set we talk
+    * to a separately-deployed repository microservice over REST; otherwise
+    * we keep the in-process in-memory store.
+    */
+  private val repositoryLayer: ZLayer[Any, Throwable, GameRepository] =
+    sys.env.get("REPOSITORY_URL").filter(_.nonEmpty) match
+      case Some(url) => HttpGameRepository.layer(url)
+      case None      => InMemoryGameRepository.layer
 
   private[chess] def app(
       headless: Boolean,
@@ -74,6 +83,14 @@ object Main extends ZIOAppDefault:
   ): ZIO[Scope, Throwable, Int] =
     for
       serverEnv <- Server.defaultWithPort(port).build
+      // Graceful shutdown: when the scope closes (e.g. SIGTERM from
+      // `docker stop`), push the quit event out to browsers before the
+      // server tears down the listener. Scope finalizers run in reverse
+      // of registration, so this runs *before* `serverEnv`'s own close
+      // finalizer. The short sleep lets the SSE frame flush.
+      _ <- ZIO.addFinalizer(
+        shutdown.succeed(()) *> ZIO.sleep(500.millis)
+      )
       boundPort <- Server
         .install(WebController.routes(gs, session, shutdown))
         .provideEnvironment(serverEnv)

@@ -1,0 +1,39 @@
+# Runs pichess as two services:
+#   • repository — REST microservice backing GameRepository (port 8091)
+#   • app        — gateway + game-service + tui + web-ui bundle (port 8090)
+#
+# Build the images first:
+#   sbt repository/Docker/publishLocal app/Docker/publishLocal
+#
+# Then:
+#   docker compose up
+#
+# Browse http://localhost:8090 for the Laminar UI. The app's TUI is attached
+# to stdin inside the app container and is mostly dormant in this mode.
+
+services:
+  repository:
+    image: pichess-repository:latest
+    container_name: pichess-repository
+    ports:
+      - "8091:8091"
+    environment:
+      REPOSITORY_PORT: "8091"
+    healthcheck:
+      # Repository exposes no /health yet; hit an arbitrary game ID and
+      # treat a 404 as "server is up and responding".
+      test: ["CMD-SHELL", "wget -qO- --server-response http://localhost:8091/games/healthcheck 2>&1 | grep -q '404'"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+
+  app:
+    image: pichess-app:latest
+    container_name: pichess-app
+    depends_on:
+      repository:
+        condition: service_healthy
+    ports:
+      - "8090:8090"
+    environment:
+      REPOSITORY_URL: "http://repository:8091"

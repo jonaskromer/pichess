@@ -1,10 +1,12 @@
 package chess.webui
 
-import chess.api.{BoardStateDto, MoveEntryDto, MoveRequest, SquareDto}
+import chess.api.{BoardStateDto, Endpoints, ErrorDto, MoveEntryDto, MoveRequest, SquareDto}
 import com.raquo.laminar.api.L.*
 import org.scalajs.dom
 import scala.concurrent.ExecutionContext.Implicits.global
-import scala.scalajs.js
+import scala.concurrent.Future
+import sttp.client3.FetchBackend
+import sttp.tapir.client.sttp.SttpClientInterpreter
 import zio.json.*
 
 object Main:
@@ -210,12 +212,12 @@ object Main:
         className := "btn-row",
         button(
           className := "secondary-btn",
-          onClick --> { _ => postSimple("/api/undo") },
+          onClick --> { _ => postUndo() },
           "Undo",
         ),
         button(
           className := "secondary-btn",
-          onClick --> { _ => postSimple("/api/redo") },
+          onClick --> { _ => postRedo() },
           "Redo",
         ),
       ),
@@ -223,17 +225,17 @@ object Main:
         className := "btn-row",
         button(
           className := "secondary-btn",
-          onClick --> { _ => postSimple("/api/draw") },
+          onClick --> { _ => postDraw() },
           "Draw",
         ),
         button(
           className := "secondary-btn",
-          onClick --> { _ => postSimple("/api/new") },
+          onClick --> { _ => postNew() },
           "New Game",
         ),
         button(
           className := "quit-btn",
-          onClick --> { _ => postSimple("/api/quit") },
+          onClick --> { _ => postQuit() },
           "Quit",
         ),
       ),
@@ -294,20 +296,41 @@ object Main:
 
   // --------------------------------------------------------------------------
   // HTTP + SSE
+  //
+  // Endpoint descriptions live in `chess.api.Endpoints`; `SttpClientInterpreter`
+  // turns them into typed functions. Renaming a route or changing a DTO field
+  // on the server compiles-breaks the caller, not a runtime 404.
   // --------------------------------------------------------------------------
 
+  private val backend = FetchBackend()
+
+  private val getStateClient =
+    SttpClientInterpreter().toClientThrowDecodeFailures(Endpoints.getState, None, backend)
+  private val postMoveClient =
+    SttpClientInterpreter().toClientThrowDecodeFailures(Endpoints.postMove, None, backend)
+  private val postUndoClient =
+    SttpClientInterpreter().toClientThrowDecodeFailures(Endpoints.postUndo, None, backend)
+  private val postRedoClient =
+    SttpClientInterpreter().toClientThrowDecodeFailures(Endpoints.postRedo, None, backend)
+  private val postDrawClient =
+    SttpClientInterpreter().toClientThrowDecodeFailures(Endpoints.postDraw, None, backend)
+  private val postNewClient =
+    SttpClientInterpreter().toClientThrowDecodeFailures(Endpoints.postNew, None, backend)
+  private val postQuitClient =
+    SttpClientInterpreter().toClientThrowDecodeFailures(Endpoints.postQuit, None, backend)
+
   private def fetchState(): Unit =
-    dom
-      .fetch("/api/state")
-      .toFuture
-      .flatMap(_.text().toFuture)
-      .foreach(body => decodeState(body))
+    getStateClient(()).foreach(handleStateResult)
 
   private def connectEvents(): Unit =
+    // SSE isn't in the Tapir contract — /api/events is a raw zio-http stream.
     val source = new dom.EventSource("/api/events")
     source.addEventListener(
       "state",
-      (e: dom.MessageEvent) => decodeState(e.data.asInstanceOf[String]),
+      (e: dom.MessageEvent) =>
+        e.data.asInstanceOf[String].fromJson[BoardStateDto] match
+          case Right(state) => stateVar.set(Some(state))
+          case Left(err)    => showToast(s"Bad state payload: $err"),
     )
     source.addEventListener(
       "quit",
@@ -316,42 +339,33 @@ object Main:
         goodbyeVar.set(true),
     )
 
-  private def decodeState(body: String): Unit =
-    body.fromJson[BoardStateDto] match
+  private def handleStateResult(
+      result: Either[ErrorDto, BoardStateDto]
+  ): Unit =
+    result match
       case Right(state) => stateVar.set(Some(state))
-      case Left(err)    => showToast(s"Bad state payload: $err")
+      case Left(err)    => showToast(err.error)
 
   private def postMove(move: String): Unit =
-    val body = MoveRequest(move).toJson
-    val init = js.Dynamic
-      .literal(
-        method  = "POST",
-        headers = js.Dictionary("Content-Type" -> "application/json"),
-        body    = body,
-      )
-      .asInstanceOf[dom.RequestInit]
-    fetchAndHandleError("/api/move", init)
+    // Success response arrives via SSE; we only surface errors to the user.
+    postMoveClient(MoveRequest(move)).foreach {
+      case Right(_)  => ()
+      case Left(err) => showToast(err.error)
+    }
 
-  private def postSimple(path: String): Unit =
-    val init = js.Dynamic.literal(method = "POST").asInstanceOf[dom.RequestInit]
-    fetchAndHandleError(path, init)
+  private def postUndo(): Unit = postAndToastErrors(postUndoClient(()))
+  private def postRedo(): Unit = postAndToastErrors(postRedoClient(()))
+  private def postDraw(): Unit = postAndToastErrors(postDrawClient(()))
+  private def postNew(): Unit  = postAndToastErrors(postNewClient(()))
+  private def postQuit(): Unit = postQuitClient(()).foreach(_ => ())
 
-  private def fetchAndHandleError(path: String, init: dom.RequestInit): Unit =
-    dom
-      .fetch(path, init)
-      .toFuture
-      .flatMap(_.text().toFuture)
-      .foreach { body =>
-        // /api/move returns BoardStateDto on success; error routes (and
-        // failed moves) return ErrorDto. Try state first — if that fails,
-        // try to surface an error message.
-        body.fromJson[BoardStateDto] match
-          case Right(_) => () // SSE will push the new state; nothing to do.
-          case Left(_) =>
-            body.fromJson[chess.api.ErrorDto] match
-              case Right(e) => showToast(e.error)
-              case Left(_)  => () // e.g. /api/quit returns {"quit":true}
-      }
+  private def postAndToastErrors(
+      f: Future[Either[ErrorDto, BoardStateDto]]
+  ): Unit =
+    f.foreach {
+      case Right(_)  => ()
+      case Left(err) => showToast(err.error)
+    }
 
   private def showToast(msg: String): Unit =
     toastVar.set(Some(msg))

@@ -3,10 +3,16 @@ import sbtcrossproject.CrossPlugin.autoImport.{CrossType, crossProject}
 ThisBuild / version      := "0.1.0-SNAPSHOT"
 ThisBuild / scalaVersion := "3.8.2"
 
+// Tapir 1.11.x pulls in zio-json 0.7.x; we run 0.9.0. The breaking changes
+// between those versions don't affect the APIs we rely on (Derive*,
+// @jsonExplicitNull), so downgrade eviction errors to warnings.
+ThisBuild / evictionErrorLevel := Level.Info
+
 val zioVersion     = "2.1.24"
 val zioHttpVersion = "3.10.1"
 val zioJsonVersion = "0.9.0"
 val laminarVersion = "17.2.0"
+val tapirVersion   = "1.11.36"
 
 lazy val commonSettings = Seq(
   libraryDependencies ++= Seq(
@@ -15,7 +21,10 @@ lazy val commonSettings = Seq(
     "dev.zio" %% "zio-test-sbt" % zioVersion % Test,
   ),
   testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
-  coverageEnabled          := true,
+  // Coverage is opt-in via `sbt coverage test coverageReport`. Leaving it on
+  // by default bakes scoverage's runtime agent into every compiled class,
+  // which tries to write coverage data to the host path at startup and
+  // breaks Docker containers with a FileNotFoundException.
   coverageMinimumStmtTotal := 100,
   coverageFailOnMinimum    := true,
 )
@@ -35,12 +44,8 @@ lazy val domain = crossProject(JVMPlatform, JSPlatform)
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
   )
   .jvmSettings(
-    coverageEnabled          := true,
     coverageMinimumStmtTotal := 100,
     coverageFailOnMinimum    := true,
-  )
-  .jsSettings(
-    coverageEnabled := false,
   )
 
 // Wire DTOs — single source of truth for the HTTP contract, shared by gateway
@@ -51,19 +56,17 @@ lazy val api = crossProject(JVMPlatform, JSPlatform)
   .settings(
     name := "pichess-api",
     libraryDependencies ++= Seq(
-      "dev.zio" %%% "zio-json"     % zioJsonVersion,
-      "dev.zio" %%% "zio-test"     % zioVersion % Test,
-      "dev.zio" %%% "zio-test-sbt" % zioVersion % Test,
+      "dev.zio"                     %%% "zio-json"       % zioJsonVersion,
+      "com.softwaremill.sttp.tapir" %%% "tapir-core"     % tapirVersion,
+      "com.softwaremill.sttp.tapir" %%% "tapir-json-zio" % tapirVersion,
+      "dev.zio"                     %%% "zio-test"       % zioVersion % Test,
+      "dev.zio"                     %%% "zio-test-sbt"   % zioVersion % Test,
     ),
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
   )
   .jvmSettings(
-    coverageEnabled          := true,
     coverageMinimumStmtTotal := 100,
     coverageFailOnMinimum    := true,
-  )
-  .jsSettings(
-    coverageEnabled := false,
   )
 
 lazy val rules = project
@@ -85,11 +88,40 @@ lazy val codec = project
     ),
   )
 
+// Contract for the repository microservice — endpoint descriptions shared by
+// its server (in `repository`) and its caller (`HttpGameRepository`).
+lazy val repositoryApi = project
+  .in(file("repository-api"))
+  .settings(commonSettings)
+  .settings(
+    name := "pichess-repository-api",
+    libraryDependencies ++= Seq(
+      "com.softwaremill.sttp.tapir" %% "tapir-core"     % tapirVersion,
+      "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % tapirVersion,
+      "dev.zio"                     %% "zio-json"       % zioJsonVersion,
+    ),
+  )
+
 lazy val repository = project
   .in(file("repository"))
-  .dependsOn(domain.jvm)
+  .dependsOn(domain.jvm, repositoryApi, codec)
+  .enablePlugins(JavaAppPackaging, DockerPlugin)
   .settings(commonSettings)
-  .settings(name := "pichess-repository")
+  .settings(
+    name := "pichess-repository",
+    Compile / mainClass := Some("chess.repository.RepositoryMain"),
+    libraryDependencies ++= Seq(
+      "dev.zio"                       %% "zio-http"              % zioHttpVersion,
+      "com.softwaremill.sttp.tapir"   %% "tapir-zio-http-server" % tapirVersion,
+      "com.softwaremill.sttp.tapir"   %% "tapir-sttp-client"     % tapirVersion,
+      "com.softwaremill.sttp.client3" %% "zio"                   % "3.11.0",
+    ),
+    Docker / packageName := "pichess-repository",
+    Docker / version     := "latest",
+    dockerBaseImage      := "eclipse-temurin:23-jre",
+    dockerExposedPorts   := Seq(8091),
+    dockerUpdateLatest   := true,
+  )
 
 lazy val gameService = project
   .in(file("game-service"))
@@ -104,8 +136,10 @@ lazy val gateway = project
   .settings(
     name := "pichess-gateway",
     libraryDependencies ++= Seq(
-      "dev.zio" %% "zio-http" % zioHttpVersion,
-      "dev.zio" %% "zio-json" % zioJsonVersion,
+      "dev.zio"                     %% "zio-http"                 % zioHttpVersion,
+      "dev.zio"                     %% "zio-json"                 % zioJsonVersion,
+      "com.softwaremill.sttp.tapir" %% "tapir-zio-http-server"    % tapirVersion,
+      "com.softwaremill.sttp.tapir" %% "tapir-swagger-ui-bundle"  % tapirVersion,
     ),
     // Copy the Scala.js output of web-ui into gateway's managed resources at
     // web/main.js so WebController can serve it from the classpath.
@@ -140,13 +174,20 @@ lazy val tui = project
 lazy val app = project
   .in(file("app"))
   .dependsOn(gameService, repository, codec, tui, gateway)
+  .enablePlugins(JavaAppPackaging, DockerPlugin)
   .settings(commonSettings)
   .settings(
-    name := "pichess-app",
+    name                := "pichess-app",
+    Compile / mainClass := Some("chess.Main"),
     libraryDependencies ++= Seq(
       "dev.zio" %% "zio-http"    % zioHttpVersion,
       "dev.zio" %% "zio-process" % "0.7.2",
     ),
+    Docker / packageName := "pichess-app",
+    Docker / version     := "latest",
+    dockerBaseImage      := "eclipse-temurin:23-jre",
+    dockerExposedPorts   := Seq(8090),
+    dockerUpdateLatest   := true,
   )
 
 lazy val webUi = project
@@ -157,7 +198,8 @@ lazy val webUi = project
     name                            := "pichess-web-ui",
     scalaJSUseMainModuleInitializer := true,
     libraryDependencies ++= Seq(
-      "com.raquo" %%% "laminar" % laminarVersion,
+      "com.raquo"                   %%% "laminar"          % laminarVersion,
+      "com.softwaremill.sttp.tapir" %%% "tapir-sttp-client" % tapirVersion,
     ),
     coverageEnabled := false,
   )
@@ -171,6 +213,7 @@ lazy val root = project
     api.js,
     rules,
     codec,
+    repositoryApi,
     repository,
     gameService,
     gateway,
