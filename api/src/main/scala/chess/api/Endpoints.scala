@@ -84,6 +84,23 @@ object Endpoints:
       .out(jsonBody[QuitAck])
       .name("postQuit")
 
+  /** POST /api/load — import a game from FEN, PGN, or JSON (auto-detected). */
+  val postLoad: PublicEndpoint[LoadRequest, ErrorDto, BoardStateDto, Any] =
+    apiBase.post
+      .in("load")
+      .in(jsonBody[LoadRequest])
+      .out(jsonBody[BoardStateDto])
+      .name("postLoad")
+      .description("Load a game from a FEN, PGN, or JSON payload")
+
+  /** GET /api/export/{format} — serialize the current position. */
+  val getExport: PublicEndpoint[String, ErrorDto, ExportResponse, Any] =
+    apiBase.get
+      .in("export" / path[String]("format"))
+      .out(jsonBody[ExportResponse])
+      .name("getExport")
+      .description("Serialize the current game as fen, pgn, or json")
+
   /** All endpoints — useful for generating OpenAPI docs. */
   val all: List[AnyEndpoint] = List(
     getState,
@@ -93,4 +110,6 @@ object Endpoints:
     postDraw,
     postNew,
     postQuit,
+    postLoad,
+    getExport,
   )

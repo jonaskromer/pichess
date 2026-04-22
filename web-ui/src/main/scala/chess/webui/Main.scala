@@ -1,10 +1,11 @@
 package chess.webui
 
-import chess.api.{BoardStateDto, Endpoints, ErrorDto, MoveEntryDto, MoveRequest, SquareDto}
+import chess.api.{BoardStateDto, Endpoints, ErrorDto, ExportResponse, LoadRequest, MoveEntryDto, MoveRequest, SquareDto}
 import com.raquo.laminar.api.L.*
 import org.scalajs.dom
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
+import scala.scalajs.js
 import sttp.client3.FetchBackend
 import sttp.tapir.client.sttp.SttpClientInterpreter
 import zio.json.*
@@ -25,6 +26,11 @@ object Main:
   private val pendingPromotionVar: Var[Option[PendingPromotion]] = Var(None)
   private val toastVar: Var[Option[String]] = Var(None)
   private val goodbyeVar: Var[Boolean] = Var(false)
+  private val flippedVar: Var[Boolean] = Var(false)
+  private val helpOpenVar: Var[Boolean] = Var(false)
+  private val loadOpenVar: Var[Boolean] = Var(false)
+  private val loadInputVar: Var[String] = Var("")
+  private val exportVar: Var[Option[ExportResponse]] = Var(None)
 
   private val whitePromotions = List(
     "Q" -> "♕",
@@ -68,6 +74,9 @@ object Main:
       boardArea(),
       sidebar(),
       promotionOverlay(),
+      helpModal(),
+      loadModal(),
+      exportModal(),
       toastElement(),
     )
 
@@ -89,21 +98,32 @@ object Main:
   private def rankLabels(): HtmlElement =
     div(
       className := "rank-labels",
-      (8 to 1 by -1).toList.map(r => div(r.toString)),
+      children <-- flippedVar.signal.map { flipped =>
+        val ranks =
+          if flipped then (1 to 8).toList else (8 to 1 by -1).toList
+        ranks.map(r => div(r.toString))
+      },
     )
 
   private def fileLabels(): HtmlElement =
     div(
       className := "file-labels",
-      ('a' to 'h').toList.map(c => div(c.toString)),
+      children <-- flippedVar.signal.map { flipped =>
+        val files =
+          if flipped then ('a' to 'h').toList.reverse
+          else ('a' to 'h').toList
+        files.map(c => div(c.toString))
+      },
     )
 
   private def board(): HtmlElement =
     div(
       className := "board",
-      children <-- stateVar.signal.map {
-        case None    => List.empty
-        case Some(s) => s.squares.map(renderSquare(s, _))
+      children <-- stateVar.signal.combineWith(flippedVar.signal).map {
+        case (None, _) => List.empty
+        case (Some(s), flipped) =>
+          val squares = if flipped then s.squares.reverse else s.squares
+          squares.map(renderSquare(s, _))
       },
     )
 
@@ -220,14 +240,52 @@ object Main:
           onClick --> { _ => postRedo() },
           "Redo",
         ),
-      ),
-      div(
-        className := "btn-row",
         button(
           className := "secondary-btn",
           onClick --> { _ => postDraw() },
           "Draw",
         ),
+      ),
+      div(
+        className := "btn-row",
+        button(
+          className := "secondary-btn",
+          onClick --> { _ => flippedVar.update(!_) },
+          child.text <-- flippedVar.signal.map(f =>
+            if f then "Unflip" else "Flip"
+          ),
+        ),
+        button(
+          className := "secondary-btn",
+          onClick --> { _ => helpOpenVar.set(true) },
+          "Help",
+        ),
+        button(
+          className := "secondary-btn",
+          onClick --> { _ => loadOpenVar.set(true) },
+          "Load",
+        ),
+      ),
+      div(
+        className := "btn-row",
+        button(
+          className := "secondary-btn",
+          onClick --> { _ => doExport("fen") },
+          "FEN",
+        ),
+        button(
+          className := "secondary-btn",
+          onClick --> { _ => doExport("pgn") },
+          "PGN",
+        ),
+        button(
+          className := "secondary-btn",
+          onClick --> { _ => doExport("json") },
+          "JSON",
+        ),
+      ),
+      div(
+        className := "btn-row",
         button(
           className := "secondary-btn",
           onClick --> { _ => postNew() },
@@ -294,12 +352,117 @@ object Main:
           )
         }
 
+  private def helpModal(): HtmlElement =
+    div(
+      className <-- helpOpenVar.signal.map(o =>
+        if o then "modal visible" else "modal"
+      ),
+      onClick --> { _ => helpOpenVar.set(false) },
+      div(
+        className := "modal-dialog help-dialog",
+        onClick.stopPropagation --> { _ => () },
+        h2("piChess Help"),
+        pre(className := "help-text", helpContent),
+        div(
+          className := "modal-actions",
+          button(
+            className := "secondary-btn",
+            onClick --> { _ => helpOpenVar.set(false) },
+            "Close",
+          ),
+        ),
+      ),
+    )
+
+  private def loadModal(): HtmlElement =
+    div(
+      className <-- loadOpenVar.signal.map(o =>
+        if o then "modal visible" else "modal"
+      ),
+      onClick --> { _ => loadOpenVar.set(false) },
+      div(
+        className := "modal-dialog load-dialog",
+        onClick.stopPropagation --> { _ => () },
+        h2("Load Game"),
+        p(
+          "Paste FEN, PGN, or JSON — the format is auto-detected."
+        ),
+        textArea(
+          className   := "load-input",
+          rows        := 10,
+          placeholder := "rnbqkbnr/pppppppp/8/...  or  1. e4 e5 2. Nf3 ...",
+          spellCheck  := false,
+          controlled(
+            value <-- loadInputVar.signal,
+            onInput.mapToValue --> loadInputVar,
+          ),
+        ),
+        div(
+          className := "modal-actions",
+          button(
+            className := "secondary-btn",
+            onClick --> { _ =>
+              val raw = loadInputVar.now().trim
+              if raw.nonEmpty then
+                postLoad(raw)
+                loadInputVar.set("")
+                loadOpenVar.set(false)
+            },
+            "Load",
+          ),
+          button(
+            className := "secondary-btn",
+            onClick --> { _ => loadOpenVar.set(false) },
+            "Cancel",
+          ),
+        ),
+      ),
+    )
+
+  private def exportModal(): HtmlElement =
+    div(
+      className <-- exportVar.signal.map(o =>
+        if o.isDefined then "modal visible" else "modal"
+      ),
+      onClick --> { _ => exportVar.set(None) },
+      div(
+        className := "modal-dialog export-dialog",
+        onClick.stopPropagation --> { _ => () },
+        h2(
+          child.text <-- exportVar.signal.map {
+            case Some(r) => s"Export (${r.format.toUpperCase})"
+            case None    => "Export"
+          }
+        ),
+        textArea(
+          className := "export-output",
+          rows      := 10,
+          readOnly  := true,
+          value <-- exportVar.signal.map(_.map(_.content).getOrElse("")),
+        ),
+        div(
+          className := "modal-actions",
+          button(
+            className := "secondary-btn",
+            onClick --> { _ =>
+              exportVar.now().foreach { r =>
+                copyToClipboard(r.content)
+                showToast(s"Copied ${r.format.toUpperCase} to clipboard")
+              }
+            },
+            "Copy",
+          ),
+          button(
+            className := "secondary-btn",
+            onClick --> { _ => exportVar.set(None) },
+            "Close",
+          ),
+        ),
+      ),
+    )
+
   // --------------------------------------------------------------------------
   // HTTP + SSE
-  //
-  // Endpoint descriptions live in `chess.api.Endpoints`; `SttpClientInterpreter`
-  // turns them into typed functions. Renaming a route or changing a DTO field
-  // on the server compiles-breaks the caller, not a runtime 404.
   // --------------------------------------------------------------------------
 
   private val backend = FetchBackend()
@@ -318,12 +481,15 @@ object Main:
     SttpClientInterpreter().toClientThrowDecodeFailures(Endpoints.postNew, None, backend)
   private val postQuitClient =
     SttpClientInterpreter().toClientThrowDecodeFailures(Endpoints.postQuit, None, backend)
+  private val postLoadClient =
+    SttpClientInterpreter().toClientThrowDecodeFailures(Endpoints.postLoad, None, backend)
+  private val getExportClient =
+    SttpClientInterpreter().toClientThrowDecodeFailures(Endpoints.getExport, None, backend)
 
   private def fetchState(): Unit =
     getStateClient(()).foreach(handleStateResult)
 
   private def connectEvents(): Unit =
-    // SSE isn't in the Tapir contract — /api/events is a raw zio-http stream.
     val source = new dom.EventSource("/api/events")
     source.addEventListener(
       "state",
@@ -347,7 +513,6 @@ object Main:
       case Left(err)    => showToast(err.error)
 
   private def postMove(move: String): Unit =
-    // Success response arrives via SSE; we only surface errors to the user.
     postMoveClient(MoveRequest(move)).foreach {
       case Right(_)  => ()
       case Left(err) => showToast(err.error)
@@ -358,6 +523,18 @@ object Main:
   private def postDraw(): Unit = postAndToastErrors(postDrawClient(()))
   private def postNew(): Unit  = postAndToastErrors(postNewClient(()))
   private def postQuit(): Unit = postQuitClient(()).foreach(_ => ())
+
+  private def postLoad(raw: String): Unit =
+    postLoadClient(LoadRequest(raw)).foreach {
+      case Right(_)  => ()
+      case Left(err) => showToast(err.error)
+    }
+
+  private def doExport(format: String): Unit =
+    getExportClient(format).foreach {
+      case Right(resp) => exportVar.set(Some(resp))
+      case Left(err)   => showToast(err.error)
+    }
 
   private def postAndToastErrors(
       f: Future[Either[ErrorDto, BoardStateDto]]
@@ -370,6 +547,10 @@ object Main:
   private def showToast(msg: String): Unit =
     toastVar.set(Some(msg))
     dom.window.setTimeout(() => toastVar.set(None), 3000)
+
+  private def copyToClipboard(text: String): Unit =
+    val nav = dom.window.navigator.asInstanceOf[js.Dynamic]
+    nav.clipboard.writeText(text)
 
   // --------------------------------------------------------------------------
   // Drag + drop
@@ -401,3 +582,34 @@ object Main:
         val row = to.charAt(1)
         row == '8' || row == '1'
       case _ => false
+
+  // --------------------------------------------------------------------------
+  // Help text
+  // --------------------------------------------------------------------------
+
+  private val helpContent: String =
+    """|Getting Started
+       |  • Drag a piece or type moves in the input (e.g. e2 e4, Nf3, O-O)
+       |  • Undo / Redo walk through your move history
+       |  • Draw: claim 50-move or threefold repetition when available
+       |  • New Game: reset to the starting position
+       |  • Flip: toggle White / Black perspective
+       |  • Load: import a game from FEN, PGN, or JSON (auto-detected)
+       |  • FEN / PGN / JSON: export the current position
+       |  • Quit: shut down the server
+       |
+       |Move Notation
+       |  Coordinate:      e2 e4   e2e4   e2-e4   e7 e8=Q
+       |  Pawn push:       e4      d5
+       |  Pawn capture:    exd5    cxb4
+       |  Piece move:      Nf3     Bc4    Rd1    Qd8    Ke2
+       |  Disambiguation:  Nbd2    N1f3   Raxd5  (file, rank, or both)
+       |  Castling:        O-O (kingside)   O-O-O (queenside)
+       |  Promotion:       e8=Q    exd8=R  (=Q, =R, =B, =N)
+       |  Check / mate:    Nf3+    Qxf7#
+       |
+       |Rules Implemented
+       |  Standard moves and captures, check / checkmate detection, castling,
+       |  en passant, promotion, 50-move and threefold / fivefold repetition,
+       |  and insufficient material. See docs/notation.md for the full guide.
+       |""".stripMargin

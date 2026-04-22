@@ -242,6 +242,61 @@ body {
   background: rgba(247,160,114,0.08);
 }
 .promotion-choice:hover { background: rgba(247,160,114,0.2); transform: scale(1.08); }
+.modal {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(45,27,20,0.85);
+  display: none;
+  justify-content: center;
+  align-items: center;
+  z-index: 300;
+}
+.modal.visible { display: flex; }
+.modal-dialog {
+  background: #3d2a20;
+  border: 1px solid rgba(247,160,114,0.2);
+  border-radius: 12px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  max-width: 90vw;
+  max-height: 85vh;
+  overflow: auto;
+  color: #f5e6dc;
+}
+.modal-dialog h2 { color: #f7a072; font-size: 20px; font-weight: 600; }
+.modal-dialog p { color: #c4a08a; font-size: 14px; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.modal-actions .secondary-btn { flex: 0 0 auto; min-width: 80px; }
+.help-dialog { width: 640px; }
+.help-text {
+  font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #f5e6dc;
+  white-space: pre;
+  background: rgba(0,0,0,0.2);
+  padding: 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+.load-dialog, .export-dialog { width: 560px; }
+.load-input, .export-output {
+  width: 100%;
+  padding: 10px;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(247,160,114,0.2);
+  border-radius: 8px;
+  color: #f5e6dc;
+  font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  outline: none;
+  resize: vertical;
+}
+.load-input:focus { border-color: #f7a072; }
 @media (max-width: 900px) {
   .app { flex-direction: column; align-items: center; gap: 24px; padding: 16px; }
   .sidebar { width: 100%; max-width: 600px; }

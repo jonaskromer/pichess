@@ -50,3 +50,15 @@ final case class ErrorDto(error: String)
 object ErrorDto:
   given JsonEncoder[ErrorDto] = DeriveJsonEncoder.gen[ErrorDto]
   given JsonDecoder[ErrorDto] = DeriveJsonDecoder.gen[ErrorDto]
+
+final case class LoadRequest(raw: String)
+
+object LoadRequest:
+  given JsonEncoder[LoadRequest] = DeriveJsonEncoder.gen[LoadRequest]
+  given JsonDecoder[LoadRequest] = DeriveJsonDecoder.gen[LoadRequest]
+
+final case class ExportResponse(format: String, content: String)
+
+object ExportResponse:
+  given JsonEncoder[ExportResponse] = DeriveJsonEncoder.gen[ExportResponse]
+  given JsonDecoder[ExportResponse] = DeriveJsonDecoder.gen[ExportResponse]

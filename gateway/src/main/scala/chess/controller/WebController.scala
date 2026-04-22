@@ -1,7 +1,8 @@
 package chess.controller
 
-import chess.api.{BoardStateDto, Endpoints, ErrorDto, MoveRequest}
+import chess.api.{BoardStateDto, Endpoints, ErrorDto, ExportResponse, LoadRequest, MoveRequest}
 import chess.api.Endpoints.QuitAck
+import chess.codec.{FenSerializer, JsonSerializer, PgnSerializer}
 import chess.model.{GameError, GameSnapshot, SessionState}
 import chess.notation.SanSerializer
 import chess.service.GameService
@@ -80,6 +81,50 @@ object WebController:
         Endpoints.postQuit.zServerLogic[Any](_ =>
           shutdown.succeed(()).as(QuitAck(quit = true))
         ),
+        Endpoints.postLoad.zServerLogic[Any] { req =>
+          gs.loadGame(req.raw)
+            .mapError(toErrorDto)
+            .flatMap { case (event, history) =>
+              session.set(
+                SessionState(
+                  GameSnapshot.fromHistory(
+                    event.gameId,
+                    event.initialState,
+                    history.reverse,
+                  )
+                )
+              )
+            }
+            .zipRight(currentBoard(session))
+        },
+        Endpoints.getExport.zServerLogic[Any] { format =>
+          val normalized = format.toLowerCase
+          session.get.flatMap { s =>
+            normalized match
+              case "fen" =>
+                ZIO.succeed(
+                  ExportResponse("fen", FenSerializer.serialize(s.state))
+                )
+              case "json" =>
+                ZIO.succeed(
+                  ExportResponse("json", JsonSerializer.serialize(s.state))
+                )
+              case "pgn" =>
+                SanSerializer
+                  .deriveMoveLog(s.initialState, s.history)
+                  .orDie
+                  .flatMap(log =>
+                    PgnSerializer.serialize(log, s.state.status)
+                  )
+                  .map(ExportResponse("pgn", _))
+              case other =>
+                ZIO.fail(
+                  ErrorDto(
+                    s"Unknown format '$other'; expected fen, pgn, or json"
+                  )
+                )
+          }
+        },
       ),
     )
 

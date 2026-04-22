@@ -198,5 +198,86 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         response.status == Status.Ok,
         s.state.status == GameStatus.Draw(DrawReason.FiftyMoveRule)
       )
-    }
+    },
+    test("POST /api/load replays a PGN into the session") {
+      val pgn = "1. e4 e5 2. Nf3 Nc6 *"
+      for
+        (routes, session, _) <- withRoutes
+        response <- routes.runZIO(
+          Request.post(
+            url"/api/load",
+            Body.fromString(s"""{"raw":"$pgn"}"""),
+          )
+        )
+        body <- response.body.asString
+        s <- session.get
+      yield assertTrue(
+        response.status == Status.Ok,
+        // After e4 e5 Nf3 Nc6, white knight on f3 and e-pawns have moved.
+        s.state.board.get(Position('f', 3)) == Some(
+          Piece(Color.White, PieceType.Knight)
+        ),
+        s.state.board.get(Position('c', 6)) == Some(
+          Piece(Color.Black, PieceType.Knight)
+        ),
+        body.contains(""""activeColor":"white""""),
+      )
+    },
+    test("POST /api/load rejects garbage with 400") {
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(
+          Request.post(
+            url"/api/load",
+            Body.fromString("""{"raw":"not a game"}"""),
+          )
+        )
+        body <- response.body.asString
+      yield assertTrue(
+        response.status == Status.BadRequest,
+        body.contains(""""error":"""),
+      )
+    },
+    test("GET /api/export/fen returns the current position") {
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.get(url"/api/export/fen"))
+        body <- response.body.asString
+      yield assertTrue(
+        response.status == Status.Ok,
+        body.contains(""""format":"fen""""),
+        // The initial FEN ends with "KQkq - 0 1".
+        body.contains("KQkq"),
+      )
+    },
+    test("GET /api/export/pgn returns a PGN envelope") {
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.get(url"/api/export/pgn"))
+        body <- response.body.asString
+      yield assertTrue(
+        response.status == Status.Ok,
+        body.contains(""""format":"pgn""""),
+      )
+    },
+    test("GET /api/export/json returns a JSON envelope") {
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.get(url"/api/export/json"))
+        body <- response.body.asString
+      yield assertTrue(
+        response.status == Status.Ok,
+        body.contains(""""format":"json""""),
+      )
+    },
+    test("GET /api/export/unknown returns 400 with an error message") {
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.get(url"/api/export/pdf"))
+        body <- response.body.asString
+      yield assertTrue(
+        response.status == Status.BadRequest,
+        body.contains("Unknown format"),
+      )
+    },
   ).provide(appLayer, Scope.default)
