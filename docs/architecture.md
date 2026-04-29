@@ -6,65 +6,90 @@
 
 The application runs a TUI and a web GUI simultaneously, sharing game state via `SubscriptionRef`. Both UIs delegate move processing to `GameController`, which orchestrates `GameService`, SAN serialization, and session state updates.
 
+## SBT Module Map
+
+The project is split into 13 SBT sub-projects (Phase 5). Cross-compiled modules (`domain`, `api`) target both JVM and JS so the Scala.js web-ui shares types and DTOs with the JVM gateway.
+
+```
+root (aggregate)
+├── domain (JVM + JS)     chess.model  — board, pieces, errors, PieceUnicode
+├── api (JVM + JS)        chess.api    — wire DTOs (BoardStateDto) + Tapir endpoints
+├── rules                 chess.model.rules — move validation, game progression, Zobrist
+├── codec                 chess.codec + chess.notation — FEN/PGN/JSON codecs, SAN, move parsing
+├── repository-api        chess.repository.api — Tapir endpoint contract for repo microservice
+├── repository            chess.repository — GameRepository impls + RepositoryServer
+├── game-service          chess.service + chess.controller.GameController + SessionState
+├── gateway               chess.controller.WebController + chess.view (HtmlPage, WebBoardView)
+├── tui                   chess.controller.TuiController + chess.view (BoardView, HelpView, MoveLogView)
+├── app                   chess.Main — composition root (TUI + gateway in one process)
+└── web-ui (JS only)      chess.webui — Laminar SPA (compiled to JS, served by gateway)
+```
+
 ## Layer Diagram
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                      Main.scala                         │
-│   (ZLayer wiring, TUI loop, HTTP server, SSE, shutdown) │
-└───────┬──────────────────────────┬──────────────────────┘
-        │ uses                     │ uses
-┌───────▼──────────────┐   ┌───────▼──────────────────────┐
-│  chess.controller    │   │         chess.view            │
-│  GameController      │   │  BoardView, MoveLogView,     │
-│  WebController       │   │  HelpView, HtmlPage,         │
-│  TuiController       │   │  WebBoardView, PieceUnicode   │
-└───────┬──────────────┘   └───────┬──────────────────────┘
-        │ uses                     │ uses
-┌───────▼──────────────┐           │
-│  chess.service       │           │
-│  GameService trait   │           │
-│  GameServiceLive     │           │
-└───┬──────────┬───────┘           │
-    │ uses     │ uses              │
-    │  ┌───────▼──────────────┐    │   ┌──────────────────────┐
-    │  │  chess.notation      │    │   │  chess.codec         │
-    │  │  NotationResolver    │    │   │  FenParser trait +   │
-    │  │  CoordinateResolver  │    │   │   3 implementations  │
-    │  │  SanResolver         │    │   │  FenBuilder          │
-    │  │  CastlingResolver    │    │   │  FenSerializer       │
-    │  │  SanSerializer       │    │   │  JsonCodec / Parser  │
-    │  │  MoveParser          │    │   │   / Serializer       │
-    │  └───────┬──────────────┘    │   │  PgnParser           │
-    │          │                   │   │  PgnSerializer       │
-    │          │                   │   └───────┬──────────────┘
-    │ uses     │ uses              │           │ uses
-┌───▼──────────▼───────────────────▼───────────▼──────────┐
-│                    chess.model                           │
-│  Board, GameState, Move, Position, Piece,               │
-│  Color, PieceType, GameId, GameEvent, GameError,        │
-│  GameSnapshot, SessionState                             │
-└───────┬─────────────────────────────────────────────────┘
-        │ uses
-┌───────▼──────────────────┐   ┌──────────────────────────┐
-│  chess.model.rules       │   │     chess.repository     │
-│  Game, MoveValidator,    │   │     GameRepository trait │
-│  Ray                     │   │     InMemoryGameRepo     │
-└──────────────────────────┘   └──────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                   app / Main.scala                          │
+│  (ZLayer wiring, TUI loop, HTTP server, SSE, shutdown)      │
+└──────┬──────────────────┬────────────────┬──────────────────┘
+       │ uses             │ uses           │ uses
+┌──────▼─────────┐ ┌─────▼──────────┐ ┌───▼──────────────────┐
+│  tui           │ │  gateway       │ │  web-ui (Scala.js)   │
+│  TuiController │ │  WebController │ │  Laminar SPA         │
+│  BoardView     │ │  HtmlPage      │ │  Logic, Main         │
+│  MoveLogView   │ │  WebBoardView  │ │  (api DTOs)          │
+│  HelpView      │ │  (Tapir+SSE)   │ └──────────────────────┘
+└──────┬─────────┘ └─────┬──────────┘
+       │ uses             │ uses
+┌──────▼──────────────────▼───────────────┐
+│  game-service                           │
+│  GameController, SessionState           │
+│  GameService trait, GameServiceLive      │
+└──────┬──────────┬───────────────────────┘
+       │ uses     │ uses
+┌──────▼──────┐ ┌─▼──────────────────────────────────────────┐
+│ repository  │ │  codec                                     │
+│ GameRepo    │ │  chess.codec: FenParser(×3), FenSerializer,│
+│ InMemory    │ │    FenCodec, JsonCodec, PgnCodec,          │
+│ HttpGame    │ │    PgnParser, PgnSerializer, JsonParser,   │
+│ RepoServer  │ │    JsonSerializer, FenBuilder              │
+└──────┬──────┘ │  chess.notation: MoveParser, SanSerializer,│
+       │        │    CoordinateResolver, SanResolver,        │
+       │        │    CastlingResolver, NotationResolver       │
+       │        └──┬─────────────────────────────────────────┘
+       │ uses      │ uses
+┌──────▼───────────▼──────────────────────────────────────────┐
+│  rules                                                      │
+│  Game, MoveValidator, Ray, Zobrist                          │
+└──────┬──────────────────────────────────────────────────────┘
+       │ uses
+┌──────▼──────────────────────────────────────────────────────┐
+│  domain (cross-compiled JVM + JS)                           │
+│  chess.model: Board, GameState, Move, Position, Piece,      │
+│    Color, PieceType, GameId, GameEvent, GameError,          │
+│    CastlingRights, GameStatus, DrawReason                   │
+│  chess.view: PieceUnicode                                   │
+└─────────────────────────────────────────────────────────────┘
+
+  Separate contract modules (no domain logic):
+┌────────────────────┐   ┌────────────────────────────┐
+│  api (JVM + JS)    │   │  repository-api             │
+│  BoardStateDto     │   │  RepositoryEndpoints        │
+│  Endpoints (Tapir) │   │  GameStateEnvelope          │
+└────────────────────┘   └────────────────────────────┘
 ```
 
 ## Packages
 
-### `chess.model`
+### `chess.model` (module: `domain`, cross-compiled JVM + JS)
 
 Domain types. No I/O, no dependencies on other packages.
 
 | File | Purpose |
 |---|---|
 | `GameId.scala` | `type GameId = String` — single change point if stronger typing is needed later |
-| `GameError.scala` | Defines `enum GameError` representing typed failure tracks (e.g. `ParseError`, `InvalidMove`, `GameNotFound`) |
+| `GameError.scala` | Defines `enum GameError` representing typed failure tracks (e.g. `ParseError`, `InvalidMove`, `GameNotFound`, `InfrastructureError`) |
 | `GameEvent.scala` | Domain events: `GameStarted`, `MoveMade`, `InvalidMoveAttempted` |
-| `SessionState.scala` | `GameSnapshot` (game ID, initial state, history as `List[(Move, GameState)]` newest-first, redo stack) and `SessionState` (snapshot + optional error/output) — held in a `SubscriptionRef`. Current state is derived from `history.head` or `initialState`. |
 | `board/Board.scala` | `type Board = Map[Position, Piece]` + initial board setup |
 | `board/CastlingRights.scala` | Case class with four booleans tracking kingside/queenside castling rights for each color |
 | `board/GameState.scala` | Immutable game snapshot: board, active color, en passant target, castling rights, in-check flag, game status, halfmove clock, fullmove number |
@@ -75,7 +100,9 @@ Domain types. No I/O, no dependencies on other packages.
 | `piece/Piece.scala` | A piece: color + type |
 | `piece/PieceType.scala` | `Pawn`, `Rook`, `Knight`, `Bishop`, `Queen`, `King` |
 
-### `chess.model.rules`
+Also in `domain`: `chess.view.PieceUnicode` — maps `(Color, PieceType)` to Unicode chess symbols; lives here so the Scala.js web-ui can use it without depending on the full view layer.
+
+### `chess.model.rules` (module: `rules`)
 
 Chess logic using ZIO's typed error channel. Takes `GameState` and `Move`, returns `IO[GameError, GameState]`.
 
@@ -84,10 +111,11 @@ Chess logic using ZIO's typed error channel. Takes `GameState` and `Move`, retur
 | `MoveValidator.scala` | Validates a move against all chess rules for all piece types, including en passant and castling. Provides `isInCheck`, `hasLegalMove`, and the legal-move enumeration used for checkmate/stalemate detection. |
 | `Game.scala` | Applies a validated move to produce a new `GameState`; handles en passant, pawn promotion, castling, halfmove/fullmove counters, and detects checkmate, stalemate, and insufficient material. |
 | `Ray.scala` | Reusable piece-movement primitives: per-piece-type ray tables (king/queen/rook/bishop = sliding, knight = single-hop) plus `walk` and `canReach` helpers used by `MoveValidator`. |
+| `Zobrist.scala` | Zobrist hashing for game positions — provides fast position comparison for repetition detection. |
 
-### `chess.notation`
+### `chess.notation` (module: `codec`)
 
-Notation parsing and serialization. Each notation style has its own resolver implementing the `NotationResolver` trait (Strategy pattern). The resolvers are chained by `MoveParser` (Chain of Responsibility).
+Notation parsing and serialization. Each notation style has its own resolver implementing the `NotationResolver` trait (Strategy pattern). The resolvers are chained by `MoveParser` (Chain of Responsibility). Lives in the `codec` module alongside the FEN/PGN/JSON codecs.
 
 | File | Purpose |
 |---|---|
@@ -98,9 +126,9 @@ Notation parsing and serialization. Each notation style has its own resolver imp
 | `MoveParser.scala` | Orchestrator: chains `CoordinateResolver`, `CastlingResolver`, `SanResolver` in order; `parse(input, state): IO[GameError, Move]`. Lives here (not in `controller`) so `codec.PgnParser` can reuse it without inverting layering. |
 | `SanSerializer.scala` | `toSan(move, state): IO[GameError, String]` — serializes a `Move` + pre-move `GameState` into SAN (with disambiguation, capture notation, and promotion). Also provides `deriveMoveLog(initialState, moves)` to replay and serialize an entire move history. |
 
-### `chess.codec`
+### `chess.codec` (module: `codec`)
 
-Game state encoding and decoding in multiple formats: FEN (Forsyth–Edwards Notation), PGN (Portable Game Notation), and JSON. FEN is used for game import/export and as the persistence wire format for the REST API introduced in phase 4. Three FEN parser implementations are provided side-by-side, each demonstrating a different parsing technique; they all share the same semantic validation through `FenBuilder`. PGN support covers move-text import/export. JSON is used for web GUI communication.
+Game state encoding and decoding in multiple formats: FEN (Forsyth–Edwards Notation), PGN (Portable Game Notation), and JSON. FEN is used for game import/export and as the persistence wire format for the repository microservice's REST API. Three FEN parser implementations are provided side-by-side, each demonstrating a different parsing technique; they all share the same semantic validation through `FenBuilder`. PGN support covers move-text import/export. JSON is used for web GUI communication.
 
 | File | Purpose |
 |---|---|
@@ -110,85 +138,117 @@ Game state encoding and decoding in multiple formats: FEN (Forsyth–Edwards Not
 | `FenParserRegex.scala` | Implementation built on `scala.util.matching.Regex` with no external parser library. |
 | `FenBuilder.scala` | Shared converter from the six tokenized FEN fields to a validated `GameState`. Computes `inCheck` via `MoveValidator.isInCheck`. |
 | `FenSerializer.scala` | `serialize(state: GameState): String` — emits the canonical FEN string for a game state, including the halfmove clock and fullmove number. Also exposes `positionKey` (the first four FEN fields) which `GameController` reuses for threefold/fivefold repetition detection. |
+| `FenCodec.scala` | Convenience facade combining `FenParserRegex` and `FenSerializer` for round-trip FEN encoding. |
 | `PgnParser.scala` | Parses PGN (Portable Game Notation) move text into a list of moves. |
 | `PgnSerializer.scala` | Serializes a game's move history into PGN format. |
+| `PgnCodec.scala` | Convenience facade combining `PgnParser` and `PgnSerializer`. |
 | `JsonParser.scala` | Parses a JSON representation of game state. |
 | `JsonSerializer.scala` | Serializes game state to JSON. |
 | `JsonCodec.scala` | Combines `JsonParser` and `JsonSerializer` for round-trip JSON encoding. |
 
-**Future:** The Phase 4 REST API will use this package to expose `GET /games/:id` (serializer) and `POST /games` with a FEN body (parser).
-
 ### `chess.controller`
 
-Input handling and shared move-processing logic.
+Input handling and shared move-processing logic. Split across three modules:
+
+| File | Module | Purpose |
+|---|---|---|
+| `GameController.scala` | `game-service` | Shared move-processing logic used by both TUI and web: `makeMove`, `undo`, `redo`, `claimDraw`. Owns the history/redo stack updates on the `SubscriptionRef[SessionState]`, persists each state via `GameService.saveState`, and runs repetition detection (`positionKey`, `countCurrentPosition`, `isFivefoldRepetition`) so a fivefold repetition is auto-promoted to a draw. |
+| `TuiController.scala` | `tui` | TUI command parser + dispatcher. Recognises `quit`, `help`, `flip`, `undo`, `redo`, `draw`, `load <text>`, `export fen|pgn|json`, and free-form moves; returns `Result.Shutdown` or `Result.Continue(flipped)`. |
+| `WebController.scala` | `gateway` | zio-http + Tapir route handlers for `GET /`, `GET /api/state`, `GET /api/events` (SSE), `POST /api/move`, `/undo`, `/redo`, `/draw`, `/new`, `/load`, `/quit`, `GET /api/export/:format`, `GET /docs` (Swagger UI). Delegates all game logic to `GameController` and converts `GameError` into JSON error responses. |
+
+### `chess.model.SessionState` (module: `game-service`)
 
 | File | Purpose |
 |---|---|
-| `GameController.scala` | Shared move-processing logic used by both TUI and web: `makeMove`, `undo`, `redo`, `claimDraw`. Owns the history/redo stack updates on the `SubscriptionRef[SessionState]`, persists each state via `GameService.saveState`, and runs repetition detection (`positionKey`, `countCurrentPosition`, `isFivefoldRepetition`) so a fivefold repetition is auto-promoted to a draw. |
-| `TuiController.scala` | TUI command parser + dispatcher. Recognises `quit`, `help`, `flip`, `undo`, `redo`, `draw`, `load <text>`, `export fen|pgn|json`, and free-form moves; returns `Result.Shutdown` or `Result.Continue(flipped)`. |
-| `WebController.scala` | zio-http route handlers for `GET /`, `GET /api/state`, `GET /api/events` (SSE), `POST /api/move`, `/undo`, `/redo`, `/draw`, `/new`, `/quit`. Delegates all game logic to `GameController` and converts `GameError` into JSON error responses. |
+| `SessionState.scala` | `GameSnapshot` (game ID, initial state, history as `List[(Move, GameState)]` newest-first, redo stack) and `SessionState` (snapshot + optional error/output) — held in a `SubscriptionRef`. Current state is derived from `history.head` or `initialState`. |
 
-### `chess.repository`
+### `chess.repository` (module: `repository`)
 
-Persistence abstraction. Designed for future swap between MongoDB and PostgreSQL.
+Persistence abstraction with in-memory and HTTP-backed implementations. The repository is also deployable as a standalone microservice via `RepositoryServer`.
 
 | File | Purpose |
 |---|---|
 | `GameRepository.scala` | Trait: `save`, `load`, `delete` by `GameId`. Returns `IO[GameError, A]`. Companion provides ZIO accessor methods. |
-| `InMemoryGameRepository.scala` | `Ref[Map[GameId, GameState]]`-backed implementation. Provided as a `ULayer[GameRepository]`. |
+| `InMemoryGameRepository.scala` | `Ref[Map[GameId, GameState]]`-backed implementation. Provided as a `ULayer[GameRepository]`. Used for local dev. |
+| `HttpGameRepository.scala` | Tapir sttp client that calls the repository microservice over REST. Used when `REPOSITORY_URL` is set. Errors map to `GameError.InfrastructureError`. |
+| `RepositoryServer.scala` | Tapir-backed HTTP server that exposes `GameRepository` over REST. Wire format is FEN. |
+| `RepositoryMain.scala` | ZIO app entry point for the standalone repository microservice (port 8091). |
 
-**Future:** `MongoGameRepository` and `PostgresGameRepository` will implement the same trait and be swapped in via ZLayer at the `Main` wiring boundary.
+### `chess.repository.api` (module: `repository-api`)
 
-### `chess.service`
+| File | Purpose |
+|---|---|
+| `RepositoryEndpoints.scala` | Tapir endpoint descriptions for the repository microservice REST contract. Shared by `RepositoryServer` (server) and `HttpGameRepository` (client). Wire format for `GameState` is FEN. |
 
-Orchestration layer. Coordinates domain logic, parsing, and persistence. This is the primary integration seam for future HTTP routes, WebSocket handlers, and Kafka producers.
+**Future:** `MongoGameRepository` and `PostgresGameRepository` will implement the same `GameRepository` trait and be swapped in via ZLayer.
+
+### `chess.api` (module: `api`, cross-compiled JVM + JS)
+
+Wire DTOs and Tapir endpoint contracts shared between the gateway (JVM encoder) and the Scala.js web-ui (JS decoder). Single source of truth for the HTTP contract.
+
+| File | Purpose |
+|---|---|
+| `BoardStateDto.scala` | Wire DTOs: `BoardStateDto`, `MoveRequest`, `LoadRequest`, `ExportResponse`, etc. Auto-derived zio-json codecs. |
+| `Endpoints.scala` | Typed Tapir endpoint descriptions for the gateway REST API (state, move, undo, redo, draw, new, load, export, quit). |
+
+### `chess.service` (module: `game-service`)
+
+Orchestration layer. Coordinates domain logic, parsing, and persistence. This is the primary integration seam for HTTP routes, WebSocket handlers, and future Kafka producers.
 
 | File | Purpose |
 |---|---|
 | `GameService.scala` | Trait: `newGame()`, `loadGame(input)` (auto-detects JSON / PGN / FEN), `makeMove(id, input)`, `getState(id)`, `saveState(id, state)`. Returns `IO[GameError, A]`. Companion provides ZIO accessors and a `layer` alias. |
 | `GameServiceLive.scala` | Live implementation injected via `ZLayer.fromFunction`. `makeMove` parses → validates → applies → persists, returning `(newState, GameEvent.MoveMade)`. `loadGame` tries `JsonParser`, then `PgnParser` (whose move history is preserved for undo/redo), then `FenParserRegex`. |
 
-**Future:** HTTP routes will call `GameService` directly. Kafka publishing will be added at the call site (`makeMove` returns the event — callers decide what to do with it).
+HTTP routes (`WebController` in `gateway`) call `GameService` directly. **Future:** Kafka publishing will be added at the call site (`makeMove` returns the event — callers decide what to do with it).
 
 ### `chess.view`
 
-Pure rendering. No I/O.
+Pure rendering. No I/O. Split across three modules:
+
+| File | Module | Purpose |
+|---|---|---|
+| `PieceUnicode.scala` | `domain` | Maps `(Color, PieceType)` to Unicode chess symbols |
+| `BoardView.scala` | `tui` | `render(state, flipped): String` — ANSI-colored board with Unicode chess symbols; supports flipped perspective |
+| `MoveLogView.scala` | `tui` | `render(log): String` — displays the last two moves in SAN with color-coded player labels |
+| `HelpView.scala` | `tui` | `render: String` — in-game help screen listing commands, notation, and implemented rules |
+| `HtmlPage.scala` | `gateway` | `render: String` — HTML page that loads the Scala.js web-ui bundle |
+| `WebBoardView.scala` | `gateway` | `toJson(state, moveLog, error): String` — serializes game state to JSON for the web frontend |
+
+### `chess.webui` (module: `web-ui`, Scala.js only)
+
+Laminar single-page app compiled to JavaScript and served by the gateway via classpath resources.
 
 | File | Purpose |
 |---|---|
-| `BoardView.scala` | `render(state, flipped): String` — ANSI-colored board with Unicode chess symbols; supports flipped perspective |
-| `MoveLogView.scala` | `render(log): String` — displays the last two moves in SAN with color-coded player labels |
-| `HelpView.scala` | `render: String` — in-game help screen listing commands, notation, and implemented rules |
-| `HtmlPage.scala` | `render: String` — HTML page with embedded CSS and JavaScript for the web GUI |
-| `WebBoardView.scala` | `toJson(state, moveLog, error): String` — serializes game state to JSON for the web frontend |
-| `PieceUnicode.scala` | Maps `(Color, PieceType)` to Unicode chess symbols |
+| `Main.scala` | Laminar app entry point — renders the board, move log, promotion dialog, and control buttons |
+| `Logic.scala` | Pure board-logic helpers (legal-move highlighting, drag-and-drop validation) extracted for unit testing |
 
-### `chess` (root)
+### `chess` (module: `app`)
 
 | File | Purpose |
 |---|---|
-| `Main.scala` | ZIO app entry point. Wires layers, runs the TUI loop + HTTP server in parallel with `SubscriptionRef` shared state, SSE, and coordinated shutdown via `Promise`. Honours `--headless` to skip the GUI. |
+| `Main.scala` | ZIO app entry point. Wires layers, runs the TUI loop + HTTP server in parallel with `SubscriptionRef` shared state, SSE, and coordinated shutdown via `Promise`. Honours `--headless` to skip the GUI. Selects `HttpGameRepository` (when `REPOSITORY_URL` is set) or `InMemoryGameRepository` for persistence. |
 
 ## Dependency Rules
 
-Dependencies only flow **downward**:
+Dependencies only flow **downward**. SBT module boundaries enforce this at compile time:
 
 ```
-Main → controller → service    → repository
-                              → notation
-                              → codec
-                              → model.rules
-                  → notation
-                  → codec
-                  → view
-                  → model
-codec → model.rules → model
-notation → model.rules → model
-view → model
-repository → model
+app → tui, gateway, game-service, repository, codec
+tui → game-service, codec
+gateway → game-service, codec, api
+web-ui → domain, api                                  (Scala.js)
+game-service → domain, rules, codec, repository
+repository → domain, repository-api, codec
+codec → domain, rules
+rules → domain
+api → (standalone, cross-compiled)
+repository-api → (standalone)
+domain → (no internal deps)
 ```
 
-No package imports from a layer above it. `chess.model` has no dependencies on any other package in this project (except ZIO itself for `IO` in `rules`).
+No module imports from a layer above it. `domain` has no dependencies on any other module in this project (except ZIO itself for `IO`). The `api` and `repository-api` modules are contract-only and depend on Tapir + zio-json, not on domain logic.
 
 ## Key Design Decisions
 
@@ -206,13 +266,10 @@ See [`docs/adr/`](adr/) for the full decision records:
 
 ## Future Integration Points
 
-See [`docs/roadmap.md`](roadmap.md) for the full phased plan.
+See [`docs/roadmap.md`](roadmap.md) for the full phased plan. Phases 1–5 and the Phase 7 web UI are complete.
 
 | Phase | Technology | Integration seam |
 |-------|-----------|-----------------|
-| 3 — Parsers (combinators / fastparse / regex) | `scala-parser-combinators`, `fastparse`, `scala.util.matching.Regex` | `chess.codec` package: three FEN parsers + serializer |
-| 4 — HTTP / REST | **Akka HTTP** or zio-http (Routing DSL) | `GameService` trait; HTTP routes call it directly |
-| 5 — Microservices | SBT multi-project + **Docker Compose** | Module boundaries mirror existing package dependencies; REST IPC between containers |
 | 6 — Persistence (Slick) | **Slick** (PostgreSQL) + DAO pattern | `GameRepository` trait; new impl swaps in via a single ZLayer line |
 | 7 — Persistence (Mongo) | **MongoDB** Scala driver | Second `GameRepository` impl behind same DAO trait |
 | 8 — Performance | **Gatling** load tests | REST API (Phase 4) is the Gatling target; optimize and show improvement |
@@ -225,14 +282,18 @@ See [`docs/roadmap.md`](roadmap.md) for the full phased plan.
 
 | Tool | Purpose |
 |---|---|
-| sbt 1.12.6 | Build tool |
+| sbt 1.12.6 | Build tool (13-module multi-project) |
 | Scala 3.8.2 | Language |
 | ZIO 2.1.24 | Effect system, dependency injection, concurrency |
 | zio-http 3.10.1 | HTTP server, SSE |
-| zio-json 0.9.0 | Auto-derived JSON codecs (used in `chess.codec.JsonCodec`) |
+| zio-json 0.9.0 | Auto-derived JSON codecs (used in `chess.codec.JsonCodec` and wire DTOs) |
 | zio-process 0.7.2 | Spawning the system browser on startup (used in `Main.openBrowser`) |
+| Tapir 1.11.36 | Typed HTTP endpoint descriptions, Swagger UI, sttp client for inter-service calls |
+| Laminar 17.2.0 | Scala.js reactive UI framework (web-ui module) |
 | scala-parser-combinators 2.4.0 | Parser combinators (used in `chess.codec`) |
 | fastparse 3.1.1 | Macro-based parser library (used in `chess.codec`) |
+| sbt-scalajs + sbt-crossproject | Scala.js compilation and JVM/JS cross-compilation |
+| sbt-native-packager | Docker image packaging (`sbt Docker/publishLocal`) |
 | zio-test 2.1.24 | Test framework |
 | sbt-scoverage 2.2.1 | Coverage instrumentation; build fails below 100% |
 | sbt-scalafmt 2.5.2 | Code formatting; run `sbt scalafmtAll` after any change |

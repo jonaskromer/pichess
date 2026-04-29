@@ -13,11 +13,19 @@
 |---|---|
 | `sbt run` | Start TUI + GUI (opens browser on port 8090) |
 | `sbt "run --headless"` | Start TUI only (no web server, no browser) |
-| `sbt test` | Run all tests |
+| `sbt test` | Run all tests across all modules |
 | `sbt scalafmtAll` | Format all source files (required before committing) |
 | `sbt coverage test coverageReport` | Run tests with coverage report |
+| `sbt app/run` | Run only the `app` module (equivalent to `sbt run`) |
+| `sbt repository/run` | Run the standalone repository microservice (port 8091) |
+| `sbt Docker/publishLocal` | Build Docker images for `app` and `repository` |
+| `docker compose up` | Start both microservices via Docker Compose |
 
-Coverage is enforced at 100%. The build fails if any line is uncovered — every file in `src/main/scala`, including `Main.scala` and `WebController.scala`, is measured. Use `scripts/check-coverage.py` after a `coverageReport` run to inspect uncovered lines per file.
+### Multi-Project Tips
+
+The project has 13 SBT sub-projects. To run commands against a single module, prefix with the module name: `sbt codec/test`, `sbt gateway/compile`, etc. `sbt test` runs tests across all modules.
+
+Coverage is enforced at 100% on all JVM modules. The build fails if any line is uncovered. Scala.js modules (`web-ui`, `domain.js`, `api.js`) have coverage disabled since scoverage doesn't instrument JS output. Use `scripts/check-coverage.py` after a `coverageReport` run to inspect uncovered lines per file.
 
 Tests use **zio-test** (`ZIOSpecDefault`). Each test spec is an `object` extending `ZIOSpecDefault` with a `def spec` that returns a `Spec` tree of `suite(...)` and `test(...)` blocks. Assertions use `assertTrue(...)`. Service/repository tests provide layers via `.provide(layer)` on the suite.
 
@@ -60,7 +68,7 @@ When fixing a bug, write a regression spec **before** touching production code:
 
 ## Adding a New Repository Implementation
 
-1. Create a class in `chess.repository` that extends `GameRepository`:
+1. Create a class in the `repository` module (`repository/src/main/scala/chess/repository/`) that extends `GameRepository`:
    ```scala
    final class PostgresGameRepository(...) extends GameRepository:
      def save(id: GameId, state: GameState): IO[GameError, Unit] = ???
@@ -72,7 +80,22 @@ When fixing a bug, write a regression spec **before** touching production code:
    object PostgresGameRepository:
      val layer: URLayer[DataSource, GameRepository] = ZLayer.fromFunction(...)
    ```
-3. In `Main.scala`, replace `InMemoryGameRepository.layer` with `PostgresGameRepository.layer` — no other file changes needed.
+3. In `app/src/main/scala/chess/Main.scala`, replace the repository layer selection — no other file changes needed. The existing `Main` already selects between `InMemoryGameRepository` and `HttpGameRepository` based on the `REPOSITORY_URL` env var; add a third branch or replace one.
+
+---
+
+## Docker
+
+Two modules are Docker-packaged via sbt-native-packager: `app` (port 8090) and `repository` (port 8091).
+
+```bash
+sbt Docker/publishLocal          # build both images
+docker compose up                # run both microservices
+```
+
+When `REPOSITORY_URL` is set (e.g. `http://repository:8091` in docker-compose), the `app` container uses `HttpGameRepository` to call the `repository` container over REST. Without it, `app` falls back to `InMemoryGameRepository`.
+
+The `docker-compose.yml` at the project root wires both services together.
 
 ---
 
@@ -156,45 +179,43 @@ Dependencies (already in `build.sbt`):
 
 ---
 
-## Adding a REST Route (Phase 4)
+## Adding a REST Route
 
-The web GUI already exposes a small JSON API through `WebController` (zio-http), but Phase 4 adds a true REST surface (`/games`, `/games/:id`, `/games/:id/moves`) intended for inter-service IPC and Gatling load testing. New routes will live in a `chess.http` package and use zio-http's `Routes` DSL — the same builder `WebController` uses today:
+The REST API lives in the `gateway` module (`WebController.scala`). Endpoint contracts are described with **Tapir** in the `api` module (`Endpoints.scala`), and wire DTOs live in `BoardStateDto.scala`. Both are cross-compiled JVM + JS so the Scala.js web-ui shares the same types.
 
-```scala
-import zio.http.*
+To add a new endpoint:
 
-val gameRoutes: Routes[GameService, Response] =
-  Routes(
-    Method.POST   / "games"                      -> handler(/* GameService.newGame() */),
-    Method.GET    / "games" / string("id")       -> handler { (id: String, _: Request) =>
-      /* GameService.getState(id) */
-    },
-    Method.POST   / "games" / string("id") / "moves" -> handler { (id: String, req: Request) =>
-      /* req.body.asString → GameService.makeMove(id, _) */
-    },
-    Method.DELETE / "games" / string("id")       -> handler { (id: String, _: Request) =>
-      /* terminate game */
-    }
-  )
-```
+1. Define the Tapir endpoint in `api/src/main/scala/chess/api/Endpoints.scala`:
+   ```scala
+   val myEndpoint = baseEndpoint.get
+     .in("api" / "my-thing")
+     .out(jsonBody[MyResponse])
+   ```
+2. Add any new DTOs to `BoardStateDto.scala` with `@jsonMemberNames(SnakeCase)` and derived codecs.
+3. Implement the server logic in `gateway/src/main/scala/chess/controller/WebController.scala`:
+   ```scala
+   Endpoints.myEndpoint.zServerLogic { _ =>
+     // delegate to GameController / GameService
+   }
+   ```
+4. The endpoint automatically appears in the Swagger UI at `/docs`.
 
-The lecture (SA-05) names Akka HTTP, but this project stays on zio-http for consistency with the existing ZIO stack — see the deviation note in `roadmap.md`.
+SSE (`/api/events`) is the one endpoint implemented as raw zio-http (not Tapir) because Tapir's typed model doesn't fit streaming.
 
 URL design rules (from lecture):
 - **Nouns not verbs** — `/games` not `/getGame`
 - **Plural for collections**, singular instance via ID
-- **Two URLs per resource**: `/games` (collection) and `/games/:id` (item)
 - Routes are a view layer — they call `GameService`, contain no domain logic
 
 ---
 
 ## Adding a New View
 
-Views live in `chess.view` and are pure functions over `GameState`:
+Views live in the `chess.view` package (split across `domain`, `tui`, and `gateway` modules) and are pure functions over `GameState`:
 
 ```scala
 object JsonBoardView:
   def render(state: GameState): String = ???
 ```
 
-No ZIO, no I/O. The view is called by the transport layer (`Main`, future HTTP routes, etc.).
+No ZIO, no I/O. Place the view in the module that uses it — `tui` for terminal views, `gateway` for web views. `PieceUnicode` is in `domain` so it can be shared across JVM and JS.

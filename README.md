@@ -33,7 +33,7 @@ Dive deeper into the project structure, our development workflow, and where the 
 
 ## 🛠️ Current Status
 
-Phases 1 (TUI Chess), 2 (Functional Style), and 3 (Parser Combinators — three FEN parsers + JSON + PGN codecs) are complete. The web GUI from Phase 7 was built ahead of schedule. **Phase 4 (REST API)** is the next milestone.
+Phases 1 (TUI Chess), 2 (Functional Style), 3 (Parser Combinators), 4 (REST API), and 5 (Microservices + Docker) are complete. The web GUI from Phase 7 was built ahead of schedule. **Phase 6 (Slick / PostgreSQL)** is the next milestone.
 
 **What works:**
 - Full piece movement validation (all piece types)
@@ -43,11 +43,14 @@ Phases 1 (TUI Chess), 2 (Functional Style), and 3 (Parser Combinators — three 
 - Coordinate notation and Standard Algebraic Notation (SAN) with disambiguation
 - FEN, PGN, and JSON codecs for game state import/export
 - ANSI-colored TUI with board flipping and move log
-- Browser GUI with drag-and-drop, promotion dialog, and live sync via SSE
+- Browser GUI (Scala.js + Laminar) with drag-and-drop, promotion dialog, and live sync via SSE
+- REST API with Tapir endpoint contracts and Swagger UI at `/docs`
+- SBT multi-project build (13 modules) with Docker packaging
+- Two Docker-packaged microservices (`app` on port 8090, `repository` on port 8091) orchestrated via `docker-compose.yml`
 - Typed error handling with `IO[GameError, A]` throughout
 - 100% test coverage with zio-test
 
-**What's next:** REST API (Phase 4) on top of the FEN codec.
+**What's next:** Slick persistence layer (Phase 6) — a `PostgresGameRepository` behind the existing `GameRepository` trait.
 
 ---
 *Built with pure functions, immutability, and plenty of 🍑.*

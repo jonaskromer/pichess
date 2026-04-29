@@ -108,17 +108,25 @@ When working as part of a multi-agent setup, each agent should read its own role
 
 ---
 
+## Completed Phases
+
+| Phase | Status |
+|---|---|
+| 1 — TUI Chess | Complete |
+| 2 — Functional Style | Complete |
+| 3 — Parser Combinators | Complete |
+| 4 — REST API (zio-http + Tapir) | Complete |
+| 5 — Microservices + Docker | Complete (13 SBT sub-projects, 2 Docker containers) |
+| 7 — Web UI (Scala.js + Laminar) | Complete (built ahead of schedule) |
+
 ## Future Phases
 
 These are known upcoming lecture phases. When suggesting any architectural change, check that it does not close off or complicate a future phase. Prefer thin traits, ZLayer wiring, and pure functions in the domain.
 
 | Phase | Lecture technology | Key integration point |
 |---|---|---|
-| 3 — Parsers (combinators / fastparse / regex) | `scala-parser-combinators`, `fastparse`, `scala.util.matching.Regex` | `chess.codec` package; FEN parsers + serializer; no domain changes |
-| 4 — HTTP / REST | **Akka HTTP** Routing DSL (or zio-http) | `GameService` trait is the seam; HTTP routes call it directly; also add module REST API for Docker IPC |
-| 5 — Microservices + Docker | SBT multi-project + **Docker Compose** | Each module in its own container; modules communicate via Phase 4 REST API |
 | 6 — Slick (PostgreSQL) | **Slick** FRM + DAO pattern | `GameRepository` trait is already the DAO; new Slick impl swaps via ZLayer |
-| 7 — MongoDB + Web UI | **MongoDB** Scala driver | Second `GameRepository` impl behind same DAO trait. Web UI already partially complete. |
+| 7 — MongoDB | **MongoDB** Scala driver | Second `GameRepository` impl behind same DAO trait |
 | 8 — Performance | **Gatling** (record, optimize, measure, improve) | REST API (Phase 4) is the Gatling target |
 | 9 — Bot / AI | Pluggable move strategy | Bot calls `GameService.makeMove` with computed move |
 | 10 — Reactive Streams | **Akka Streams** GraphDSL (or ZIO Streams) | `GameService.makeMove` return value is the stream publishing seam |
