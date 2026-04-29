@@ -1,6 +1,6 @@
 package chess.view
 
-import chess.model.board.{GameState, Position}
+import chess.model.board.{DrawReason, GameState, GameStatus, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 import zio.json.*
 import zio.test.*
@@ -121,6 +121,40 @@ object WebBoardViewSpec extends ZIOSpecDefault:
         )
       }
     ),
+    suite("toJson with status")(
+      test("emit a playing status by default") {
+        assertTrue(
+          json.contains(
+            """"status":{"kind":"playing","winner":null,"reason":null}"""
+          )
+        )
+      },
+      test("emit checkmate with winner color") {
+        val state = GameState.initial.copy(
+          status = GameStatus.Checkmate(Color.White)
+        )
+        val result = WebBoardView.toJson(state, Nil, None)
+        assertTrue(
+          result.contains(""""kind":"checkmate""""),
+          result.contains(""""winner":"white"""")
+        )
+      },
+      test("emit each draw reason in camelCase") {
+        val cases = List(
+          DrawReason.Stalemate -> "stalemate",
+          DrawReason.FiftyMoveRule -> "fiftyMoveRule",
+          DrawReason.InsufficientMaterial -> "insufficientMaterial",
+          DrawReason.ThreefoldRepetition -> "threefoldRepetition",
+          DrawReason.FivefoldRepetition -> "fivefoldRepetition"
+        )
+        val outputs = cases.map { case (reason, label) =>
+          val state = GameState.initial.copy(status = GameStatus.Draw(reason))
+          val result = WebBoardView.toJson(state, Nil, None)
+          (label, result.contains(s""""reason":"$label""""))
+        }
+        assertTrue(outputs.forall(_._2))
+      }
+    ),
     suite("error-message escaping")(
       test("escape embedded double quotes in error messages") {
         val result =
@@ -128,7 +162,9 @@ object WebBoardViewSpec extends ZIOSpecDefault:
         // zio-json renders the escaped error inside the JSON string value.
         assertTrue(result.contains("""\"hello\""""))
       },
-      test("escape control characters that the previous hand-rolled escape missed") {
+      test(
+        "escape control characters that the previous hand-rolled escape missed"
+      ) {
         // Regression: the previous escapeJson did not escape \u0000–\u001f
         // outside \n \r \t, so error messages containing such characters
         // produced invalid JSON. zio-json emits a \uXXXX escape.

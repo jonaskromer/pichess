@@ -31,12 +31,18 @@ object Main extends ZIOAppDefault:
 
   /** Pick the repository implementation. If `REPOSITORY_URL` is set we talk
     * to a separately-deployed repository microservice over REST; otherwise
-    * we keep the in-process in-memory store.
+    * we keep the in-process in-memory store. Empty / whitespace values fall
+    * back to in-memory so an unset Docker var doesn't crash startup.
     */
-  private val repositoryLayer: ZLayer[Any, Throwable, GameRepository] =
-    sys.env.get("REPOSITORY_URL").filter(_.nonEmpty) match
+  private[chess] def selectRepositoryLayer(
+      envUrl: Option[String]
+  ): ZLayer[Any, Throwable, GameRepository] =
+    envUrl.filter(_.nonEmpty) match
       case Some(url) => HttpGameRepository.layer(url)
       case None      => InMemoryGameRepository.layer
+
+  private val repositoryLayer: ZLayer[Any, Throwable, GameRepository] =
+    selectRepositoryLayer(sys.env.get("REPOSITORY_URL"))
 
   private[chess] def app(
       headless: Boolean,

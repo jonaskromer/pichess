@@ -12,17 +12,18 @@ object BoardStateDtoSpec extends ZIOSpecDefault:
     SquareDto("e5", "dark", None, None)
 
   private val sampleState = BoardStateDto(
-    squares        = List(sampleSquare, emptySquare),
-    activeColor    = "white",
-    moveLog        = List(MoveEntryDto("white", "e4")),
-    error          = None,
-    inCheck        = false,
+    squares = List(sampleSquare, emptySquare),
+    activeColor = "white",
+    moveLog = List(MoveEntryDto("white", "e4")),
+    error = None,
+    inCheck = false,
     checkedKingPos = None,
+    status = GameStatusDto.Playing
   )
 
   def spec = suite("BoardStateDto")(
     test("round-trip via JSON") {
-      val json    = sampleState.toJson
+      val json = sampleState.toJson
       val decoded = json.fromJson[BoardStateDto]
       assertTrue(decoded == Right(sampleState))
     },
@@ -30,7 +31,7 @@ object BoardStateDtoSpec extends ZIOSpecDefault:
       val json = sampleState.toJson
       assertTrue(
         json.contains("\"error\":null"),
-        json.contains("\"checkedKingPos\":null"),
+        json.contains("\"checkedKingPos\":null")
       )
     },
     test("round-trip a square with a piece") {
@@ -63,12 +64,40 @@ object BoardStateDtoSpec extends ZIOSpecDefault:
     },
     test("decode state where optional fields are present") {
       val withError = sampleState.copy(
-        error          = Some("nope"),
-        inCheck        = true,
-        checkedKingPos = Some("e1"),
+        error = Some("nope"),
+        inCheck = true,
+        checkedKingPos = Some("e1")
       )
-      val json    = withError.toJson
+      val json = withError.toJson
       val decoded = json.fromJson[BoardStateDto]
       assertTrue(decoded == Right(withError))
     },
+    test("serialize a Playing status with null winner and reason") {
+      val json = sampleState.toJson
+      assertTrue(
+        json.contains(
+          """"status":{"kind":"playing","winner":null,"reason":null}"""
+        )
+      )
+    },
+    test("round-trip a Checkmate status") {
+      val mated = sampleState.copy(status = GameStatusDto.checkmate("black"))
+      val json = mated.toJson
+      val decoded = json.fromJson[BoardStateDto]
+      assertTrue(
+        json.contains(""""kind":"checkmate""""),
+        json.contains(""""winner":"black""""),
+        decoded == Right(mated)
+      )
+    },
+    test("round-trip a Draw status with a reason") {
+      val drawn = sampleState.copy(status = GameStatusDto.draw("stalemate"))
+      val json = drawn.toJson
+      val decoded = json.fromJson[BoardStateDto]
+      assertTrue(
+        json.contains(""""kind":"draw""""),
+        json.contains(""""reason":"stalemate""""),
+        decoded == Right(drawn)
+      )
+    }
   )

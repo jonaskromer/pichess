@@ -1,6 +1,6 @@
 package chess.webui
 
-import chess.api.{BoardStateDto, MoveEntryDto, SquareDto}
+import chess.api.{BoardStateDto, GameStatusDto, MoveEntryDto, SquareDto}
 import zio.test.*
 
 object LogicSpec extends ZIOSpecDefault:
@@ -15,6 +15,7 @@ object LogicSpec extends ZIOSpecDefault:
       error          = None,
       inCheck        = false,
       checkedKingPos = None,
+      status         = GameStatusDto.Playing,
     )
 
   private val whitePawnOnE7 =

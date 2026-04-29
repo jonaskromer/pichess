@@ -51,6 +51,11 @@ lazy val domain = crossProject(JVMPlatform, JSPlatform)
     coverageMinimumStmtTotal := 100,
     coverageFailOnMinimum    := true,
   )
+  .jsSettings(
+    // scoverage's runtime agent uses java.io.File / TrieMap and doesn't link
+    // under Scala.js — leaving instrumentation on breaks `sbt coverage`.
+    coverageEnabled := false,
+  )
 
 // Wire DTOs — single source of truth for the HTTP contract, shared by gateway
 // (JVM encoder) and web-ui (JS decoder) via zio-json's cross-compiled codecs.
@@ -71,6 +76,9 @@ lazy val api = crossProject(JVMPlatform, JSPlatform)
   .jvmSettings(
     coverageMinimumStmtTotal := 100,
     coverageFailOnMinimum    := true,
+  )
+  .jsSettings(
+    coverageEnabled := false,
   )
 
 lazy val rules = project

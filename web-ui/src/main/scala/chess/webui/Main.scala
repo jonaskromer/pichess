@@ -1,6 +1,6 @@
 package chess.webui
 
-import chess.api.{BoardStateDto, Endpoints, ErrorDto, ExportResponse, LoadRequest, MoveEntryDto, MoveRequest, SquareDto}
+import chess.api.{BoardStateDto, Endpoints, ErrorDto, ExportResponse, LoadRequest, MoveEntryDto, MoveRequest, SquareDto, StateResponse}
 import com.raquo.laminar.api.L.*
 import org.scalajs.dom
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -478,11 +478,9 @@ object Main:
     SttpClientInterpreter().toClientThrowDecodeFailures(Endpoints.postQuit, None, backend)
   private val postLoadClient =
     SttpClientInterpreter().toClientThrowDecodeFailures(Endpoints.postLoad, None, backend)
-  private val getExportClient =
-    SttpClientInterpreter().toClientThrowDecodeFailures(Endpoints.getExport, None, backend)
 
   private def fetchState(): Unit =
-    getStateClient(()).foreach(handleStateResult)
+    getStateClient(None).foreach(handleStateResult)
 
   private def connectEvents(): Unit =
     val source = new dom.EventSource("/api/events")
@@ -501,11 +499,12 @@ object Main:
     )
 
   private def handleStateResult(
-      result: Either[ErrorDto, BoardStateDto]
+      result: Either[ErrorDto, StateResponse]
   ): Unit =
     result match
-      case Right(state) => stateVar.set(Some(state))
-      case Left(err)    => showToast(err.error)
+      case Right(StateResponse.View(state)) => stateVar.set(Some(state))
+      case Right(_: StateResponse.Export)   => ()
+      case Left(err)                        => showToast(err.error)
 
   private def postMove(move: String): Unit =
     postMoveClient(MoveRequest(move)).foreach {
@@ -526,9 +525,10 @@ object Main:
     }
 
   private def doExport(format: String): Unit =
-    getExportClient(format).foreach {
-      case Right(resp) => exportVar.set(Some(resp))
-      case Left(err)   => showToast(err.error)
+    getStateClient(Some(format)).foreach {
+      case Right(StateResponse.Export(resp)) => exportVar.set(Some(resp))
+      case Right(_: StateResponse.View)      => ()
+      case Left(err)                         => showToast(err.error)
     }
 
   private def postAndToastErrors(

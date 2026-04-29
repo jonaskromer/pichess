@@ -1,6 +1,6 @@
 package chess.controller
 
-import chess.api.{BoardStateDto, Endpoints, ErrorDto, ExportResponse, LoadRequest, MoveRequest}
+import chess.api.{BoardStateDto, Endpoints, ErrorDto, ExportResponse, LoadRequest, MoveRequest, StateResponse}
 import chess.api.Endpoints.QuitAck
 import chess.codec.{FenSerializer, JsonSerializer, PgnSerializer}
 import chess.model.{GameError, GameSnapshot, SessionState}
@@ -41,7 +41,12 @@ object WebController:
       .fromEndpoints[Task](Endpoints.all, "pichess API", "0.1.0")
     ZioHttpInterpreter().toHttp(
       swagger ++ List(
-        Endpoints.getState.zServerLogic[Any](_ => currentBoard(session)),
+        Endpoints.getState.zServerLogic[Any] {
+          case None | Some("view") =>
+            currentBoard(session).map(StateResponse.View(_))
+          case Some(other) =>
+            exportInFormat(session, other).map(StateResponse.Export(_))
+        },
         Endpoints.postMove.zServerLogic[Any] { req =>
           GameController
             .makeMove(gs, session, req.move)
@@ -97,36 +102,40 @@ object WebController:
             }
             .zipRight(currentBoard(session))
         },
-        Endpoints.getExport.zServerLogic[Any] { format =>
-          val normalized = format.toLowerCase
-          session.get.flatMap { s =>
-            normalized match
-              case "fen" =>
-                ZIO.succeed(
-                  ExportResponse("fen", FenSerializer.serialize(s.state))
-                )
-              case "json" =>
-                ZIO.succeed(
-                  ExportResponse("json", JsonSerializer.serialize(s.state))
-                )
-              case "pgn" =>
-                SanSerializer
-                  .deriveMoveLog(s.initialState, s.history)
-                  .orDie
-                  .flatMap(log =>
-                    PgnSerializer.serialize(log, s.state.status)
-                  )
-                  .map(ExportResponse("pgn", _))
-              case other =>
-                ZIO.fail(
-                  ErrorDto(
-                    s"Unknown format '$other'; expected fen, pgn, or json"
-                  )
-                )
-          }
-        },
+        Endpoints.getExport.zServerLogic[Any](exportInFormat(session, _)),
       ),
     )
+
+  private def exportInFormat(
+      session: SubscriptionRef[SessionState],
+      format: String,
+  ): ZIO[Any, ErrorDto, ExportResponse] =
+    val normalized = format.toLowerCase
+    session.get.flatMap { s =>
+      normalized match
+        case "fen" =>
+          ZIO.succeed(
+            ExportResponse("fen", FenSerializer.serialize(s.state))
+          )
+        case "json" =>
+          ZIO.succeed(
+            ExportResponse("json", JsonSerializer.serialize(s.state))
+          )
+        case "pgn" =>
+          SanSerializer
+            .deriveMoveLog(s.initialState, s.history)
+            .orDie
+            .flatMap(log =>
+              PgnSerializer.serialize(log, s.state.status)
+            )
+            .map(ExportResponse("pgn", _))
+        case other =>
+          ZIO.fail(
+            ErrorDto(
+              s"Unknown format '$other'; expected fen, pgn, or json"
+            )
+          )
+    }
 
   private def toErrorDto(err: GameError): ErrorDto = ErrorDto(err.message)
 

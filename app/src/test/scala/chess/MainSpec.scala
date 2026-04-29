@@ -1,7 +1,7 @@
 package chess
 
 import chess.model.{GameSnapshot, SessionState}
-import chess.repository.InMemoryGameRepository
+import chess.repository.{GameRepository, InMemoryGameRepository}
 import chess.service.{GameService, GameServiceLive}
 import zio.*
 import zio.stream.SubscriptionRef
@@ -160,6 +160,26 @@ object MainSpec extends ZIOSpecDefault:
       test("executes the given shell command") {
         // `true` is a no-op command available on every Unix and exits 0.
         Main.runCommand(List("true")).as(assertCompletes)
+      } @@ withLiveClock
+    ),
+    suite("selectRepositoryLayer")(
+      test("None falls back to in-memory and resolves to a GameRepository") {
+        for repo <- ZIO.service[GameRepository].provide(
+          Main.selectRepositoryLayer(None)
+        )
+        yield assertTrue(repo.isInstanceOf[InMemoryGameRepository])
+      },
+      test("empty string falls back to in-memory") {
+        for repo <- ZIO.service[GameRepository].provide(
+          Main.selectRepositoryLayer(Some(""))
+        )
+        yield assertTrue(repo.isInstanceOf[InMemoryGameRepository])
+      },
+      test("non-empty URL builds an HttpGameRepository layer") {
+        for repo <- ZIO.service[GameRepository].provide(
+          Main.selectRepositoryLayer(Some("http://repository:8091"))
+        )
+        yield assertTrue(!repo.isInstanceOf[InMemoryGameRepository])
       } @@ withLiveClock
     ),
     suite("run")(

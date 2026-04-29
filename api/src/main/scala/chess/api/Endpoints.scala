@@ -23,13 +23,36 @@ object Endpoints:
         statusCode(StatusCode.BadRequest).and(jsonBody[ErrorDto])
       )
 
-  /** GET /api/state — full snapshot of the current board. */
-  val getState: PublicEndpoint[Unit, ErrorDto, BoardStateDto, Any] =
+  /** GET /api/state — full snapshot of the current board.
+    *
+    * The optional `format` query parameter selects the response shape:
+    *   - absent or `view` → [[BoardStateDto]] (UI projection, default)
+    *   - `fen` / `pgn` / `json` → [[ExportResponse]] (canonical export)
+    */
+  val getState: PublicEndpoint[Option[String], ErrorDto, StateResponse, Any] =
     apiBase.get
       .in("state")
-      .out(jsonBody[BoardStateDto])
+      .in(
+        query[Option[String]]("format")
+          .description(
+            "Optional response format: view (default), fen, pgn, or json"
+          )
+      )
+      .out(
+        oneOf[StateResponse](
+          oneOfVariant[StateResponse.View](
+            jsonBody[BoardStateDto].mapTo[StateResponse.View]
+          ),
+          oneOfVariant[StateResponse.Export](
+            jsonBody[ExportResponse].mapTo[StateResponse.Export]
+          )
+        )
+      )
       .name("getState")
-      .description("Current board state for the session")
+      .description(
+        "Current board state. Without ?format= returns the UI projection; "
+          + "with ?format=fen|pgn|json returns the canonical export."
+      )
 
   /** POST /api/move — apply a move. */
   val postMove: PublicEndpoint[MoveRequest, ErrorDto, BoardStateDto, Any] =
@@ -93,13 +116,20 @@ object Endpoints:
       .name("postLoad")
       .description("Load a game from a FEN, PGN, or JSON payload")
 
-  /** GET /api/export/{format} — serialize the current position. */
+  /** GET /api/export/{format} — serialize the current position.
+    *
+    * Kept as an alias for back-compat; new clients should prefer `GET
+    * /api/state?format=…` so format selection lives in one place.
+    */
   val getExport: PublicEndpoint[String, ErrorDto, ExportResponse, Any] =
     apiBase.get
       .in("export" / path[String]("format"))
       .out(jsonBody[ExportResponse])
       .name("getExport")
-      .description("Serialize the current game as fen, pgn, or json")
+      .description(
+        "Serialize the current game as fen, pgn, or json. "
+          + "Prefer GET /api/state?format=… for new clients."
+      )
 
   /** All endpoints — useful for generating OpenAPI docs. */
   val all: List[AnyEndpoint] = List(
@@ -111,5 +141,5 @@ object Endpoints:
     postNew,
     postQuit,
     postLoad,
-    getExport,
+    getExport
   )

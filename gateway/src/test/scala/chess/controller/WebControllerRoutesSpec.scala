@@ -1,7 +1,7 @@
 package chess.controller
 
-import chess.model.{GameSnapshot, SessionState}
-import chess.model.board.{DrawReason, GameState, GameStatus, Position}
+import chess.model.{GameError, GameEvent, GameId, GameSnapshot, SessionState}
+import chess.model.board.{DrawReason, GameState, GameStatus, Move, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.repository.InMemoryGameRepository
 import chess.service.{GameService, GameServiceLive}
@@ -34,7 +34,59 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         body <- response.body.asString
       yield assertTrue(
         response.status == Status.Ok,
+        body.contains(""""activeColor":"white""""),
+        body.contains(""""status":{"kind":"playing"""")
+      )
+    },
+    test("GET /api/state?format=view also returns the UI projection") {
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.get(url"/api/state?format=view"))
+        body <- response.body.asString
+      yield assertTrue(
+        response.status == Status.Ok,
         body.contains(""""activeColor":"white"""")
+      )
+    },
+    test("GET /api/state?format=fen returns an ExportResponse envelope") {
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.get(url"/api/state?format=fen"))
+        body <- response.body.asString
+      yield assertTrue(
+        response.status == Status.Ok,
+        body.contains(""""format":"fen""""),
+        body.contains("KQkq")
+      )
+    },
+    test("GET /api/state?format=pgn returns an ExportResponse envelope") {
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.get(url"/api/state?format=pgn"))
+        body <- response.body.asString
+      yield assertTrue(
+        response.status == Status.Ok,
+        body.contains(""""format":"pgn"""")
+      )
+    },
+    test("GET /api/state?format=json returns an ExportResponse envelope") {
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.get(url"/api/state?format=json"))
+        body <- response.body.asString
+      yield assertTrue(
+        response.status == Status.Ok,
+        body.contains(""""format":"json"""")
+      )
+    },
+    test("GET /api/state?format=xyz returns 400 with an error") {
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.get(url"/api/state?format=pdf"))
+        body <- response.body.asString
+      yield assertTrue(
+        response.status == Status.BadRequest,
+        body.contains("Unknown format")
       )
     },
     test("POST /api/move applies a valid move") {
@@ -206,7 +258,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         response <- routes.runZIO(
           Request.post(
             url"/api/load",
-            Body.fromString(s"""{"raw":"$pgn"}"""),
+            Body.fromString(s"""{"raw":"$pgn"}""")
           )
         )
         body <- response.body.asString
@@ -220,7 +272,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         s.state.board.get(Position('c', 6)) == Some(
           Piece(Color.Black, PieceType.Knight)
         ),
-        body.contains(""""activeColor":"white""""),
+        body.contains(""""activeColor":"white"""")
       )
     },
     test("POST /api/load rejects garbage with 400") {
@@ -229,13 +281,13 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         response <- routes.runZIO(
           Request.post(
             url"/api/load",
-            Body.fromString("""{"raw":"not a game"}"""),
+            Body.fromString("""{"raw":"not a game"}""")
           )
         )
         body <- response.body.asString
       yield assertTrue(
         response.status == Status.BadRequest,
-        body.contains(""""error":"""),
+        body.contains(""""error":""")
       )
     },
     test("GET /api/export/fen returns the current position") {
@@ -247,7 +299,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         response.status == Status.Ok,
         body.contains(""""format":"fen""""),
         // The initial FEN ends with "KQkq - 0 1".
-        body.contains("KQkq"),
+        body.contains("KQkq")
       )
     },
     test("GET /api/export/pgn returns a PGN envelope") {
@@ -257,7 +309,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         body <- response.body.asString
       yield assertTrue(
         response.status == Status.Ok,
-        body.contains(""""format":"pgn""""),
+        body.contains(""""format":"pgn"""")
       )
     },
     test("GET /api/export/json returns a JSON envelope") {
@@ -267,7 +319,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         body <- response.body.asString
       yield assertTrue(
         response.status == Status.Ok,
-        body.contains(""""format":"json""""),
+        body.contains(""""format":"json"""")
       )
     },
     test("GET /api/export/unknown returns 400 with an error message") {
@@ -277,7 +329,71 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         body <- response.body.asString
       yield assertTrue(
         response.status == Status.BadRequest,
-        body.contains("Unknown format"),
+        body.contains("Unknown format")
       )
     },
+    test("POST /api/redo returns error when nothing to redo") {
+      // Drives the redo error → toErrorDto path in WebController.
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.post(url"/api/redo", Body.empty))
+        body <- response.body.asString
+      yield assertTrue(
+        response.status == Status.BadRequest,
+        body.contains("Nothing to redo")
+      )
+    },
+    test("GET /web/main.js serves the JS bundle or 404 if absent") {
+      // Exercises the raw zio-http serveJsBundle handler. The asset is only
+      // present on the classpath in production builds (managed resources from
+      // webUi/fastLinkJS); in unit tests it's typically absent, so we accept
+      // either Ok with body or NotFound — both branches are valid responses.
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.get(url"/web/main.js"))
+      yield assertTrue(
+        response.status == Status.Ok || response.status == Status.NotFound
+      )
+    },
+    test("GET / serves the HTML shell") {
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.get(url"/"))
+        body <- response.body.asString
+      yield assertTrue(
+        response.status == Status.Ok,
+        response.headers
+          .get(Header.ContentType)
+          .exists(_.mediaType == MediaType.text.html),
+        body.contains("<html")
+      )
+    },
+    suite("postNew error mapping")(
+      test("surfaces a GameService.newGame failure as 400 with the message") {
+        // Uses a stub GameService whose newGame fails, so the
+        // `mapError(err => ErrorDto(err.message))` branch in postNew runs.
+        val failingGs: GameService = new GameService:
+          def newGame(): IO[GameError, GameEvent.GameStarted] =
+            ZIO.fail(GameError.InvalidMove("repository unavailable"))
+          def loadGame(input: String) =
+            ZIO.fail(GameError.ParseError("not used"))
+          def makeMove(id: GameId, rawInput: String) =
+            ZIO.fail(GameError.GameNotFound(id))
+          def getState(id: GameId) = ZIO.succeed(None)
+          def saveState(id: GameId, state: GameState) = ZIO.unit
+
+        for
+          session <- SubscriptionRef.make(
+            SessionState(GameSnapshot.fresh("dummy", GameState.initial))
+          )
+          shutdown <- Promise.make[Nothing, Unit]
+          routes = WebController.routes(failingGs, session, shutdown)
+          response <- routes.runZIO(Request.post(url"/api/new", Body.empty))
+          body <- response.body.asString
+        yield assertTrue(
+          response.status == Status.BadRequest,
+          body.contains("repository unavailable")
+        )
+      }
+    )
   ).provide(appLayer, Scope.default)
