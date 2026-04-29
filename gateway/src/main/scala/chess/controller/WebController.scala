@@ -208,6 +208,7 @@ object WebController:
     if lower.endsWith(".js") then Some(MediaType.application.`javascript`)
     else if lower.endsWith(".svg") then Some(MediaType.image.`svg+xml`)
     else if lower.endsWith(".css") then Some(MediaType.text.css)
+    else if lower.endsWith(".png") then Some(MediaType.image.png)
     else None
 
   private def serveClasspathResource(
@@ -218,14 +219,13 @@ object WebController:
       val stream = getClass.getClassLoader.getResourceAsStream(path)
       if stream == null then Response(status = Status.NotFound)
       else
-        val source = scala.io.Source.fromInputStream(stream)
-        val content =
-          try source.mkString
-          finally source.close()
+        // Read raw bytes — `Source.fromInputStream(...).mkString` would
+        // decode as UTF-8 and corrupt binary assets like PNGs.
+        val bytes = try stream.readAllBytes() finally stream.close()
         Response(
           status  = Status.Ok,
           headers = Headers(Header.ContentType(contentType)),
-          body    = Body.fromString(content),
+          body    = Body.fromArray(bytes),
         )
     }
 

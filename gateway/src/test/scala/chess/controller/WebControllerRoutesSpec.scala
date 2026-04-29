@@ -379,6 +379,28 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         response.status == Status.Ok || response.status == Status.NotFound
       )
     },
+    test("GET /web/peach.png serves the rasterised favicon") {
+      // The PNG is the favicon for browsers (Safari) that don't render
+      // <symbol>/<use>-bearing SVGs as icons. Body is binary, so we just
+      // sanity-check the response status and content type plus a minimum
+      // body length.
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.get(url"/web/peach.png"))
+        bytes    <- response.body.asArray
+      yield assertTrue(
+        response.status == Status.Ok,
+        response.headers.get(Header.ContentType).exists(h =>
+          h.mediaType.mainType == "image" && h.mediaType.subType == "png"
+        ),
+        // PNG signature: 89 50 4E 47 0D 0A 1A 0A
+        bytes.length > 8,
+        bytes(0) == 0x89.toByte,
+        bytes(1) == 0x50.toByte, // 'P'
+        bytes(2) == 0x4E.toByte, // 'N'
+        bytes(3) == 0x47.toByte, // 'G'
+      )
+    },
     test("GET /web/peach.svg serves the brand logo SVG") {
       for
         (routes, _, _) <- withRoutes

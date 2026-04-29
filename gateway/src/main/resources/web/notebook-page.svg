@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-14 -10 628 824">
+  <style>
+    .paper { fill: var(--paper-color, #fdfbf3); }
+    .grid  { stroke: var(--grid-color, #b9d3e7); fill: none; }
+  </style>
+  <defs>
+    <filter id="page-shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-opacity="0.18"/>
+    </filter>
+    <pattern id="grid-minor" width="24" height="24" patternUnits="userSpaceOnUse">
+      <path class="grid" stroke-width="0.6" stroke-opacity="0.55"
+            d="M 24 0 L 0 0 L 0 24"/>
+    </pattern>
+    <pattern id="grid-major" width="120" height="120" patternUnits="userSpaceOnUse">
+      <path class="grid" stroke-width="1.1" stroke-opacity="0.9"
+            d="M 120 0 L 0 0 L 0 120"/>
+    </pattern>
+    <clipPath id="paper-clip">
+      <rect x="0" y="0" width="600" height="800" rx="2"/>
+    </clipPath>
+  </defs>
+
+  <!-- paper with drop shadow -->
+  <rect x="0" y="0" width="600" height="800" rx="2"
+        class="paper" filter="url(#page-shadow)"/>
+
+  <!-- grid, clipped to the paper so it doesn't bleed past rounded corners -->
+  <g clip-path="url(#paper-clip)">
+    <rect x="0" y="0" width="600" height="800" fill="url(#grid-minor)"/>
+    <rect x="0" y="0" width="600" height="800" fill="url(#grid-major)"/>
+    <!-- right & bottom edges (the grid pattern only draws top & left of each cell) -->
+    <path class="grid" stroke-width="1.1" stroke-opacity="0.9"
+          d="M 600 0 L 600 800 M 0 800 L 600 800"/>
+  </g>
+</svg>

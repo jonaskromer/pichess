@@ -11,7 +11,9 @@ object HtmlPage:
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>piChess</title>
-<link rel="icon" type="image/svg+xml" href="/web/peach.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/web/peach-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/web/peach.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/web/peach-180.png">
 <style>
 $css
 </style>

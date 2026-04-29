@@ -29,9 +29,14 @@ object HtmlPageSpec extends ZIOSpecDefault:
         html.contains("grid-template-columns: repeat(8,")
       )
     },
-    test("link the peach SVG as the tab favicon") {
+    test("link rasterised peach favicons in three sizes") {
+      // PNG (not SVG) because Safari's icon parser silently fails on SVGs
+      // that use <symbol>+<use> indirection. Three sizes — 32×32 for the
+      // tab, 192×192 for hi-DPI / Android, 180×180 for the apple-touch-icon.
       assertTrue(
-        html.contains("""<link rel="icon" type="image/svg+xml" href="/web/peach.svg">"""),
+        html.contains("""<link rel="icon" type="image/png" sizes="32x32" href="/web/peach-32.png">"""),
+        html.contains("""<link rel="icon" type="image/png" sizes="192x192" href="/web/peach.png">"""),
+        html.contains("""<link rel="apple-touch-icon" sizes="180x180" href="/web/peach-180.png">"""),
       )
     },
   )
