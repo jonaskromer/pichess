@@ -31,24 +31,25 @@ object WebBoardViewSpec extends ZIOSpecDefault:
           json.contains(""""pos":"a7"""")
         )
       },
-      test("contain white piece unicode characters") {
+      test("encode white pieces as type-name strings") {
+        // The wire field is the symbol id used by /web/pieces/<name>.svg, not
+        // a glyph. The white side is identified by `pieceColor: "white"`.
         assertTrue(
-          json.contains("♔"),
-          json.contains("♕"),
-          json.contains("♖"),
-          json.contains("♗"),
-          json.contains("♘"),
-          json.contains("♙")
+          json.contains(""""piece":"king""""),
+          json.contains(""""piece":"queen""""),
+          json.contains(""""piece":"rook""""),
+          json.contains(""""piece":"bishop""""),
+          json.contains(""""piece":"knight""""),
+          json.contains(""""piece":"pawn""""),
+          json.contains(""""pieceColor":"white""""),
         )
       },
-      test("contain black piece unicode characters") {
+      test("encode black pieces with the same type names") {
         assertTrue(
-          json.contains("♚"),
-          json.contains("♛"),
-          json.contains("♜"),
-          json.contains("♝"),
-          json.contains("♞"),
-          json.contains("♟")
+          json.contains(""""pieceColor":"black"""),
+          // Type names appear for both sides; pieceColor disambiguates.
+          // Black pawns are present in the initial position alongside white.
+          json.split(""""piece":"pawn"""").length == 17, // 8 white + 8 black + 1
         )
       },
       test("have null piece for empty squares") {

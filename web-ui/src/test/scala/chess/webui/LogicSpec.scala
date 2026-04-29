@@ -19,11 +19,11 @@ object LogicSpec extends ZIOSpecDefault:
     )
 
   private val whitePawnOnE7 =
-    SquareDto("e7", "dark", Some("♙"), Some("white"))
+    SquareDto("e7", "dark", Some("pawn"), Some("white"))
   private val blackPawnOnE2 =
-    SquareDto("e2", "light", Some("♟"), Some("black"))
+    SquareDto("e2", "light", Some("pawn"), Some("black"))
   private val whiteRookOnE4 =
-    SquareDto("e4", "light", Some("♖"), Some("white"))
+    SquareDto("e4", "light", Some("rook"), Some("white"))
   private val emptyE7 =
     SquareDto("e7", "dark", None, None)
 
@@ -101,26 +101,12 @@ object LogicSpec extends ZIOSpecDefault:
         )
       },
     ),
-    suite("selectPromotionPieces")(
-      test("white returns the four uppercase glyphs") {
-        val keys = Logic.selectPromotionPieces(true).map(_._1)
-        val glyphs = Logic.selectPromotionPieces(true).map(_._2)
+    suite("promotionChoices")(
+      test("offers Q/R/B/N mapped to piece-type names") {
         assertTrue(
-          keys   == List("Q", "R", "B", "N"),
-          glyphs == List("♕", "♖", "♗", "♘"),
-        )
-      },
-      test("black returns the four lowercase glyphs in the same order") {
-        val keys = Logic.selectPromotionPieces(false).map(_._1)
-        val glyphs = Logic.selectPromotionPieces(false).map(_._2)
-        assertTrue(
-          keys   == List("Q", "R", "B", "N"),
-          glyphs == List("♛", "♜", "♝", "♞"),
-        )
-      },
-      test("all four promotion keys are distinct") {
-        assertTrue(
-          Logic.selectPromotionPieces(true).map(_._1).distinct.size == 4
+          Logic.promotionChoices.map(_._1) == List("Q", "R", "B", "N"),
+          Logic.promotionChoices.map(_._2) ==
+            List("queen", "rook", "bishop", "knight"),
         )
       },
     ),
@@ -138,25 +124,6 @@ object LogicSpec extends ZIOSpecDefault:
         assertTrue(Logic.humanizeDrawReason("agreement") == "agreement")
       },
     ),
-    suite("isWhiteGlyph")(
-      test("returns true for white glyphs") {
-        assertTrue(
-          Logic.isWhiteGlyph("♔"),
-          Logic.isWhiteGlyph("♕"),
-          Logic.isWhiteGlyph("♖"),
-          Logic.isWhiteGlyph("♗"),
-          Logic.isWhiteGlyph("♘"),
-          Logic.isWhiteGlyph("♙"),
-        )
-      },
-      test("returns false for black glyphs and unknowns") {
-        assertTrue(
-          !Logic.isWhiteGlyph("♚"),
-          !Logic.isWhiteGlyph("♟"),
-          !Logic.isWhiteGlyph("?"),
-        )
-      },
-    ),
     suite("capturedFromSquares")(
       test("starting position has no captures") {
         val (white, black) = Logic.capturedFromSquares(startingSquares)
@@ -168,7 +135,7 @@ object LogicSpec extends ZIOSpecDefault:
           else sq
         }
         val (white, black) = Logic.capturedFromSquares(squares)
-        assertTrue(white.isEmpty, black == List("♟"))
+        assertTrue(white.isEmpty, black == List("pawn"))
       },
       test("multiple captures sort by descending value") {
         // Remove black queen, a black rook, and two black pawns.
@@ -178,43 +145,46 @@ object LogicSpec extends ZIOSpecDefault:
           else sq
         }
         val (_, black) = Logic.capturedFromSquares(squares)
-        assertTrue(black == List("♛", "♜", "♟", "♟"))
+        assertTrue(black == List("queen", "rook", "pawn", "pawn"))
       },
       test("under-promotion to a second queen still treats the lost pawn as captured") {
-        // Move the d8 black queen square away and add a second white queen
-        // somewhere, simulating a promoted-pawn position. The promoted
-        // white pawn shows as a captured ♙ since it's missing from the
-        // starting count.
+        // Replace the white e2 pawn with a queen, simulating a promoted-pawn
+        // position. The promoted white pawn shows as a captured "pawn" since
+        // it's missing from the starting count.
         val squares = startingSquares.map { sq =>
-          if sq.pos == "e2" then sq.copy(piece = Some("♕"), pieceColor = Some("white"))
+          if sq.pos == "e2" then
+            sq.copy(piece = Some("queen"), pieceColor = Some("white"))
           else sq
         }
         val (white, _) = Logic.capturedFromSquares(squares)
-        assertTrue(white == List("♙"))
+        assertTrue(white == List("pawn"))
       },
-      test("foreign glyphs in squares are ignored") {
-        val squares = startingSquares :+ SquareDto("z9", "light", Some("?"), Some("white"))
+      test("squares without piece info are ignored") {
+        // A square missing pieceColor or piece is treated as empty —
+        // exercises the collect-filter branch in capturedFromSquares.
+        val squares = startingSquares :+
+          SquareDto("z9", "light", Some("rook"), None) :+
+          SquareDto("z8", "light", None, Some("white"))
         val (white, black) = Logic.capturedFromSquares(squares)
         assertTrue(white.isEmpty, black.isEmpty)
       },
     ),
   )
 
-  // Build a starting-position square list using the same conventions as
-  // WebBoardView (lowercase-letter glyphs for black, uppercase for white).
+  // Build a starting-position square list using piece-type names —
+  // matches the wire format emitted by WebBoardView.toDto.
   private val startingSquares: List[SquareDto] =
-    val whiteBack = List("♖","♘","♗","♕","♔","♗","♘","♖")
-    val blackBack = List("♜","♞","♝","♛","♚","♝","♞","♜")
+    val backRank = List("rook","knight","bishop","queen","king","bishop","knight","rook")
     (for
       rank <- (8 to 1 by -1).toList
       file <- ('a' to 'h').toList
     yield
       val pos = s"$file$rank"
       val (piece, color) = rank match
-        case 8 => (Some(blackBack(file - 'a')), Some("black"))
-        case 7 => (Some("♟"),                   Some("black"))
-        case 2 => (Some("♙"),                   Some("white"))
-        case 1 => (Some(whiteBack(file - 'a')), Some("white"))
+        case 8 => (Some(backRank(file - 'a')), Some("black"))
+        case 7 => (Some("pawn"),               Some("black"))
+        case 2 => (Some("pawn"),               Some("white"))
+        case 1 => (Some(backRank(file - 'a')), Some("white"))
         case _ => (None, None)
       val sqColor = if (file - 'a' + rank) % 2 == 0 then "dark" else "light"
       SquareDto(pos, sqColor, piece, color)

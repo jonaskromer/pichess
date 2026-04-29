@@ -393,9 +393,10 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
             h.mediaType.subType == "svg+xml"
           ),
         // Sanity: the body should be the unified, var-driven SVG, not a raw
-        // light/dark variant. The CSS-variable references uniquely identify it.
+        // light/dark variant. The CSS-variable references uniquely identify it,
+        // and the composite `<symbol id="pawn">` is what external <use> targets.
         body.contains("var(--piece-primary"),
-        body.contains("<g id=\"pawn\""),
+        body.contains("<symbol id=\"pawn\""),
       )
     },
     test("GET /web/pieces/missing.svg returns 404 when the file is absent") {

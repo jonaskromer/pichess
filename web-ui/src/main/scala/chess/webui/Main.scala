@@ -177,29 +177,29 @@ object Main:
     )
 
   private def capturedTray(topSide: Boolean): HtmlElement =
-    val piecesSignal = stateVar.signal.combineWith(flippedVar.signal).map {
-      case (None, _) => List.empty[String]
+    // (color shown in this tray, list of piece-type names lost). White's lost
+    // pieces sit above the board by default (where black "stacks" them);
+    // flip swaps both the tray side and the colour rendered.
+    val signal = stateVar.signal.combineWith(flippedVar.signal).map {
+      case (None, _) => ("white", List.empty[String])
       case (Some(s), flipped) =>
         val (whiteLost, blackLost) = Logic.capturedFromSquares(s.squares)
-        // White sits on the bottom by default — what white has *lost* shows
-        // above the board (where black "stacks" them). Flip swaps trays.
-        val showOnTop = if flipped then blackLost else whiteLost
-        val showOnBot = if flipped then whiteLost else blackLost
-        if topSide then showOnTop else showOnBot
+        val showsWhite = if flipped then !topSide else topSide
+        if showsWhite then ("white", whiteLost) else ("black", blackLost)
     }
     div(
       // visibility:hidden when empty (via .tray-empty) so layout space is
       // preserved — board doesn't jump up/down as captures appear.
-      className <-- piecesSignal.map(p =>
+      className <-- signal.map { case (_, p) =>
         if p.isEmpty then "captured-tray tray-empty" else "captured-tray"
-      ),
-      children <-- piecesSignal.map(_.map(renderCapturedPiece)),
+      },
+      children <-- signal.map { case (color, ps) =>
+        ps.map(renderCapturedPiece(_, color))
+      },
     )
 
-  private def renderCapturedPiece(glyph: String): HtmlElement =
-    val color =
-      if Logic.isWhiteGlyph(glyph) then "white-piece" else "black-piece"
-    span(className := s"captured-piece $color", glyph)
+  private def renderCapturedPiece(name: String, color: String): HtmlElement =
+    span(className := s"captured-piece $color-piece", pieceSvg(name))
 
   private def rankLabels(): HtmlElement =
     div(
@@ -245,16 +245,46 @@ object Main:
       dataAttr("pos") := sq.pos,
       onDragOver.preventDefault --> { _ => () },
       onDrop.preventDefault --> { _ => handleDrop(sq.pos, state) },
-      sq.piece.map { glyph =>
+      sq.piece.map { name =>
         span(
           className := s"piece ${sq.pieceColor.getOrElse("")}-piece",
           draggable := true,
           onDragStart --> { e => handleDragStart(sq.pos, e) },
           onDragEnd --> { _ => dragSourceVar.set(None) },
-          glyph,
+          pieceSvg(name),
         )
       },
     )
+
+  /** Render a chess piece as an inline SVG that pulls geometry from the
+    * shared sprite at `/web/pieces/<name>.svg#<name>`. Inline SVG (rather
+    * than `<img>`) is needed so the parent's `--piece-primary` and
+    * `--piece-secondary` CSS variables cascade through the `<use>`
+    * reference into the symbol's paths.
+    *
+    * The host SVG's viewBox matches each piece's source aspect ratio so the
+    * browser can derive an intrinsic height when the surrounding CSS sets
+    * `width: <fixed>; height: auto`. All pieces then share a common base
+    * width while keeping their natural relative heights — kings tall,
+    * pawns short.
+    */
+  private def pieceSvg(name: String): SvgElement =
+    svg.svg(
+      svg.viewBox := pieceViewBox(name),
+      svg.cls     := "piece-svg",
+      svg.use(svg.href := s"/web/pieces/$name.svg#$name"),
+    )
+
+  // Source-coordinate viewBox per piece — copied from each unified SVG
+  // file so the host SVG inherits its aspect ratio.
+  private val pieceViewBox: Map[String, String] = Map(
+    "pawn"   -> "0 0 460.1 624.7",
+    "rook"   -> "0 0 498.5 747.5",
+    "knight" -> "0 0 507.7 777.5",
+    "bishop" -> "0 0 460.1 856.8",
+    "queen"  -> "0 0 544.3 1000.7",
+    "king"   -> "0 0 590.5 1259.6",
+  )
 
   // --------------------------------------------------------------------------
   // Sidebar
@@ -475,17 +505,15 @@ object Main:
     state.squares.find(_.pos == p.from) match
       case None => List.empty
       case Some(sq) =>
-        val isWhite    = sq.pieceColor.contains("white")
-        val pieces     = Logic.selectPromotionPieces(isWhite)
         val colorClass = s"${sq.pieceColor.getOrElse("")}-piece"
-        pieces.map { case (key, glyph) =>
+        Logic.promotionChoices.map { case (key, name) =>
           div(
             className := s"promotion-choice $colorClass",
             onClick --> { _ =>
               pendingPromotionVar.set(None)
               postMove(s"${p.from} ${p.to}=$key")
             },
-            glyph,
+            pieceSvg(name),
           )
         }
 

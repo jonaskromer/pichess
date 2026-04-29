@@ -5,6 +5,10 @@ import chess.model.board.{DrawReason, GameState, GameStatus, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 import zio.json.*
 
+// The wire field `SquareDto.piece` holds a lowercase piece-type name
+// ("pawn", "knight", …) rather than a Unicode glyph. The Laminar UI
+// uses it as the symbol id when fetching from `/web/pieces/<name>.svg`.
+
 /** Builds the [[BoardStateDto]] consumed by the browser UI from a domain
   * [[GameState]]. DTO shape + codecs live in the shared `api` module so the
   * Laminar web-ui decodes the same type the gateway encodes.
@@ -35,7 +39,7 @@ object WebBoardView:
           SquareDto(
             pos = pos.toString,
             squareColor = squareColorName,
-            piece = Some(PieceUnicode(piece).toString),
+            piece = Some(pieceTypeName(piece.pieceType)),
             pieceColor = Some(colorStr(piece.color))
           )
         case None =>
@@ -70,6 +74,14 @@ object WebBoardView:
   private def colorStr(color: Color): String = color match
     case Color.White => "white"
     case Color.Black => "black"
+
+  private def pieceTypeName(t: PieceType): String = t match
+    case PieceType.Pawn   => "pawn"
+    case PieceType.Rook   => "rook"
+    case PieceType.Knight => "knight"
+    case PieceType.Bishop => "bishop"
+    case PieceType.Queen  => "queen"
+    case PieceType.King   => "king"
 
   private def statusDto(status: GameStatus): GameStatusDto = status match
     case GameStatus.Playing => GameStatusDto.Playing

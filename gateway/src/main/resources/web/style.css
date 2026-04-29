@@ -75,12 +75,10 @@ body {
 .captured-tray {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   width: calc(72px * 8);
-  min-height: 40px;
-  padding: 4px 6px;
-  font-size: 30px;
-  line-height: 1;
+  min-height: 44px;
+  padding: 2px 6px;
   background: rgba(247,160,114,0.06);
   border-radius: 6px;
   border: 1px solid rgba(247,160,114,0.1);
@@ -90,20 +88,6 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-}
-.captured-tray .captured-piece.white-piece {
-  color: #fff;
-  text-shadow:
-    0 0 2px rgba(0,0,0,0.9),
-    0 0 4px rgba(0,0,0,0.6),
-    0 1px 2px rgba(0,0,0,0.4);
-}
-.captured-tray .captured-piece.black-piece {
-  color: #1a1a1a;
-  text-shadow:
-    0 0 2px rgba(255,255,255,0.85),
-    0 0 5px rgba(255,255,255,0.55),
-    0 1px 1px rgba(255,255,255,0.4);
 }
 .board-wrapper {
   display: grid;
@@ -143,7 +127,6 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 48px;
   cursor: default;
   position: relative;
   transition: background-color 0.15s ease;
@@ -173,11 +156,49 @@ body {
   line-height: 1;
   transition: transform 0.1s ease;
   pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .piece:active { cursor: grabbing; }
-.piece.white-piece { color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.6), 0 0 1px rgba(0,0,0,0.4); }
-.piece.black-piece { color: #1a1a1a; text-shadow: 0 1px 2px rgba(255,255,255,0.15); }
 .piece.dragging { transform: scale(1.15); opacity: 0.9; }
+/* Piece colour schemes — drive the SVG via CSS variables. The defaults
+   inside each SVG match `--piece-primary: rgb(70.117188%, 52.539062%,
+   34.521484%)` so unsetting these vars on a side falls back to the warm
+   "light" palette. The outline colour is currently always white (sticker
+   look) and is set as a literal in each SVG, so we don't expose it as
+   a variable here. */
+.piece.white-piece,
+.captured-piece.white-piece,
+.promotion-choice.white-piece {
+  --piece-primary:   rgb(70.117188%, 52.539062%, 34.521484%);
+  --piece-secondary: rgb(55.664062%, 35.301208%, 18.041992%);
+}
+.piece.black-piece,
+.captured-piece.black-piece,
+.promotion-choice.black-piece {
+  --piece-primary:   rgb(37.646484%, 37.646484%, 37.646484%);
+  --piece-secondary: rgb(25.488281%, 25.488281%, 25.488281%);
+}
+.piece-svg {
+  display: block;
+  height: auto; /* derived from each piece's source viewBox aspect ratio */
+  pointer-events: none; /* drag events bubble to the wrapping .piece span */
+  /* Silhouette drop-shadow. `filter: drop-shadow` runs against the rendered
+     alpha (the piece outline) rather than a bounding rectangle — `box-shadow`
+     would draw a rectangular shadow around the SVG element, which looks
+     wrong for the sticker effect. Tuned for the small render sizes; halve
+     the offset/blur for the captured tray below. */
+  filter: drop-shadow(0 1.5px 2px rgba(0,0,0,0.35));
+}
+/* Common base width per context. Heights come from the host SVG's
+   intrinsic aspect ratio — set per-piece in `pieceViewBox` (Main.scala) —
+   so kings are tall and pawns short while every piece's pedestal sits at
+   the same width. 32px keeps the tallest piece (king ≈ 68px) inside the
+   72px square. */
+.piece            > .piece-svg { width: 32px; }
+.captured-piece   > .piece-svg { width: 18px; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.35)); }
+.promotion-choice > .piece-svg { width: 40px; }
 .sidebar {
   width: 280px;
   display: flex;

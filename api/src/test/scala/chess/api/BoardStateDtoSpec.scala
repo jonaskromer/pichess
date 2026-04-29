@@ -6,7 +6,7 @@ import zio.test.*
 object BoardStateDtoSpec extends ZIOSpecDefault:
 
   private val sampleSquare =
-    SquareDto("e4", "light", Some("♙"), Some("white"))
+    SquareDto("e4", "light", Some("pawn"), Some("white"))
 
   private val emptySquare =
     SquareDto("e5", "dark", None, None)
