@@ -1,6 +1,6 @@
 package chess.webui
 
-import chess.api.{BoardStateDto, Endpoints, ErrorDto, ExportResponse, LoadRequest, MoveEntryDto, MoveRequest, SquareDto, StateResponse}
+import chess.api.{BoardStateDto, Endpoints, ErrorDto, ExportResponse, GameStatusDto, LoadRequest, MoveEntryDto, MoveRequest, SquareDto, StateResponse}
 import com.raquo.laminar.api.L.*
 import org.scalajs.dom
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -27,23 +27,26 @@ object Main:
   private val toastVar: Var[Option[String]] = Var(None)
   private val goodbyeVar: Var[Boolean] = Var(false)
   private val flippedVar: Var[Boolean] = Var(false)
-  private val helpOpenVar: Var[Boolean] = Var(false)
   private val loadOpenVar: Var[Boolean] = Var(false)
   private val loadInputVar: Var[String] = Var("")
   private val exportVar: Var[Option[ExportResponse]] = Var(None)
+  // Help is rendered as an in-SPA view — not a separate route — so that the
+  // browser back button returns to the game without a full page reload.
+  // We sync this var with `location.hash` so deep-links (#help) and the back
+  // button just work via hashchange events.
+  private val helpOpenVar: Var[Boolean] = Var(false)
 
-  private val whitePromotions = List(
-    "Q" -> "♕",
-    "R" -> "♖",
-    "B" -> "♗",
-    "N" -> "♘",
+  // Generic "are you sure?" prompt. Set to `Some(...)` to display; the modal
+  // wires the confirm button to `action` and clears itself on confirm/cancel.
+  private case class ConfirmRequest(
+      title: String,
+      message: String,
+      confirmLabel: String,
+      destructive: Boolean,
+      action: () => Unit,
   )
-  private val blackPromotions = List(
-    "Q" -> "♛",
-    "R" -> "♜",
-    "B" -> "♝",
-    "N" -> "♞",
-  )
+  private val confirmVar: Var[Option[ConfirmRequest]] = Var(None)
+  private def askConfirm(req: ConfirmRequest): Unit = confirmVar.set(Some(req))
 
   // --------------------------------------------------------------------------
   // Top-level component
@@ -54,12 +57,20 @@ object Main:
       onMountCallback { _ =>
         fetchState()
         connectEvents()
+        syncHelpFromHash()
+        dom.window.addEventListener(
+          "hashchange",
+          (_: dom.Event) => syncHelpFromHash(),
+        )
       },
       child <-- goodbyeVar.signal.map {
         case true  => goodbyeScreen()
         case false => mainUi()
       },
     )
+
+  private def syncHelpFromHash(): Unit =
+    helpOpenVar.set(dom.window.location.hash == "#help")
 
   private def goodbyeScreen(): HtmlElement =
     div(
@@ -70,15 +81,83 @@ object Main:
 
   private def mainUi(): HtmlElement =
     div(
+      className := "app-shell",
+      header(),
+      child <-- helpOpenVar.signal.map {
+        case true  => HelpView.render()
+        case false => gameBody()
+      },
+      promotionOverlay(),
+      loadModal(),
+      exportModal(),
+      confirmModal(),
+      toastElement(),
+    )
+
+  private def gameBody(): HtmlElement =
+    div(
       className := "app",
       boardArea(),
       sidebar(),
-      promotionOverlay(),
-      helpModal(),
-      loadModal(),
-      exportModal(),
-      toastElement(),
     )
+
+  // --------------------------------------------------------------------------
+  // Header
+  // --------------------------------------------------------------------------
+
+  private def header(): HtmlElement =
+    headerTag(
+      className := "header",
+      div(
+        className := "header-brand",
+        span(className := "header-logo", "🍑"),
+        span(child.text <-- helpOpenVar.signal.map(o =>
+          if o then "piChess Help" else "piChess"
+        )),
+      ),
+      div(className := "header-spacer"),
+      div(
+        className := "header-actions",
+        children <-- helpOpenVar.signal.map(o =>
+          if o then helpHeaderActions else gameHeaderActions
+        ),
+      ),
+    )
+
+  private def gameHeaderActions: List[HtmlElement] = List(
+    button(
+      className := "header-new-btn",
+      onClick --> { _ => askConfirm(confirmNewGame) },
+      "New Game",
+    ),
+    a(
+      className := "header-link",
+      href      := "#help",
+      "Help",
+    ),
+    a(
+      className := "header-link",
+      href      := "/docs",
+      target    := "_blank",
+      rel       := "noopener noreferrer",
+      "Docs ↗",
+    ),
+  )
+
+  private def helpHeaderActions: List[HtmlElement] = List(
+    a(
+      className := "header-link",
+      href      := "#",
+      "← Game",
+    ),
+    a(
+      className := "header-link",
+      href      := "/docs",
+      target    := "_blank",
+      rel       := "noopener noreferrer",
+      "Docs ↗",
+    ),
+  )
 
   // --------------------------------------------------------------------------
   // Board
@@ -87,13 +166,40 @@ object Main:
   private def boardArea(): HtmlElement =
     div(
       className := "board-area",
+      capturedTray(topSide = true),
       div(
         className := "board-wrapper",
         rankLabels(),
         board(),
         fileLabels(),
       ),
+      capturedTray(topSide = false),
     )
+
+  private def capturedTray(topSide: Boolean): HtmlElement =
+    val piecesSignal = stateVar.signal.combineWith(flippedVar.signal).map {
+      case (None, _) => List.empty[String]
+      case (Some(s), flipped) =>
+        val (whiteLost, blackLost) = Logic.capturedFromSquares(s.squares)
+        // White sits on the bottom by default — what white has *lost* shows
+        // above the board (where black "stacks" them). Flip swaps trays.
+        val showOnTop = if flipped then blackLost else whiteLost
+        val showOnBot = if flipped then whiteLost else blackLost
+        if topSide then showOnTop else showOnBot
+    }
+    div(
+      // visibility:hidden when empty (via .tray-empty) so layout space is
+      // preserved — board doesn't jump up/down as captures appear.
+      className <-- piecesSignal.map(p =>
+        if p.isEmpty then "captured-tray tray-empty" else "captured-tray"
+      ),
+      children <-- piecesSignal.map(_.map(renderCapturedPiece)),
+    )
+
+  private def renderCapturedPiece(glyph: String): HtmlElement =
+    val color =
+      if Logic.isWhiteGlyph(glyph) then "white-piece" else "black-piece"
+    span(className := s"captured-piece $color", glyph)
 
   private def rankLabels(): HtmlElement =
     div(
@@ -157,25 +263,46 @@ object Main:
   private def sidebar(): HtmlElement =
     div(
       className := "sidebar",
-      h1(className := "title", "piChess"),
-      turnIndicator(),
+      statusIndicator(),
       moveLogContainer(),
       controls(),
     )
 
-  private def turnIndicator(): HtmlElement =
+  private def statusIndicator(): HtmlElement =
     div(
-      className := "turn-indicator",
-      children <-- stateVar.signal.map {
+      child <-- stateVar.signal.map {
+        case None    => emptyNode
         case Some(s) =>
-          val name = if s.activeColor == "white" then "White" else "Black"
-          List(
-            div(className := s"turn-dot ${s.activeColor}"),
-            span(s"$name to move"),
-          )
-        case None => List.empty
+          s.status.kind match
+            case "checkmate"   => checkmateBanner(s.status)
+            case "draw"        => drawBanner(s.status)
+            case "resignation" => resignationBanner(s.status)
+            case _             => turnIndicator(s)
       },
     )
+
+  private def turnIndicator(s: BoardStateDto): HtmlElement =
+    val name = if s.activeColor == "white" then "White" else "Black"
+    div(
+      className := "turn-indicator",
+      div(className := s"turn-dot ${s.activeColor}"),
+      span(s"$name to move"),
+    )
+
+  private def checkmateBanner(status: GameStatusDto): HtmlElement =
+    val winner = status.winner.map(capitalize).getOrElse("Someone")
+    div(className := "banner win", s"$winner wins by checkmate")
+
+  private def drawBanner(status: GameStatusDto): HtmlElement =
+    val reason = status.reason.map(Logic.humanizeDrawReason).getOrElse("agreement")
+    div(className := "banner draw", s"Draw — $reason")
+
+  private def resignationBanner(status: GameStatusDto): HtmlElement =
+    val winner = status.winner.map(capitalize).getOrElse("Someone")
+    div(className := "banner win", s"$winner wins by resignation")
+
+  private def capitalize(s: String): String =
+    if s.isEmpty then s else s.head.toUpper + s.tail
 
   private def moveLogContainer(): HtmlElement =
     div(
@@ -191,13 +318,15 @@ object Main:
     )
 
   private def renderMoveLog(moves: List[MoveEntryDto]): List[HtmlElement] =
-    Logic.groupMovesByTwo(moves).map { case (num, white, blackOpt) =>
-      val cells = List(
-        span(className := "move-number", s"$num."),
-        span(className := "move-san", white.san),
-      ) ++ blackOpt.map(m => span(className := "move-san", m.san))
-      div(className := "move-row", cells)
-    }
+    if moves.isEmpty then List(div(className := "move-log-empty", "No moves yet"))
+    else
+      Logic.groupMovesByTwo(moves).map { case (num, white, blackOpt) =>
+        val cells = List(
+          span(className := "move-number", s"$num."),
+          span(className := "move-san", white.san),
+        ) ++ blackOpt.map(m => span(className := "move-san", m.san))
+        div(className := "move-row", cells)
+      }
 
   private def controls(): HtmlElement =
     val moveInputVar = Var("")
@@ -224,24 +353,14 @@ object Main:
         ),
         button(tpe := "submit", "Move"),
       ),
+      sectionLabel("History"),
       div(
         className := "btn-row",
-        button(
-          className := "secondary-btn",
-          onClick --> { _ => postUndo() },
-          "Undo",
-        ),
-        button(
-          className := "secondary-btn",
-          onClick --> { _ => postRedo() },
-          "Redo",
-        ),
-        button(
-          className := "secondary-btn",
-          onClick --> { _ => postDraw() },
-          "Draw",
-        ),
+        secondaryButton("Undo", () => postUndo()),
+        secondaryButton("Redo", () => postRedo()),
+        secondaryButton("Draw", () => askConfirm(confirmDraw)),
       ),
+      sectionLabel("Board"),
       div(
         className := "btn-row",
         button(
@@ -251,48 +370,71 @@ object Main:
             if f then "Unflip" else "Flip"
           ),
         ),
-        button(
-          className := "secondary-btn",
-          onClick --> { _ => helpOpenVar.set(true) },
-          "Help",
-        ),
-        button(
-          className := "secondary-btn",
-          onClick --> { _ => loadOpenVar.set(true) },
-          "Load",
-        ),
       ),
+      sectionLabel("Data"),
+      div(
+        className := "btn-row",
+        secondaryButton("Load", () => loadOpenVar.set(true)),
+        secondaryButton("FEN",  () => doExport("fen")),
+        secondaryButton("PGN",  () => doExport("pgn")),
+        secondaryButton("JSON", () => doExport("json")),
+      ),
+      sectionLabel("Game"),
       div(
         className := "btn-row",
         button(
           className := "secondary-btn",
-          onClick --> { _ => doExport("fen") },
-          "FEN",
-        ),
-        button(
-          className := "secondary-btn",
-          onClick --> { _ => doExport("pgn") },
-          "PGN",
-        ),
-        button(
-          className := "secondary-btn",
-          onClick --> { _ => doExport("json") },
-          "JSON",
-        ),
-      ),
-      div(
-        className := "btn-row",
-        button(
-          className := "secondary-btn",
-          onClick --> { _ => postNew() },
-          "New Game",
+          onClick --> { _ => askConfirm(confirmForfeit) },
+          "Forfeit",
         ),
         button(
           className := "quit-btn",
-          onClick --> { _ => postQuit() },
+          onClick --> { _ => askConfirm(confirmQuit) },
           "Quit",
         ),
       ),
+    )
+
+  private val confirmNewGame: ConfirmRequest = ConfirmRequest(
+    title        = "Start a new game?",
+    message      = "This discards the current game and resets to the starting position.",
+    confirmLabel = "New Game",
+    destructive  = true,
+    action       = () => postNew(),
+  )
+
+  private val confirmDraw: ConfirmRequest = ConfirmRequest(
+    title        = "Claim a draw?",
+    message      = "Only valid if the 50-move rule applies or the position has occurred at least three times.",
+    confirmLabel = "Claim Draw",
+    destructive  = false,
+    action       = () => postDraw(),
+  )
+
+  private val confirmQuit: ConfirmRequest = ConfirmRequest(
+    title        = "Shut down the server?",
+    message      = "This stops piChess and closes the page. Make sure to save anything you want to keep.",
+    confirmLabel = "Quit",
+    destructive  = true,
+    action       = () => postQuit(),
+  )
+
+  private val confirmForfeit: ConfirmRequest = ConfirmRequest(
+    title        = "Forfeit the game?",
+    message      = "The current player resigns; the opponent wins.",
+    confirmLabel = "Forfeit",
+    destructive  = true,
+    action       = () => postForfeit(),
+  )
+
+  private def sectionLabel(text: String): HtmlElement =
+    div(className := "section-title", text)
+
+  private def secondaryButton(label: String, onClickAction: () => Unit): HtmlElement =
+    button(
+      className := "secondary-btn",
+      onClick --> { _ => onClickAction() },
+      label,
     )
 
   // --------------------------------------------------------------------------
@@ -347,28 +489,6 @@ object Main:
           )
         }
 
-  private def helpModal(): HtmlElement =
-    div(
-      className <-- helpOpenVar.signal.map(o =>
-        if o then "modal visible" else "modal"
-      ),
-      onClick --> { _ => helpOpenVar.set(false) },
-      div(
-        className := "modal-dialog help-dialog",
-        onClick.stopPropagation --> { _ => () },
-        h2("piChess Help"),
-        pre(className := "help-text", helpContent),
-        div(
-          className := "modal-actions",
-          button(
-            className := "secondary-btn",
-            onClick --> { _ => helpOpenVar.set(false) },
-            "Close",
-          ),
-        ),
-      ),
-    )
-
   private def loadModal(): HtmlElement =
     div(
       className <-- loadOpenVar.signal.map(o =>
@@ -409,6 +529,40 @@ object Main:
             className := "secondary-btn",
             onClick --> { _ => loadOpenVar.set(false) },
             "Cancel",
+          ),
+        ),
+      ),
+    )
+
+  private def confirmModal(): HtmlElement =
+    div(
+      className <-- confirmVar.signal.map(c =>
+        if c.isDefined then "modal visible" else "modal"
+      ),
+      onClick --> { _ => confirmVar.set(None) },
+      div(
+        className := "modal-dialog confirm-dialog",
+        onClick.stopPropagation --> { _ => () },
+        h2(child.text <-- confirmVar.signal.map(_.map(_.title).getOrElse(""))),
+        p(child.text <-- confirmVar.signal.map(_.map(_.message).getOrElse(""))),
+        div(
+          className := "modal-actions",
+          button(
+            className := "secondary-btn",
+            onClick --> { _ => confirmVar.set(None) },
+            "Cancel",
+          ),
+          button(
+            className <-- confirmVar.signal.map(c =>
+              if c.exists(_.destructive) then "quit-btn" else "secondary-btn"
+            ),
+            onClick --> { _ =>
+              confirmVar.now().foreach(_.action())
+              confirmVar.set(None)
+            },
+            child.text <-- confirmVar.signal.map(
+              _.map(_.confirmLabel).getOrElse("Confirm")
+            ),
           ),
         ),
       ),
@@ -478,6 +632,8 @@ object Main:
     SttpClientInterpreter().toClientThrowDecodeFailures(Endpoints.postQuit, None, backend)
   private val postLoadClient =
     SttpClientInterpreter().toClientThrowDecodeFailures(Endpoints.postLoad, None, backend)
+  private val postForfeitClient =
+    SttpClientInterpreter().toClientThrowDecodeFailures(Endpoints.postForfeit, None, backend)
 
   private def fetchState(): Unit =
     getStateClient(None).foreach(handleStateResult)
@@ -512,11 +668,12 @@ object Main:
       case Left(err) => showToast(err.error)
     }
 
-  private def postUndo(): Unit = postAndToastErrors(postUndoClient(()))
-  private def postRedo(): Unit = postAndToastErrors(postRedoClient(()))
-  private def postDraw(): Unit = postAndToastErrors(postDrawClient(()))
-  private def postNew(): Unit  = postAndToastErrors(postNewClient(()))
-  private def postQuit(): Unit = postQuitClient(()).foreach(_ => ())
+  private def postUndo(): Unit    = postAndToastErrors(postUndoClient(()))
+  private def postRedo(): Unit    = postAndToastErrors(postRedoClient(()))
+  private def postDraw(): Unit    = postAndToastErrors(postDrawClient(()))
+  private def postNew(): Unit     = postAndToastErrors(postNewClient(()))
+  private def postForfeit(): Unit = postAndToastErrors(postForfeitClient(()))
+  private def postQuit(): Unit    = postQuitClient(()).foreach(_ => ())
 
   private def postLoad(raw: String): Unit =
     postLoadClient(LoadRequest(raw)).foreach {
@@ -573,34 +730,3 @@ object Main:
       state: BoardStateDto,
   ): Boolean =
     Logic.isPawnPromotion(from, to, state)
-
-  // --------------------------------------------------------------------------
-  // Help text
-  // --------------------------------------------------------------------------
-
-  private val helpContent: String =
-    """|Getting Started
-       |  • Drag a piece or type moves in the input (e.g. e2 e4, Nf3, O-O)
-       |  • Undo / Redo walk through your move history
-       |  • Draw: claim 50-move or threefold repetition when available
-       |  • New Game: reset to the starting position
-       |  • Flip: toggle White / Black perspective
-       |  • Load: import a game from FEN, PGN, or JSON (auto-detected)
-       |  • FEN / PGN / JSON: export the current position
-       |  • Quit: shut down the server
-       |
-       |Move Notation
-       |  Coordinate:      e2 e4   e2e4   e2-e4   e7 e8=Q
-       |  Pawn push:       e4      d5
-       |  Pawn capture:    exd5    cxb4
-       |  Piece move:      Nf3     Bc4    Rd1    Qd8    Ke2
-       |  Disambiguation:  Nbd2    N1f3   Raxd5  (file, rank, or both)
-       |  Castling:        O-O (kingside)   O-O-O (queenside)
-       |  Promotion:       e8=Q    exd8=R  (=Q, =R, =B, =N)
-       |  Check / mate:    Nf3+    Qxf7#
-       |
-       |Rules Implemented
-       |  Standard moves and captures, check / checkmate detection, castling,
-       |  en passant, promotion, 50-move and threefold / fivefold repetition,
-       |  and insufficient material. See docs/notation.md for the full guide.
-       |""".stripMargin

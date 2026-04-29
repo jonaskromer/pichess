@@ -124,4 +124,98 @@ object LogicSpec extends ZIOSpecDefault:
         )
       },
     ),
+    suite("humanizeDrawReason")(
+      test("known reasons render as friendly phrases") {
+        assertTrue(
+          Logic.humanizeDrawReason("fiftyMoveRule") == "50-move rule",
+          Logic.humanizeDrawReason("threefoldRepetition") == "threefold repetition",
+          Logic.humanizeDrawReason("fivefoldRepetition") == "fivefold repetition",
+          Logic.humanizeDrawReason("stalemate") == "stalemate",
+          Logic.humanizeDrawReason("insufficientMaterial") == "insufficient material",
+        )
+      },
+      test("unknown reasons fall through unchanged") {
+        assertTrue(Logic.humanizeDrawReason("agreement") == "agreement")
+      },
+    ),
+    suite("isWhiteGlyph")(
+      test("returns true for white glyphs") {
+        assertTrue(
+          Logic.isWhiteGlyph("♔"),
+          Logic.isWhiteGlyph("♕"),
+          Logic.isWhiteGlyph("♖"),
+          Logic.isWhiteGlyph("♗"),
+          Logic.isWhiteGlyph("♘"),
+          Logic.isWhiteGlyph("♙"),
+        )
+      },
+      test("returns false for black glyphs and unknowns") {
+        assertTrue(
+          !Logic.isWhiteGlyph("♚"),
+          !Logic.isWhiteGlyph("♟"),
+          !Logic.isWhiteGlyph("?"),
+        )
+      },
+    ),
+    suite("capturedFromSquares")(
+      test("starting position has no captures") {
+        val (white, black) = Logic.capturedFromSquares(startingSquares)
+        assertTrue(white.isEmpty, black.isEmpty)
+      },
+      test("removing a black pawn shows up in blackLost") {
+        val squares = startingSquares.map { sq =>
+          if sq.pos == "e7" then sq.copy(piece = None, pieceColor = None)
+          else sq
+        }
+        val (white, black) = Logic.capturedFromSquares(squares)
+        assertTrue(white.isEmpty, black == List("♟"))
+      },
+      test("multiple captures sort by descending value") {
+        // Remove black queen, a black rook, and two black pawns.
+        val removed = Set("d8", "a8", "a7", "b7")
+        val squares = startingSquares.map { sq =>
+          if removed.contains(sq.pos) then sq.copy(piece = None, pieceColor = None)
+          else sq
+        }
+        val (_, black) = Logic.capturedFromSquares(squares)
+        assertTrue(black == List("♛", "♜", "♟", "♟"))
+      },
+      test("under-promotion to a second queen still treats the lost pawn as captured") {
+        // Move the d8 black queen square away and add a second white queen
+        // somewhere, simulating a promoted-pawn position. The promoted
+        // white pawn shows as a captured ♙ since it's missing from the
+        // starting count.
+        val squares = startingSquares.map { sq =>
+          if sq.pos == "e2" then sq.copy(piece = Some("♕"), pieceColor = Some("white"))
+          else sq
+        }
+        val (white, _) = Logic.capturedFromSquares(squares)
+        assertTrue(white == List("♙"))
+      },
+      test("foreign glyphs in squares are ignored") {
+        val squares = startingSquares :+ SquareDto("z9", "light", Some("?"), Some("white"))
+        val (white, black) = Logic.capturedFromSquares(squares)
+        assertTrue(white.isEmpty, black.isEmpty)
+      },
+    ),
   )
+
+  // Build a starting-position square list using the same conventions as
+  // WebBoardView (lowercase-letter glyphs for black, uppercase for white).
+  private val startingSquares: List[SquareDto] =
+    val whiteBack = List("♖","♘","♗","♕","♔","♗","♘","♖")
+    val blackBack = List("♜","♞","♝","♛","♚","♝","♞","♜")
+    (for
+      rank <- (8 to 1 by -1).toList
+      file <- ('a' to 'h').toList
+    yield
+      val pos = s"$file$rank"
+      val (piece, color) = rank match
+        case 8 => (Some(blackBack(file - 'a')), Some("black"))
+        case 7 => (Some("♟"),                   Some("black"))
+        case 2 => (Some("♙"),                   Some("white"))
+        case 1 => (Some(whiteBack(file - 'a')), Some("white"))
+        case _ => (None, None)
+      val sqColor = if (file - 'a' + rank) % 2 == 0 then "dark" else "light"
+      SquareDto(pos, sqColor, piece, color)
+    )

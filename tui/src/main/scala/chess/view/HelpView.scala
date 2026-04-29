@@ -1,5 +1,6 @@
 package chess.view
 
+// Mirror of web-ui/src/main/scala/chess/webui/HelpView.scala — keep in sync.
 object HelpView:
   def render: String =
     """|=== πChess Help ===

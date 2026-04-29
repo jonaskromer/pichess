@@ -13,12 +13,19 @@ object PgnCodec:
 
   // ─── Result token ↔ GameStatus ────────────────────────────────────────────
 
-  /** Encode a [[GameStatus]] as a PGN result token. */
+  /** Encode a [[GameStatus]] as a PGN result token.
+    *
+    * Resignation collapses onto the same token as checkmate — the resigning
+    * side simply loses, and PGN itself doesn't distinguish how the win
+    * happened (any `[Termination]` annotation is a header, not a result token).
+    */
   def encodeResult(status: GameStatus): String = status match
-    case GameStatus.Playing                => "*"
-    case GameStatus.Checkmate(Color.White) => "1-0"
-    case GameStatus.Checkmate(Color.Black) => "0-1"
-    case GameStatus.Draw(_)                => "1/2-1/2"
+    case GameStatus.Playing                  => "*"
+    case GameStatus.Checkmate(Color.White)   => "1-0"
+    case GameStatus.Checkmate(Color.Black)   => "0-1"
+    case GameStatus.Resignation(Color.White) => "1-0"
+    case GameStatus.Resignation(Color.Black) => "0-1"
+    case GameStatus.Draw(_)                  => "1/2-1/2"
 
   /** The set of valid PGN result tokens, derived from the encode mapping. Used
     * by [[PgnParser]] to filter result tokens out of movetext.

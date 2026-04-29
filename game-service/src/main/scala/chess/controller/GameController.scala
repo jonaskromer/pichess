@@ -132,6 +132,34 @@ object GameController:
           )
     }
 
+  /** The side to move resigns; the opponent is recorded as the winner.
+    *
+    * Promotes the current state's status to `Resignation(opponent)` via
+    * [[GameState.endWith]], persists the result, and commits the new session.
+    * Refuses if the game is already over — you can't resign a finished game.
+    */
+  def forfeit(
+      gs: GameService,
+      session: SubscriptionRef[SessionState]
+  ): IO[GameError, Unit] =
+    session.modifyZIO { s =>
+      if s.state.status.isOver then
+        ZIO.fail(GameError.InvalidMove("Game is already over"))
+      else
+        val winner = s.state.activeColor.opposite
+        val resigned = s.state.endWith(GameStatus.Resignation(winner))
+        gs.saveState(s.gameId, resigned).as(
+          (
+            (),
+            s.copy(
+              game = s.game.withCurrentState(resigned),
+              error = None,
+              output = None,
+            ),
+          )
+        )
+    }
+
   /** Counts how many times the current position has occurred in this game,
     * including the current position itself.
     *

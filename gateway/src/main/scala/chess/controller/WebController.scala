@@ -71,6 +71,12 @@ object WebController:
             .mapError(toErrorDto)
             .zipRight(currentBoard(session))
         ),
+        Endpoints.postForfeit.zServerLogic[Any](_ =>
+          GameController
+            .forfeit(gs, session)
+            .mapError(toErrorDto)
+            .zipRight(currentBoard(session))
+        ),
         Endpoints.postNew.zServerLogic[Any](_ =>
           gs.newGame()
             .mapError(err => ErrorDto(err.message))
@@ -161,6 +167,8 @@ object WebController:
     Routes(
       Method.GET / ""                -> handler(servePage()),
       Method.GET / "web" / "main.js" -> handler(serveJsBundle()),
+      Method.GET / "web" / "pieces" / string("name") ->
+        handler((name: String, _: Request) => servePieceSvg(name)),
       Method.GET / "api" / "events" -> handler(
         serveEvents(session, shutdown)
       ),
@@ -176,8 +184,25 @@ object WebController:
     )
 
   private def serveJsBundle(): ZIO[Any, Nothing, Response] =
+    serveClasspathResource("web/main.js", MediaType.application.`javascript`)
+
+  /** Serve a unified piece SVG from `web/pieces/`. The `name` segment is
+    * allow-listed against `[a-z]+\.svg` so a malicious URL can't escape the
+    * resource directory via `..` traversal or read arbitrary classpath
+    * entries with crafted suffixes.
+    */
+  private def servePieceSvg(name: String): ZIO[Any, Nothing, Response] =
+    if !name.matches("[a-z]+\\.svg") then
+      ZIO.succeed(Response(status = Status.NotFound))
+    else
+      serveClasspathResource(s"web/pieces/$name", MediaType.image.`svg+xml`)
+
+  private def serveClasspathResource(
+      path: String,
+      contentType: MediaType,
+  ): ZIO[Any, Nothing, Response] =
     ZIO.succeed {
-      val stream = getClass.getClassLoader.getResourceAsStream("web/main.js")
+      val stream = getClass.getClassLoader.getResourceAsStream(path)
       if stream == null then Response(status = Status.NotFound)
       else
         val source = scala.io.Source.fromInputStream(stream)
@@ -186,10 +211,8 @@ object WebController:
           finally source.close()
         Response(
           status  = Status.Ok,
-          headers = Headers(
-            Header.ContentType(MediaType.application.`javascript`)
-          ),
-          body = Body.fromString(content),
+          headers = Headers(Header.ContentType(contentType)),
+          body    = Body.fromString(content),
         )
     }
 

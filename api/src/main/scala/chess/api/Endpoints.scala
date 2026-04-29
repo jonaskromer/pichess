@@ -84,6 +84,14 @@ object Endpoints:
       .out(jsonBody[BoardStateDto])
       .name("postDraw")
 
+  /** POST /api/forfeit — the side to move resigns; the opponent wins. */
+  val postForfeit: PublicEndpoint[Unit, ErrorDto, BoardStateDto, Any] =
+    apiBase.post
+      .in("forfeit")
+      .out(jsonBody[BoardStateDto])
+      .name("postForfeit")
+      .description("The side to move forfeits; the opponent is recorded as the winner.")
+
   /** POST /api/new — reset the game to the starting position. */
   val postNew: PublicEndpoint[Unit, ErrorDto, BoardStateDto, Any] =
     apiBase.post
@@ -138,6 +146,7 @@ object Endpoints:
     postUndo,
     postRedo,
     postDraw,
+    postForfeit,
     postNew,
     postQuit,
     postLoad,

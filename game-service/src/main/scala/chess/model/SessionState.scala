@@ -77,6 +77,19 @@ case class GameSnapshot(
       case Nil            => this
       case (m, _) :: rest => copy(history = (m, newState) :: rest)
 
+  /** Update the snapshot's *current* state, regardless of whether history is
+    * empty. When history is non-empty this is equivalent to [[replaceHead]];
+    * when history is empty (no moves played yet) it updates [[initialState]]
+    * directly so [[state]] still resolves to `newState`.
+    *
+    * Used by terminal transitions that can fire before any move has been
+    * made — e.g. forfeit at move 0.
+    */
+  def withCurrentState(newState: GameState): GameSnapshot =
+    history match
+      case Nil => copy(initialState = newState)
+      case _   => replaceHead(newState)
+
   /** How many times the given state's position has occurred in this game. */
   def countOf(state: GameState): Int =
     positionCounts.getOrElse(Zobrist.hash(state), 0)

@@ -68,6 +68,28 @@ object PgnSerializerSpec extends ZIOSpecDefault:
         pgn.endsWith("1/2-1/2")
       )
     },
+    test("serializes white-resignation result as 0-1 (white loses)") {
+      // Resignation collapses onto the same result token as a checkmate
+      // loss for the resigning side — PGN itself doesn't distinguish.
+      for pgn <- PgnSerializer.serialize(
+          List((Color.White, "e4"), (Color.Black, "e5")),
+          GameStatus.Resignation(Color.Black),
+        )
+      yield assertTrue(
+        pgn.contains("[Result \"0-1\"]"),
+        pgn.endsWith("0-1"),
+      )
+    },
+    test("serializes black-resignation result as 1-0 (black loses)") {
+      for pgn <- PgnSerializer.serialize(
+          Nil,
+          GameStatus.Resignation(Color.White),
+        )
+      yield assertTrue(
+        pgn.contains("[Result \"1-0\"]"),
+        pgn.endsWith("1-0"),
+      )
+    },
     test("includes all seven PGN tag roster headers") {
       for pgn <- PgnSerializer.serialize(Nil, GameStatus.Playing)
       yield assertTrue(

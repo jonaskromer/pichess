@@ -262,6 +262,55 @@ object GameControllerSpec extends ZIOSpecDefault:
         yield assertTrue(exit.isFailure)
       }
     ),
+    suite("forfeit")(
+      test("on a fresh game, ends with the opponent of the side to move as winner") {
+        // White is to move on the initial position, so White forfeits and
+        // Black is recorded as the winner. The empty-history path of
+        // GameSnapshot.withCurrentState is exercised here.
+        for
+          (gs, session) <- withSession
+          _ <- GameController.forfeit(gs, session)
+          s <- session.get
+        yield assertTrue(
+          s.state.status == GameStatus.Resignation(Color.Black),
+          s.state.activeColor == Color.White, // unchanged; forfeit doesn't switch turn
+          s.history.isEmpty,
+        )
+      },
+      test("after a move, the side to move (Black) forfeits and White wins") {
+        for
+          (gs, session) <- withSession
+          _ <- GameController.makeMove(gs, session, "e2 e4")
+          _ <- GameController.forfeit(gs, session)
+          s <- session.get
+        yield assertTrue(
+          s.state.status == GameStatus.Resignation(Color.White),
+          s.history.length == 1,
+        )
+      },
+      test("persists the resignation state to the repository") {
+        for
+          (gs, session) <- withSession
+          gameId <- session.get.map(_.gameId)
+          _ <- GameController.forfeit(gs, session)
+          persisted <- gs.getState(gameId)
+        yield assertTrue(
+          persisted.exists(_.status == GameStatus.Resignation(Color.Black))
+        )
+      },
+      test("fail when the game is already over") {
+        // After Black checkmates with Fool's Mate, forfeit must be rejected
+        // — you can't resign a finished game.
+        for
+          (gs, session) <- withSession
+          _ <- GameController.makeMove(gs, session, "f3")
+          _ <- GameController.makeMove(gs, session, "e5")
+          _ <- GameController.makeMove(gs, session, "g4")
+          _ <- GameController.makeMove(gs, session, "Qh4")
+          err <- GameController.forfeit(gs, session).flip
+        yield assertTrue(err.message.contains("already over"))
+      },
+    ),
     suite("threefold repetition")(
       test("claim draw after position occurs 3 times") {
         // Initial → Nf3 → Nf6 → Ng1 → Ng8 (back to initial) → Nf3 → Nf6 → Ng1 → Ng8 (3rd time)

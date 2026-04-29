@@ -99,5 +99,15 @@ object BoardStateDtoSpec extends ZIOSpecDefault:
         json.contains(""""reason":"stalemate""""),
         decoded == Right(drawn)
       )
-    }
+    },
+    test("round-trip a Resignation status with the surviving winner") {
+      val resigned = sampleState.copy(status = GameStatusDto.resignation("white"))
+      val json = resigned.toJson
+      val decoded = json.fromJson[BoardStateDto]
+      assertTrue(
+        json.contains(""""kind":"resignation""""),
+        json.contains(""""winner":"white""""),
+        decoded == Right(resigned),
+      )
+    },
   )

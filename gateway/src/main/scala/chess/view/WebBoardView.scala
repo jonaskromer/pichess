@@ -76,6 +76,8 @@ object WebBoardView:
     case GameStatus.Checkmate(winner) =>
       GameStatusDto.checkmate(colorStr(winner))
     case GameStatus.Draw(reason) => GameStatusDto.draw(drawReasonStr(reason))
+    case GameStatus.Resignation(winner) =>
+      GameStatusDto.resignation(colorStr(winner))
 
   private def drawReasonStr(reason: DrawReason): String = reason match
     case DrawReason.Stalemate            => "stalemate"

@@ -211,6 +211,30 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         response <- routes.runZIO(Request.post(url"/api/undo", Body.empty))
       yield assertTrue(response.status == Status.BadRequest)
     },
+    test("POST /api/forfeit ends the game with the opponent as winner") {
+      for
+        (routes, session, _) <- withRoutes
+        response <- routes.runZIO(Request.post(url"/api/forfeit", Body.empty))
+        body <- response.body.asString
+        s <- session.get
+      yield assertTrue(
+        response.status == Status.Ok,
+        body.contains(""""kind":"resignation""""),
+        body.contains(""""winner":"black""""),
+        s.state.status == GameStatus.Resignation(Color.Black),
+      )
+    },
+    test("POST /api/forfeit returns 400 when the game is already over") {
+      for
+        (routes, _, _) <- withRoutes
+        _        <- routes.runZIO(Request.post(url"/api/forfeit", Body.empty))
+        response <- routes.runZIO(Request.post(url"/api/forfeit", Body.empty))
+        body     <- response.body.asString
+      yield assertTrue(
+        response.status == Status.BadRequest,
+        body.contains("already over"),
+      )
+    },
     test("POST /api/draw returns error when clock is below 100") {
       for
         (routes, _, _) <- withRoutes
@@ -354,6 +378,41 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
       yield assertTrue(
         response.status == Status.Ok || response.status == Status.NotFound
       )
+    },
+    test("GET /web/pieces/pawn.svg serves a unified piece SVG") {
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.get(url"/web/pieces/pawn.svg"))
+        body     <- response.body.asString
+      yield assertTrue(
+        response.status == Status.Ok,
+        response.headers
+          .get(Header.ContentType)
+          .exists(h =>
+            h.mediaType.mainType == "image" &&
+            h.mediaType.subType == "svg+xml"
+          ),
+        // Sanity: the body should be the unified, var-driven SVG, not a raw
+        // light/dark variant. The CSS-variable references uniquely identify it.
+        body.contains("var(--piece-primary"),
+        body.contains("<g id=\"pawn\""),
+      )
+    },
+    test("GET /web/pieces/missing.svg returns 404 when the file is absent") {
+      // 'missing' passes the allow-list but isn't on the classpath; this
+      // exercises the stream==null branch in serveClasspathResource.
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.get(url"/web/pieces/missing.svg"))
+      yield assertTrue(response.status == Status.NotFound)
+    },
+    test("GET /web/pieces/<bad-name> returns 404 without touching the classpath") {
+      // The allow-list rejects names containing dots (path traversal), digits,
+      // dashes, etc. Hits the early-return branch in servePieceSvg.
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.get(url"/web/pieces/..%2Fmain.js"))
+      yield assertTrue(response.status == Status.NotFound)
     },
     test("GET / serves the HTML shell") {
       for

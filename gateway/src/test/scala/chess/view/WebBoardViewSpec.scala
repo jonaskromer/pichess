@@ -153,7 +153,17 @@ object WebBoardViewSpec extends ZIOSpecDefault:
           (label, result.contains(s""""reason":"$label""""))
         }
         assertTrue(outputs.forall(_._2))
-      }
+      },
+      test("emit resignation with the surviving winner") {
+        val state = GameState.initial.copy(
+          status = GameStatus.Resignation(Color.Black)
+        )
+        val result = WebBoardView.toJson(state, Nil, None)
+        assertTrue(
+          result.contains(""""kind":"resignation""""),
+          result.contains(""""winner":"black""""),
+        )
+      },
     ),
     suite("error-message escaping")(
       test("escape embedded double quotes in error messages") {
