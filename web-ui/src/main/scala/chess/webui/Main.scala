@@ -191,17 +191,13 @@ object Main:
     )
 
   private def renderMoveLog(moves: List[MoveEntryDto]): List[HtmlElement] =
-    moves
-      .grouped(2)
-      .zipWithIndex
-      .map { case (pair, idx) =>
-        val cells = List(
-          span(className := "move-number", s"${idx + 1}."),
-          span(className := "move-san", pair.head.san),
-        ) ++ pair.drop(1).map(m => span(className := "move-san", m.san))
-        div(className := "move-row", cells)
-      }
-      .toList
+    Logic.groupMovesByTwo(moves).map { case (num, white, blackOpt) =>
+      val cells = List(
+        span(className := "move-number", s"$num."),
+        span(className := "move-san", white.san),
+      ) ++ blackOpt.map(m => span(className := "move-san", m.san))
+      div(className := "move-row", cells)
+    }
 
   private def controls(): HtmlElement =
     val moveInputVar = Var("")
@@ -337,9 +333,8 @@ object Main:
     state.squares.find(_.pos == p.from) match
       case None => List.empty
       case Some(sq) =>
-        val pieces =
-          if sq.pieceColor.contains("white") then whitePromotions
-          else blackPromotions
+        val isWhite    = sq.pieceColor.contains("white")
+        val pieces     = Logic.selectPromotionPieces(isWhite)
         val colorClass = s"${sq.pieceColor.getOrElse("")}-piece"
         pieces.map { case (key, glyph) =>
           div(
@@ -577,11 +572,7 @@ object Main:
       to: String,
       state: BoardStateDto,
   ): Boolean =
-    state.squares.find(_.pos == from).flatMap(_.piece) match
-      case Some(p) if p == "♙" || p == "♟" =>
-        val row = to.charAt(1)
-        row == '8' || row == '1'
-      case _ => false
+    Logic.isPawnPromotion(from, to, state)
 
   // --------------------------------------------------------------------------
   // Help text

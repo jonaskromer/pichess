@@ -5,8 +5,12 @@ ThisBuild / scalaVersion := "3.8.2"
 
 // Tapir 1.11.x pulls in zio-json 0.7.x; we run 0.9.0. The breaking changes
 // between those versions don't affect the APIs we rely on (Derive*,
-// @jsonExplicitNull), so downgrade eviction errors to warnings.
-ThisBuild / evictionErrorLevel := Level.Info
+// @jsonExplicitNull), so whitelist only that exact conflict. Other
+// cross-version evictions will still surface as errors.
+ThisBuild / libraryDependencySchemes ++= Seq(
+  "dev.zio" %% "zio-json"                    % VersionScheme.Always,
+  "dev.zio" % "zio-json_sjs1_3"              % VersionScheme.Always,
+)
 
 val zioVersion     = "2.1.24"
 val zioHttpVersion = "3.10.1"
@@ -198,9 +202,14 @@ lazy val webUi = project
     name                            := "pichess-web-ui",
     scalaJSUseMainModuleInitializer := true,
     libraryDependencies ++= Seq(
-      "com.raquo"                   %%% "laminar"          % laminarVersion,
+      "com.raquo"                   %%% "laminar"           % laminarVersion,
       "com.softwaremill.sttp.tapir" %%% "tapir-sttp-client" % tapirVersion,
+      "dev.zio"                     %%% "zio-test"          % zioVersion % Test,
+      "dev.zio"                     %%% "zio-test-sbt"      % zioVersion % Test,
     ),
+    testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
+    // Scoverage doesn't instrument Scala.js output, so coverage stays off here
+    // even when someone runs `sbt coverage test coverageReport` globally.
     coverageEnabled := false,
   )
 

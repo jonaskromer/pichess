@@ -152,7 +152,18 @@ object TuiControllerSpec extends ZIOSpecDefault:
           TuiController.parseCommand("export xyz") ==
             TuiController.Command.Move("export xyz")
         )
-      }
+      },
+      test("parse empty input as Noop (not as an invalid move)") {
+        assertTrue(
+          TuiController.parseCommand("") == TuiController.Command.Noop
+        )
+      },
+      test("parse whitespace-only input as Noop") {
+        assertTrue(
+          TuiController.parseCommand("   ") == TuiController.Command.Noop,
+          TuiController.parseCommand("\t") == TuiController.Command.Noop,
+        )
+      },
     ),
     suite("handleCommand")(
       test("quit sets shutdown promise and returns Shutdown") {
@@ -166,6 +177,33 @@ object TuiControllerSpec extends ZIOSpecDefault:
         for (result, _, _) <- handle("help", flipped = true)
         yield assertTrue(
           result == TuiController.Result.Continue(true)
+        )
+      },
+      test("empty input returns Continue without setting an error") {
+        // Regression: an accidental enter used to fall through to
+        // Command.Move("") and surface as "Invalid move".
+        for (result, isDone, s) <- handle("")
+        yield assertTrue(
+          result == TuiController.Result.Continue(false),
+          !isDone,
+          s.error.isEmpty,
+        )
+      },
+      test("empty input clears a stale error from a previous bad command") {
+        for
+          (gs, session, shutdown) <- withSession
+          _ <- session.update(_.copy(error = Some("stale")))
+          result <- TuiController.handleCommand(
+            TuiController.Command.Noop,
+            gs,
+            session,
+            shutdown,
+            flipped = false,
+          )
+          s <- session.get
+        yield assertTrue(
+          result == TuiController.Result.Continue(false),
+          s.error.isEmpty,
         )
       },
       test("flip toggles flipped state") {

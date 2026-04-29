@@ -22,6 +22,11 @@ object TuiController:
     case Load(raw: String)
     case Export(format: ExportFormat)
     case Move(raw: String)
+    /** Whitespace-only input — re-display the prompt without attempting a
+      * move. Without this, an accidental enter would fall through to
+      * `Command.Move("")` and surface as "Invalid move".
+      */
+    case Noop
 
   enum Result:
     case Shutdown
@@ -32,7 +37,8 @@ object TuiController:
 
   def parseCommand(input: String): Command =
     val trimmed = input.trim
-    if trimmed.startsWith(loadPrefix) then
+    if trimmed.isEmpty then Command.Noop
+    else if trimmed.startsWith(loadPrefix) then
       Command.Load(trimmed.drop(loadPrefix.length))
     else if trimmed.startsWith(exportPrefix) then
       trimmed.drop(exportPrefix.length) match
@@ -77,6 +83,10 @@ object TuiController:
     command match
       case Command.Quit =>
         shutdown.succeed(()).as(Result.Shutdown)
+      case Command.Noop =>
+        session
+          .update(_.copy(error = None, output = None))
+          .as(Result.Continue(flipped))
       case Command.Help =>
         session
           .update(_.copy(error = None, output = None))

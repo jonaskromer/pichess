@@ -247,7 +247,81 @@ object GameSpec extends ZIOSpecDefault:
         yield assertTrue(
           result.board(Position('d', 8)) == Piece(Color.White, PieceType.Queen)
         )
-      }
+      },
+      test("underpromote to rook via straight push") {
+        val s = GameState(
+          Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)),
+          Color.White
+        )
+        for result <- Game.applyMove(
+            s,
+            Move(Position('e', 7), Position('e', 8), Some(PieceType.Rook))
+          )
+        yield assertTrue(
+          result.board(Position('e', 8)) == Piece(Color.White, PieceType.Rook)
+        )
+      },
+      test("underpromote to bishop via straight push") {
+        val s = GameState(
+          Map(Position('e', 7) -> Piece(Color.White, PieceType.Pawn)),
+          Color.White
+        )
+        for result <- Game.applyMove(
+            s,
+            Move(Position('e', 7), Position('e', 8), Some(PieceType.Bishop))
+          )
+        yield assertTrue(
+          result.board(Position('e', 8)) == Piece(Color.White, PieceType.Bishop)
+        )
+      },
+      test("underpromote to rook via capture") {
+        val s = GameState(
+          Map(
+            Position('e', 7) -> Piece(Color.White, PieceType.Pawn),
+            Position('d', 8) -> Piece(Color.Black, PieceType.Knight)
+          ),
+          Color.White
+        )
+        for result <- Game.applyMove(
+            s,
+            Move(Position('e', 7), Position('d', 8), Some(PieceType.Rook))
+          )
+        yield assertTrue(
+          result.board(Position('d', 8)) == Piece(Color.White, PieceType.Rook)
+        )
+      },
+      test("underpromote to bishop via capture") {
+        val s = GameState(
+          Map(
+            Position('e', 7) -> Piece(Color.White, PieceType.Pawn),
+            Position('d', 8) -> Piece(Color.Black, PieceType.Knight)
+          ),
+          Color.White
+        )
+        for result <- Game.applyMove(
+            s,
+            Move(Position('e', 7), Position('d', 8), Some(PieceType.Bishop))
+          )
+        yield assertTrue(
+          result.board(Position('d', 8)) == Piece(Color.White, PieceType.Bishop)
+        )
+      },
+      test("underpromote black pawn to knight via capture on rank 1") {
+        val s = GameState(
+          Map(
+            Position('e', 2) -> Piece(Color.Black, PieceType.Pawn),
+            Position('d', 1) -> Piece(Color.White, PieceType.Rook)
+          ),
+          Color.Black
+        )
+        for result <- Game.applyMove(
+            s,
+            Move(Position('e', 2), Position('d', 1), Some(PieceType.Knight))
+          )
+        yield assertTrue(
+          result.board(Position('d', 1)) == Piece(Color.Black, PieceType.Knight)
+        )
+      },
     ),
     // ─── Check rules ──────────────────────────────────────────────────────────
     suite("check")(

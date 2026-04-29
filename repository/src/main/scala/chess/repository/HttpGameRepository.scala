@@ -3,7 +3,7 @@ package chess.repository
 import chess.codec.{FenParserRegex, FenSerializer}
 import chess.model.{GameError, GameId}
 import chess.model.board.GameState
-import chess.repository.api.{GameStateEnvelope, RepositoryEndpoints}
+import chess.repository.api.{GameStateEnvelope, LoadFailure, RepositoryEndpoints}
 import sttp.client3.SttpBackend
 import sttp.client3.httpclient.zio.HttpClientZioBackend
 import sttp.model.Uri
@@ -15,6 +15,10 @@ import zio.*
   *
   * Used when `repository` runs as its own Docker container; `game-service`
   * gets this layer in place of [[InMemoryGameRepository.layer]].
+  *
+  * All non-2xx responses and transport errors map to
+  * [[GameError.InfrastructureError]]; the message preserves the server's
+  * description where one is available.
   */
 final class HttpGameRepository(
     baseUri: Uri,
@@ -47,27 +51,30 @@ final class HttpGameRepository(
 
   def save(id: GameId, state: GameState): IO[GameError, Unit] =
     saveClient((id, GameStateEnvelope(FenSerializer.serialize(state))))
-      .mapError(toGameError)
+      .mapError(transportError)
       .flatMap {
-        case Right(_) => ZIO.unit
-        case Left(_)  => ZIO.fail(GameError.ParseError("repository rejected save"))
+        case Right(_)     => ZIO.unit
+        case Left(errMsg) =>
+          ZIO.fail(GameError.InfrastructureError(s"save rejected: $errMsg"))
       }
 
   def load(id: GameId): IO[GameError, Option[GameState]] =
-    loadClient(id).mapError(toGameError).flatMap {
-      case Right(env) => FenParserRegex.parse(env.fen).map(Some(_))
-      case Left(_)    => ZIO.succeed(None) // 404 → None
+    loadClient(id).mapError(transportError).flatMap {
+      case Right(env)                       => FenParserRegex.parse(env.fen).map(Some(_))
+      case Left(LoadFailure.NotFound)       => ZIO.succeed(None)
+      case Left(LoadFailure.ServerError(m)) =>
+        ZIO.fail(GameError.InfrastructureError(s"load rejected: $m"))
     }
 
   def delete(id: GameId): IO[GameError, Unit] =
-    deleteClient(id).mapError(toGameError).flatMap {
-      case Right(_) => ZIO.unit
-      case Left(_)  =>
-        ZIO.fail(GameError.ParseError("repository rejected delete"))
+    deleteClient(id).mapError(transportError).flatMap {
+      case Right(_)     => ZIO.unit
+      case Left(errMsg) =>
+        ZIO.fail(GameError.InfrastructureError(s"delete rejected: $errMsg"))
     }
 
-  private def toGameError(t: Throwable): GameError =
-    GameError.ParseError(s"repository HTTP error: ${t.getMessage}")
+  private def transportError(t: Throwable): GameError =
+    GameError.InfrastructureError(s"repository HTTP error: ${t.getMessage}")
 
 object HttpGameRepository:
 
@@ -80,8 +87,15 @@ object HttpGameRepository:
     ZLayer.scoped {
       for
         backend <- HttpClientZioBackend.scoped()
+        // Pre-validate via java.net.URI — sttp's Uri.parse is permissive
+        // enough that bad inputs slip through and surface only at request
+        // time. The JDK is strict (rejects unbalanced brackets, unencoded
+        // spaces, …), giving a deterministic, testable failure mode.
         uri     <- ZIO
-          .fromEither(Uri.parse(baseUri))
-          .mapError(m => new RuntimeException(s"Invalid base uri: $m"))
+          .attempt(java.net.URI.create(baseUri))
+          .mapBoth(
+            t => new RuntimeException(s"Invalid base uri: ${t.getMessage}"),
+            parsed => Uri(parsed),
+          )
       yield HttpGameRepository(uri, backend)
     }

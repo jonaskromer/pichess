@@ -66,34 +66,51 @@ The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural
 
 ## Phase 4 — HTTP / REST
 
+**Status:** Complete (zio-http + Tapir).
+
 **Lecture task:** Develop a REST service using Akka HTTP as a further view layer. Also introduce a module-level REST API for interprocess communication (used in Phase 5 Docker IPC).
 
-- New package `chess.http`
-- Lecture specifies **Akka HTTP** with the high-level Routing DSL; project may use **zio-http** for consistency with ZIO stack
-- Implement as a **view layer** (same role as TUI — calls `GameService`, no domain logic)
-- URL design: nouns not verbs, plural collection + singular instance
-  - `POST   /games`              → `GameService.newGame()`
-  - `POST   /games/:id/moves`    → `GameService.makeMove(id, input)`
-  - `GET    /games/:id`          → `GameService.getState(id)`
-  - `DELETE /games/:id`          → terminate game
-- This REST API will be used for **Gatling performance testing** in Phase 8
-- No changes to `GameService` or any layer below it
+- New `gateway` module — the project's REST view layer (same role as TUI: calls `GameService` / `GameController`, no domain logic)
+- Built on **zio-http** instead of Akka HTTP (for consistency with the ZIO stack); endpoint contracts described with **Tapir** in the cross-compiled `api` module
+- Wire DTOs (`BoardStateDto`, `MoveRequest`, `LoadRequest`, …) live in `api` and are shared by the gateway encoder and the Scala.js web-ui decoder via zio-json — single source of truth for the contract
+- Session-scoped endpoints (one in-flight game per process, mirroring the TUI):
+  - `GET  /api/state`              → current `BoardStateDto`
+  - `POST /api/move`               → apply a move (coordinate or SAN)
+  - `POST /api/undo` / `/api/redo` → reverse / replay the last half-move
+  - `POST /api/draw`               → claim a 50-move / threefold-repetition draw
+  - `POST /api/new`                → reset to the starting position
+  - `POST /api/load`               → import FEN / PGN / JSON (auto-detected)
+  - `GET  /api/export/:format`     → serialize the current position
+  - `POST /api/quit`               → trigger shutdown
+  - `GET  /api/events`             → SSE stream over `SubscriptionRef.changes` (raw zio-http; doesn't fit Tapir's typed model)
+  - `GET  /docs`                   → Tapir-generated Swagger UI
+- The `gateway` also serves the web UI's static assets (`/`, `/main.js`) — Scala.js output is copied into managed resources during `sbt compile` so a single classpath powers both API and UI
+- `GameService` and the layers below it are unchanged — addition only
 
 ---
 
 ## Phase 5 — Microservices (SBT Multi-project + Docker)
 
+**Status:** Complete.
+
 **Lecture task:** Start each microservice using Docker. Then start the entire application using Docker Compose.
 
-- Split into SBT sub-projects:
-  - `chess-model` — `chess.model`, `chess.model.rules` (domain)
-  - `chess-service` — `chess.service`, `chess.repository`
-  - `chess-http` — `chess.http` (REST API)
-  - `chess-tui` — `chess.view` + TUI loop
-- Each module packaged as a **Docker** container with its own `Dockerfile`
-- Orchestrate all services with **Docker Compose** (`compose.yaml`)
-- Modules communicate between Docker instances via the REST API introduced in Phase 4
-- ZLayer wiring stays identical; SBT module boundaries enforce existing dependency rules
+- SBT split is more granular than the original sketch — 13 sub-projects total:
+  - `domain` (cross-compiled JVM/JS) — `chess.model` (board, pieces, errors)
+  - `rules` — `chess.model.rules` (move validation, game progression)
+  - `codec` — FEN/PGN/JSON parsers, SAN serializer, parser-combinator showcases
+  - `api` (cross-compiled JVM/JS) — wire DTOs shared by gateway encoder and web-ui decoder
+  - `repository-api` — Tapir endpoint contract for the repository microservice
+  - `repository` — `GameRepository` impls (`InMemoryGameRepository`, `HttpGameRepository`) plus `RepositoryServer` (HTTP host)
+  - `game-service` — `GameService` orchestration on top of the repo
+  - `gateway` — REST/SSE view layer (Phase 4)
+  - `tui` — terminal view + controller
+  - `web-ui` — Laminar/Scala.js single-page app (Phase 7)
+  - `app` — composition root that wires TUI + gateway in one process
+- Two Docker-packaged microservices: `app` (port 8090, full TUI+REST+UI) and `repository` (port 8091, standalone state store)
+- `docker-compose.yml` runs both; `app` talks to `repository` over REST when `REPOSITORY_URL` is set, otherwise falls back to `InMemoryGameRepository` for local dev
+- Cross-service communication uses the typed Tapir client `HttpGameRepository` (errors map to `GameError.InfrastructureError` for retry policies)
+- ZLayer wiring is preserved; SBT module boundaries enforce the existing layering rules
 
 ---
 
@@ -113,15 +130,15 @@ The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural
 
 **Lecture task (MongoDB):** Use MongoDB to build a second DB implementation using the DAO pattern.
 
-**Status:** Web UI partially complete (done ahead of schedule). MongoDB not started.
+**Status:** Web UI complete (built ahead of schedule and now feature-equivalent to the TUI). MongoDB not started.
 
-- **MongoDB:** Implement `MongoGameRepository` using the MongoDB Scala driver. Swap via ZLayer alongside the Slick implementation.
-- **Web UI** (implemented): browser GUI served via zio-http with drag-and-drop, promotion dialog, and move log
-- TUI and web GUI share state via `SubscriptionRef[SessionState]` — moves in either UI are instantly visible in the other
-- State changes pushed to the browser via **Server-Sent Events** (SSE); TUI races `readLine` against `session.changes`
-- Coordinated shutdown via `Promise[Nothing, Unit]` — quit from either UI triggers goodbye in both
-- `GameController.makeMove` encapsulates shared move-processing logic used by both UIs
-- View files: `HtmlPage` (HTML/CSS/JS), `WebBoardView` (JSON serialization)
+- **Web UI** (`web-ui` module — Scala.js + Laminar):
+  - Drag-and-drop, promotion dialog, move log, board flip, undo/redo, draw-claim, FEN/PGN/JSON load and export
+  - Live state sync with the TUI via `SubscriptionRef[SessionState]` and the gateway's SSE endpoint — moves in either UI appear instantly in the other
+  - Coordinated shutdown via `Promise[Nothing, Unit]` — quit from any surface ends both
+  - Pure board-logic helpers extracted into `Logic.scala` so they're unit-testable in plain `zio-test` even though scoverage doesn't instrument Scala.js output
+  - Wire DTOs and endpoint contracts shared with the gateway via the cross-compiled `api` module
+- **MongoDB:** Pending. Plan: `MongoGameRepository` using the MongoDB Scala driver, swappable via ZLayer alongside the Slick implementation from Phase 6
 
 ---
 
