@@ -165,10 +165,9 @@ object WebController:
       shutdown: Promise[Nothing, Unit],
   ): Routes[Any, Response] =
     Routes(
-      Method.GET / ""                -> handler(servePage()),
-      Method.GET / "web" / "main.js" -> handler(serveJsBundle()),
-      Method.GET / "web" / "pieces" / string("name") ->
-        handler((name: String, _: Request) => servePieceSvg(name)),
+      Method.GET / ""               -> handler(servePage()),
+      Method.GET / "web" / trailing ->
+        handler((rest: zio.http.Path, _: Request) => serveAsset(rest)),
       Method.GET / "api" / "events" -> handler(
         serveEvents(session, shutdown)
       ),
@@ -183,19 +182,33 @@ object WebController:
       )
     )
 
-  private def serveJsBundle(): ZIO[Any, Nothing, Response] =
-    serveClasspathResource("web/main.js", MediaType.application.`javascript`)
-
-  /** Serve a unified piece SVG from `web/pieces/`. The `name` segment is
-    * allow-listed against `[a-z]+\.svg` so a malicious URL can't escape the
-    * resource directory via `..` traversal or read arbitrary classpath
-    * entries with crafted suffixes.
+  /** Serve any file from the `web/` resource directory. Path traversal
+    * (`..`), absolute paths, and segments containing characters outside
+    * `[A-Za-z0-9._-]` all return 404 without touching the classpath. The
+    * extension allow-list controls Content-Type — an unknown extension
+    * is also a 404 so we never serve mystery bytes.
     */
-  private def servePieceSvg(name: String): ZIO[Any, Nothing, Response] =
-    if !name.matches("[a-z]+\\.svg") then
-      ZIO.succeed(Response(status = Status.NotFound))
-    else
-      serveClasspathResource(s"web/pieces/$name", MediaType.image.`svg+xml`)
+  private def serveAsset(rest: zio.http.Path): ZIO[Any, Nothing, Response] =
+    val relative = rest.toString.stripPrefix("/")
+    contentTypeFor(relative) match
+      case Some(contentType) if isSafeAssetPath(relative) =>
+        serveClasspathResource(s"web/$relative", contentType)
+      case _ =>
+        ZIO.succeed(Response(status = Status.NotFound))
+
+  private def isSafeAssetPath(p: String): Boolean =
+    p.nonEmpty && p.split('/').forall(seg =>
+      seg.nonEmpty &&
+      seg != ".." &&
+      seg.forall(c => c.isLetterOrDigit || c == '.' || c == '-' || c == '_')
+    )
+
+  private def contentTypeFor(path: String): Option[MediaType] =
+    val lower = path.toLowerCase
+    if lower.endsWith(".js") then Some(MediaType.application.`javascript`)
+    else if lower.endsWith(".svg") then Some(MediaType.image.`svg+xml`)
+    else if lower.endsWith(".css") then Some(MediaType.text.css)
+    else None
 
   private def serveClasspathResource(
       path: String,

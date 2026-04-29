@@ -110,7 +110,16 @@ object Main:
       className := "header",
       div(
         className := "header-brand",
-        span(className := "header-logo", "🍑"),
+        // Inline SVG so the host's CSS variables (--peach-color, --leaf-color,
+        // …) cascade through the <use> reference into the symbol's paths.
+        // <img src=…> would isolate the SVG and prevent any theming. The
+        // viewBox must match the symbol's so the right and bottom of the
+        // peach aren't clipped by the host's coordinate system.
+        svg.svg(
+          svg.viewBox := "-3 -3 43 44",
+          svg.cls     := "header-logo",
+          svg.use(svg.href := "/web/peach.svg#peach"),
+        ),
         span(child.text <-- helpOpenVar.signal.map(o =>
           if o then "piChess Help" else "piChess"
         )),

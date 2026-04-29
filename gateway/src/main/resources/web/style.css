@@ -32,7 +32,17 @@ body {
   color: #f7a072;
   letter-spacing: 1px;
 }
-.header-logo { font-size: 28px; line-height: 1; }
+.header-logo {
+  width: 32px;
+  height: 32px;
+  display: block;
+  /* Same silhouette drop-shadow used on chess pieces — keeps the brand
+     visually consistent with the board. */
+  filter: drop-shadow(0 1.5px 2px rgba(0,0,0,0.35));
+  /* The peach SVG exposes these tone vars; defaults bake the warm fruit
+     palette right into each var(...) call, so we only need to override
+     here if we ever want to retheme the brand. */
+}
 .header-spacer { flex: 1; }
 .header-actions { display: flex; gap: 10px; }
 .header-link {

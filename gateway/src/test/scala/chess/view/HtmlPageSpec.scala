@@ -29,4 +29,9 @@ object HtmlPageSpec extends ZIOSpecDefault:
         html.contains("grid-template-columns: repeat(8,")
       )
     },
+    test("link the peach SVG as the tab favicon") {
+      assertTrue(
+        html.contains("""<link rel="icon" type="image/svg+xml" href="/web/peach.svg">"""),
+      )
+    },
   )

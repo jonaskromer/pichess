@@ -379,6 +379,22 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         response.status == Status.Ok || response.status == Status.NotFound
       )
     },
+    test("GET /web/peach.svg serves the brand logo SVG") {
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.get(url"/web/peach.svg"))
+        body     <- response.body.asString
+      yield assertTrue(
+        response.status == Status.Ok,
+        response.headers
+          .get(Header.ContentType)
+          .exists(h =>
+            h.mediaType.mainType == "image" &&
+              h.mediaType.subType == "svg+xml"
+          ),
+        body.contains("""id="peach""""),
+      )
+    },
     test("GET /web/pieces/pawn.svg serves a unified piece SVG") {
       for
         (routes, _, _) <- withRoutes
@@ -408,12 +424,45 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
       yield assertTrue(response.status == Status.NotFound)
     },
     test("GET /web/pieces/<bad-name> returns 404 without touching the classpath") {
-      // The allow-list rejects names containing dots (path traversal), digits,
-      // dashes, etc. Hits the early-return branch in servePieceSvg.
+      // The asset path validator rejects `..` segments and characters
+      // outside [A-Za-z0-9._-], so a URL-encoded traversal attempt is 404.
       for
         (routes, _, _) <- withRoutes
         response <- routes.runZIO(Request.get(url"/web/pieces/..%2Fmain.js"))
       yield assertTrue(response.status == Status.NotFound)
+    },
+    test("GET /web/foo.txt returns 404 — unknown extension is not served") {
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.get(url"/web/foo.txt"))
+      yield assertTrue(response.status == Status.NotFound)
+    },
+    test("GET /web/foo..svg returns 404 — `..` anywhere is rejected") {
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.get(url"/web/foo..svg"))
+      yield assertTrue(response.status == Status.NotFound)
+    },
+    test("GET /web/foo bar.svg returns 404 — disallowed character") {
+      // `%20` is a space; the validator rejects it before classpath lookup.
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.get(url"/web/foo%20bar.svg"))
+      yield assertTrue(response.status == Status.NotFound)
+    },
+    test("GET /web/style.css serves the stylesheet with text/css content type") {
+      // Even though HtmlPage also inlines the CSS, the file exists in
+      // resources/web/ and the generic asset endpoint serves it. Exercises
+      // the css branch of contentTypeFor.
+      for
+        (routes, _, _) <- withRoutes
+        response <- routes.runZIO(Request.get(url"/web/style.css"))
+      yield assertTrue(
+        response.status == Status.Ok,
+        response.headers.get(Header.ContentType).exists(h =>
+          h.mediaType.mainType == "text" && h.mediaType.subType == "css"
+        ),
+      )
     },
     test("GET / serves the HTML shell") {
       for

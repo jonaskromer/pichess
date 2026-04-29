@@ -1,4 +1,4 @@
-# πChess 🍑
+# <img src="gateway/src/main/resources/web/peach.svg" alt="🍑" width="32" /> πChess
 
 Welcome to **πChess** (pronounced like *peaches* in German)! 
 
