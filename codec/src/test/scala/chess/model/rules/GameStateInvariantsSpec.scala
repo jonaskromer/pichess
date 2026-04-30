@@ -13,10 +13,10 @@ import zio.test.*
   * For every intermediate [[GameState]] reached by replaying a SAN sequence
   * from the initial position, this spec asserts:
   *
-  *   1. '''FEN round-trip''': `FenParserRegex.parse(FenSerializer.serialize(s))`
-  *      agrees with `s` on every field except `status` (which FEN does not
-  *      encode).
-  *   2. '''positionKey determinism''': two consecutive calls to
+  *   1. '''FEN round-trip''':
+  *      `FenParserRegex.parse(FenSerializer.serialize(s))` agrees with `s` on
+  *      every field except `status` (which FEN does not encode). 2.
+  *      '''positionKey determinism''': two consecutive calls to
   *      `FenSerializer.positionKey` on the same state return the same string.
   *
   * The sequences are chosen to exercise the four position-identity fields

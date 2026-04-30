@@ -37,13 +37,15 @@ object MoveValidatorSpec extends ZIOSpecDefault:
         val s = state(pos('e', 2) -> WP)
         MoveValidator
           .validate(s, Move(pos('e', 2), pos('e', 3)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test("allow two squares forward from rank 2") {
         val s = state(pos('e', 2) -> WP)
         MoveValidator
           .validate(s, Move(pos('e', 2), pos('e', 4)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test("reject two-square advance from non-starting rank") {
         val s = state(pos('e', 3) -> WP)
@@ -79,7 +81,8 @@ object MoveValidatorSpec extends ZIOSpecDefault:
         val s = state(pos('e', 3) -> WP, pos('f', 4) -> BP)
         MoveValidator
           .validate(s, Move(pos('e', 3), pos('f', 4)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test("reject diagonal move to empty square") {
         val s = state(pos('e', 3) -> WP)
@@ -109,13 +112,15 @@ object MoveValidatorSpec extends ZIOSpecDefault:
         val s = blackState(pos('e', 7) -> BP)
         MoveValidator
           .validate(s, Move(pos('e', 7), pos('e', 6)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test("allow two squares forward from rank 7") {
         val s = blackState(pos('e', 7) -> BP)
         MoveValidator
           .validate(s, Move(pos('e', 7), pos('e', 5)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test("reject two-square advance from non-starting rank") {
         val s = blackState(pos('e', 6) -> BP)
@@ -128,7 +133,8 @@ object MoveValidatorSpec extends ZIOSpecDefault:
         val s = blackState(pos('e', 7) -> BP, pos('f', 6) -> WP)
         MoveValidator
           .validate(s, Move(pos('e', 7), pos('f', 6)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       }
     ),
     // ─── Rook ───────────────────────────────────────────────────────────────────
@@ -137,13 +143,15 @@ object MoveValidatorSpec extends ZIOSpecDefault:
         val s = state(pos('a', 1) -> WR)
         MoveValidator
           .validate(s, Move(pos('a', 1), pos('h', 1)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test("allow vertical move on a clear file") {
         val s = state(pos('a', 1) -> WR)
         MoveValidator
           .validate(s, Move(pos('a', 1), pos('a', 8)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test("reject diagonal move") {
         val s = state(pos('a', 1) -> WR)
@@ -177,7 +185,8 @@ object MoveValidatorSpec extends ZIOSpecDefault:
         val s = state(pos('a', 1) -> WR, pos('h', 1) -> BP)
         MoveValidator
           .validate(s, Move(pos('a', 1), pos('h', 1)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       }
     ),
     // ─── Bishop ─────────────────────────────────────────────────────────────────
@@ -186,13 +195,15 @@ object MoveValidatorSpec extends ZIOSpecDefault:
         val s = state(pos('a', 1) -> WB)
         MoveValidator
           .validate(s, Move(pos('a', 1), pos('d', 4)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test("allow diagonal move in the other direction") {
         val s = state(pos('d', 4) -> WB)
         MoveValidator
           .validate(s, Move(pos('d', 4), pos('a', 1)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test("reject horizontal move") {
         val s = state(pos('a', 1) -> WB)
@@ -243,19 +254,22 @@ object MoveValidatorSpec extends ZIOSpecDefault:
         val s = state(pos('d', 1) -> WQ)
         MoveValidator
           .validate(s, Move(pos('d', 1), pos('h', 1)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test("allow vertical move") {
         val s = state(pos('d', 1) -> WQ)
         MoveValidator
           .validate(s, Move(pos('d', 1), pos('d', 8)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test("allow diagonal move") {
         val s = state(pos('d', 1) -> WQ)
         MoveValidator
           .validate(s, Move(pos('d', 1), pos('g', 4)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test("reject knight-leap shape") {
         val s = state(pos('d', 1) -> WQ)
@@ -292,25 +306,29 @@ object MoveValidatorSpec extends ZIOSpecDefault:
         val s = state(pos('g', 1) -> WN)
         MoveValidator
           .validate(s, Move(pos('g', 1), pos('f', 3)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test("allow L-shape (1 forward, 2 side)") {
         val s = state(pos('g', 1) -> WN)
         MoveValidator
           .validate(s, Move(pos('g', 1), pos('h', 3)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test("allow L-shape (2 side, 1 forward)") {
         val s = state(pos('b', 1) -> WN)
         MoveValidator
           .validate(s, Move(pos('b', 1), pos('d', 2)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test("allow jumping over pieces") {
         val s = state(pos('g', 1) -> WN, pos('g', 2) -> BP, pos('f', 2) -> BP)
         MoveValidator
           .validate(s, Move(pos('g', 1), pos('f', 3)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test("reject straight move") {
         val s = state(pos('g', 1) -> WN)
@@ -347,19 +365,22 @@ object MoveValidatorSpec extends ZIOSpecDefault:
         val s = state(pos('e', 1) -> WK)
         MoveValidator
           .validate(s, Move(pos('e', 1), pos('f', 1)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test("allow one square vertically") {
         val s = state(pos('e', 1) -> WK)
         MoveValidator
           .validate(s, Move(pos('e', 1), pos('e', 2)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test("allow one square diagonally") {
         val s = state(pos('e', 1) -> WK)
         MoveValidator
           .validate(s, Move(pos('e', 1), pos('f', 2)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test("reject two squares") {
         val s = state(pos('e', 1) -> WK)
@@ -399,7 +420,8 @@ object MoveValidatorSpec extends ZIOSpecDefault:
         )
         MoveValidator
           .validate(s, Move(pos('e', 5), pos('d', 6)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test("allow black pawn en passant capture") {
         val s = GameState(
@@ -409,7 +431,8 @@ object MoveValidatorSpec extends ZIOSpecDefault:
         )
         MoveValidator
           .validate(s, Move(pos('d', 4), pos('e', 3)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test("reject diagonal to empty square without en passant target") {
         val s = state(pos('e', 5) -> WP)
@@ -444,7 +467,8 @@ object MoveValidatorSpec extends ZIOSpecDefault:
         )
         MoveValidator
           .validate(s, Move(pos('e', 1), pos('g', 1)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test(
         "allow white queen-side castling when path is clear and rights exist"
@@ -458,7 +482,8 @@ object MoveValidatorSpec extends ZIOSpecDefault:
         )
         MoveValidator
           .validate(s, Move(pos('e', 1), pos('c', 1)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test(
         "allow black king-side castling when path is clear and rights exist"
@@ -472,7 +497,8 @@ object MoveValidatorSpec extends ZIOSpecDefault:
         )
         MoveValidator
           .validate(s, Move(pos('e', 8), pos('g', 8)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test(
         "allow black queen-side castling when path is clear and rights exist"
@@ -486,7 +512,8 @@ object MoveValidatorSpec extends ZIOSpecDefault:
         )
         MoveValidator
           .validate(s, Move(pos('e', 8), pos('c', 8)))
-          .exit.map(e => assertTrue(e.isSuccess))
+          .exit
+          .map(e => assertTrue(e.isSuccess))
       },
       test(
         "reject castling when pieces are between king and rook (king-side)"
@@ -632,7 +659,9 @@ object MoveValidatorSpec extends ZIOSpecDefault:
             .exit
         yield assertTrue(exit.isFailure)
       },
-      test("allow queen-side castling when only the rook's path (b1) is attacked") {
+      test(
+        "allow queen-side castling when only the rook's path (b1) is attacked"
+      ) {
         // Black rook on b8 attacks the b-file; b1 is the square the ROOK
         // crosses during O-O-O but NOT a square the king passes through.
         // King path is e1 → d1 → c1; none of those are attacked.
@@ -640,9 +669,9 @@ object MoveValidatorSpec extends ZIOSpecDefault:
           Map(
             pos('e', 1) -> WK,
             pos('a', 1) -> WR,
-            pos('b', 8) -> BR,
+            pos('b', 8) -> BR
           ),
-          Color.White,
+          Color.White
         )
         for exit <- MoveValidator
             .validate(s, Move(pos('e', 1), pos('c', 1)))
@@ -657,15 +686,15 @@ object MoveValidatorSpec extends ZIOSpecDefault:
           Map(
             pos('e', 1) -> WK,
             pos('h', 1) -> WR,
-            pos('h', 8) -> BR,
+            pos('h', 8) -> BR
           ),
-          Color.White,
+          Color.White
         )
         for exit <- MoveValidator
             .validate(s, Move(pos('e', 1), pos('g', 1)))
             .exit
         yield assertTrue(exit.isSuccess)
-      },
+      }
     ),
     // ─── Source square / turn validation ────────────────────────────────────────
     suite("source and turn")(

@@ -117,12 +117,10 @@ object PositionIdentityBehaviors:
           assertTrue(identity(base) != identity(withEp))
         },
         test("en passant: different target files produce different keys") {
-          val d3 = GameState.initial.copy(enPassantTarget =
-            Some(Position('d', 3))
-          )
-          val e3 = GameState.initial.copy(enPassantTarget =
-            Some(Position('e', 3))
-          )
+          val d3 =
+            GameState.initial.copy(enPassantTarget = Some(Position('d', 3)))
+          val e3 =
+            GameState.initial.copy(enPassantTarget = Some(Position('e', 3)))
           assertTrue(identity(d3) != identity(e3))
         }
       ),

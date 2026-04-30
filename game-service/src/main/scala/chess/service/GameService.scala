@@ -19,33 +19,31 @@ import zio.*
   */
 trait GameService:
 
-  /** Start a new game from the standard initial position. Generates a
-    * fresh UUID-based game ID and persists the initial state so subsequent
-    * calls (makeMove, getState) can find it.
+  /** Start a new game from the standard initial position. Generates a fresh
+    * UUID-based game ID and persists the initial state so subsequent calls
+    * (makeMove, getState) can find it.
     */
   def newGame(): IO[GameError, GameEvent.GameStarted]
 
-  /** Load a game from a serialized representation, auto-detecting the
-    * format. Attempts parsing in this order:
-    *   1. JSON (the GameState DTO emitted by [[chess.codec.JsonSerializer]])
-    *   2. PGN (with optional `[FEN "…"]` header for a custom start)
-    *   3. FEN (a single position, no move history)
+  /** Load a game from a serialized representation, auto-detecting the format.
+    * Attempts parsing in this order:
+    *   1. JSON (the GameState DTO emitted by [[chess.codec.JsonSerializer]]) 2.
+    *      PGN (with optional `[FEN "…"]` header for a custom start) 3. FEN (a
+    *      single position, no move history)
     *
-    * Returns the [[GameEvent.GameStarted]] with the initial state, along
-    * with the replayed move history (empty for FEN/JSON). The resulting
-    * game is persisted under a fresh ID; callers do not need to save it
-    * separately.
+    * Returns the [[GameEvent.GameStarted]] with the initial state, along with
+    * the replayed move history (empty for FEN/JSON). The resulting game is
+    * persisted under a fresh ID; callers do not need to save it separately.
     *
-    * Fails with [[GameError.ParseError]] if none of the three formats
-    * accept the input.
+    * Fails with [[GameError.ParseError]] if none of the three formats accept
+    * the input.
     */
   def loadGame(
       input: String
   ): IO[GameError, (GameEvent.GameStarted, List[(Move, GameState)])]
 
-  /** Parse `rawInput` as a move against the game identified by `id`, apply
-    * it, persist the new state, and return it alongside a
-    * [[GameEvent.MoveMade]].
+  /** Parse `rawInput` as a move against the game identified by `id`, apply it,
+    * persist the new state, and return it alongside a [[GameEvent.MoveMade]].
     *
     * `rawInput` is resolved through [[chess.notation.MoveParser]], which
     * accepts coordinate, castling, and SAN notations. The underlying state

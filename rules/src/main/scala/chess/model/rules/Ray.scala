@@ -5,9 +5,9 @@ import chess.model.board.{Board, Position}
 
 /** Behavior of a piece along a ray.
   *
-  *   - [[Slider]] — Queen, Rook, Bishop, King: advances step-by-step along
-  *     the ray and stops at the first occupied square (which becomes a
-  *     potential capture target). Blocked by intervening pieces.
+  *   - [[Slider]] — Queen, Rook, Bishop, King: advances step-by-step along the
+  *     ray and stops at the first occupied square (which becomes a potential
+  *     capture target). Blocked by intervening pieces.
   *   - [[Leaper]] — Knight: lands directly on the destination regardless of
   *     squares in between. Not blocked by intervening pieces.
   */

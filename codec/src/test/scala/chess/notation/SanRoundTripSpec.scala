@@ -6,10 +6,10 @@ import zio.*
 import zio.test.*
 
 /** Full round-trip: for a real multi-move game, every move serialized by
-  * [[SanSerializer]] must re-parse to the same `Move` via [[MoveParser]]
-  * when fed the pre-move state. Catches asymmetries between the two codecs
-  * (missing disambiguation, wrong capture-vs-push choice, mishandled castling,
-  * etc.) that a one-directional test would miss.
+  * [[SanSerializer]] must re-parse to the same `Move` via [[MoveParser]] when
+  * fed the pre-move state. Catches asymmetries between the two codecs (missing
+  * disambiguation, wrong capture-vs-push choice, mishandled castling, etc.)
+  * that a one-directional test would miss.
   */
 object SanRoundTripSpec extends ZIOSpecDefault:
 
@@ -18,7 +18,7 @@ object SanRoundTripSpec extends ZIOSpecDefault:
     */
   private def playMoves(
       initial: GameState,
-      moves: List[Move],
+      moves: List[Move]
   ): IO[chess.model.GameError, List[(GameState, Move)]] =
     ZIO
       .foldLeft(moves)(List.empty[(GameState, Move)] -> initial) {
@@ -36,8 +36,8 @@ object SanRoundTripSpec extends ZIOSpecDefault:
     ZIO
       .foreach(pairs) { case (pre, move) =>
         for
-          san         <- SanSerializer.toSan(move, pre)
-          reparsed    <- MoveParser.parse(san, pre)
+          san <- SanSerializer.toSan(move, pre)
+          reparsed <- MoveParser.parse(san, pre)
         yield assertTrue(reparsed == move).label(s"SAN: $san")
       }
       .map(_.reduce(_ && _))
@@ -51,10 +51,10 @@ object SanRoundTripSpec extends ZIOSpecDefault:
         Move(Position('g', 1), Position('f', 3)),
         Move(Position('b', 8), Position('c', 6)),
         Move(Position('f', 1), Position('c', 4)),
-        Move(Position('g', 8), Position('f', 6)),
+        Move(Position('g', 8), Position('f', 6))
       )
       for
-        pairs  <- playMoves(GameState.initial, moves)
+        pairs <- playMoves(GameState.initial, moves)
         result <- assertRoundTrip(pairs)
       yield result
     },
@@ -67,11 +67,11 @@ object SanRoundTripSpec extends ZIOSpecDefault:
         Move(Position('g', 8), Position('f', 6)),
         Move(Position('f', 1), Position('c', 4)),
         Move(Position('f', 8), Position('c', 5)),
-        Move(Position('e', 1), Position('g', 1)),   // O-O
-        Move(Position('e', 8), Position('g', 8)),   // O-O
+        Move(Position('e', 1), Position('g', 1)), // O-O
+        Move(Position('e', 8), Position('g', 8)) // O-O
       )
       for
-        pairs  <- playMoves(GameState.initial, moves)
+        pairs <- playMoves(GameState.initial, moves)
         result <- assertRoundTrip(pairs)
       yield result
     },
@@ -87,16 +87,24 @@ object SanRoundTripSpec extends ZIOSpecDefault:
           Position('a', 7) -> Piece(Color.White, PieceType.Pawn),
           Position('b', 8) -> Piece(Color.Black, PieceType.Rook),
           Position('h', 2) -> Piece(Color.Black, PieceType.Pawn),
-          Position('g', 1) -> Piece(Color.White, PieceType.Knight),
+          Position('g', 1) -> Piece(Color.White, PieceType.Knight)
         ),
-        Color.White,
+        Color.White
       )
       val moves = List(
-        Move(Position('a', 7), Position('b', 8), Some(PieceType.Queen)), // axb8=Q
-        Move(Position('h', 2), Position('g', 1), Some(PieceType.Knight)), // hxg1=N
+        Move(
+          Position('a', 7),
+          Position('b', 8),
+          Some(PieceType.Queen)
+        ), // axb8=Q
+        Move(
+          Position('h', 2),
+          Position('g', 1),
+          Some(PieceType.Knight)
+        ) // hxg1=N
       )
       for
-        pairs  <- playMoves(start, moves)
+        pairs <- playMoves(start, moves)
         result <- assertRoundTrip(pairs)
       yield result
     },
@@ -110,15 +118,15 @@ object SanRoundTripSpec extends ZIOSpecDefault:
           Position('e', 1) -> Piece(Color.White, PieceType.King),
           Position('e', 8) -> Piece(Color.Black, PieceType.King),
           Position('b', 1) -> Piece(Color.White, PieceType.Knight),
-          Position('d', 1) -> Piece(Color.White, PieceType.Knight),
+          Position('d', 1) -> Piece(Color.White, PieceType.Knight)
         ),
-        Color.White,
+        Color.White
       )
       val moves = List(
-        Move(Position('b', 1), Position('c', 3)), // Nbc3
+        Move(Position('b', 1), Position('c', 3)) // Nbc3
       )
       for
-        pairs  <- playMoves(start, moves)
+        pairs <- playMoves(start, moves)
         result <- assertRoundTrip(pairs)
       yield result
     },
@@ -132,16 +140,16 @@ object SanRoundTripSpec extends ZIOSpecDefault:
           Position('e', 1) -> Piece(Color.White, PieceType.King),
           Position('e', 8) -> Piece(Color.Black, PieceType.King),
           Position('g', 1) -> Piece(Color.White, PieceType.Knight),
-          Position('g', 5) -> Piece(Color.White, PieceType.Knight),
+          Position('g', 5) -> Piece(Color.White, PieceType.Knight)
         ),
-        Color.White,
+        Color.White
       )
       val moves = List(
-        Move(Position('g', 1), Position('f', 3)), // N1f3
+        Move(Position('g', 1), Position('f', 3)) // N1f3
       )
       for
-        pairs  <- playMoves(start, moves)
+        pairs <- playMoves(start, moves)
         result <- assertRoundTrip(pairs)
       yield result
-    },
+    }
   )

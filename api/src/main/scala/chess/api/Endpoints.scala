@@ -90,7 +90,9 @@ object Endpoints:
       .in("forfeit")
       .out(jsonBody[BoardStateDto])
       .name("postForfeit")
-      .description("The side to move forfeits; the opponent is recorded as the winner.")
+      .description(
+        "The side to move forfeits; the opponent is recorded as the winner."
+      )
 
   /** POST /api/new — reset the game to the starting position. */
   val postNew: PublicEndpoint[Unit, ErrorDto, BoardStateDto, Any] =

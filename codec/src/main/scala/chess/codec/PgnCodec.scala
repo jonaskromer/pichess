@@ -16,8 +16,8 @@ object PgnCodec:
   /** Encode a [[GameStatus]] as a PGN result token.
     *
     * Resignation collapses onto the same token as checkmate — the resigning
-    * side simply loses, and PGN itself doesn't distinguish how the win
-    * happened (any `[Termination]` annotation is a header, not a result token).
+    * side simply loses, and PGN itself doesn't distinguish how the win happened
+    * (any `[Termination]` annotation is a header, not a result token).
     */
   def encodeResult(status: GameStatus): String = status match
     case GameStatus.Playing                  => "*"

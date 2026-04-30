@@ -6,13 +6,13 @@ import chess.model.rules.Zobrist
 /** Immutable snapshot of a game in progress: the gameId, the initial position,
   * the move history, and the redo stack.
   *
-  * `positionCounts` tracks how many times each Zobrist-hashed position has
-  * been reached. It is maintained incrementally by the instance helpers
-  * ([[recordMove]], [[undoOnce]], [[redoOnce]]) so repetition detection is
-  * O(1) per query rather than O(history length). Callers should construct
-  * snapshots via [[GameSnapshot.fresh]] or [[GameSnapshot.fromHistory]] —
-  * the case-class default of `Map.empty` is only suitable for internal
-  * `.copy()` chaining inside the helpers themselves.
+  * `positionCounts` tracks how many times each Zobrist-hashed position has been
+  * reached. It is maintained incrementally by the instance helpers
+  * ([[recordMove]], [[undoOnce]], [[redoOnce]]) so repetition detection is O(1)
+  * per query rather than O(history length). Callers should construct snapshots
+  * via [[GameSnapshot.fresh]] or [[GameSnapshot.fromHistory]] — the case-class
+  * default of `Map.empty` is only suitable for internal `.copy()` chaining
+  * inside the helpers themselves.
   */
 case class GameSnapshot(
     gameId: GameId,
@@ -68,9 +68,9 @@ case class GameSnapshot(
 
   /** Replace the state at the top of history without changing the move or the
     * redo stack. Used when [[chess.controller.GameController.claimDraw]]
-    * promotes the current position to a Draw status, or when fivefold
-    * detection promotes to auto-Draw. Zobrist hashes `status`-identical
-    * states equally, so no position-count update is needed.
+    * promotes the current position to a Draw status, or when fivefold detection
+    * promotes to auto-Draw. Zobrist hashes `status`-identical states equally,
+    * so no position-count update is needed.
     */
   def replaceHead(newState: GameState): GameSnapshot =
     history match
@@ -82,8 +82,8 @@ case class GameSnapshot(
     * when history is empty (no moves played yet) it updates [[initialState]]
     * directly so [[state]] still resolves to `newState`.
     *
-    * Used by terminal transitions that can fire before any move has been
-    * made — e.g. forfeit at move 0.
+    * Used by terminal transitions that can fire before any move has been made —
+    * e.g. forfeit at move 0.
     */
   def withCurrentState(newState: GameState): GameSnapshot =
     history match
@@ -106,8 +106,8 @@ object GameSnapshot:
     )
 
   /** Construct a snapshot from a loaded history (e.g. PGN replay). The
-    * positionCounts map is derived by folding Zobrist.hash across the
-    * initial state and every historical state.
+    * positionCounts map is derived by folding Zobrist.hash across the initial
+    * state and every historical state.
     */
   def fromHistory(
       gameId: GameId,

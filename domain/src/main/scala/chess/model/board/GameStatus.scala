@@ -12,9 +12,9 @@ enum DrawReason:
 /** The current phase of a chess game.
   *
   * Transitions always go `Playing → Terminal` — once a game is over
-  * (`Checkmate`, `Draw`, or `Resignation`) it stays over. Future terminal
-  * cases (e.g. `Timeout`) should extend this enum and be treated as terminal
-  * by [[isOver]].
+  * (`Checkmate`, `Draw`, or `Resignation`) it stays over. Future terminal cases
+  * (e.g. `Timeout`) should extend this enum and be treated as terminal by
+  * [[isOver]].
   */
 enum GameStatus:
   case Playing

@@ -16,36 +16,36 @@ import zio.test.*
   */
 object HttpGameRepositorySpec extends ZIOSpecDefault:
 
-  /** A repository whose every operation fails — used to drive the server's
-    * 5xx error paths and the corresponding client mapping.
+  /** A repository whose every operation fails — used to drive the server's 5xx
+    * error paths and the corresponding client mapping.
     */
   private object BoomRepository extends GameRepository:
     private val boom = GameError.InfrastructureError("backend boom")
     def save(id: GameId, state: GameState): IO[GameError, Unit] = ZIO.fail(boom)
-    def load(id: GameId): IO[GameError, Option[GameState]]      = ZIO.fail(boom)
-    def delete(id: GameId): IO[GameError, Unit]                 = ZIO.fail(boom)
+    def load(id: GameId): IO[GameError, Option[GameState]] = ZIO.fail(boom)
+    def delete(id: GameId): IO[GameError, Unit] = ZIO.fail(boom)
 
   private def withClientBacked[A](repo: GameRepository)(
       run: GameRepository => ZIO[Scope, Throwable, A]
   ): ZIO[Scope, Throwable, A] =
     for
-      serverEnv   <- Server.defaultWithPort(0).build
-      port        <- Server
+      serverEnv <- Server.defaultWithPort(0).build
+      port <- Server
         .install(RepositoryServer.routes(repo))
         .provideEnvironment(serverEnv)
       sttpBackend <- HttpClientZioBackend.scoped()
-      uri         <- ZIO
+      uri <- ZIO
         .fromEither(Uri.parse(s"http://localhost:$port"))
         .mapError(m => new RuntimeException(m))
-      client       = new HttpGameRepository(uri, sttpBackend)
-      result      <- run(client)
+      client = new HttpGameRepository(uri, sttpBackend)
+      result <- run(client)
     yield result
 
   private def withClient[A](
       run: GameRepository => ZIO[Scope, Throwable, A]
   ): ZIO[Scope, Throwable, A] =
     for
-      store  <- Ref.make(Map.empty[GameId, GameState])
+      store <- Ref.make(Map.empty[GameId, GameState])
       result <- withClientBacked(new InMemoryGameRepository(store))(run)
     yield result
 
@@ -54,14 +54,16 @@ object HttpGameRepositorySpec extends ZIOSpecDefault:
   ): ZIO[Scope, Throwable, A] =
     for
       backend <- HttpClientZioBackend.scoped()
-      uri     <- ZIO
+      uri <- ZIO
         .fromEither(Uri.parse("http://127.0.0.1:1"))
         .mapError(m => new RuntimeException(m))
-      client   = new HttpGameRepository(uri, backend)
-      result  <- run(client)
+      client = new HttpGameRepository(uri, backend)
+      result <- run(client)
     yield result
 
-  private def isInfraError(msgFragment: String): Either[GameError, Any] => Boolean =
+  private def isInfraError(
+      msgFragment: String
+  ): Either[GameError, Any] => Boolean =
     case Left(GameError.InfrastructureError(m)) => m.contains(msgFragment)
     case _                                      => false
 
@@ -70,7 +72,7 @@ object HttpGameRepositorySpec extends ZIOSpecDefault:
       withClient { client =>
         val state = GameState.initial
         for
-          _      <- client.save("g1", state)
+          _ <- client.save("g1", state)
           loaded <- client.load("g1")
         yield assertTrue(loaded == Some(state))
       }
@@ -87,8 +89,8 @@ object HttpGameRepositorySpec extends ZIOSpecDefault:
         val s1 = GameState.initial
         val s2 = s1.copy(activeColor = Color.Black)
         for
-          _      <- client.save("g1", s1)
-          _      <- client.save("g1", s2)
+          _ <- client.save("g1", s1)
+          _ <- client.save("g1", s2)
           loaded <- client.load("g1")
         yield assertTrue(loaded == Some(s2))
       }
@@ -96,8 +98,8 @@ object HttpGameRepositorySpec extends ZIOSpecDefault:
     test("delete removes a saved game; later load returns None") {
       withClient { client =>
         for
-          _      <- client.save("g1", GameState.initial)
-          _      <- client.delete("g1")
+          _ <- client.save("g1", GameState.initial)
+          _ <- client.delete("g1")
           loaded <- client.load("g1")
         yield assertTrue(loaded.isEmpty)
       }
@@ -112,15 +114,15 @@ object HttpGameRepositorySpec extends ZIOSpecDefault:
         val s1 = GameState.initial
         val s2 = s1.copy(activeColor = Color.Black)
         for
-          _   <- client.save("g1", s1)
-          _   <- client.save("g2", s2)
-          g1  <- client.load("g1")
-          g2  <- client.load("g2")
-          g3  <- client.load("g3")
+          _ <- client.save("g1", s1)
+          _ <- client.save("g2", s2)
+          g1 <- client.load("g1")
+          g2 <- client.load("g2")
+          g3 <- client.load("g3")
         yield assertTrue(
           g1 == Some(s1),
           g2 == Some(s2),
-          g3.isEmpty,
+          g3.isEmpty
         )
       }
     },
@@ -130,9 +132,7 @@ object HttpGameRepositorySpec extends ZIOSpecDefault:
           client
             .save("g1", GameState.initial)
             .either
-            .map(e =>
-              assertTrue(isInfraError("Save failed: backend boom")(e))
-            )
+            .map(e => assertTrue(isInfraError("Save failed: backend boom")(e)))
         }
       },
       test("load surfaces as InfrastructureError") {
@@ -140,9 +140,7 @@ object HttpGameRepositorySpec extends ZIOSpecDefault:
           client
             .load("g1")
             .either
-            .map(e =>
-              assertTrue(isInfraError("Load failed: backend boom")(e))
-            )
+            .map(e => assertTrue(isInfraError("Load failed: backend boom")(e)))
         }
       },
       test("delete surfaces as InfrastructureError") {
@@ -154,7 +152,7 @@ object HttpGameRepositorySpec extends ZIOSpecDefault:
               assertTrue(isInfraError("Delete failed: backend boom")(e))
             )
         }
-      },
+      }
     ),
     suite("transport failure → InfrastructureError")(
       // Port 1 is privileged and almost never bound, so connecting fails
@@ -172,7 +170,7 @@ object HttpGameRepositorySpec extends ZIOSpecDefault:
       test("delete") {
         withDeadClient(_.delete("g1").either)
           .map(e => assertTrue(isInfraError("repository HTTP error")(e)))
-      },
+      }
     ),
     suite("layer")(
       test("wires up a working client; transport failures still propagate") {
@@ -182,7 +180,9 @@ object HttpGameRepositorySpec extends ZIOSpecDefault:
           .provide(HttpGameRepository.layer("http://127.0.0.1:1"))
           .map(e => assertTrue(isInfraError("repository HTTP error")(e)))
       },
-      test("fails to build with 'Invalid base uri' when java.net.URI rejects the input") {
+      test(
+        "fails to build with 'Invalid base uri' when java.net.URI rejects the input"
+      ) {
         // An unencoded space is rejected by java.net.URI.create — the
         // strictest URI parsing path the layer goes through.
         ZIO
@@ -190,9 +190,10 @@ object HttpGameRepositorySpec extends ZIOSpecDefault:
           .provide(HttpGameRepository.layer("http://example.com/has space"))
           .either
           .map {
-            case Left(t)  => assertTrue(t.getMessage.contains("Invalid base uri"))
+            case Left(t) =>
+              assertTrue(t.getMessage.contains("Invalid base uri"))
             case Right(_) => assertTrue(false)
           }
-      },
-    ),
+      }
+    )
   ).provide(Scope.default)

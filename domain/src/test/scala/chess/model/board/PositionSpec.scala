@@ -4,8 +4,8 @@ import chess.model.GameError
 import zio.ZIO
 import zio.test.*
 
-/** Contract tests for [[Position.make]], the validated factory that is the
-  * only way to construct a Position from untrusted coordinates.
+/** Contract tests for [[Position.make]], the validated factory that is the only
+  * way to construct a Position from untrusted coordinates.
   */
 object PositionSpec extends ZIOSpecDefault:
 

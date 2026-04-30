@@ -10,17 +10,17 @@ import zio.json.*
   *
   * `GameState` is serialized on the wire as FEN (Forsyth–Edwards Notation): a
   * short, canonical string that both sides convert with `FenSerializer` /
-  * `FenParserRegex`. Keeping FEN as the wire format avoids ad-hoc JSON
-  * encoders for the nested `Board` / `Piece` types and makes the service
-  * curl-friendly for debugging.
+  * `FenParserRegex`. Keeping FEN as the wire format avoids ad-hoc JSON encoders
+  * for the nested `Board` / `Piece` types and makes the service curl-friendly
+  * for debugging.
   *
-  *   PUT    /games/{id}  → save;   500 with message on any failure
-  *   GET    /games/{id}  → load;   404 when absent, 500 with message on failure
-  *   DELETE /games/{id}  → delete; idempotent, 500 with message on failure
+  * PUT /games/{id} → save; 500 with message on any failure GET /games/{id} →
+  * load; 404 when absent, 500 with message on failure DELETE /games/{id} →
+  * delete; idempotent, 500 with message on failure
   *
-  * Save/delete pick 5xx (rather than 4xx) because the only consumer that
-  * speaks this contract is [[HttpGameRepository]] and it can't structurally
-  * produce malformed input — every reachable failure is server-side.
+  * Save/delete pick 5xx (rather than 4xx) because the only consumer that speaks
+  * this contract is [[HttpGameRepository]] and it can't structurally produce
+  * malformed input — every reachable failure is server-side.
   */
 final case class GameStateEnvelope(fen: String)
 
@@ -31,14 +31,14 @@ object GameStateEnvelope:
     DeriveJsonDecoder.gen[GameStateEnvelope]
 
 /** Typed error for [[RepositoryEndpoints.loadGame]] — distinguishes "no such
-  * game" (which the client maps to `None`) from a real backend failure
-  * (which the client treats as an infrastructure error).
+  * game" (which the client maps to `None`) from a real backend failure (which
+  * the client treats as an infrastructure error).
   */
 sealed trait LoadFailure
 
 object LoadFailure:
-  case object NotFound                            extends LoadFailure
-  final case class ServerError(message: String)   extends LoadFailure
+  case object NotFound extends LoadFailure
+  final case class ServerError(message: String) extends LoadFailure
 
 object RepositoryEndpoints:
 
@@ -51,8 +51,8 @@ object RepositoryEndpoints:
       ),
       oneOfVariant[LoadFailure.ServerError](
         StatusCode.InternalServerError,
-        stringBody.map(LoadFailure.ServerError(_))(_.message),
-      ),
+        stringBody.map(LoadFailure.ServerError(_))(_.message)
+      )
     )
 
   val saveGame: PublicEndpoint[(String, GameStateEnvelope), String, Unit, Any] =

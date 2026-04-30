@@ -263,7 +263,9 @@ object GameControllerSpec extends ZIOSpecDefault:
       }
     ),
     suite("forfeit")(
-      test("on a fresh game, ends with the opponent of the side to move as winner") {
+      test(
+        "on a fresh game, ends with the opponent of the side to move as winner"
+      ) {
         // White is to move on the initial position, so White forfeits and
         // Black is recorded as the winner. The empty-history path of
         // GameSnapshot.withCurrentState is exercised here.
@@ -274,7 +276,7 @@ object GameControllerSpec extends ZIOSpecDefault:
         yield assertTrue(
           s.state.status == GameStatus.Resignation(Color.Black),
           s.state.activeColor == Color.White, // unchanged; forfeit doesn't switch turn
-          s.history.isEmpty,
+          s.history.isEmpty
         )
       },
       test("after a move, the side to move (Black) forfeits and White wins") {
@@ -285,7 +287,7 @@ object GameControllerSpec extends ZIOSpecDefault:
           s <- session.get
         yield assertTrue(
           s.state.status == GameStatus.Resignation(Color.White),
-          s.history.length == 1,
+          s.history.length == 1
         )
       },
       test("persists the resignation state to the repository") {
@@ -309,7 +311,7 @@ object GameControllerSpec extends ZIOSpecDefault:
           _ <- GameController.makeMove(gs, session, "Qh4")
           err <- GameController.forfeit(gs, session).flip
         yield assertTrue(err.message.contains("already over"))
-      },
+      }
     ),
     suite("threefold repetition")(
       test("claim draw after position occurs 3 times") {
@@ -496,9 +498,7 @@ object GameControllerSpec extends ZIOSpecDefault:
         val moves = List("Nf3", "Nc6", "Nc3", "Nf6")
         for
           (gs, session) <- withSession
-          _ <- ZIO.foreach(moves)(m =>
-            GameController.makeMove(gs, session, m)
-          )
+          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, session, m))
           s <- session.get
         yield assertTrue(s.state.halfmoveClock == 4)
       },
@@ -506,9 +506,7 @@ object GameControllerSpec extends ZIOSpecDefault:
         val moves = List("Nf3", "Nc6", "Nc3", "Nf6", "e4")
         for
           (gs, session) <- withSession
-          _ <- ZIO.foreach(moves)(m =>
-            GameController.makeMove(gs, session, m)
-          )
+          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, session, m))
           s <- session.get
         yield assertTrue(s.state.halfmoveClock == 0)
       },
@@ -517,9 +515,7 @@ object GameControllerSpec extends ZIOSpecDefault:
         val moves = List("Nf3", "Nc6", "Nc3", "d5", "Nxd5")
         for
           (gs, session) <- withSession
-          _ <- ZIO.foreach(moves)(m =>
-            GameController.makeMove(gs, session, m)
-          )
+          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, session, m))
           s <- session.get
         yield assertTrue(s.state.halfmoveClock == 0)
       },
@@ -536,9 +532,7 @@ object GameControllerSpec extends ZIOSpecDefault:
           gameId <- session.get.map(_.gameId)
           _ <- gs.saveState(gameId, start)
           _ <- session.set(SessionState(GameSnapshot.fresh(gameId, start)))
-          _ <- ZIO.foreach(moves)(m =>
-            GameController.makeMove(gs, session, m)
-          )
+          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, session, m))
           afterMoves <- session.get
           _ <- GameController.claimDraw(gs, session)
           afterClaim <- session.get

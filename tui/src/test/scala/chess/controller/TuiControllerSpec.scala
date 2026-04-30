@@ -161,9 +161,9 @@ object TuiControllerSpec extends ZIOSpecDefault:
       test("parse whitespace-only input as Noop") {
         assertTrue(
           TuiController.parseCommand("   ") == TuiController.Command.Noop,
-          TuiController.parseCommand("\t") == TuiController.Command.Noop,
+          TuiController.parseCommand("\t") == TuiController.Command.Noop
         )
-      },
+      }
     ),
     suite("handleCommand")(
       test("quit sets shutdown promise and returns Shutdown") {
@@ -186,7 +186,7 @@ object TuiControllerSpec extends ZIOSpecDefault:
         yield assertTrue(
           result == TuiController.Result.Continue(false),
           !isDone,
-          s.error.isEmpty,
+          s.error.isEmpty
         )
       },
       test("empty input clears a stale error from a previous bad command") {
@@ -198,12 +198,12 @@ object TuiControllerSpec extends ZIOSpecDefault:
             gs,
             session,
             shutdown,
-            flipped = false,
+            flipped = false
           )
           s <- session.get
         yield assertTrue(
           result == TuiController.Result.Continue(false),
-          s.error.isEmpty,
+          s.error.isEmpty
         )
       },
       test("flip toggles flipped state") {

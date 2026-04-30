@@ -1,69 +1,89 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="-14 -10 628 824">
-  <style>
-    .paper { fill: var(--paper-color, #fdfbf3); }
-    .grid  { stroke: var(--grid-color, #b9d3e7); fill: none; }
-  </style>
-  <defs>
+<!--
+  Crumpled notebook page. Same CSS-variable hooks as `notebook-page.svg`:
+
+    paper-color   page background fill   (#fdfbf3 cream)
+    grid-color    ruled-grid stroke      (#b9d3e7 light blue)
+
+  Self-contained sprite (style + defs live INSIDE the symbol) so a
+  cross-document `<use href="…#paper-crumpled"/>` from the host page pulls
+  the crumple filter / patterns / clip along with the symbol body.
+-->
+  <symbol id="paper-crumpled" viewBox="-14 -10 628 824" overflow="visible">
     <!--
-      Crumple filter chain:
-        1. feTurbulence            — generate noise (used twice below)
-        2. feDisplacementMap       — push pixels around so paper edges and grid lines warp
-        3. feDiffuseLighting       — treat the SAME noise as a heightmap and compute
-                                     directional lighting; produces shadows on the slopes
-                                     of the wrinkles
-        4. feComponentTransfer     — remap lighting so most of the page stays bright,
-                                     only steep gradients (creases) actually cast shadows
-        5. feComposite (operator=in) — mask lighting to the warped paper shape
-        6. feBlend mode="multiply" — multiply lighting onto warped paper (lit areas
-                                     unchanged, shaded areas darkened)
-        7. feDropShadow            — cast shadow under the crumpled paper
+      Colours come via `fill="var(...)"` / `stroke="var(...)"` inline rather
+      than a <style> block — same reasoning as notebook-page.svg: inline
+      `var()` on attributes propagates reliably through cross-document
+      `<use>`, CSS variable cascade into a nested <symbol> <style> is
+      browser-flaky.
     -->
-    <filter id="crumple" x="-5%" y="-5%" width="110%" height="110%">
-      <feTurbulence type="fractalNoise" baseFrequency="0.008" numOctaves="3"
-                    seed="5" result="noise"/>
+    <defs>
+      <!--
+        Crumple filter chain:
+          1. feTurbulence            — generate noise (used twice below)
+          2. feDisplacementMap       — push pixels around so paper edges and grid lines warp
+          3. feDiffuseLighting       — treat the SAME noise as a heightmap and compute
+                                       directional lighting; produces shadows on the slopes
+                                       of the wrinkles
+          4. feComponentTransfer     — remap lighting so most of the page stays bright,
+                                       only steep gradients (creases) actually cast shadows
+          5. feComposite (operator=in) — mask lighting to the warped paper shape
+          6. feBlend mode="multiply" — multiply lighting onto warped paper (lit areas
+                                       unchanged, shaded areas darkened)
+          7. feDropShadow            — cast shadow under the crumpled paper
+      -->
+      <filter id="crumple" x="-5%" y="-5%" width="110%" height="110%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.008" numOctaves="3"
+                      seed="5" result="noise"/>
 
-      <feDisplacementMap in="SourceGraphic" in2="noise" scale="8"
-                         xChannelSelector="R" yChannelSelector="G" result="warped"/>
+        <feDisplacementMap in="SourceGraphic" in2="noise" scale="8"
+                           xChannelSelector="R" yChannelSelector="G" result="warped"/>
 
-      <feDiffuseLighting in="noise" surfaceScale="5" diffuseConstant="1"
-                         lighting-color="white" result="lightRaw">
-        <feDistantLight azimuth="135" elevation="45"/>
-      </feDiffuseLighting>
+        <feDiffuseLighting in="noise" surfaceScale="5" diffuseConstant="1"
+                           lighting-color="white" result="lightRaw">
+          <feDistantLight azimuth="135" elevation="45"/>
+        </feDiffuseLighting>
 
-      <!-- Brighten lighting: deepest creases darken paper to ~50%, lit areas stay full bright -->
-      <feComponentTransfer in="lightRaw" result="lightAdj">
-        <feFuncR type="linear" slope="0.5" intercept="0.5"/>
-        <feFuncG type="linear" slope="0.5" intercept="0.5"/>
-        <feFuncB type="linear" slope="0.5" intercept="0.5"/>
-      </feComponentTransfer>
+        <!-- Brighten lighting: deepest creases darken paper to ~50%, lit areas stay full bright -->
+        <feComponentTransfer in="lightRaw" result="lightAdj">
+          <feFuncR type="linear" slope="0.5" intercept="0.5"/>
+          <feFuncG type="linear" slope="0.5" intercept="0.5"/>
+          <feFuncB type="linear" slope="0.5" intercept="0.5"/>
+        </feComponentTransfer>
 
-      <feComposite in="lightAdj" in2="warped" operator="in" result="light"/>
-      <feBlend in="warped" in2="light" mode="multiply" result="shaded"/>
-      <feDropShadow in="shaded" dx="0" dy="4" stdDeviation="6" flood-opacity="0.18"/>
-    </filter>
+        <feComposite in="lightAdj" in2="warped" operator="in" result="light"/>
+        <feBlend in="warped" in2="light" mode="multiply" result="shaded"/>
+        <feDropShadow in="shaded" dx="0" dy="4" stdDeviation="6" flood-opacity="0.18"/>
+      </filter>
 
-    <pattern id="grid-minor" width="24" height="24" patternUnits="userSpaceOnUse">
-      <path class="grid" stroke-width="0.6" stroke-opacity="0.55"
-            d="M 24 0 L 0 0 L 0 24"/>
-    </pattern>
-    <pattern id="grid-major" width="120" height="120" patternUnits="userSpaceOnUse">
-      <path class="grid" stroke-width="1.1" stroke-opacity="0.9"
-            d="M 120 0 L 0 0 L 0 120"/>
-    </pattern>
-    <clipPath id="paper-clip">
-      <rect x="0" y="0" width="600" height="800" rx="2"/>
-    </clipPath>
-  </defs>
+      <pattern id="grid-minor" width="24" height="24" patternUnits="userSpaceOnUse">
+        <path stroke="var(--grid-color, #b9d3e7)" fill="none"
+              stroke-width="0.6" stroke-opacity="0.55"
+              d="M 24 0 L 0 0 L 0 24"/>
+      </pattern>
+      <pattern id="grid-major" width="120" height="120" patternUnits="userSpaceOnUse">
+        <path stroke="var(--grid-color, #b9d3e7)" fill="none"
+              stroke-width="1.1" stroke-opacity="0.9"
+              d="M 120 0 L 0 0 L 0 120"/>
+      </pattern>
+      <clipPath id="paper-clip">
+        <rect x="0" y="0" width="600" height="800" rx="2"/>
+      </clipPath>
+    </defs>
 
-  <!-- paper + grid wrapped together so they crumple as one -->
-  <g filter="url(#crumple)">
-    <rect x="0" y="0" width="600" height="800" rx="2" class="paper"/>
-    <g clip-path="url(#paper-clip)">
-      <rect x="0" y="0" width="600" height="800" fill="url(#grid-minor)"/>
-      <rect x="0" y="0" width="600" height="800" fill="url(#grid-major)"/>
-      <!-- right & bottom edges (the grid pattern only draws top & left of each cell) -->
-      <path class="grid" stroke-width="1.1" stroke-opacity="0.9"
-            d="M 600 0 L 600 800 M 0 800 L 600 800"/>
+    <!-- paper + grid wrapped together so they crumple as one -->
+    <g filter="url(#crumple)">
+      <rect x="0" y="0" width="600" height="800" rx="2"
+            fill="var(--paper-color, #fdfbf3)"/>
+      <g clip-path="url(#paper-clip)">
+        <rect x="0" y="0" width="600" height="800" fill="url(#grid-minor)"/>
+        <rect x="0" y="0" width="600" height="800" fill="url(#grid-major)"/>
+        <!-- right & bottom edges (the grid pattern only draws top & left of each cell) -->
+        <path stroke="var(--grid-color, #b9d3e7)" fill="none"
+              stroke-width="1.1" stroke-opacity="0.9"
+              d="M 600 0 L 600 800 M 0 800 L 600 800"/>
+      </g>
     </g>
-  </g>
+  </symbol>
+  <use href="#paper-crumpled"/>
 </svg>

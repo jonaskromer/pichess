@@ -21,14 +21,14 @@ object Game:
     *
     * Orchestrates validation, board mutation, and status detection. The
     * returned state reflects every consequence of the move: updated board,
-    * flipped active color, revoked castling rights, new or cleared
-    * en-passant target, incremented/reset halfmove clock, fullmove number,
-    * `inCheck` flag, and a resolved [[GameStatus]]:
+    * flipped active color, revoked castling rights, new or cleared en-passant
+    * target, incremented/reset halfmove clock, fullmove number, `inCheck` flag,
+    * and a resolved [[GameStatus]]:
     *
-    *   - [[GameStatus.Checkmate]] if the opponent has no legal reply while
-    *     in check
-    *   - [[GameStatus.Draw]] with the appropriate [[DrawReason]] for
-    *     stalemate or insufficient material
+    *   - [[GameStatus.Checkmate]] if the opponent has no legal reply while in
+    *     check
+    *   - [[GameStatus.Draw]] with the appropriate [[DrawReason]] for stalemate
+    *     or insufficient material
     *   - [[GameStatus.Playing]] otherwise
     *
     * Fails with [[GameError.InvalidMove]] when:
@@ -41,9 +41,9 @@ object Game:
     *   - the move would leave the active color's king in check
     *   - promotion is missing, excess, or to an invalid piece type
     *
-    * Threefold/fivefold repetition detection is **not** performed here —
-    * that requires history, which lives in [[chess.model.GameSnapshot]] and
-    * is handled by [[chess.controller.GameController.makeMove]].
+    * Threefold/fivefold repetition detection is **not** performed here — that
+    * requires history, which lives in [[chess.model.GameSnapshot]] and is
+    * handled by [[chess.controller.GameController.makeMove]].
     */
   def applyMove(
       state: GameState,

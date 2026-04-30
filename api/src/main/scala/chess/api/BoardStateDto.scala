@@ -28,10 +28,10 @@ object MoveEntryDto:
 
 /** Wire-format game outcome.
   *
-  * kind == "playing" → `winner` and `reason` are null
-  * kind == "checkmate" → `winner` is "white" or "black"; `reason` is null
-  * kind == "draw" → `reason` names the draw cause; `winner` is null
-  * kind == "resignation" → `winner` is the side that did NOT resign; `reason` is null
+  * kind == "playing" → `winner` and `reason` are null kind == "checkmate" →
+  * `winner` is "white" or "black"; `reason` is null kind == "draw" → `reason`
+  * names the draw cause; `winner` is null kind == "resignation" → `winner` is
+  * the side that did NOT resign; `reason` is null
   *
   * Lowercase / camelCase strings match the rest of `BoardStateDto`
   * (`activeColor`, square colors, piece colors). The canonical (Title-cased)

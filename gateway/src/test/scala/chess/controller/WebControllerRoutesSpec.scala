@@ -221,18 +221,18 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         response.status == Status.Ok,
         body.contains(""""kind":"resignation""""),
         body.contains(""""winner":"black""""),
-        s.state.status == GameStatus.Resignation(Color.Black),
+        s.state.status == GameStatus.Resignation(Color.Black)
       )
     },
     test("POST /api/forfeit returns 400 when the game is already over") {
       for
         (routes, _, _) <- withRoutes
-        _        <- routes.runZIO(Request.post(url"/api/forfeit", Body.empty))
+        _ <- routes.runZIO(Request.post(url"/api/forfeit", Body.empty))
         response <- routes.runZIO(Request.post(url"/api/forfeit", Body.empty))
-        body     <- response.body.asString
+        body <- response.body.asString
       yield assertTrue(
         response.status == Status.BadRequest,
-        body.contains("already over"),
+        body.contains("already over")
       )
     },
     test("POST /api/draw returns error when clock is below 100") {
@@ -387,25 +387,27 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
       for
         (routes, _, _) <- withRoutes
         response <- routes.runZIO(Request.get(url"/web/peach.png"))
-        bytes    <- response.body.asArray
+        bytes <- response.body.asArray
       yield assertTrue(
         response.status == Status.Ok,
-        response.headers.get(Header.ContentType).exists(h =>
-          h.mediaType.mainType == "image" && h.mediaType.subType == "png"
-        ),
+        response.headers
+          .get(Header.ContentType)
+          .exists(h =>
+            h.mediaType.mainType == "image" && h.mediaType.subType == "png"
+          ),
         // PNG signature: 89 50 4E 47 0D 0A 1A 0A
         bytes.length > 8,
         bytes(0) == 0x89.toByte,
         bytes(1) == 0x50.toByte, // 'P'
-        bytes(2) == 0x4E.toByte, // 'N'
-        bytes(3) == 0x47.toByte, // 'G'
+        bytes(2) == 0x4e.toByte, // 'N'
+        bytes(3) == 0x47.toByte // 'G'
       )
     },
     test("GET /web/peach.svg serves the brand logo SVG") {
       for
         (routes, _, _) <- withRoutes
         response <- routes.runZIO(Request.get(url"/web/peach.svg"))
-        body     <- response.body.asString
+        body <- response.body.asString
       yield assertTrue(
         response.status == Status.Ok,
         response.headers
@@ -414,27 +416,27 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
             h.mediaType.mainType == "image" &&
               h.mediaType.subType == "svg+xml"
           ),
-        body.contains("""id="peach""""),
+        body.contains("""id="peach"""")
       )
     },
     test("GET /web/pieces/pawn.svg serves a unified piece SVG") {
       for
         (routes, _, _) <- withRoutes
         response <- routes.runZIO(Request.get(url"/web/pieces/pawn.svg"))
-        body     <- response.body.asString
+        body <- response.body.asString
       yield assertTrue(
         response.status == Status.Ok,
         response.headers
           .get(Header.ContentType)
           .exists(h =>
             h.mediaType.mainType == "image" &&
-            h.mediaType.subType == "svg+xml"
+              h.mediaType.subType == "svg+xml"
           ),
         // Sanity: the body should be the unified, var-driven SVG, not a raw
         // light/dark variant. The CSS-variable references uniquely identify it,
         // and the composite `<symbol id="pawn">` is what external <use> targets.
         body.contains("var(--piece-primary"),
-        body.contains("<symbol id=\"pawn\""),
+        body.contains("<symbol id=\"pawn\"")
       )
     },
     test("GET /web/pieces/missing.svg returns 404 when the file is absent") {
@@ -445,7 +447,9 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         response <- routes.runZIO(Request.get(url"/web/pieces/missing.svg"))
       yield assertTrue(response.status == Status.NotFound)
     },
-    test("GET /web/pieces/<bad-name> returns 404 without touching the classpath") {
+    test(
+      "GET /web/pieces/<bad-name> returns 404 without touching the classpath"
+    ) {
       // The asset path validator rejects `..` segments and characters
       // outside [A-Za-z0-9._-], so a URL-encoded traversal attempt is 404.
       for
@@ -472,7 +476,9 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         response <- routes.runZIO(Request.get(url"/web/foo%20bar.svg"))
       yield assertTrue(response.status == Status.NotFound)
     },
-    test("GET /web/style.css serves the stylesheet with text/css content type") {
+    test(
+      "GET /web/style.css serves the stylesheet with text/css content type"
+    ) {
       // Even though HtmlPage also inlines the CSS, the file exists in
       // resources/web/ and the generic asset endpoint serves it. Exercises
       // the css branch of contentTypeFor.
@@ -481,9 +487,11 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         response <- routes.runZIO(Request.get(url"/web/style.css"))
       yield assertTrue(
         response.status == Status.Ok,
-        response.headers.get(Header.ContentType).exists(h =>
-          h.mediaType.mainType == "text" && h.mediaType.subType == "css"
-        ),
+        response.headers
+          .get(Header.ContentType)
+          .exists(h =>
+            h.mediaType.mainType == "text" && h.mediaType.subType == "css"
+          )
       )
     },
     test("GET / serves the HTML shell") {

@@ -164,21 +164,27 @@ object MainSpec extends ZIOSpecDefault:
     ),
     suite("selectRepositoryLayer")(
       test("None falls back to in-memory and resolves to a GameRepository") {
-        for repo <- ZIO.service[GameRepository].provide(
-          Main.selectRepositoryLayer(None)
-        )
+        for repo <- ZIO
+            .service[GameRepository]
+            .provide(
+              Main.selectRepositoryLayer(None)
+            )
         yield assertTrue(repo.isInstanceOf[InMemoryGameRepository])
       },
       test("empty string falls back to in-memory") {
-        for repo <- ZIO.service[GameRepository].provide(
-          Main.selectRepositoryLayer(Some(""))
-        )
+        for repo <- ZIO
+            .service[GameRepository]
+            .provide(
+              Main.selectRepositoryLayer(Some(""))
+            )
         yield assertTrue(repo.isInstanceOf[InMemoryGameRepository])
       },
       test("non-empty URL builds an HttpGameRepository layer") {
-        for repo <- ZIO.service[GameRepository].provide(
-          Main.selectRepositoryLayer(Some("http://repository:8091"))
-        )
+        for repo <- ZIO
+            .service[GameRepository]
+            .provide(
+              Main.selectRepositoryLayer(Some("http://repository:8091"))
+            )
         yield assertTrue(!repo.isInstanceOf[InMemoryGameRepository])
       } @@ withLiveClock
     ),

@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-10 -8 220 56"
+     preserveAspectRatio="none" overflow="visible">
+<!--
+  Marker-pen stripe shape — used as mask-image on text headings
+  (.section-title) so a CSS background-color shows through the irregular
+  shape. The mask alpha (opaque black = visible, transparent = hidden)
+  defines where the highlight paints.
+
+  Two filter passes produce the brush-stroke look:
+
+    1. Shape distortion. feTurbulence + feDisplacementMap warp the rect's
+       edges so the highlight doesn't look like a clean rectangle.
+       Asymmetric baseFrequency (0.05 0.25) gives more vertical wobble
+       than horizontal — reads as a hand wobble rather than a chunky
+       pixel artefact.
+
+    2. Streaky alpha modulation. A second feTurbulence at high X
+       frequency (vertical streaks) + low Y frequency (long horizontal
+       continuity) is converted to alpha via feColorMatrix and lifted
+       from 0..1 to 0.4..1.0 so the streaks aren't fully transparent.
+       feComposite operator=arithmetic multiplies warped's alpha by the
+       streak's alpha — final mask alpha varies across the stripe like
+       a brush dragged with uneven pigment.
+
+  Layout:
+    - viewBox includes a 10/8-unit margin around the rect so displaced
+      edges have room to render without being clipped.
+    - filter region extends past the rect (x=-15% width=130%) so the
+      displacement doesn't get cut at the filter region boundary.
+    - overflow="visible" + preserveAspectRatio="none" let the stripe
+      stretch to whatever heading width it ends up wrapping while still
+      showing displaced edges past the rect bounds.
+-->
+  <defs>
+    <filter id="rough" x="-15%" y="-30%" width="130%" height="160%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.05 0.25"
+                    numOctaves="2" seed="3" result="shape-noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="shape-noise" scale="14"
+                         result="warped"/>
+
+      <feTurbulence type="fractalNoise" baseFrequency="0.4 0.04"
+                    numOctaves="2" seed="11" result="streak-noise"/>
+      <feColorMatrix in="streak-noise" type="matrix"
+        values="0 0 0 0 0
+                0 0 0 0 0
+                0 0 0 0 0
+                1 0 0 0 0" result="streak-alpha"/>
+      <feComponentTransfer in="streak-alpha" result="streak-boosted">
+        <feFuncA type="linear" slope="0.6" intercept="0.4"/>
+      </feComponentTransfer>
+
+      <feComposite in="warped" in2="streak-boosted" operator="arithmetic"
+                   k1="1" k2="0" k3="0" k4="0"/>
+    </filter>
+  </defs>
+  <rect x="0" y="2" width="200" height="36" fill="black" filter="url(#rough)"/>
+</svg>

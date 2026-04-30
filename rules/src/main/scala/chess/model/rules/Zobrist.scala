@@ -70,10 +70,8 @@ object Zobrist:
   /** Hash a [[GameState]] to a 64-bit Zobrist key.
     *
     * The hash is sensitive to exactly the four FIDE position-identity fields:
-    *   1. piece placement
-    *   2. active color
-    *   3. castling rights
-    *   4. en passant target (file-only; the rank is redundant in chess)
+    *   1. piece placement 2. active color 3. castling rights 4. en passant
+    *      target (file-only; the rank is redundant in chess)
     *
     * It is '''not''' sensitive to `halfmoveClock`, `fullmoveNumber`, `status`,
     * or `inCheck` — matching the contract of

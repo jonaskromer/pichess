@@ -10,9 +10,9 @@ object PgnSerializer:
 
   private val pgnDateFormat = DateTimeFormatter.ofPattern("yyyy.MM.dd")
 
-  /** Serialize a move log + final status to a PGN string. The Date header
-    * is read from `Clock.currentDateTime` so the function is pure given
-    * the ZIO clock context — tests can control it via `TestClock`.
+  /** Serialize a move log + final status to a PGN string. The Date header is
+    * read from `Clock.currentDateTime` so the function is pure given the ZIO
+    * clock context — tests can control it via `TestClock`.
     */
   def serialize(
       moveLog: List[(Color, String)],

@@ -15,12 +15,12 @@ import zio.test.*
   *
   * Zobrist-specific tests added here:
   *   - '''Distinctness sweep''': replay the curated game sequences used
-  *     elsewhere in the suite, collect every state reached, and assert that
-  *     the Zobrist hash partitions them identically to the FEN position-key.
-  *     Any divergence is a Zobrist correctness bug.
+  *     elsewhere in the suite, collect every state reached, and assert that the
+  *     Zobrist hash partitions them identically to the FEN position-key. Any
+  *     divergence is a Zobrist correctness bug.
   *   - '''Stability''': the hash of the initial position is non-zero and
-  *     consistent across calls — a minimal regression guard against a change
-  *     to the seed or the tables accidentally collapsing to zero.
+  *     consistent across calls — a minimal regression guard against a change to
+  *     the seed or the tables accidentally collapsing to zero.
   */
 object ZobristSpec extends ZIOSpecDefault:
 
@@ -42,12 +42,49 @@ object ZobristSpec extends ZIOSpecDefault:
 
   private val corpusSequences: List[List[String]] = List(
     // Ruy Lopez with both castling kingside
-    List("e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6", "O-O", "Be7",
-      "Re1", "b5", "Bb3", "d6", "c3", "O-O"),
+    List(
+      "e4",
+      "e5",
+      "Nf3",
+      "Nc6",
+      "Bb5",
+      "a6",
+      "Ba4",
+      "Nf6",
+      "O-O",
+      "Be7",
+      "Re1",
+      "b5",
+      "Bb3",
+      "d6",
+      "c3",
+      "O-O"
+    ),
     // Najdorf with opposite-side castling
-    List("e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3", "a6",
-      "Be3", "e5", "Nb3", "Be6", "f3", "b5", "Qd2", "Nbd7", "O-O-O", "Be7",
-      "g4", "O-O"),
+    List(
+      "e4",
+      "c5",
+      "Nf3",
+      "d6",
+      "d4",
+      "cxd4",
+      "Nxd4",
+      "Nf6",
+      "Nc3",
+      "a6",
+      "Be3",
+      "e5",
+      "Nb3",
+      "Be6",
+      "f3",
+      "b5",
+      "Qd2",
+      "Nbd7",
+      "O-O-O",
+      "Be7",
+      "g4",
+      "O-O"
+    ),
     // En passant capture cycle
     List("e4", "Nf6", "e5", "d5", "exd6"),
     // Scholar's mate

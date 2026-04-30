@@ -18,7 +18,9 @@ object GameSnapshotSpec extends ZIOSpecDefault:
       val result = fresh.replaceHead(altered)
       assertTrue(result == fresh)
     },
-    test("withCurrentState on an empty history updates initialState so state resolves correctly") {
+    test(
+      "withCurrentState on an empty history updates initialState so state resolves correctly"
+    ) {
       // Forfeit at move 0 needs to be representable, so withCurrentState
       // must update the snapshot's resolved current state even when there
       // is no move history yet.
@@ -28,21 +30,23 @@ object GameSnapshotSpec extends ZIOSpecDefault:
       assertTrue(
         updated.state == altered,
         updated.initialState == altered,
-        updated.history.isEmpty,
+        updated.history.isEmpty
       )
     },
     test("withCurrentState on a non-empty history delegates to replaceHead") {
       val pos1 = Position('e', 2)
       val pos2 = Position('e', 4)
       val mv = Move(pos1, pos2)
-      val mid = GameState.initial.copy(activeColor = chess.model.piece.Color.Black)
-      val withMove = GameSnapshot.fresh("id", GameState.initial).recordMove(mv, mid)
+      val mid =
+        GameState.initial.copy(activeColor = chess.model.piece.Color.Black)
+      val withMove =
+        GameSnapshot.fresh("id", GameState.initial).recordMove(mv, mid)
       val altered = mid.copy(inCheck = true)
       val updated = withMove.withCurrentState(altered)
       assertTrue(
         updated.state == altered,
         updated.history.head._2 == altered,
-        updated.initialState == GameState.initial,
+        updated.initialState == GameState.initial
       )
     },
     test("countOf returns 0 for a position that has never occurred") {

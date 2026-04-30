@@ -41,7 +41,7 @@ object WebBoardViewSpec extends ZIOSpecDefault:
           json.contains(""""piece":"bishop""""),
           json.contains(""""piece":"knight""""),
           json.contains(""""piece":"pawn""""),
-          json.contains(""""pieceColor":"white""""),
+          json.contains(""""pieceColor":"white"""")
         )
       },
       test("encode black pieces with the same type names") {
@@ -49,7 +49,7 @@ object WebBoardViewSpec extends ZIOSpecDefault:
           json.contains(""""pieceColor":"black"""),
           // Type names appear for both sides; pieceColor disambiguates.
           // Black pawns are present in the initial position alongside white.
-          json.split(""""piece":"pawn"""").length == 17, // 8 white + 8 black + 1
+          json.split(""""piece":"pawn"""").length == 17 // 8 white + 8 black + 1
         )
       },
       test("have null piece for empty squares") {
@@ -162,9 +162,9 @@ object WebBoardViewSpec extends ZIOSpecDefault:
         val result = WebBoardView.toJson(state, Nil, None)
         assertTrue(
           result.contains(""""kind":"resignation""""),
-          result.contains(""""winner":"black""""),
+          result.contains(""""winner":"black"""")
         )
-      },
+      }
     ),
     suite("error-message escaping")(
       test("escape embedded double quotes in error messages") {

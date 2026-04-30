@@ -10,9 +10,9 @@ import zio.test.*
 /** Equivalence test between Zobrist-based and FEN-based repetition counting.
   *
   * [[GameSnapshot.positionCounts]] is an incrementally-maintained,
-  * Zobrist-keyed map. Its contract is that it agrees, at every reachable
-  * state, with the FEN-string equality class defined by
-  * [[FenSerializer.positionKey]] — the original reference implementation.
+  * Zobrist-keyed map. Its contract is that it agrees, at every reachable state,
+  * with the FEN-string equality class defined by [[FenSerializer.positionKey]]
+  * — the original reference implementation.
   *
   * After Phase B's cutover, `GameController.countCurrentPosition` itself uses
   * the Zobrist map, so comparing against it would be a tautology. This spec
@@ -20,8 +20,8 @@ import zio.test.*
   * equivalence check remains a real regression guard even after cutover.
   *
   * For every position reached across forward play, undo, and redo, the two
-  * schemes must agree. Any divergence points at an exact state and labels
-  * the step where the mismatch occurred.
+  * schemes must agree. Any divergence points at an exact state and labels the
+  * step where the mismatch occurred.
   */
 object RepetitionEquivalenceSpec extends ZIOSpecDefault:
 
@@ -32,13 +32,46 @@ object RepetitionEquivalenceSpec extends ZIOSpecDefault:
   private val corpusSequences: List[List[String]] = List(
     // Ruy Lopez with both kingside castling
     List(
-      "e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6", "O-O", "Be7", "Re1",
-      "b5", "Bb3", "d6", "c3", "O-O"
+      "e4",
+      "e5",
+      "Nf3",
+      "Nc6",
+      "Bb5",
+      "a6",
+      "Ba4",
+      "Nf6",
+      "O-O",
+      "Be7",
+      "Re1",
+      "b5",
+      "Bb3",
+      "d6",
+      "c3",
+      "O-O"
     ),
     // Najdorf English Attack: opposite-side castling
     List(
-      "e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3", "a6", "Be3",
-      "e5", "Nb3", "Be6", "f3", "b5", "Qd2", "Nbd7", "O-O-O", "Be7", "g4",
+      "e4",
+      "c5",
+      "Nf3",
+      "d6",
+      "d4",
+      "cxd4",
+      "Nxd4",
+      "Nf6",
+      "Nc3",
+      "a6",
+      "Be3",
+      "e5",
+      "Nb3",
+      "Be6",
+      "f3",
+      "b5",
+      "Qd2",
+      "Nbd7",
+      "O-O-O",
+      "Be7",
+      "g4",
       "O-O"
     ),
     // En passant mid-cycle
@@ -47,7 +80,14 @@ object RepetitionEquivalenceSpec extends ZIOSpecDefault:
     List("e4", "e5", "Qh5", "Nc6", "Bc4", "Nf6", "Qxf7#"),
     // Knight shuffle producing the initial position 3× (threefold territory)
     List(
-      "Nf3", "Nc6", "Ng1", "Nb8", "Nf3", "Nc6", "Ng1", "Nb8"
+      "Nf3",
+      "Nc6",
+      "Ng1",
+      "Nb8",
+      "Nf3",
+      "Nc6",
+      "Ng1",
+      "Nb8"
     )
   )
 
@@ -57,9 +97,9 @@ object RepetitionEquivalenceSpec extends ZIOSpecDefault:
     */
   private type Mismatch = String
 
-  /** FEN-based reference count, inlined here so the assertion compares
-    * Zobrist against the original implementation even after Phase B's cutover
-    * of `GameController.countCurrentPosition` to the Zobrist map.
+  /** FEN-based reference count, inlined here so the assertion compares Zobrist
+    * against the original implementation even after Phase B's cutover of
+    * `GameController.countCurrentPosition` to the Zobrist map.
     */
   private def fenBasedCount(snap: GameSnapshot): Int =
     val currentKey = FenSerializer.positionKey(snap.state)
@@ -88,13 +128,12 @@ object RepetitionEquivalenceSpec extends ZIOSpecDefault:
     val start = GameSnapshot.fresh("eq-test", GameState.initial)
     val initialMismatch = checkCount(start, "initial").toList
     ZIO
-      .foldLeft(seq)((start, initialMismatch)) {
-        case ((snap, acc), san) =>
-          for
-            move <- MoveParser.parse(san, snap.state)
-            next <- Game.applyMove(snap.state, move)
-            advanced = snap.recordMove(move, next)
-          yield (advanced, checkCount(advanced, s"after $san").toList ::: acc)
+      .foldLeft(seq)((start, initialMismatch)) { case ((snap, acc), san) =>
+        for
+          move <- MoveParser.parse(san, snap.state)
+          next <- Game.applyMove(snap.state, move)
+          advanced = snap.recordMove(move, next)
+        yield (advanced, checkCount(advanced, s"after $san").toList ::: acc)
       }
       .map(_._2.reverse)
 

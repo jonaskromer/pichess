@@ -6,13 +6,13 @@ import zio.*
 
 /** Unified entry point for converting a user-supplied move string into a
   * [[Move]] given the current [[GameState]]. Tries each registered
-  * [[NotationResolver]] in order (coordinate → castling → SAN) and returns
-  * the first successful parse.
+  * [[NotationResolver]] in order (coordinate → castling → SAN) and returns the
+  * first successful parse.
   *
   * Lives in `chess.notation` rather than `chess.controller` because it is a
   * notation concern — composing the resolvers already defined here — and is
-  * used by both the controller layer (TUI/web input) and the codec layer
-  * (PGN replay). Having it in `controller` would invert the layering since
+  * used by both the controller layer (TUI/web input) and the codec layer (PGN
+  * replay). Having it in `controller` would invert the layering since
   * `codec.PgnParser` would then depend on `controller`.
   */
 object MoveParser:

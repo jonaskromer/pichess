@@ -2,7 +2,11 @@ package chess
 
 import chess.controller.{GameController, TuiController, WebController}
 import chess.model.{GameSnapshot, SessionState}
-import chess.repository.{GameRepository, HttpGameRepository, InMemoryGameRepository}
+import chess.repository.{
+  GameRepository,
+  HttpGameRepository,
+  InMemoryGameRepository
+}
 import chess.service.GameService
 import chess.notation.SanSerializer
 import chess.view.{BoardView, HelpView, MoveLogView}
@@ -25,14 +29,14 @@ object Main extends ZIOAppDefault:
     ZIOAppArgs.getArgs.flatMap(args =>
       app(args.contains("--headless")).provide(
         GameService.layer,
-        repositoryLayer,
+        repositoryLayer
       )
     )
 
-  /** Pick the repository implementation. If `REPOSITORY_URL` is set we talk
-    * to a separately-deployed repository microservice over REST; otherwise
-    * we keep the in-process in-memory store. Empty / whitespace values fall
-    * back to in-memory so an unset Docker var doesn't crash startup.
+  /** Pick the repository implementation. If `REPOSITORY_URL` is set we talk to
+    * a separately-deployed repository microservice over REST; otherwise we keep
+    * the in-process in-memory store. Empty / whitespace values fall back to
+    * in-memory so an unset Docker var doesn't crash startup.
     */
   private[chess] def selectRepositoryLayer(
       envUrl: Option[String]

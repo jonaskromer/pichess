@@ -321,7 +321,7 @@ object GameSpec extends ZIOSpecDefault:
         yield assertTrue(
           result.board(Position('d', 1)) == Piece(Color.Black, PieceType.Knight)
         )
-      },
+      }
     ),
     // ─── Check rules ──────────────────────────────────────────────────────────
     suite("check")(

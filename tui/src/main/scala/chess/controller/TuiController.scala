@@ -22,8 +22,9 @@ object TuiController:
     case Load(raw: String)
     case Export(format: ExportFormat)
     case Move(raw: String)
-    /** Whitespace-only input — re-display the prompt without attempting a
-      * move. Without this, an accidental enter would fall through to
+
+    /** Whitespace-only input — re-display the prompt without attempting a move.
+      * Without this, an accidental enter would fall through to
       * `Command.Move("")` and surface as "Invalid move".
       */
     case Noop

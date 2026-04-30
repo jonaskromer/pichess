@@ -4,11 +4,37 @@ import chess.api.{BoardStateDto, MoveEntryDto, SquareDto}
 
 /** Pure helpers used by the Laminar `Main` component.
   *
-  * These have no DOM or Laminar dependency so they can be unit-tested in
-  * plain zio-test on Scala.js — the `Main.scala` file itself is harder to
-  * exercise because it wires together Laminar signals and DOM events.
+  * These have no DOM or Laminar dependency so they can be unit-tested in plain
+  * zio-test on Scala.js — the `Main.scala` file itself is harder to exercise
+  * because it wires together Laminar signals and DOM events.
   */
 object Logic:
+
+  /** Active page theme. The Scala.js bundle reads / writes this; the
+    * synchronous bootstrap script in `HtmlPage.scala` applies the matching
+    * `dark` class on `<html>` before the bundle loads to avoid FOUT.
+    */
+  enum Theme:
+    case Light, Dark
+
+  /** Decide which theme to start in.
+    *
+    * Light is the default — only an explicit stored `dark` opts in. The OS
+    * `prefers-color-scheme` is intentionally ignored so first-time visitors
+    * always see the same palette regardless of system settings; the user can
+    * switch via the toggle and the choice persists.
+    *
+    * The `prefersDark` parameter is retained for compatibility with the call
+    * site and historical tests, but it no longer affects the result.
+    */
+  def decideInitialTheme(
+      stored: Option[String],
+      prefersDark: Boolean = false
+  ): Theme =
+    val _ = prefersDark
+    stored match
+      case Some("dark") => Theme.Dark
+      case _            => Theme.Light
 
   /** `true` when moving the piece at `from` to `to` constitutes a pawn
     * promotion — i.e. the piece is a pawn and the destination rank is the
@@ -17,7 +43,7 @@ object Logic:
   def isPawnPromotion(
       from: String,
       to: String,
-      state: BoardStateDto,
+      state: BoardStateDto
   ): Boolean =
     state.squares.find(_.pos == from).flatMap(_.piece) match
       case Some("pawn") =>
@@ -26,11 +52,11 @@ object Logic:
       case _ => false
 
   /** Group a chronological move log into `(moveNumber, white, blackOpt)`
-    * triples — one row per White-Black pair; a dangling white half-move
-    * appears alone at the end with `None` in the black slot.
+    * triples — one row per White-Black pair; a dangling white half-move appears
+    * alone at the end with `None` in the black slot.
     */
   def groupMovesByTwo(
-      moves: List[MoveEntryDto],
+      moves: List[MoveEntryDto]
   ): List[(Int, MoveEntryDto, Option[MoveEntryDto])] =
     moves
       .grouped(2)
@@ -39,14 +65,14 @@ object Logic:
       .toList
 
   /** (SAN-key, piece-type-name) pairs offered in the promotion dialog — four
-    * entries, the same four for both colors. The piece-type name is used as
-    * the symbol id when rendering `<use href="/web/pieces/<name>.svg#<name>"/>`.
+    * entries, the same four for both colors. The piece-type name is used as the
+    * symbol id when rendering `<use href="/web/pieces/<name>.svg#<name>"/>`.
     */
   val promotionChoices: List[(String, String)] = List(
     "Q" -> "queen",
     "R" -> "rook",
     "B" -> "bishop",
-    "N" -> "knight",
+    "N" -> "knight"
   )
 
   /** Map a wire-format draw reason to a user-readable phrase. The kebab-case
@@ -88,10 +114,12 @@ object Logic:
       squares: List[SquareDto]
   ): (List[String], List[String]) =
     val whiteAlive = squares.collect {
-      case s if s.pieceColor.contains("white") && s.piece.nonEmpty => s.piece.get
+      case s if s.pieceColor.contains("white") && s.piece.nonEmpty =>
+        s.piece.get
     }
     val blackAlive = squares.collect {
-      case s if s.pieceColor.contains("black") && s.piece.nonEmpty => s.piece.get
+      case s if s.pieceColor.contains("black") && s.piece.nonEmpty =>
+        s.piece.get
     }
     val whiteLost = sortByValue(multisetDiff(startingPieceTypes, whiteAlive))
     val blackLost = sortByValue(multisetDiff(startingPieceTypes, blackAlive))
@@ -101,12 +129,12 @@ object Logic:
   // The king gets a sentinel value so the (illegal but possible) edge case
   // of a missing king sorts to the front rather than crashing on lookup.
   private val pieceValues: Map[String, Int] = Map(
-    "king"   -> 100,
-    "queen"  -> 9,
-    "rook"   -> 5,
+    "king" -> 100,
+    "queen" -> 9,
+    "rook" -> 5,
     "bishop" -> 3,
     "knight" -> 3,
-    "pawn"   -> 1,
+    "pawn" -> 1
   )
 
   private def sortByValue(types: List[String]): List[String] =

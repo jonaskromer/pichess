@@ -1,6 +1,14 @@
 package chess.controller
 
-import chess.api.{BoardStateDto, Endpoints, ErrorDto, ExportResponse, LoadRequest, MoveRequest, StateResponse}
+import chess.api.{
+  BoardStateDto,
+  Endpoints,
+  ErrorDto,
+  ExportResponse,
+  LoadRequest,
+  MoveRequest,
+  StateResponse
+}
 import chess.api.Endpoints.QuitAck
 import chess.codec.{FenSerializer, JsonSerializer, PgnSerializer}
 import chess.model.{GameError, GameSnapshot, SessionState}
@@ -24,7 +32,7 @@ object WebController:
   def routes(
       gs: GameService,
       session: SubscriptionRef[SessionState],
-      shutdown: Promise[Nothing, Unit],
+      shutdown: Promise[Nothing, Unit]
   ): Routes[Any, Response] =
     tapirRoutes(gs, session, shutdown) ++ rawRoutes(session, shutdown)
 
@@ -35,7 +43,7 @@ object WebController:
   private def tapirRoutes(
       gs: GameService,
       session: SubscriptionRef[SessionState],
-      shutdown: Promise[Nothing, Unit],
+      shutdown: Promise[Nothing, Unit]
   ): Routes[Any, Response] =
     val swagger = SwaggerInterpreter()
       .fromEndpoints[Task](Endpoints.all, "pichess API", "0.1.0")
@@ -101,20 +109,20 @@ object WebController:
                   GameSnapshot.fromHistory(
                     event.gameId,
                     event.initialState,
-                    history.reverse,
+                    history.reverse
                   )
                 )
               )
             }
             .zipRight(currentBoard(session))
         },
-        Endpoints.getExport.zServerLogic[Any](exportInFormat(session, _)),
-      ),
+        Endpoints.getExport.zServerLogic[Any](exportInFormat(session, _))
+      )
     )
 
   private def exportInFormat(
       session: SubscriptionRef[SessionState],
-      format: String,
+      format: String
   ): ZIO[Any, ErrorDto, ExportResponse] =
     val normalized = format.toLowerCase
     session.get.flatMap { s =>
@@ -131,9 +139,7 @@ object WebController:
           SanSerializer
             .deriveMoveLog(s.initialState, s.history)
             .orDie
-            .flatMap(log =>
-              PgnSerializer.serialize(log, s.state.status)
-            )
+            .flatMap(log => PgnSerializer.serialize(log, s.state.status))
             .map(ExportResponse("pgn", _))
         case other =>
           ZIO.fail(
@@ -162,31 +168,31 @@ object WebController:
 
   private def rawRoutes(
       session: SubscriptionRef[SessionState],
-      shutdown: Promise[Nothing, Unit],
+      shutdown: Promise[Nothing, Unit]
   ): Routes[Any, Response] =
     Routes(
-      Method.GET / ""               -> handler(servePage()),
+      Method.GET / "" -> handler(servePage()),
       Method.GET / "web" / trailing ->
         handler((rest: zio.http.Path, _: Request) => serveAsset(rest)),
       Method.GET / "api" / "events" -> handler(
         serveEvents(session, shutdown)
-      ),
+      )
     )
 
   private def servePage(): ZIO[Any, Nothing, Response] =
     ZIO.succeed(
       Response(
-        status  = Status.Ok,
+        status = Status.Ok,
         headers = Headers(Header.ContentType(MediaType.text.html)),
-        body    = Body.fromString(HtmlPage.render),
+        body = Body.fromString(HtmlPage.render)
       )
     )
 
-  /** Serve any file from the `web/` resource directory. Path traversal
-    * (`..`), absolute paths, and segments containing characters outside
+  /** Serve any file from the `web/` resource directory. Path traversal (`..`),
+    * absolute paths, and segments containing characters outside
     * `[A-Za-z0-9._-]` all return 404 without touching the classpath. The
-    * extension allow-list controls Content-Type — an unknown extension
-    * is also a 404 so we never serve mystery bytes.
+    * extension allow-list controls Content-Type — an unknown extension is also
+    * a 404 so we never serve mystery bytes.
     */
   private def serveAsset(rest: zio.http.Path): ZIO[Any, Nothing, Response] =
     val relative = rest.toString.stripPrefix("/")
@@ -197,11 +203,13 @@ object WebController:
         ZIO.succeed(Response(status = Status.NotFound))
 
   private def isSafeAssetPath(p: String): Boolean =
-    p.nonEmpty && p.split('/').forall(seg =>
-      seg.nonEmpty &&
-      seg != ".." &&
-      seg.forall(c => c.isLetterOrDigit || c == '.' || c == '-' || c == '_')
-    )
+    p.nonEmpty && p
+      .split('/')
+      .forall(seg =>
+        seg.nonEmpty &&
+          seg != ".." &&
+          seg.forall(c => c.isLetterOrDigit || c == '.' || c == '-' || c == '_')
+      )
 
   private def contentTypeFor(path: String): Option[MediaType] =
     val lower = path.toLowerCase
@@ -213,7 +221,7 @@ object WebController:
 
   private def serveClasspathResource(
       path: String,
-      contentType: MediaType,
+      contentType: MediaType
   ): ZIO[Any, Nothing, Response] =
     ZIO.succeed {
       val stream = getClass.getClassLoader.getResourceAsStream(path)
@@ -221,25 +229,27 @@ object WebController:
       else
         // Read raw bytes — `Source.fromInputStream(...).mkString` would
         // decode as UTF-8 and corrupt binary assets like PNGs.
-        val bytes = try stream.readAllBytes() finally stream.close()
+        val bytes =
+          try stream.readAllBytes()
+          finally stream.close()
         Response(
-          status  = Status.Ok,
+          status = Status.Ok,
           headers = Headers(Header.ContentType(contentType)),
-          body    = Body.fromArray(bytes),
+          body = Body.fromArray(bytes)
         )
     }
 
   private def serveEvents(
       session: SubscriptionRef[SessionState],
-      shutdown: Promise[Nothing, Unit],
+      shutdown: Promise[Nothing, Unit]
   ): ZIO[Any, Nothing, Response] =
     ZIO.succeed {
       val stateEvents = session.changes.mapZIO { s =>
         sessionToDto(s)
           .map(dto =>
             ServerSentEvent(
-              data      = zio.json.EncoderOps(dto).toJson,
-              eventType = Some("state"),
+              data = zio.json.EncoderOps(dto).toJson,
+              eventType = Some("state")
             )
           )
       }
@@ -247,8 +257,8 @@ object WebController:
         .fromZIO(shutdown.await)
         .map(_ =>
           ServerSentEvent(
-            data      = "quit",
-            eventType = Some("quit"),
+            data = "quit",
+            eventType = Some("quit")
           )
         )
       Response.fromServerSentEvents(stateEvents.merge(quitEvent))

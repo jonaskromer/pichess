@@ -11,9 +11,9 @@ import zio.stream.SubscriptionRef
   * Each action uses `session.modifyZIO` so that reading the session, mutating
   * the repository, and committing the new session state happen as a single
   * atomic step. `SubscriptionRef` extends `Ref.Synchronized`, which holds a
-  * semaphore during the effect — concurrent callers (e.g. TUI + Web) queue
-  * on it rather than racing. If the effect fails, the session is left
-  * unchanged, so a failed `makeMove` doesn't corrupt history.
+  * semaphore during the effect — concurrent callers (e.g. TUI + Web) queue on
+  * it rather than racing. If the effect fails, the session is left unchanged,
+  * so a failed `makeMove` doesn't corrupt history.
   */
 object GameController:
 
@@ -29,11 +29,11 @@ object GameController:
   /** Apply `rawInput` as a move against the current session state.
     *
     * Runs atomically under `session.modifyZIO`'s internal semaphore: reading
-    * the session, applying the move via [[GameService.makeMove]] (which
-    * parses, validates, and persists to the repository), detecting fivefold
-    * repetition, and committing the new session all happen as one indivisible
-    * step. Concurrent callers (TUI + Web) queue on the semaphore rather than
-    * racing; a failed effect leaves the session unchanged.
+    * the session, applying the move via [[GameService.makeMove]] (which parses,
+    * validates, and persists to the repository), detecting fivefold repetition,
+    * and committing the new session all happen as one indivisible step.
+    * Concurrent callers (TUI + Web) queue on the semaphore rather than racing;
+    * a failed effect leaves the session unchanged.
     *
     * Fivefold auto-draw: if the move-applied state is `Playing` and the
     * resulting position has occurred `>= FivefoldThreshold` times in the
@@ -42,8 +42,8 @@ object GameController:
     * The repository is saved with the final (post-promotion) state so
     * subsequent loads reflect the auto-draw.
     *
-    * Fails with any [[GameError]] from move parsing or validation; the
-    * session state is not modified on failure.
+    * Fails with any [[GameError]] from move parsing or validation; the session
+    * state is not modified on failure.
     */
   def makeMove(
       gs: GameService,
@@ -60,9 +60,10 @@ object GameController:
               newState.endWith(GameStatus.Draw(DrawReason.FivefoldRepetition))
             )
           else provisional
-        gs.saveState(s.gameId, finalGame.state).as(
-          ((), s.copy(game = finalGame, error = None, output = None))
-        )
+        gs.saveState(s.gameId, finalGame.state)
+          .as(
+            ((), s.copy(game = finalGame, error = None, output = None))
+          )
       }
     }
 
@@ -75,9 +76,10 @@ object GameController:
         case None =>
           ZIO.fail(GameError.InvalidMove("Nothing to undo"))
         case Some(undone) =>
-          gs.saveState(s.gameId, undone.state).as(
-            ((), s.copy(game = undone, error = None, output = None))
-          )
+          gs.saveState(s.gameId, undone.state)
+            .as(
+              ((), s.copy(game = undone, error = None, output = None))
+            )
     }
 
   def redo(
@@ -89,9 +91,10 @@ object GameController:
         case None =>
           ZIO.fail(GameError.InvalidMove("Nothing to redo"))
         case Some(redone) =>
-          gs.saveState(s.gameId, redone.state).as(
-            ((), s.copy(game = redone, error = None, output = None))
-          )
+          gs.saveState(s.gameId, redone.state)
+            .as(
+              ((), s.copy(game = redone, error = None, output = None))
+            )
     }
 
   def claimDraw(
@@ -120,16 +123,17 @@ object GameController:
             if threefoldOk then DrawReason.ThreefoldRepetition
             else DrawReason.FiftyMoveRule
           val drawState = s.state.endWith(GameStatus.Draw(reason))
-          gs.saveState(s.gameId, drawState).as(
-            (
-              (),
-              s.copy(
-                game = s.game.replaceHead(drawState),
-                error = None,
-                output = None
+          gs.saveState(s.gameId, drawState)
+            .as(
+              (
+                (),
+                s.copy(
+                  game = s.game.replaceHead(drawState),
+                  error = None,
+                  output = None
+                )
               )
             )
-          )
     }
 
   /** The side to move resigns; the opponent is recorded as the winner.
@@ -148,25 +152,26 @@ object GameController:
       else
         val winner = s.state.activeColor.opposite
         val resigned = s.state.endWith(GameStatus.Resignation(winner))
-        gs.saveState(s.gameId, resigned).as(
-          (
-            (),
-            s.copy(
-              game = s.game.withCurrentState(resigned),
-              error = None,
-              output = None,
-            ),
+        gs.saveState(s.gameId, resigned)
+          .as(
+            (
+              (),
+              s.copy(
+                game = s.game.withCurrentState(resigned),
+                error = None,
+                output = None
+              )
+            )
           )
-        )
     }
 
   /** Counts how many times the current position has occurred in this game,
     * including the current position itself.
     *
     * Backed by [[GameSnapshot.positionCounts]], an incrementally-maintained
-    * Zobrist-keyed map. O(1). Equivalence with the FEN-based implementation
-    * is locked down by
-    * [[chess.model.rules.RepetitionEquivalenceSpec]] across the full corpus.
+    * Zobrist-keyed map. O(1). Equivalence with the FEN-based implementation is
+    * locked down by [[chess.model.rules.RepetitionEquivalenceSpec]] across the
+    * full corpus.
     */
   def countCurrentPosition(game: chess.model.GameSnapshot): Int =
     game.countOf(game.state)
