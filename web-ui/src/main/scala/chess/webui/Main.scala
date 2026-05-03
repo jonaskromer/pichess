@@ -33,7 +33,55 @@ object Main:
   // --------------------------------------------------------------------------
 
   private val stateVar: Var[Option[BoardStateDto]] = Var(None)
-  private val dragSourceVar: Var[Option[String]] = Var(None)
+
+  /** Pointer-event drag state. Replaces the previous HTML5-drag setup
+    * (which had unreliable `setDragImage` snapshots for inline SVG with
+    * cross-document `<use>` references). The data captured here drives
+    *   1. the `is-being-dragged` class on the source piece (hides it),
+    *   2. the floating-clone's transform (follows the cursor),
+    *   3. the `body.is-dragging` class (cursor: grabbing).
+    * `moved` distinguishes a drag-and-drop from a stationary click —
+    * pointerup short-circuits if the user never crossed the 4 px
+    * threshold, so a tap on a piece doesn't accidentally try to "move"
+    * it onto itself.
+    */
+  private case class DragState(
+      fromPos: String,
+      pieceName: String,
+      pieceColorClass: String,
+      pointerId: Double,
+      offsetX: Double,
+      offsetY: Double,
+      cursorX: Double,
+      cursorY: Double,
+      moved: Boolean,
+  )
+  private val dragVar: Var[Option[DragState]] = Var(None)
+
+  /** One signal shared by all 64 squares. With `.distinct`, the value
+    * only emits when the dragged-from square actually changes — twice per
+    * drag (start, end). Per-square `cls.toggle` then subscribes to a
+    * cheap equality check on a signal that itself emits ~twice per drag,
+    * instead of recomputing 64 predicates on every pointermove.
+    */
+  private val dragFromPosSignal: Signal[Option[String]] =
+    dragVar.signal.map(_.map(_.fromPos)).distinct
+
+  // Hit-testing reads `.board` via `querySelector` at pointerup time
+  // (not via a stashed Var). The Var-based approach raced with
+  // mount/unmount callbacks during reactive child swaps and could leave
+  // us holding a reference to a detached element; `querySelector`
+  // always returns the currently-attached `.board`. The lookup runs
+  // once per drop, not per frame, so cost is negligible.
+
+  // Coalesces 240 Hz+ pointermove events down to display rate. The handler
+  // stores the latest cursor coords and queues a single rAF; everything
+  // else (`dragVar` update, floating-clone transform, body class) runs
+  // inside the frame.
+  private var latestPointerX: Double = 0.0
+  private var latestPointerY: Double = 0.0
+  private var rafQueued: Boolean = false
+
   private val pendingPromotionVar: Var[Option[PendingPromotion]] = Var(None)
   private val toastVar: Var[Option[String]] = Var(None)
   private val goodbyeVar: Var[Boolean] = Var(false)
@@ -46,6 +94,10 @@ object Main:
   // We sync this var with `location.hash` so deep-links (#help) and the back
   // button just work via hashchange events.
   private val helpOpenVar: Var[Boolean] = Var(false)
+  // Move input is promoted to object scope so the `moveLogContainer`
+  // function can render the form alongside the scrolling history while
+  // the rest of the controls live in the sidebar post-its.
+  private val moveInputVar: Var[String] = Var("")
 
   // Generic "are you sure?" prompt. Set to `Some(...)` to display; the modal
   // wires the confirm button to `action` and clears itself on confirm/cancel.
@@ -77,6 +129,10 @@ object Main:
     if t == Logic.Theme.Dark then cl.add("dark") else cl.remove("dark")
 
   private def toggleTheme(): Unit =
+    // Flip the class on <html>; the paper SVGs are pre-rasterised in
+    // both themes (see HtmlPage's paperSprites) so the only cost of a
+    // toggle is a CSS `display` swap on already-painted symbols. No
+    // filter re-computation, no view-transition snapshot needed.
     val next = themeVar.now() match
       case Logic.Theme.Light => Logic.Theme.Dark
       case Logic.Theme.Dark  => Logic.Theme.Light
@@ -107,7 +163,7 @@ object Main:
 
   private def App(): HtmlElement =
     div(
-      onMountCallback { _ =>
+      onMountCallback { ctx =>
         // The HtmlPage bootstrap script already set the dark class before
         // first paint; this call is the safety net for the (rare) case
         // where the script ran before localStorage was readable.
@@ -119,8 +175,54 @@ object Main:
           "hashchange",
           (_: dom.Event) => syncHelpFromHash()
         )
+        // Document-level pointer listeners drive the drag's middle and
+        // end. We don't rely on setPointerCapture — when the source
+        // piece gets `is-being-dragged`, some engines implicitly drop
+        // capture, after which pointermove/up only reach the cursor's
+        // current target (often a bare `.square`). Listening on the
+        // document is unconditional. Each handler checks dragVar.now()
+        // and is a no-op when no drag is in flight.
+        dom.document.addEventListener(
+          "pointermove",
+          ((e: dom.Event) =>
+            handleGlobalPointerMove(e.asInstanceOf[dom.PointerEvent])
+          ): js.Function1[dom.Event, Unit],
+        )
+        dom.document.addEventListener(
+          "pointerup",
+          ((e: dom.Event) =>
+            handleGlobalPointerUp(e.asInstanceOf[dom.PointerEvent])
+          ): js.Function1[dom.Event, Unit],
+        )
+        dom.document.addEventListener(
+          "pointercancel",
+          ((_: dom.Event) => {
+            rafQueued = false
+            latestPointerX = 0.0
+            latestPointerY = 0.0
+            dragVar.set(None)
+          }): js.Function1[dom.Event, Unit],
+        )
+        // Flip a `body.is-dragging` class while a drag is in flight so
+        // the cursor turns to `grabbing` everywhere on the page (the
+        // CSS rule lives in style.css). `.distinct` so it only fires
+        // when the boolean actually changes, not on every pointermove.
+        // Owned by the App element so it unsubscribes if App unmounts.
+        dragVar.signal
+          .map(_.isDefined)
+          .distinct
+          .foreach { active =>
+            val cl = dom.document.body.classList
+            if active then cl.add("is-dragging") else cl.remove("is-dragging")
+          }(using ctx.owner)
       },
-      child <-- goodbyeVar.signal.map {
+      // `.distinct` is load-bearing: without it, `Var.set(value)` re-emits
+      // even when the value didn't change, which causes `child <--` to
+      // unmount + remount the entire UI tree. That tear-down was racing
+      // with `boardElementVar`'s mount/unmount callbacks and leaving us
+      // holding a stale reference to a detached `.board` element — which
+      // returned a 0×0 rect at hit-test time, breaking drag-drop.
+      child <-- goodbyeVar.signal.distinct.map {
         case true  => goodbyeScreen()
         case false => mainUi()
       }
@@ -141,7 +243,8 @@ object Main:
       className := "app-shell",
       pageBackground(),
       header(),
-      child <-- helpOpenVar.signal.map {
+      // `.distinct` — see the rationale on the App-level signal above.
+      child <-- helpOpenVar.signal.distinct.map {
         case true  => HelpView.render()
         case false => gameBody()
       },
@@ -149,7 +252,94 @@ object Main:
       loadModal(),
       exportModal(),
       confirmModal(),
-      toastElement()
+      toastElement(),
+      // Floating clone of the dragged piece. Mounted ONCE — the inner
+      // piece span is the only thing that re-renders, and only when the
+      // piece identity changes (drag start / drag end). The transform
+      // attribute updates every pointermove, but updating an attribute
+      // on a stable element is a sub-frame compositor flip rather than
+      // a DOM tear-down + rebuild. Earlier `child.maybe <-- signal.map(
+      // _.map(floatingDragLayer))` re-built the entire floating layer
+      // on every pointermove — that was the source of the visible
+      // flicker AND the lag.
+      floatingDragLayer,
+      // Cancel an in-flight drag when the user presses Escape. Filtering
+      // by `dragVar.now().isDefined` keeps the listener no-op when no
+      // drag is active so it doesn't compete with anything else.
+      documentEvents(_.onKeyDown)
+        .filter(e => e.key == "Escape" && dragVar.now().isDefined)
+        --> { _ => dragVar.set(None) },
+    )
+
+  /** Stable floating layer. Mounted once for the App's lifetime AND with
+    * all six piece SVGs pre-mounted as siblings inside it. This is the
+    * Safari-specific shape:
+    *
+    *   - Chrome aggressively caches the resolved-shadow tree of inline
+    *     `<use href="#symbol"/>` and re-uses it across mount/unmount of
+    *     the consuming `<svg>` element. Mount on drag start, unmount on
+    *     drag end is essentially free.
+    *   - Safari does NOT share that work across contexts. Each fresh
+    *     `<svg><use href="#pawn"/></svg>` mounted inside the floating
+    *     layer triggers a re-resolve, and the resolve only kicks off
+    *     once the element actually paints. With the previous "mount the
+    *     inner span on drag start" shape, that re-resolve was on the
+    *     critical path of pointerdown → first paint. Pre-mounting all
+    *     six pieces here pays the cost once at app boot (when nothing
+    *     visible is changing) and reduces drag start to a single attribute
+    *     flip — `data-active-piece` — which CSS uses to display exactly
+    *     one of the six children.
+    *
+    * The transform is updated by direct `el.style.transform = …` writes
+    * inside the rAF callback so we skip Laminar's `styleAttr` reactive
+    * binding and the `setAttribute("style", …)` parse step at 60-120 Hz
+    * pointermove rates. The colour-cascade class (`white-piece` /
+    * `black-piece`) is on the inner `.piece` span and updates twice per
+    * drag via `className <--`; cheap.
+    *
+    * Idle state parks the layer at translate(-9999px, -9999px) instead
+    * of toggling visibility — keeps the GPU compositor layer warm in
+    * Safari (visibility flips destroy and recreate the layer in some
+    * versions). The layer is invisible to the user either way because
+    * it's far off-screen and `pointer-events: none`.
+    */
+  private val floatingDragLayer: HtmlElement =
+    div(
+      className := "drag-floating",
+      onMountCallback { ctx =>
+        val el = ctx.thisNode.ref.asInstanceOf[dom.html.Element]
+        // Park off-screen synchronously at mount, before the first
+        // paint, so users never see the pre-mounted pieces.
+        el.style.transform = "translate(-9999px, -9999px)"
+        dragVar.signal.foreach {
+          case Some(s) =>
+            el.style.transform =
+              s"translate(${s.cursorX - s.offsetX}px, ${s.cursorY - s.offsetY}px)"
+          case None =>
+            el.style.transform = "translate(-9999px, -9999px)"
+        }(using ctx.owner)
+      },
+      span(
+        // The inner `.piece` span carries the colour-cascade class so
+        // CSS variables `--piece-primary` / `--piece-secondary` flow
+        // into whichever pre-mounted SVG is currently shown. When no
+        // drag is in flight the layer is parked off-screen anyway, so
+        // the default class ("piece" with no colour modifier) is fine.
+        className <-- dragVar.signal.map { s =>
+          s.fold("piece")(d => s"piece ${d.pieceColorClass}")
+        },
+        // Drives which one of the pre-mounted SVGs is `display: block`
+        // (CSS attribute selector in style.css). Empty string when no
+        // drag — none match, all stay `display: none`.
+        dataAttr("active-piece") <-- dragVar.signal.map(_.fold("")(_.pieceName)),
+        Seq("pawn", "rook", "knight", "bishop", "queen", "king").map { name =>
+          svg.svg(
+            svg.viewBox := pieceViewBox(name),
+            svg.cls := s"piece-svg piece-svg-$name",
+            svg.use(svg.href := s"#$name")
+          )
+        }
+      )
     )
 
   // --------------------------------------------------------------------------
@@ -249,12 +439,11 @@ object Main:
     )
 
   private def gameHeaderActions: List[HtmlElement] = List(
+    // New Game lives inside the Move post-it now, not the header — keeps
+    // the header for navigation only and groups the destructive "reset
+    // game state" action visually with the "make a move" input it
+    // resets.
     themeToggleButton(),
-    button(
-      className := "header-new-btn",
-      onClick --> { _ => askConfirm(confirmNewGame) },
-      "New Game"
-    ),
     a(
       className := "header-link",
       href := "#help",
@@ -399,24 +588,35 @@ object Main:
     div(
       className := squareClasses,
       dataAttr("pos") := sq.pos,
-      onDragOver --> { e =>
-        e.preventDefault()
-        // Tell the browser this is a "move" target — without this, the
-        // cursor over a drop target shows the OS default (often the
-        // text-select / I-beam shape) rather than the move icon.
-        e.dataTransfer.dropEffect =
-          "move".asInstanceOf[dom.DataTransferDropEffectKind]
-      },
-      onDrop.preventDefault --> { _ => handleDrop(sq.pos, state) },
       sq.piece.map { name =>
         span(
           className := s"piece ${sq.pieceColor.getOrElse("")}-piece",
-          draggable := true,
-          onDragStart --> { e => handleDragStart(sq.pos, e) },
-          onDragEnd --> { _ => dragSourceVar.set(None) },
-          pieceSvg(name)
+          // The is-being-dragged class hides the source piece during
+          // drag (opacity:0 in CSS) so the only piece the user sees is
+          // the floating clone following the cursor. We bind to the
+          // shared `dragFromPosSignal` (already `.distinct` — emits
+          // twice per drag) so all 64 squares share one upstream
+          // computation instead of running their own predicate on
+          // every pointermove.
+          cls.toggle("is-being-dragged") <-- dragFromPosSignal
+            .map(_.contains(sq.pos))
+            .distinct,
+          // Only `pointerdown` is wired to the piece. `pointermove`,
+          // `pointerup`, and `pointercancel` are attached at the document
+          // level (see App's onMountCallback) — relying on
+          // `setPointerCapture` was unreliable, because the
+          // `is-being-dragged` class can implicitly release capture in
+          // some engines, after which subsequent events fire on whatever
+          // is under the cursor (frequently a `.square` element with no
+          // piece-level handler). Document-level listeners fire
+          // regardless of cursor position and check `dragVar.now()` to
+          // decide whether they're dealing with an in-flight drag.
+          onPointerDown --> { e =>
+            handlePointerDown(sq.pos, name, sq.pieceColor.getOrElse(""), e)
+          },
+          pieceSvg(name),
         )
-      }
+      },
     )
 
   /** Render a chess piece as an inline SVG that pulls geometry from the shared
@@ -431,15 +631,27 @@ object Main:
     * while keeping their natural relative heights — kings tall, pawns short.
     */
   private def pieceSvg(name: String): SvgElement =
+    // Document-internal <use> — the piece <symbol id="<name>"> is
+    // inlined into the page's .svg-sprite-host (see HtmlPage.scala).
+    // Same-document references resolve synchronously with no fetch,
+    // which is what makes the floating drag clone appear instantly on
+    // pointerdown. Cross-document `<use href="external.svg#id"/>` still
+    // worked but introduced a per-element resolve step the first time
+    // the symbol was rendered in a new container.
     svg.svg(
       svg.viewBox := pieceViewBox(name),
       svg.cls := "piece-svg",
-      svg.use(svg.href := s"/web/pieces/$name.svg#$name")
+      svg.use(svg.href := s"#$name")
     )
 
   // Source-coordinate viewBox per piece — copied from each unified SVG
-  // file so the host SVG inherits its aspect ratio.
-  private val pieceViewBox: Map[String, String] = Map(
+  // file so the host SVG inherits its aspect ratio. `lazy val` because
+  // `floatingDragLayer` (declared above) eagerly calls `pieceViewBox(...)`
+  // for all six pieces during its own `val` init, before this map is
+  // reached in source order. Lazy initialisation defers the map until
+  // first access, so reverse-order dependencies between object members
+  // resolve cleanly.
+  private lazy val pieceViewBox: Map[String, String] = Map(
     "pawn" -> "0 0 460.1 624.7",
     "rook" -> "0 0 498.5 747.5",
     "knight" -> "0 0 507.7 777.5",
@@ -546,6 +758,49 @@ object Main:
               case Some(s) => renderMoveLog(s.moveLog)
             }
           )
+        ),
+        // Move input lives BELOW the scrolling log, on the same paper
+        // but outside the OS-managed scroll viewport — putting it inside
+        // the scroll container would scroll it out of reach. Pairing it
+        // with the log keeps the visual relationship "history above,
+        // next move below" intact and frees the sidebar from a tiny
+        // dedicated post-it whose only resident was this one input.
+        form(
+          idAttr := "moveForm",
+          onSubmit.preventDefault --> { _ =>
+            val v = moveInputVar.now().trim
+            if v.nonEmpty then
+              postMove(v)
+              moveInputVar.set("")
+          },
+          // The wrapper carries the hand-drawn underline pseudo so the
+          // input itself can stay borderless. Also lets the underline
+          // span the input width without the input's own box model
+          // pushing the line around.
+          span(
+            className := "move-input-wrap",
+            input(
+              tpe := "text",
+              idAttr := "moveInput",
+              placeholder := "e.g. e2e4 or Nf3",
+              autoComplete := "off",
+              spellCheck := false,
+              controlled(
+                value <-- moveInputVar.signal,
+                onInput.mapToValue --> moveInputVar
+              )
+            )
+          ),
+          // Icon-only submit — matches the visual vocabulary of Undo /
+          // Redo / Flip in the post-its. The neon-orange marker stripe
+          // on hover (--marker-yellow) ties it to the heading marker
+          // colour family.
+          button(
+            className := "post-it-action icon-only action-move",
+            aria.label := "Submit move",
+            tpe := "submit",
+            icon("move")
+          )
         )
       )
     )
@@ -563,70 +818,164 @@ object Main:
       }
 
   private def controls(): HtmlElement =
-    val moveInputVar = Var("")
     div(
       className := "controls",
-      form(
-        idAttr := "moveForm",
-        onSubmit.preventDefault --> { _ =>
-          val v = moveInputVar.now().trim
-          if v.nonEmpty then
-            postMove(v)
-            moveInputVar.set("")
-        },
-        input(
-          tpe := "text",
-          idAttr := "moveInput",
-          placeholder := "e.g. e2e4 or Nf3",
-          autoComplete := "off",
-          spellCheck := false,
-          controlled(
-            value <-- moveInputVar.signal,
-            onInput.mapToValue --> moveInputVar
-          )
+      // Post-it 1 (yellow): board controls + Export. The icon-only row
+      // covers "universal-meaning" actions; the text-only row covers the
+      // data formats (no icon mapping fits FEN/PGN/JSON).
+      div(
+        className := "post-it-card",
+        div(
+          className := "post-it-row",
+          iconOnlyButton(
+            "undo",
+            "Undo last move",
+            () => postUndo()
+          ),
+          iconOnlyButton(
+            "redo",
+            "Redo move",
+            () => postRedo()
+          ),
+          flipIconButton()
         ),
-        button(tpe := "submit", "Move")
-      ),
-      sectionLabel("History"),
-      div(
-        className := "btn-row",
-        secondaryButton("Undo", () => postUndo()),
-        secondaryButton("Redo", () => postRedo()),
-        secondaryButton("Draw", () => askConfirm(confirmDraw))
-      ),
-      sectionLabel("Board"),
-      div(
-        className := "btn-row",
-        button(
-          className := "secondary-btn",
-          onClick --> { _ => flippedVar.update(!_) },
-          child.text <-- flippedVar.signal.map(f =>
-            if f then "Unflip" else "Flip"
-          )
+        h3(className := "post-it-subheading", "Export"),
+        ul(
+          className := "export-list",
+          li(textActionButton("FEN", () => doExport("fen"))),
+          li(textActionButton("PGN", () => doExport("pgn"))),
+          li(textActionButton("JSON", () => doExport("json")))
         )
       ),
-      sectionLabel("Data"),
+      // Post-it 2 (cyan): game-state actions — start a new one, load a
+      // saved game, agree on a draw, resign, or shut down the server.
+      // Cyan keeps the palette calmer than the previous coral; Quit
+      // breaks out of the row visually via the `underlined` modifier so
+      // the "shut everything down" option reads as distinct from the
+      // in-game state changes.
       div(
-        className := "btn-row",
-        secondaryButton("Load", () => loadOpenVar.set(true)),
-        secondaryButton("FEN", () => doExport("fen")),
-        secondaryButton("PGN", () => doExport("pgn")),
-        secondaryButton("JSON", () => doExport("json"))
-      ),
-      sectionLabel("Game"),
-      div(
-        className := "btn-row",
-        button(
-          className := "secondary-btn",
-          onClick --> { _ => askConfirm(confirmForfeit) },
-          "Forfeit"
+        className := "post-it-card cyan",
+        // Per-action classes (`action-new`, `action-forfeit`, etc.) drive
+        // the per-button hover marker colour overrides in CSS so each
+        // action carries its own emotional weight: green = positive
+        // start, pink = give up, red = power off, neutral cyan default
+        // for the in-game state changes (Load, Draw).
+        actionButton(
+          "new",
+          "New Game",
+          modifier = "action-new",
+          () => askConfirm(confirmNewGame)
         ),
-        button(
-          className := "quit-btn",
-          onClick --> { _ => askConfirm(confirmQuit) },
-          "Quit"
+        actionButton(
+          "load",
+          "Load",
+          modifier = "action-load",
+          () => loadOpenVar.set(true)
+        ),
+        actionButton(
+          "draw",
+          "Draw",
+          modifier = "action-draw",
+          () => askConfirm(confirmDraw)
+        ),
+        actionButton(
+          "forfeit",
+          "Forfeit",
+          modifier = "action-forfeit",
+          () => askConfirm(confirmForfeit)
+        ),
+        underlinedActionButton(
+          "quit",
+          "Quit",
+          modifier = "action-quit",
+          () => askConfirm(confirmQuit)
         )
       )
+    )
+
+  /** A doodle icon inlined as a `<span>` whose backing CSS rule (`.icon-…`)
+    * sets `--icon-url` and the masking machinery — keeps Laminar-side code
+    * declarative ("show the undo glyph") and the styling decisions (size,
+    * colour, mask-mode) centralised in style.css.
+    */
+  private def icon(name: String): HtmlElement =
+    span(className := s"icon icon-$name", aria.hidden := true)
+
+  private def iconOnlyButton(
+      iconName: String,
+      ariaLabel: String,
+      action: () => Unit
+  ): HtmlElement =
+    button(
+      className := "post-it-action icon-only",
+      aria.label := ariaLabel,
+      onClick --> { _ => action() },
+      icon(iconName)
+    )
+
+  /** Icon + text action button. The optional `modifier` adds an extra
+    * class (e.g. `action-new`) so per-button styling — typically the
+    * hover marker stripe colour — can target it without leaning on
+    * positional selectors. Pass an empty string for "no extra class".
+    */
+  private def actionButton(
+      iconName: String,
+      label: String,
+      modifier: String,
+      action: () => Unit
+  ): HtmlElement =
+    val cls = if modifier.isEmpty then "post-it-action"
+              else s"post-it-action $modifier"
+    button(
+      className := cls,
+      onClick --> { _ => action() },
+      icon(iconName),
+      label
+    )
+
+  private def textActionButton(
+      label: String,
+      action: () => Unit
+  ): HtmlElement =
+    button(
+      className := "post-it-action",
+      onClick --> { _ => action() },
+      label
+    )
+
+  /** Variant of [[actionButton]] with the `underlined` modifier and the
+    * label text wrapped in a `<span class="label">` so the hand-drawn
+    * underline pseudo can target the text only (full-width underline
+    * stretching past the icon looked like a divider). Used exclusively on
+    * Quit so the "shut down" option visually breaks out of its row.
+    */
+  private def underlinedActionButton(
+      iconName: String,
+      label: String,
+      modifier: String,
+      action: () => Unit
+  ): HtmlElement =
+    val cls =
+      if modifier.isEmpty then "post-it-action underlined"
+      else s"post-it-action underlined $modifier"
+    button(
+      className := cls,
+      onClick --> { _ => action() },
+      icon(iconName),
+      span(className := "label", label)
+    )
+
+  // Flip toggles its own state, so both the aria-label and (potentially) the
+  // icon need to track flippedVar. The icon stays the same — flipping a
+  // flipped board is still "flip" — and the label flips Flip ↔ Unflip.
+  private def flipIconButton(): HtmlElement =
+    button(
+      className := "post-it-action icon-only",
+      aria.label <-- flippedVar.signal.map(f =>
+        if f then "Unflip board" else "Flip board"
+      ),
+      onClick --> { _ => flippedVar.update(!_) },
+      icon("flip")
     )
 
   private val confirmNewGame: ConfirmRequest = ConfirmRequest(
@@ -663,19 +1012,6 @@ object Main:
     destructive = true,
     action = () => postForfeit()
   )
-
-  private def sectionLabel(text: String): HtmlElement =
-    div(className := "section-title", text)
-
-  private def secondaryButton(
-      label: String,
-      onClickAction: () => Unit
-  ): HtmlElement =
-    button(
-      className := "secondary-btn",
-      onClick --> { _ => onClickAction() },
-      label
-    )
 
   // --------------------------------------------------------------------------
   // Overlays
@@ -983,61 +1319,169 @@ object Main:
     nav.clipboard.writeText(text)
 
   // --------------------------------------------------------------------------
-  // Drag + drop
+  // Pointer-driven drag + drop
+  //
+  // We use pointer events (not HTML5 native drag-and-drop). The native API
+  // hands us a `setDragImage` snapshot path that doesn't reliably wait for
+  // inline SVG with cross-document `<use>` references — exactly what our
+  // chess pieces are. Pointer events are simpler: hide the source piece
+  // directly, render a floating clone that follows the cursor every frame
+  // via CSS transform, hit-test the drop target via `elementFromPoint`.
+  // Touch + mouse are unified by the browser; no separate code paths.
   // --------------------------------------------------------------------------
 
-  private def handleDragStart(pos: String, e: dom.DragEvent): Unit =
-    dragSourceVar.set(Some(pos))
-    e.dataTransfer.effectAllowed =
-      "move".asInstanceOf[dom.DataTransferEffectAllowedKind]
-    e.dataTransfer.setData("text/plain", "")
-    // Replace the browser's default drag image. The default is a screenshot
-    // of the dragged element at its on-screen position, which means
-    // transparent SVG pixels reveal the source square's colour underneath
-    // — looks like a coloured rectangle around the piece. Cloning the
-    // piece into the body (no parent square behind it) gives a clean
-    // transparent capture.
-    //
-    // Positioning detail: the clone has to be RENDERED for the browser to
-    // capture it. Browsers (Chrome especially) won't capture an element
-    // positioned far off-screen via top: -9999px — they treat it as
-    // not-rendered. Position it at (0, 0) with opacity: 0 instead — laid
-    // out and rendered, just visually invisible until the browser
-    // snapshots and removes it on the next tick.
-    val src = e.currentTarget.asInstanceOf[dom.html.Element]
-    val ghost = src.cloneNode(true).asInstanceOf[dom.html.Element]
-    val rect = src.getBoundingClientRect()
-    ghost.style.position = "absolute"
-    ghost.style.top = "0"
-    ghost.style.left = "0"
-    ghost.style.width = s"${rect.width}px"
-    ghost.style.height = s"${rect.height}px"
-    ghost.style.opacity = "0"
-    ghost.style.pointerEvents = "none"
-    ghost.style.zIndex = "9999"
-    dom.document.body.appendChild(ghost)
-    e.dataTransfer.setDragImage(
-      ghost,
-      (rect.width / 2).toInt,
-      (rect.height / 2).toInt
-    )
-    // Remove the ghost on the next tick — the browser has captured the
-    // drag image by then, but the node still needs to leave the DOM.
-    dom.window.setTimeout(() => dom.document.body.removeChild(ghost), 0)
+  private def handlePointerDown(
+      pos: String,
+      name: String,
+      pieceColor: String,
+      e: dom.PointerEvent,
+  ): Unit =
+    // Ignore non-primary buttons (right-click, middle-click) and any
+    // pointers other than the first finger — chess is a one-pointer
+    // gesture. Also bail out if a drag is already in flight or the
+    // promotion modal is up.
+    if e.button != 0 || !e.isPrimary then ()
+    else if dragVar.now().isDefined then ()
+    else if pendingPromotionVar.now().isDefined then ()
+    else
+      val el = e.currentTarget.asInstanceOf[dom.html.Element]
+      val rect = el.getBoundingClientRect()
+      // No `setPointerCapture` — we use document-level pointermove/up
+      // listeners instead. Capture turned out to be unreliable once the
+      // source piece got `pointer-events: none`, with implicit capture
+      // release in some engines. Document listeners always fire.
+      dragVar.set(
+        Some(
+          DragState(
+            fromPos = pos,
+            pieceName = name,
+            pieceColorClass = s"$pieceColor-piece",
+            pointerId = e.pointerId,
+            offsetX = e.clientX - rect.left,
+            offsetY = e.clientY - rect.top,
+            cursorX = e.clientX,
+            cursorY = e.clientY,
+            moved = false,
+          )
+        )
+      )
+      e.preventDefault()
 
-  private def handleDrop(target: String, state: BoardStateDto): Unit =
-    dragSourceVar.now() match
-      case None                       => ()
-      case Some(src) if src == target => dragSourceVar.set(None)
-      case Some(src) =>
-        if isPawnPromotion(src, target, state) then
-          pendingPromotionVar.set(Some(PendingPromotion(src, target)))
-        else postMove(s"$src $target")
-        dragSourceVar.set(None)
+  /** Document-level pointermove handler. Cheap no-op when no drag is in
+    * flight; otherwise stores the latest cursor coordinates and queues a
+    * single `requestAnimationFrame` to flush them into `dragVar`. Pointer
+    * events fire at 240+ Hz on modern devices but the display only paints
+    * at 60–120 Hz — coalescing here means at most one `dragVar.set` per
+    * frame regardless of pointer rate. This is the same pattern lichess's
+    * chessground uses around `pieceMove`. The 4 px threshold flips
+    * `moved = true` so a stationary click on a piece doesn't get
+    * interpreted as a zero-distance drop.
+    */
+  private def handleGlobalPointerMove(e: dom.PointerEvent): Unit =
+    if dragVar.now().isDefined then
+      latestPointerX = e.clientX
+      latestPointerY = e.clientY
+      if !rafQueued then
+        rafQueued = true
+        dom.window.requestAnimationFrame { _ =>
+          rafQueued = false
+          dragVar.now().foreach { st =>
+            val movedNow = st.moved ||
+              math.hypot(
+                latestPointerX - st.cursorX,
+                latestPointerY - st.cursorY
+              ) > 4
+            dragVar.set(
+              Some(
+                st.copy(
+                  cursorX = latestPointerX,
+                  cursorY = latestPointerY,
+                  moved = movedNow,
+                )
+              )
+            )
+          }
+        }
 
-  private def isPawnPromotion(
+  /** Document-level pointerup handler. Reads the live BoardStateDto out
+    * of `stateVar.now()` so it works even if `dragVar`'s captured state
+    * has gone stale relative to the latest server snapshot. Hit-tests
+    * the drop target by pure coordinate math against the board's
+    * bounding rect — `elementFromPoint` was unreliable because the
+    * floating clone's `<span class="piece">` inherits
+    * `pointer-events: auto` from the `.piece` rule's specificity and
+    * intercepts the hit.
+    */
+  private def handleGlobalPointerUp(e: dom.PointerEvent): Unit =
+    dragVar.now().foreach { st =>
+      // `st.moved` is only flipped to true *inside* the rAF callback,
+      // so on a fast drag the rAF may not have fired before pointerup —
+      // dragVar still reads `moved = false` even though the user clearly
+      // dragged. Re-derive movement from the up event's coordinates
+      // against the last flushed cursor (which is the pointerdown coord
+      // until the first rAF runs). Either we already crossed threshold
+      // mid-drag (`st.moved`) or the up event itself is far enough from
+      // the last flushed position.
+      val finalMoved = st.moved ||
+        math.hypot(
+          e.clientX - st.cursorX,
+          e.clientY - st.cursorY
+        ) > 4
+      if finalMoved then
+        stateVar.now().foreach { state =>
+          squareFromCoords(e.clientX, e.clientY).foreach { to =>
+            attemptMove(st.fromPos, to, state)
+          }
+        }
+    }
+    // Reset the rAF latch and the latest-pointer cache so a queued rAF
+    // from this drag (if any) can't overwrite a freshly-started next
+    // drag with stale coordinates.
+    rafQueued = false
+    latestPointerX = 0.0
+    latestPointerY = 0.0
+    dragVar.set(None)
+
+  /** Body of the previous `handleDrop` — extracted so both pointerup and
+    * (someday) keyboard moves can call it.
+    */
+  private def attemptMove(
       from: String,
       to: String,
-      state: BoardStateDto
-  ): Boolean =
-    Logic.isPawnPromotion(from, to, state)
+      state: BoardStateDto,
+  ): Unit =
+    if from == to then ()
+    else if Logic.isPawnPromotion(from, to, state) then
+      pendingPromotionVar.set(Some(PendingPromotion(from, to)))
+    else postMove(s"$from $to")
+
+  /** Pure-arithmetic hit-test. The board is always 8 × 8 with no gaps,
+    * so given its bounding rect we can compute the target square
+    * directly from the cursor position — no DOM walk, no
+    * `elementFromPoint`, no interference from the floating clone or any
+    * other overlay. Returns `None` when the cursor is outside the rect
+    * (drop into the sidebar / off the page is a no-op).
+    */
+  private def squareFromCoords(x: Double, y: Double): Option[String] =
+    val el = dom.document
+      .querySelector(".board")
+      .asInstanceOf[dom.html.Element]
+    if el == null then None
+    else
+      val rect = el.getBoundingClientRect()
+      if x < rect.left || x >= rect.right ||
+         y < rect.top || y >= rect.bottom
+      then None
+      else
+        val flipped = flippedVar.now()
+        val fileIdx =
+          ((x - rect.left) / (rect.width / 8)).toInt.max(0).min(7)
+        val rankIdx =
+          ((y - rect.top) / (rect.height / 8)).toInt.max(0).min(7)
+        val file =
+          if flipped then ('h'.toInt - fileIdx).toChar
+          else ('a'.toInt + fileIdx).toChar
+        val rank =
+          if flipped then (1 + rankIdx).toString
+          else (8 - rankIdx).toString
+        Some(s"$file$rank")

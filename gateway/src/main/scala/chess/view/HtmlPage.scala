@@ -53,6 +53,7 @@ $css
      embedded copy. -->
 <div class="svg-sprite-host" aria-hidden="true">
 $paperSprites
+$pieceSprites
 <!-- Hand-drawn distortion filter applied to scrollbar handle (and other
      things later). feTurbulence + feDisplacementMap warp the rendered
      alpha so straight rectangles become slightly wonky — sells the
@@ -77,6 +78,21 @@ $paperSprites
   private val paperSprites: String =
     loadResource("web/notebook-page-crumpled-square.svg") +
       loadResource("web/notebook-page-crumpled-grid-square.svg")
+  // Piece SVGs were previously referenced cross-document via
+  // `<use href="/web/pieces/<name>.svg#<name>"/>`. Even with a warm
+  // browser cache that path forces a per-element resolve step the first
+  // time each piece is mounted in a new context — most painfully when
+  // the floating drag clone mounts on pointerdown, where the SVG had to
+  // be (re-)resolved before the piece appeared. Inlining the symbol
+  // definitions here makes `<use href="#<name>"/>` resolve from the
+  // current document with no fetch and no parse delay, so drag start
+  // is a single composite flip. The standalone /web/pieces/<name>.svg
+  // route is unchanged — the file is still served for callers that
+  // want a piece glyph as an asset (OG images, sharing, etc.).
+  private val pieceSprites: String =
+    List("pawn", "rook", "knight", "bishop", "queen", "king")
+      .map(n => loadResource(s"web/pieces/$n.svg"))
+      .mkString
 
   private def loadResource(path: String): String =
     val stream = getClass.getClassLoader.getResourceAsStream(path)

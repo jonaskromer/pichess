@@ -1,12 +1,22 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  /* Single scale knob. 137.5% = 22px (over the browser default 16px) so
-     the whole UI runs ~37.5% larger — handwriting fonts (Caveat) read
-     visually smaller than their em-square, so the page needs the bump for
-     comfortable reading. The percentage form respects user font-size
-     preferences instead of hard-coding `22px`; everything below is in
-     `rem`, so changing this one number rescales the page. */
-  font-size: 137.5%;
+  /* Fluid root font-size — scales with viewport width so the whole UI
+     looks the right size on small laptops AND large/4K desktops. The
+     handwriting fonts (Caveat) read visually smaller than their em-square,
+     so we want the page to land near 22px on a wide desktop while
+     bottoming out around 16px on a 13" laptop.
+
+     The clamp expression is fully relative (no px) so user font-size
+     accessibility settings still flow through:
+       floor    1em    = browser default (≈16px)
+       slope    0.5em + 0.6vw  — rises ~0.6px per 100px of viewport width
+       ceiling  1.375em ≈ 22px (matches the previous fixed value)
+     Curve at 16px-default browsers:
+       1280vw → 16.0px (clamped)
+       1600vw → 17.6px
+       2000vw → 20.0px
+       2400vw → 22.0px (clamped) */
+  font-size: clamp(1em, 0.5em + 0.6vw, 1.375em);
 
   /* Scrapbook type system. Logo = brush wordmark, hand = body / annotations,
      press = typewriter for "printed" data (move log, FEN, code). */
@@ -61,10 +71,15 @@
 
   /* Highlighter behind headings — neon orange with low opacity. Brush-
      stroke alpha variation comes from a noise modulation inside the mask
-     SVG itself (see marker-stripe.svg), not just the bg colour. */
+     SVG itself (see marker-stripe.svg), not just the bg colour. The
+     per-action variants below (green, red) give specific buttons their
+     own colour vocabulary on hover so e.g. Quit reads as "warning red"
+     even though the post-it card itself is calm cyan. */
   --marker-yellow:      rgba(255,120,40,0.45);
-  --marker-pink:        rgba(255,80,120,0.40);
+  --marker-pink:        rgba(255,80,120,0.50);
   --marker-blue:        rgba(80,170,220,0.40);
+  --marker-green:       rgba(80,220,110,0.50);
+  --marker-red:         rgba(255, 70, 70,0.55);
 
   /* Torn-note clip-paths. Three reusable variants for paper panels.
      Drop-shadow gets clipped by clip-path, so panels using these also need
@@ -121,24 +136,28 @@
        b: top-left corner cut + gentle bow
        c: no folded corner, slightly more pronounced bow (for icon buttons
           where a corner cut would compete with the glyph) */
+  /* Bottom edge is concave — like a sticky note pinned at the top: the
+     corners curl up off the page (smaller Y%), the middle hangs lowest
+     under gravity (largest Y%). Reads as a real lifted post-it rather
+     than a stamped rectangle with a smile in it. */
   --post-shape-a: polygon(
     0 0, 92% 0, 100% 8%,
-    100% 100%,
-    92% 98%, 75% 96%, 50% 95%, 25% 96%, 8% 98%,
-    0 100%
+    100% 95%,
+    92% 96%, 75% 98%, 50% 100%, 25% 98%, 8% 96%,
+    0 95%
   );
   --post-shape-b: polygon(
     0 8%, 8% 0,
     100% 0,
-    100% 100%,
-    92% 98%, 75% 96%, 50% 95%, 25% 96%, 8% 98%,
-    0 100%
+    100% 95%,
+    92% 96%, 75% 98%, 50% 100%, 25% 98%, 8% 96%,
+    0 95%
   );
   --post-shape-c: polygon(
     0 0, 100% 0,
-    100% 100%,
-    92% 97%, 75% 95%, 50% 94%, 25% 95%, 8% 97%,
-    0 100%
+    100% 94%,
+    92% 95%, 75% 97%, 50% 100%, 25% 97%, 8% 95%,
+    0 94%
   );
   /* Right + bottom edges torn, top + left straight. Used on the move-log
      panel where the inner sidebar/board edges should stay clean and the
@@ -416,11 +435,14 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
    upward curve at the bottom, drop-shadow that follows the clipped shape).
    Header-link is intentionally NOT in this list — see newspaper-cutout
    below. */
+/* The Move submit button used to live in this group as `#moveForm button`,
+   styled like a yellow post-it. It's now a `.post-it-action.primary`
+   inside the move-log paper, so the ID-prefixed selector was removed
+   from this list — `.post-it-action` rules below take over. */
 .header-new-btn,
 .theme-toggle-btn,
 .secondary-btn,
-.quit-btn,
-#moveForm button {
+.quit-btn {
   position: relative;
   background: var(--pn-bg);
   color: var(--post-text);
@@ -457,8 +479,7 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
 .header-new-btn:hover,
 .theme-toggle-btn:hover,
 .secondary-btn:hover,
-.quit-btn:hover,
-#moveForm button:hover {
+.quit-btn:hover {
   transform: translateY(-0.12rem);
   filter:
     drop-shadow(0 0.2rem 0.35rem rgba(0,0,0,0.22))
@@ -467,8 +488,7 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
 .header-new-btn:active,
 .theme-toggle-btn:active,
 .secondary-btn:active,
-.quit-btn:active,
-#moveForm button:active {
+.quit-btn:active {
   transform: translateY(0);
   filter:
     drop-shadow(0 0.1rem 0.2rem rgba(0,0,0,0.18))
@@ -650,9 +670,6 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
    reads as marker pen drawn on the page rather than printed pixel-fills. */
 .square.light { background: rgba(253, 232, 208, 0.72); }
 .square.dark  { background: rgba(232, 149, 106, 0.72); }
-.square.drag-over.light { background: rgba(253, 216, 181, 0.85); box-shadow: inset 0 0 0 0.1875rem rgba(200,120,80,0.5); }
-.square.drag-over.dark  { background: rgba(212, 128, 78, 0.85);  box-shadow: inset 0 0 0 0.1875rem rgba(200,120,80,0.5); }
-.square.drag-source { opacity: 0.4; }
 .square.in-check { box-shadow: inset 0 0 0 0.3125rem rgba(220, 40, 40, 0.6); }
 .square.in-check::after {
   content: '';
@@ -676,13 +693,73 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
   justify-content: center;
   /* Defensive: piece images aren't selectable text, but without an explicit
      user-select: none the browser sometimes shows the I-beam (text-select)
-     cursor when hovering, especially during drag. */
+     cursor when hovering. `touch-action: none` prevents the browser from
+     interpreting a touch-drag on a piece as a scroll gesture, so the
+     pointerdown/move/up handlers actually receive the events. */
   user-select: none;
   -webkit-user-select: none;
-  -webkit-user-drag: element;
+  touch-action: none;
 }
 .piece:active { cursor: grabbing; }
-.piece.dragging { transform: scale(1.15); opacity: 0.9; }
+
+/* Pointer-driven drag — the source piece is hidden during drag and the
+   floating clone follows the cursor via CSS transform. See Main.scala
+   `handlePointerDown` / `floatingDragLayer`. Hit-testing is now pure
+   coordinate math against `.board.getBoundingClientRect()` so the
+   source piece doesn't need to remain interactive.
+   `visibility: hidden` (rather than `opacity: 0`) is a Safari-friendly
+   pick — visibility flips are compositor-only, while opacity:0 forces
+   a paint pass on the surrounding `.board-paper` layer (which carries
+   the slow feDiffuseLighting filter). The element keeps its layout
+   space either way, so neighbouring squares don't shift. */
+.piece.is-being-dragged {
+  visibility: hidden;
+}
+.drag-floating {
+  position: fixed;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 10000;
+  /* GPU-promoted compositing layer so the per-frame transform updates
+     don't trigger layout/paint, only composite. */
+  will-change: transform;
+}
+/* Belt and braces. The cloned `.piece` inside the floating layer would
+   otherwise inherit `pointer-events: auto` from the more-specific
+   .piece rule above and capture hit-tests from anything that falls back
+   to `elementFromPoint`. We hit-test by coordinate math now, but keeping
+   the floating layer fully non-interactive prevents future regressions. */
+.drag-floating,
+.drag-floating * { pointer-events: none; }
+
+/* All six piece SVGs are pre-mounted as siblings inside the floating
+   layer's inner `.piece` span. The `data-active-piece` attribute on
+   the span selects exactly one to display; the other five stay hidden.
+   The point of pre-mounting is Safari: each fresh `<svg><use href=
+   "#name"/></svg>` mounted on drag start would otherwise re-resolve
+   the symbol on its critical path, and we'd see a perceptible delay
+   before the floating piece appears. With this rule, drag start is
+   a single attribute write — the SVGs are already painted. */
+.drag-floating .piece > .piece-svg { display: none; }
+.drag-floating .piece[data-active-piece="pawn"]   > .piece-svg-pawn,
+.drag-floating .piece[data-active-piece="rook"]   > .piece-svg-rook,
+.drag-floating .piece[data-active-piece="knight"] > .piece-svg-knight,
+.drag-floating .piece[data-active-piece="bishop"] > .piece-svg-bishop,
+.drag-floating .piece[data-active-piece="queen"]  > .piece-svg-queen,
+.drag-floating .piece[data-active-piece="king"]   > .piece-svg-king {
+  display: block;
+}
+/* While a drag is in flight, set the cursor on body so it inherits to
+   anything that doesn't have its own cursor declaration (move log
+   background, page background, etc.). The earlier rule used
+   `body.is-dragging *` to force grabbing on every descendant — that's
+   a universal selector match against thousands of elements on every
+   class flip, and it caused a perceptible hitch at drag start AND end
+   while the engine recomputed styles for the entire tree. Inheritance
+   alone covers the common cases; `.piece { cursor: grab }` on
+   non-source pieces still wins on hover, which is acceptable. */
+body.is-dragging { cursor: grabbing; }
 /* Piece colour schemes — drive the SVG via CSS variables. The defaults
    inside each SVG match `--piece-primary: rgb(70.117188%, 52.539062%,
    34.521484%)` so unsetting these vars on a side falls back to the warm
@@ -803,10 +880,16 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
      SVG can't go inside .move-log because absolute positioning inside a
      scroll container scrolls with the content; here the SVG sits at the
      wrap level, fixed behind the viewport, while the move list scrolls
-     above it. The padding-top + padding-left give the "Moves" heading room
-     to breathe on the paper before the scrolling list starts. */
+     above it.
+
+     Padding intentionally exceeds the deepest jag of `--torn-left-bottom`
+     (0.6rem on both bottom and left) so the rectangular .move-log
+     content area sits inside the torn silhouette at every x — without
+     this the bottom strip of move rows would peek past the torn paper
+     edge into the page background. Top + right are straight in the
+     polygon, so they need only enough room for the heading + breathing. */
   position: relative;
-  padding: 0.9rem 0 0 1rem;
+  padding: 0.9rem 0 0.9rem 1rem;
 }
 .move-log {
   /* Static height (3/5 of board = 21.6rem) keeps the panel from growing
@@ -832,18 +915,38 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
   padding: 0.6rem 1rem 1rem;
 }
 
-/* overlayScrollbars custom theme — STEP 1 (debug): plain red handle so we
-   can verify scrolling and the OS DOM integration before doing any
-   styling. Once confirmed, swap the handle for the hatched/hand-drawn
-   look (and arrow SVGs if added). */
+/* overlayScrollbars custom theme — hand-drawn marker hatch on paper.
+   The handle is a CSS mask of /web/hatch.svg painted in `currentColor`,
+   distorted by the inline `#hand-drawn` SVG filter so the strokes look
+   wobbly rather than CAD-precise. Theming works via:
+     mask-image: url(...) — uses only the SVG's alpha channel
+     background-color: currentColor — sources colour from CSS `color`
+     color: var(--text-secondary) — theme cascades from :root tokens
+   `--` doesn't propagate into data: URLs, so we keep the hatch as a
+   regular file and let the colour come from the host CSS instead. */
 .os-theme-pichess {
   --os-size: 0.7rem;
   --os-padding-perpendicular: 0.15rem;
   --os-padding-axis: 0.2rem;
 }
-.os-theme-pichess .os-scrollbar-track  { background: rgba(0,0,0,0.06); }
-.os-theme-pichess .os-scrollbar-handle { background: red; }
-.os-theme-pichess .os-scrollbar-handle:hover { background: darkred; }
+.os-theme-pichess .os-scrollbar-track  { background: rgba(0,0,0,0.06); border-radius: 0.35rem; }
+.os-theme-pichess .os-scrollbar-handle {
+  border-radius: 0.35rem;
+  background-color: currentColor;
+  color: var(--text-secondary);
+  -webkit-mask-image: url(/web/hatch.svg);
+          mask-image: url(/web/hatch.svg);
+  -webkit-mask-size: 0.35rem 0.35rem;
+          mask-size: 0.35rem 0.35rem;
+  -webkit-mask-repeat: repeat;
+          mask-repeat: repeat;
+  filter: url(#hand-drawn);
+  /* GPU compositing layer — keeps the displacement filter from re-rasterising
+     on every scroll frame, which would otherwise flicker on big move logs. */
+  will-change: transform;
+}
+.os-theme-pichess .os-scrollbar-handle:hover  { color: var(--text-primary); }
+.os-theme-pichess .os-scrollbar-handle:active { color: var(--accent-strong); }
 .move-log-empty {
   color: var(--text-muted);
   font-style: italic;
@@ -866,31 +969,29 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
 }
 #moveInput {
   /* Scrapbook input — typed onto the page rather than into a styled box.
-     No top/side borders; just a darker bottom rule like a paper line.
-     Translucent bg keeps the page texture visible behind the typed text. */
-  flex: 1 1 8rem;
-  min-width: 0;
+     The hand-drawn underline lives on the wrapping `.move-input-wrap`
+     pseudo-element (not on the input itself) so it can use the same
+     #hand-drawn filter as the Export heading underline. The input is
+     just a borderless transparent text field. */
+  width: 100%;
   padding: 0.5rem 0.4rem 0.45rem;
   border: none;
-  border-bottom: 2px solid var(--text-muted);
   border-radius: 0;
   background: transparent;
   color: var(--text-primary);
   font-size: 1rem;
   font-family: var(--font-press);
   outline: none;
-  transition: border-color 0.2s;
 }
-#moveInput:focus { border-bottom-color: var(--accent); }
 #moveInput::placeholder { color: var(--text-muted); font-style: italic; }
-/* Post-it colour + shape + sizing for sidebar buttons (shared post-it base
-   styles are defined alongside the header buttons above). */
-#moveForm button {
-  --pn-bg: var(--post-yellow);
-  --pn-shadow: var(--post-yellow-shadow);
-  --post-shape: var(--post-shape-b);
-  font-size: 1.25rem;
-  padding: 0.5rem 1.2rem;
+/* Move-form layout: input + Move submit. The submit is a
+   `.post-it-action.primary` inside the move-log paper — it picks up
+   styling from `.post-it-action` rules elsewhere; this block only
+   handles the form layout. The form sits BELOW the move-log scroll
+   container, on the same paper, separated by a small gap. */
+#moveForm {
+  margin-top: 0.6rem;
+  padding-right: 0.6rem;
 }
 .btn-row { display: flex; gap: 0.5rem; }
 .secondary-btn {
@@ -909,6 +1010,251 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
   --post-shape: var(--post-shape-a);
   flex: 1;
 }
+
+/* ─── Grouped post-it cards (3-card sidebar layout) ──────────────────────
+   Each `.post-it-card` is itself a sticky note (paper colour + clipped
+   shape + drop-shadow), and the buttons inside are PLAIN TEXT by
+   default — the marker stripe behind text only shows on hover. The post-
+   it card itself has no heading; its buttons are the content (with one
+   exception: post-it 2 has a small "Export" sub-heading). */
+.post-it-card {
+  --pn-bg: var(--post-yellow);
+  --pn-shadow: var(--post-yellow-shadow);
+  background: var(--pn-bg);
+  color: var(--post-text);
+  padding: 0.9rem 1.1rem 1.1rem;
+  border-radius: 0;
+  clip-path: var(--post-shape, var(--post-shape-a));
+  filter:
+    drop-shadow(0 0.15rem 0.25rem rgba(0,0,0,0.20))
+    drop-shadow(0 0.6rem 0.9rem var(--pn-shadow));
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+/* Vary shapes across the column so the three cards don't look stamped. */
+.post-it-card:nth-of-type(3n+1) { --post-shape: var(--post-shape-a); }
+.post-it-card:nth-of-type(3n+2) { --post-shape: var(--post-shape-b); }
+.post-it-card:nth-of-type(3n)   { --post-shape: var(--post-shape-c); }
+.post-it-card.coral {
+  --pn-bg: var(--post-coral);
+  --pn-shadow: var(--post-coral-shadow);
+}
+.post-it-card.cyan {
+  --pn-bg: var(--post-cyan);
+  --pn-shadow: var(--post-cyan-shadow);
+  /* Intrinsic-width children — each button is only as wide as its
+     content + padding, so a row of cyan actions reads as a stack of
+     varied-width sticky labels rather than a column of identical bars. */
+  align-items: center;
+  gap: 0.15rem;
+}
+
+/* Plain-text buttons inside a card. The marker stripe sits behind the
+   text via a ::before pseudo with the same SVG mask used on
+   `.section-title` — alpha-driven so the colour comes from CSS and the
+   stripe shape varies (the mask SVG bakes in shape-warp + streak alpha
+   modulation, no extra setup needed). Default is yellow marker; coral
+   cards swap to pink so the highlight reads as "destructive". */
+.post-it-action {
+  position: relative;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-hand);
+  font-size: 1.15rem;
+  line-height: 1.1;
+  color: var(--post-text);
+  padding: 0.25rem 0.55rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  text-align: center;
+  transition: color 0.15s, transform 0.1s;
+}
+.post-it-action::before {
+  content: '';
+  position: absolute;
+  inset: -0.05rem -0.2rem;
+  background: var(--marker-yellow);
+  -webkit-mask: url(/web/marker-stripe.svg) center/100% 100% no-repeat;
+          mask: url(/web/marker-stripe.svg) center/100% 100% no-repeat;
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+  z-index: 0;
+}
+.post-it-action > * { position: relative; z-index: 1; }
+.post-it-action:hover::before    { opacity: 1; }
+.post-it-action:hover            { transform: translateY(-0.05rem); }
+.post-it-action:active           { transform: translateY(0.05rem); }
+.post-it-action[type="submit"]::before,
+.post-it-card .post-it-action.primary::before { opacity: 0.7; } /* always-on hint for primary */
+.post-it-card.coral .post-it-action::before { background: var(--marker-pink); }
+.post-it-card.cyan  .post-it-action::before { background: var(--marker-blue); }
+
+/* Per-action hover-marker overrides. Specific actions get their own
+   colour vocabulary on hover so the cyan card mixes calm-cyan defaults
+   (Load, Draw) with action-coded warnings (red Quit, pink Forfeit) and
+   one positive starter (green New Game). The Move submit button uses
+   neon-orange so it matches the heading marker stripes.
+
+   Specificity: the cyan card-level rule above is `.post-it-card.cyan
+   .post-it-action::before` — three classes (0,3,1) when you count the
+   pseudo-element. Per-action overrides need to match or beat that, so
+   they're qualified with `.post-it-card.cyan` to land at (0,4,1) and
+   win cleanly. Move sits outside any post-it card; it still uses the
+   bare selector to override the card-less `.post-it-action::before`. */
+.post-it-card.cyan .post-it-action.action-new::before     { background: var(--marker-green); }
+.post-it-card.cyan .post-it-action.action-forfeit::before { background: var(--marker-pink); }
+.post-it-card.cyan .post-it-action.action-quit::before    { background: var(--marker-red); }
+.post-it-action.action-move::before                       { background: var(--marker-yellow); }
+
+/* "Underlined" modifier — used on Quit so it visually breaks out of its
+   row of post-it actions. The hand-drawn underline now sits beneath the
+   `.label` span only (full-width was visually awkward — a line that
+   stretched past the icon felt like a divider rather than emphasis on
+   the word). Wrap the button's text in <span class="label">…</span>
+   to enable this. Underline in `currentColor` (text colour) — leans on
+   the same #hand-drawn filter as the Export sub-heading. */
+.post-it-action.underlined .label  { position: relative; }
+.post-it-action.underlined .label::after {
+  content: '';
+  position: absolute;
+  left: -0.05rem;
+  right: -0.05rem;
+  bottom: -0.18rem;
+  height: 0.12rem;
+  background: currentColor;
+  filter: url(#hand-drawn);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+/* Icon-only variant — no label text, just the 1.4em-tall masked icon.
+   `aria-label` carries the meaning for screen readers. */
+.post-it-action.icon-only {
+  justify-content: center;
+  padding: 0.35rem 0.45rem;
+}
+.post-it-action.icon-only > .icon { width: 1.4em; height: 1.4em; }
+
+/* Row of buttons inside a post-it card. evenly-spaced flex; gap respects
+   the card's overall vertical rhythm. */
+.post-it-row {
+  display: flex;
+  gap: 0.35rem;
+  align-items: stretch;
+}
+.post-it-row > .post-it-action { flex: 1; }
+
+/* Sub-heading inside a post-it (currently only "Export" in card 2). The
+   hand-drawn underline reuses the inlined #hand-drawn filter to wobble a
+   plain marker rectangle into a sketched stroke. */
+.post-it-subheading {
+  font-family: var(--font-logo);
+  font-size: 1.1rem;
+  letter-spacing: 0.04em;
+  margin: 0.5rem 0 0.15rem;
+  padding-bottom: 0.2rem;
+  position: relative;
+  display: inline-block;
+  align-self: flex-start;
+  color: var(--post-text);
+}
+.post-it-subheading::after {
+  content: '';
+  position: absolute;
+  left: -0.1rem;
+  right: -0.1rem;
+  bottom: 0;
+  height: 0.18rem;
+  background: var(--marker-yellow);
+  filter: url(#hand-drawn);
+  opacity: 0.85;
+}
+
+/* Dark-mode toggle: relies on cascading CSS variables through the inline
+   paper SVGs. Toggling `:root.dark` updates --paper-color, --grid-color,
+   and --crumple-highlight; the SVGs re-rasterise their feTurbulence +
+   feDiffuseLighting chain on each instance. That re-rasterisation is
+   what makes the toggle feel slow on pages with several paper panels —
+   a known browser limitation that no purely-CSS workaround eliminates.
+   Earlier attempts (View Transitions snapshots, dual pre-rendered
+   variants) made the perceived slowness either equivalent or worse, so
+   the simple cascading-vars approach stays. */
+
+/* ─── Doodle-icon mask helper ────────────────────────────────────────────
+   Each icon points at a doodle SVG via a per-class `--icon-url` variable.
+   `mask-image` sources the silhouette; `background-color: currentColor`
+   paints it in the inherited theme colour, so a hovered button or a dark-
+   mode swap re-tints automatically. The doodle SVGs use literal black
+   fills — that's fine, only their alpha matters in mask mode. */
+.icon {
+  display: inline-block;
+  width: 1.05em;
+  height: 1.05em;
+  background-color: currentColor;
+  -webkit-mask: var(--icon-url) center/contain no-repeat;
+          mask: var(--icon-url) center/contain no-repeat;
+  vertical-align: -0.15em;
+  flex-shrink: 0;
+}
+.icon-undo    { --icon-url: url(/web/doodle_icons/interface/backward.svg); }
+.icon-redo    { --icon-url: url(/web/doodle_icons/interface/forward.svg); }
+.icon-flip    { --icon-url: url(/web/doodle_icons/interface/flip.svg); }
+.icon-new     { --icon-url: url(/web/doodle_icons/interface/play.svg); }
+.icon-load    { --icon-url: url(/web/doodle_icons/interface/upload.svg); }
+.icon-draw    { --icon-url: url(/web/doodle_icons/hand-gestures/folded-hands.svg); }
+.icon-forfeit { --icon-url: url(/web/doodle_icons/interface/flag.svg); }
+.icon-quit    { --icon-url: url(/web/doodle_icons/interface/logout.svg); }
+.icon-move    { --icon-url: url(/web/doodle_icons/arrows/chevrons-right.svg); }
+
+/* Export bullet list inside post-it 2 — buttons sit inside <li> so each
+   format reads as a list entry rather than a row of identical bars. The
+   list bullet (default disc) gives a small visual cue and the buttons
+   stay intrinsic-width since `<button>` defaults to inline-block, no
+   `flex: 1` from the .post-it-row rule. */
+.export-list {
+  list-style: disc;
+  padding-left: 1.4rem;
+  margin: 0.1rem 0 0.3rem;
+  align-self: flex-start;
+  color: var(--text-secondary);
+}
+.export-list li {
+  padding: 0.05rem 0;
+  margin: 0;
+}
+.export-list li > .post-it-action {
+  padding: 0.15rem 0.45rem;
+}
+
+/* Move input wrapper — hand-drawn underline matches the Export
+   sub-heading and other heading underlines, but in `--text-muted`
+   instead of marker yellow so the input reads as a notebook line.
+   Wrapping the <input> in a <span> is the only way to attach an
+   ::after pseudo (replaced elements like <input> can't have them). */
+.move-input-wrap {
+  position: relative;
+  flex: 1 1 8rem;
+  min-width: 0;
+}
+.move-input-wrap::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 0.12rem;
+  background: var(--text-muted);
+  filter: url(#hand-drawn);
+  opacity: 0.8;
+  pointer-events: none;
+}
+.move-input-wrap:focus-within::after { background: var(--text-secondary); }
+
 .toast {
   position: fixed;
   bottom: 1.875rem;

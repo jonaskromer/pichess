@@ -87,6 +87,21 @@ object HtmlPageSpec extends ZIOSpecDefault:
         html.contains("""id="paper-crumpled-grid-square"""")
       )
     },
+    test("embed all six piece-SVG sprites in the same sprite host") {
+      // The floating drag clone mounts a fresh <use href="#<name>"/> on
+      // every pointerdown. Cross-document references forced a per-mount
+      // resolve step that visibly delayed drag start; inlining the
+      // <symbol id="pawn">, <symbol id="rook">, etc. lets the same
+      // reference resolve synchronously from the current document.
+      assertTrue(
+        html.contains("""id="pawn""""),
+        html.contains("""id="rook""""),
+        html.contains("""id="knight""""),
+        html.contains("""id="bishop""""),
+        html.contains("""id="queen""""),
+        html.contains("""id="king"""")
+      )
+    },
     test("inline a synchronous theme-bootstrap script before paint") {
       // The Scala.js bundle loads after the body, so without a synchronous
       // <head> script the user briefly sees the wrong mode before the JS
