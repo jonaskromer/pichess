@@ -91,26 +91,22 @@ The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural
 
 ## Phase 5 — Microservices (SBT Multi-project + Docker)
 
-**Status:** Complete.
+**Status:** Complete (re-architected together with Phase 11).
 
 **Lecture task:** Start each microservice using Docker. Then start the entire application using Docker Compose.
 
-- SBT split is more granular than the original sketch — 13 sub-projects total:
-  - `domain` (cross-compiled JVM/JS) — `chess.model` (board, pieces, errors)
-  - `rules` — `chess.model.rules` (move validation, game progression)
-  - `codec` — FEN/PGN/JSON parsers, SAN serializer, parser-combinator showcases
-  - `api` (cross-compiled JVM/JS) — wire DTOs shared by gateway encoder and web-ui decoder
-  - `repository-api` — Tapir endpoint contract for the repository microservice
-  - `repository` — `GameRepository` impls (`InMemoryGameRepository`, `HttpGameRepository`) plus `RepositoryServer` (HTTP host)
-  - `game-service` — `GameService` orchestration on top of the repo
-  - `gateway` — REST/SSE view layer (Phase 4)
-  - `tui` — terminal view + controller
-  - `web-ui` — Laminar/Scala.js single-page app (Phase 7)
-  - `app` — composition root that wires TUI + gateway in one process
-- Two Docker-packaged microservices: `app` (port 8090, full TUI+REST+UI) and `repository` (port 8091, standalone state store)
-- `docker-compose.yml` runs both; `app` talks to `repository` over REST when `REPOSITORY_URL` is set, otherwise falls back to `InMemoryGameRepository` for local dev
-- Cross-service communication uses the typed Tapir client `HttpGameRepository` (errors map to `GameError.InfrastructureError` for retry policies)
-- ZLayer wiring is preserved; SBT module boundaries enforce the existing layering rules
+- SBT split is now 14 sub-projects:
+  - `domain` (cross JVM/JS), `api` (cross JVM/JS), `rules`, `codec`, `repositoryApi` — libraries (no Docker)
+  - `events` — Kafka event ADT + zio-json codecs (new in this phase)
+  - `proto` — generated zio-grpc stubs (new in this phase; `coverageEnabled := false` for generated code)
+  - `repository` (svc, port 8091) — REST surface for read-side queries; Kafka consumer for the `chess.game-events` topic (write side)
+  - `game-service` (svc, gRPC :9000) — authoritative in-memory game state; zio-grpc server; Kafka producer
+  - `gateway` (svc, HTTP :8090) — public Tapir REST + SSE + Laminar web-ui static; gRPC client to game-service
+  - `tui` — parser-only library (handleCommand → REST gateway calls is documented future work)
+  - `webUi` — Laminar/Scala.js single-page app (embedded into gateway resources)
+- The `app` monolith is **deleted**. Its responsibilities are split across `gateway` and `gameService`, each running as its own Docker container. `sbt run` at the root no longer works — use `sbt <svc>/run` or `docker compose up`.
+- See [ADR 013](adr/013-deletion-of-app-module-and-sbt-run.md) for the rationale.
+- Per-service Docker images use sbt-native-packager's `dockerGroupLayers` to put 3rd-party jars in a separate (cached) layer from project jars — a one-file edit triggers a rebuild of only the small project-jar layer.
 
 ---
 
@@ -178,13 +174,18 @@ The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural
 
 ## Phase 11 — Kafka Event Publishing
 
+**Status:** Complete.
+
 **Lecture task:** Write a Kafka Producer and Consumer connected to your microservices via your data stream.
 
-- `GameEvent` is already returned by `makeMove` — callers decide what to do with it
-- Add a Kafka producer at the HTTP/WebSocket call site, connected via the reactive stream from Phase 10
-- Lecture specifies **Alpakka Kafka** (Akka Streams + Kafka connector); project may use ZIO Kafka
-- `(newState, event)` return from `makeMove` is the integration point
-- `GameService` itself remains unchanged
+- Single topic: `chess.game-events`, partition key = `gameId`, KRaft mode (no Zookeeper).
+- Event ADT lives in the new `events` SBT module (`chess.events.GameDomainEvent`): `GameStarted | GameLoaded | MoveMade | Undone | Redone | DrawClaimed | Forfeited | GameEnded`. Every event carries a `resultingFen` field — the canonical "what to persist after this event" — so the consumer is type-agnostic.
+- Producer: **`game-service`** (`KafkaGameEventProducer`, zio-kafka) publishes after every successful state transition with `acks=all` and idempotence on. The MakeMove rpc returns to the gateway only after the produce future resolves.
+- Consumer: **`repository`** (`KafkaGameEventConsumer`) subscribes with consumer group `pichess-repository`, applies each event idempotently via `repo.save(gameId, fen)`. Stream-level failures interrupt the service via the supervising scope.
+- Serialization: zio-json over the wire (no schema registry — see [ADR 012](adr/012-zio-json-event-serialization-no-schema-registry.md)).
+- Coexists with the legacy REST PUT path on the repository (used by Gatling and ad-hoc curl). Both paths are idempotent.
+
+**Next iteration:** game-service replays the topic on startup to rebuild in-memory state — needed for true restart resilience.
 
 ---
 

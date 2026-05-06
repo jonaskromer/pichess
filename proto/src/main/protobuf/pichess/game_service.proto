@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package pichess;
+
+// gRPC contract for the gameService microservice.
+//
+// Wire format: GameState is carried as FEN (Forsyth–Edwards Notation) — a
+// compact, canonical string both sides convert with FenSerializer. Keeping
+// FEN on the wire avoids modelling Board/Piece in protobuf and matches the
+// existing convention used by repositoryApi.
+//
+// `gameId` is the partition key used by the Kafka producer; clients must
+// reuse the id returned by NewGame/LoadGame for subsequent rpcs on the same
+// game.
+service GameService {
+  // Lifecycle
+  rpc NewGame      (NewGameRequest)      returns (StateReply);
+  rpc LoadGame     (LoadGameRequest)     returns (StateReply);
+
+  // Commands — each mutates the per-game SessionState and produces an event
+  // on chess.game-events.
+  rpc MakeMove     (MoveRequest)         returns (StateReply);
+  rpc Undo         (GameIdRequest)       returns (StateReply);
+  rpc Redo         (GameIdRequest)       returns (StateReply);
+  rpc ClaimDraw    (GameIdRequest)       returns (StateReply);
+  rpc Forfeit      (GameIdRequest)       returns (StateReply);
+
+  // Queries
+  rpc GetState     (GameIdRequest)       returns (StateReply);
+  rpc ExportGame   (ExportRequest)       returns (ExportReply);
+
+  // Streaming subscription — emits the current state immediately, then every
+  // subsequent state change for that game. Powers the gateway's SSE source.
+  rpc SubscribeGame(GameIdRequest)       returns (stream StateReply);
+}
+
+message NewGameRequest {}
+
+message LoadGameRequest {
+  string raw = 1;  // FEN, PGN, or JSON — auto-detected server-side
+}
+
+message MoveRequest {
+  string game_id = 1;
+  string raw     = 2;  // coordinate, castling, or SAN notation
+}
+
+message GameIdRequest {
+  string game_id = 1;
+}
+
+message ExportRequest {
+  string game_id = 1;
+  string format  = 2;  // fen | pgn | json
+}
+
+// Universal state response. Carries the canonical FEN, the active color, the
+// move log (SAN with side to move), the game status, and any session-level
+// error surfaced by a controller action.
+message StateReply {
+  string game_id      = 1;
+  string fen          = 2;
+  string status       = 3;  // Playing | Checkmate(...) | Draw(...) | Resignation(...)
+  string active_color = 4;  // White | Black
+  repeated MoveLogEntry move_log = 5;
+  string error        = 6;  // empty when the action succeeded
+}
+
+message MoveLogEntry {
+  string color = 1;  // "White" | "Black" — the side that played this move
+  string san   = 2;
+}
+
+message ExportReply {
+  string format = 1;
+  string body   = 2;
+}

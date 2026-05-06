@@ -1,16 +1,21 @@
 package chess.service
 
+import chess.events.InMemoryGameEventProducer
+import chess.gameservice.InMemoryGameStore
 import chess.model.GameEvent
 import chess.model.board.{GameState, Position}
 import chess.model.piece.{Color, Piece, PieceType}
-import chess.repository.InMemoryGameRepository
 import zio.*
 import zio.test.*
 
 object GameServiceSpec extends ZIOSpecDefault:
 
   private val appLayer: ULayer[GameService] =
-    InMemoryGameRepository.layer >>> GameServiceLive.layer
+    ZLayer.make[GameService](
+      GameServiceLive.layer,
+      InMemoryGameStore.layer,
+      InMemoryGameEventProducer.layer
+    )
 
   def spec = suite("GameService")(
     suite("newGame")(

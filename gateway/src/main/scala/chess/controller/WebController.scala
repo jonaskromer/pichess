@@ -5,16 +5,23 @@ import chess.api.{
   Endpoints,
   ErrorDto,
   ExportResponse,
-  LoadRequest,
-  MoveRequest,
   StateResponse
 }
 import chess.api.Endpoints.QuitAck
-import chess.codec.{FenSerializer, JsonSerializer, PgnSerializer}
-import chess.model.{GameError, GameSnapshot, SessionState}
-import chess.notation.SanSerializer
-import chess.service.GameService
+import chess.codec.FenParserRegex
+import chess.model.GameError
+import chess.model.piece.Color
 import chess.view.{HtmlPage, WebBoardView}
+import io.grpc.StatusException
+import pichess.game_service.{
+  ExportRequest,
+  GameIdRequest,
+  LoadGameRequest,
+  MoveRequest,
+  NewGameRequest,
+  StateReply,
+  ZioGameService
+}
 import sttp.tapir.server.ziohttp.ZioHttpInterpreter
 import sttp.tapir.swagger.bundle.SwaggerInterpreter
 import sttp.tapir.ztapir.*
@@ -22,27 +29,33 @@ import zio.*
 import zio.http.*
 import zio.stream.SubscriptionRef
 
-// JSON endpoints under /api are defined in the shared `Endpoints` module and
-// interpreted here via ZioHttpInterpreter — so the Laminar UI and internal
-// callers can share the same typed contract. HTML, the Scala.js bundle, and
-// the SSE stream stay as raw zio-http routes because they don't fit Tapir's
-// typed body model well.
+/** Tapir-backed REST surface plus raw zio-http routes (HTML, web-ui assets,
+  * SSE). Every command endpoint is a thin shim over the gameService gRPC
+  * client; the gateway holds **no** authoritative game state — only the
+  * `activeGameId` ref tracking which game in the gameService cluster this
+  * gateway process is currently focused on.
+  *
+  * `activeGameId` is a `SubscriptionRef[String]` so the SSE source can
+  * re-subscribe to a new game's stream when `/api/new` or `/api/load` is
+  * called.
+  */
 object WebController:
 
   def routes(
-      gs: GameService,
-      session: SubscriptionRef[SessionState],
+      client: ZioGameService.GameServiceClient,
+      activeGameId: SubscriptionRef[String],
       shutdown: Promise[Nothing, Unit]
   ): Routes[Any, Response] =
-    tapirRoutes(gs, session, shutdown) ++ rawRoutes(session, shutdown)
+    tapirRoutes(client, activeGameId, shutdown) ++
+      rawRoutes(client, activeGameId, shutdown)
 
   // --------------------------------------------------------------------------
   // Tapir-backed JSON API
   // --------------------------------------------------------------------------
 
   private def tapirRoutes(
-      gs: GameService,
-      session: SubscriptionRef[SessionState],
+      client: ZioGameService.GameServiceClient,
+      activeGameId: SubscriptionRef[String],
       shutdown: Promise[Nothing, Unit]
   ): Routes[Any, Response] =
     val swagger = SwaggerInterpreter()
@@ -51,123 +64,113 @@ object WebController:
       swagger ++ List(
         Endpoints.getState.zServerLogic[Any] {
           case None | Some("view") =>
-            currentBoard(session).map(StateResponse.View(_))
+            currentBoard(client, activeGameId).map(StateResponse.View(_))
           case Some(other) =>
-            exportInFormat(session, other).map(StateResponse.Export(_))
+            exportInFormat(client, activeGameId, other).map(StateResponse.Export(_))
         },
         Endpoints.postMove.zServerLogic[Any] { req =>
-          GameController
-            .makeMove(gs, session, req.move)
-            .mapError(toErrorDto)
-            .zipRight(currentBoard(session))
+          for
+            id    <- activeGameId.get
+            reply <- client
+                       .makeMove(MoveRequest(id, req.move))
+                       .mapError(toErrorDto)
+            dto   <- replyToDto(reply)
+          yield dto
         },
         Endpoints.postUndo.zServerLogic[Any](_ =>
-          GameController
-            .undo(gs, session)
-            .mapError(toErrorDto)
-            .zipRight(currentBoard(session))
+          callOnActive(client, activeGameId, c => g => c.undo(GameIdRequest(g)))
         ),
         Endpoints.postRedo.zServerLogic[Any](_ =>
-          GameController
-            .redo(gs, session)
-            .mapError(toErrorDto)
-            .zipRight(currentBoard(session))
+          callOnActive(client, activeGameId, c => g => c.redo(GameIdRequest(g)))
         ),
         Endpoints.postDraw.zServerLogic[Any](_ =>
-          GameController
-            .claimDraw(gs, session)
-            .mapError(toErrorDto)
-            .zipRight(currentBoard(session))
+          callOnActive(client, activeGameId, c => g => c.claimDraw(GameIdRequest(g)))
         ),
         Endpoints.postForfeit.zServerLogic[Any](_ =>
-          GameController
-            .forfeit(gs, session)
-            .mapError(toErrorDto)
-            .zipRight(currentBoard(session))
+          callOnActive(client, activeGameId, c => g => c.forfeit(GameIdRequest(g)))
         ),
         Endpoints.postNew.zServerLogic[Any](_ =>
-          gs.newGame()
-            .mapError(err => ErrorDto(err.message))
-            .flatMap(event =>
-              session.set(
-                SessionState(
-                  GameSnapshot.fresh(event.gameId, event.initialState)
-                )
-              )
-            )
-            .zipRight(currentBoard(session))
+          for
+            reply <- client.newGame(NewGameRequest()).mapError(toErrorDto)
+            _     <- activeGameId.set(reply.gameId)
+            dto   <- replyToDto(reply)
+          yield dto
         ),
         Endpoints.postQuit.zServerLogic[Any](_ =>
           shutdown.succeed(()).as(QuitAck(quit = true))
         ),
         Endpoints.postLoad.zServerLogic[Any] { req =>
-          gs.loadGame(req.raw)
-            .mapError(toErrorDto)
-            .flatMap { case (event, history) =>
-              session.set(
-                SessionState(
-                  GameSnapshot.fromHistory(
-                    event.gameId,
-                    event.initialState,
-                    history.reverse
-                  )
-                )
-              )
-            }
-            .zipRight(currentBoard(session))
+          for
+            reply <- client.loadGame(LoadGameRequest(req.raw)).mapError(toErrorDto)
+            _     <- activeGameId.set(reply.gameId)
+            dto   <- replyToDto(reply)
+          yield dto
         },
-        Endpoints.getExport.zServerLogic[Any](exportInFormat(session, _))
+        Endpoints.getExport.zServerLogic[Any](
+          exportInFormat(client, activeGameId, _)
+        )
       )
     )
 
+  private def callOnActive(
+      client: ZioGameService.GameServiceClient,
+      activeGameId: SubscriptionRef[String],
+      action: ZioGameService.GameServiceClient => String => IO[StatusException, StateReply]
+  ): ZIO[Any, ErrorDto, BoardStateDto] =
+    for
+      id    <- activeGameId.get
+      reply <- action(client)(id).mapError(toErrorDto)
+      dto   <- replyToDto(reply)
+    yield dto
+
   private def exportInFormat(
-      session: SubscriptionRef[SessionState],
+      client: ZioGameService.GameServiceClient,
+      activeGameId: SubscriptionRef[String],
       format: String
   ): ZIO[Any, ErrorDto, ExportResponse] =
-    val normalized = format.toLowerCase
-    session.get.flatMap { s =>
-      normalized match
-        case "fen" =>
-          ZIO.succeed(
-            ExportResponse("fen", FenSerializer.serialize(s.state))
-          )
-        case "json" =>
-          ZIO.succeed(
-            ExportResponse("json", JsonSerializer.serialize(s.state))
-          )
-        case "pgn" =>
-          SanSerializer
-            .deriveMoveLog(s.initialState, s.history)
-            .orDie
-            .flatMap(log => PgnSerializer.serialize(log, s.state.status))
-            .map(ExportResponse("pgn", _))
-        case other =>
-          ZIO.fail(
-            ErrorDto(
-              s"Unknown format '$other'; expected fen, pgn, or json"
-            )
-          )
-    }
+    for
+      id    <- activeGameId.get
+      reply <- client.exportGame(ExportRequest(id, format)).mapError(toErrorDto)
+    yield ExportResponse(reply.format, reply.body)
 
-  private def toErrorDto(err: GameError): ErrorDto = ErrorDto(err.message)
+  private def toErrorDto(err: StatusException): ErrorDto =
+    val description = Option(err.getStatus.getDescription).getOrElse(err.getMessage)
+    ErrorDto(description)
 
   private def currentBoard(
-      session: SubscriptionRef[SessionState]
+      client: ZioGameService.GameServiceClient,
+      activeGameId: SubscriptionRef[String]
   ): ZIO[Any, ErrorDto, BoardStateDto] =
-    session.get.flatMap(sessionToDto)
+    for
+      id    <- activeGameId.get
+      reply <- client.getState(GameIdRequest(id)).mapError(toErrorDto)
+      dto   <- replyToDto(reply)
+    yield dto
 
-  private def sessionToDto(s: SessionState): ZIO[Any, Nothing, BoardStateDto] =
-    SanSerializer
-      .deriveMoveLog(s.initialState, s.history)
-      .map(log => WebBoardView.toDto(s.state, log, s.error))
-      .orDie
+  private def replyToDto(reply: StateReply): ZIO[Any, ErrorDto, BoardStateDto] =
+    FenParserRegex
+      .parse(reply.fen)
+      .mapError(err => ErrorDto(err.message))
+      .map { state =>
+        WebBoardView.toDto(
+          state,
+          reply.moveLog.toList.map(e => (parseColor(e.color), e.san)),
+          Option.when(reply.error.nonEmpty)(reply.error)
+        )
+      }
+
+  private def parseColor(s: String): Color = s match
+    case "White" => Color.White
+    case "Black" => Color.Black
+    case _       => Color.White // gameService never emits anything else
 
   // --------------------------------------------------------------------------
   // Raw zio-http routes (HTML / JS / SSE)
   // --------------------------------------------------------------------------
 
   private def rawRoutes(
-      session: SubscriptionRef[SessionState],
+      client: ZioGameService.GameServiceClient,
+      activeGameId: SubscriptionRef[String],
       shutdown: Promise[Nothing, Unit]
   ): Routes[Any, Response] =
     Routes(
@@ -175,7 +178,7 @@ object WebController:
       Method.GET / "web" / trailing ->
         handler((rest: zio.http.Path, _: Request) => serveAsset(rest)),
       Method.GET / "api" / "events" -> handler(
-        serveEvents(session, shutdown)
+        serveEvents(client, activeGameId, shutdown)
       )
     )
 
@@ -227,8 +230,6 @@ object WebController:
       val stream = getClass.getClassLoader.getResourceAsStream(path)
       if stream == null then Response(status = Status.NotFound)
       else
-        // Read raw bytes — `Source.fromInputStream(...).mkString` would
-        // decode as UTF-8 and corrupt binary assets like PNGs.
         val bytes =
           try stream.readAllBytes()
           finally stream.close()
@@ -240,19 +241,30 @@ object WebController:
     }
 
   private def serveEvents(
-      session: SubscriptionRef[SessionState],
+      client: ZioGameService.GameServiceClient,
+      activeGameId: SubscriptionRef[String],
       shutdown: Promise[Nothing, Unit]
   ): ZIO[Any, Nothing, Response] =
     ZIO.succeed {
-      val stateEvents = session.changes.mapZIO { s =>
-        sessionToDto(s)
-          .map(dto =>
-            ServerSentEvent(
-              data = zio.json.EncoderOps(dto).toJson,
-              eventType = Some("state")
-            )
-          )
-      }
+      val stateEvents = activeGameId.changes
+        .flatMap(id =>
+          client
+            .subscribeGame(GameIdRequest(id))
+            .catchAll(_ => zio.stream.ZStream.empty)
+        )
+        .mapZIO(reply =>
+          replyToDto(reply).either.map {
+            case Right(dto) =>
+              Some(
+                ServerSentEvent(
+                  data = zio.json.EncoderOps(dto).toJson,
+                  eventType = Some("state")
+                )
+              )
+            case Left(_) => None
+          }
+        )
+        .collectSome
       val quitEvent = zio.stream.ZStream
         .fromZIO(shutdown.await)
         .map(_ =>

@@ -2,9 +2,25 @@
 
 ## Overview
 
-πChess is a chess game written in Scala 3 using ZIO throughout. The architecture is layered to support future additions — HTTP APIs, microservices, dual-database persistence, reactive streams, and Kafka — without requiring changes to the domain model.
+πChess is a chess game written in Scala 3 using ZIO throughout. The runtime architecture is a **four-container microservice stack** (kafka + game-service + repository + gateway), with **gRPC** between gateway and game-service, **Kafka** as the event log between game-service (producer) and repository (consumer), and a Laminar/Scala.js web UI served from the gateway.
 
-The application runs a TUI and a web GUI simultaneously, sharing game state via `SubscriptionRef`. Both UIs delegate move processing to `GameController`, which orchestrates `GameService`, SAN serialization, and session state updates.
+```
+   browser ──HTTP/SSE──▶  gateway  ──gRPC──▶  game-service  ──Kafka──▶  repository
+                                                                ▲
+                                                       chess.game-events topic
+```
+
+- **gateway** holds **no** authoritative game state — only a `SubscriptionRef[String]` tracking the current game id. Each REST endpoint forwards to a gRPC rpc; the SSE source re-subscribes when the active game id changes.
+- **game-service** owns in-memory game state via `GameSessions` (one `SubscriptionRef[SessionState]` per game id). After every successful state transition it publishes a `GameDomainEvent` to Kafka.
+- **repository** keeps a Kafka consumer that applies each event by writing the latest FEN under `gameId`. The legacy REST PUT surface is retained for Gatling and ad-hoc curl — both write paths are idempotent.
+
+For background see:
+- [ADR 010 — Kafka as event log](adr/010-kafka-as-event-log.md)
+- [ADR 011 — gRPC for internal RPC](adr/011-grpc-for-internal-rpc.md)
+- [ADR 012 — zio-json events, no schema registry](adr/012-zio-json-event-serialization-no-schema-registry.md)
+- [ADR 013 — deletion of `app` module and `sbt run`](adr/013-deletion-of-app-module-and-sbt-run.md)
+
+> **Historical note (pre-Phase 11):** The application used to run as a single `app` Main bundling TUI + gateway + game-service in one process, with the repository reachable over a synchronous REST PUT. That monolith is gone; the description below preserves the per-module responsibilities, but the wiring is now per-service and the cross-service hop is gRPC, not in-process method calls.
 
 ## SBT Module Map
 

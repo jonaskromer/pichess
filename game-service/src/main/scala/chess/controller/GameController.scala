@@ -1,10 +1,14 @@
 package chess.controller
 
+import chess.codec.FenSerializer
+import chess.events.{GameDomainEvent, GameEventProducer}
 import chess.model.{GameError, GameSnapshot, SessionState}
-import chess.model.board.{DrawReason, GameStatus}
+import chess.model.board.{DrawReason, GameStatus, GameState}
 import chess.service.GameService
 import zio.*
 import zio.stream.SubscriptionRef
+
+import java.util.concurrent.TimeUnit
 
 /** Controller-level actions on a game session.
   *
@@ -14,6 +18,12 @@ import zio.stream.SubscriptionRef
   * semaphore during the effect — concurrent callers (e.g. TUI + Web) queue on
   * it rather than racing. If the effect fails, the session is left unchanged,
   * so a failed `makeMove` doesn't corrupt history.
+  *
+  * Every method takes a `GameEventProducer` and publishes the corresponding
+  * Kafka event (`Undone`, `Redone`, `DrawClaimed`, `Forfeited`) after the
+  * state mutation is persisted. `gs.makeMove` already publishes its own
+  * `MoveMade` event; the only additional event the controller emits on
+  * `makeMove` is a `DrawClaimed(FivefoldRepetition)` when auto-draw triggers.
   */
 object GameController:
 
@@ -26,49 +36,42 @@ object GameController:
   /** Number of times a position must occur for an automatic fivefold draw. */
   val FivefoldThreshold: Int = 5
 
-  /** Apply `rawInput` as a move against the current session state.
-    *
-    * Runs atomically under `session.modifyZIO`'s internal semaphore: reading
-    * the session, applying the move via [[GameService.makeMove]] (which parses,
-    * validates, and persists to the repository), detecting fivefold repetition,
-    * and committing the new session all happen as one indivisible step.
-    * Concurrent callers (TUI + Web) queue on the semaphore rather than racing;
-    * a failed effect leaves the session unchanged.
-    *
-    * Fivefold auto-draw: if the move-applied state is `Playing` and the
-    * resulting position has occurred `>= FivefoldThreshold` times in the
-    * session history, the state's status is promoted to
-    * `Draw(FivefoldRepetition)` via [[GameState.endWith]] before committing.
-    * The repository is saved with the final (post-promotion) state so
-    * subsequent loads reflect the auto-draw.
-    *
-    * Fails with any [[GameError]] from move parsing or validation; the session
-    * state is not modified on failure.
-    */
+  private val now: UIO[Long] = Clock.currentTime(TimeUnit.MILLISECONDS)
+
   def makeMove(
       gs: GameService,
+      producer: GameEventProducer,
       session: SubscriptionRef[SessionState],
       rawInput: String
   ): IO[GameError, Unit] =
     session.modifyZIO { s =>
       gs.makeMove(s.gameId, rawInput).flatMap { (newState, event) =>
         val provisional = s.game.recordMove(event.move, newState)
+        val triggeredFivefold =
+          newState.status.isPlaying && isFivefoldRepetition(provisional)
         val finalGame =
-          if newState.status.isPlaying && isFivefoldRepetition(provisional)
-          then
+          if triggeredFivefold then
             provisional.replaceHead(
               newState.endWith(GameStatus.Draw(DrawReason.FivefoldRepetition))
             )
           else provisional
-        gs.saveState(s.gameId, finalGame.state)
-          .as(
-            ((), s.copy(game = finalGame, error = None, output = None))
-          )
+        for
+          _ <- gs.saveState(s.gameId, finalGame.state)
+          _ <- ZIO.when(triggeredFivefold) {
+                 publishDraw(
+                   producer,
+                   s.gameId,
+                   finalGame.state,
+                   DrawReason.FivefoldRepetition
+                 )
+               }
+        yield ((), s.copy(game = finalGame, error = None, output = None))
       }
     }
 
   def undo(
       gs: GameService,
+      producer: GameEventProducer,
       session: SubscriptionRef[SessionState]
   ): IO[GameError, Unit] =
     session.modifyZIO { s =>
@@ -76,14 +79,22 @@ object GameController:
         case None =>
           ZIO.fail(GameError.InvalidMove("Nothing to undo"))
         case Some(undone) =>
-          gs.saveState(s.gameId, undone.state)
-            .as(
-              ((), s.copy(game = undone, error = None, output = None))
-            )
+          for
+            _  <- gs.saveState(s.gameId, undone.state)
+            ts <- now
+            _  <- producer.publish(
+                    GameDomainEvent.Undone(
+                      gameId       = s.gameId,
+                      resultingFen = FenSerializer.serialize(undone.state),
+                      occurredAt   = ts
+                    )
+                  )
+          yield ((), s.copy(game = undone, error = None, output = None))
     }
 
   def redo(
       gs: GameService,
+      producer: GameEventProducer,
       session: SubscriptionRef[SessionState]
   ): IO[GameError, Unit] =
     session.modifyZIO { s =>
@@ -91,14 +102,22 @@ object GameController:
         case None =>
           ZIO.fail(GameError.InvalidMove("Nothing to redo"))
         case Some(redone) =>
-          gs.saveState(s.gameId, redone.state)
-            .as(
-              ((), s.copy(game = redone, error = None, output = None))
-            )
+          for
+            _  <- gs.saveState(s.gameId, redone.state)
+            ts <- now
+            _  <- producer.publish(
+                    GameDomainEvent.Redone(
+                      gameId       = s.gameId,
+                      resultingFen = FenSerializer.serialize(redone.state),
+                      occurredAt   = ts
+                    )
+                  )
+          yield ((), s.copy(game = redone, error = None, output = None))
     }
 
   def claimDraw(
       gs: GameService,
+      producer: GameEventProducer,
       session: SubscriptionRef[SessionState]
   ): IO[GameError, Unit] =
     session.modifyZIO { s =>
@@ -123,17 +142,17 @@ object GameController:
             if threefoldOk then DrawReason.ThreefoldRepetition
             else DrawReason.FiftyMoveRule
           val drawState = s.state.endWith(GameStatus.Draw(reason))
-          gs.saveState(s.gameId, drawState)
-            .as(
-              (
-                (),
-                s.copy(
-                  game = s.game.replaceHead(drawState),
-                  error = None,
-                  output = None
-                )
-              )
+          for
+            _ <- gs.saveState(s.gameId, drawState)
+            _ <- publishDraw(producer, s.gameId, drawState, reason)
+          yield (
+            (),
+            s.copy(
+              game = s.game.replaceHead(drawState),
+              error = None,
+              output = None
             )
+          )
     }
 
   /** The side to move resigns; the opponent is recorded as the winner.
@@ -144,6 +163,7 @@ object GameController:
     */
   def forfeit(
       gs: GameService,
+      producer: GameEventProducer,
       session: SubscriptionRef[SessionState]
   ): IO[GameError, Unit] =
     session.modifyZIO { s =>
@@ -152,18 +172,44 @@ object GameController:
       else
         val winner = s.state.activeColor.opposite
         val resigned = s.state.endWith(GameStatus.Resignation(winner))
-        gs.saveState(s.gameId, resigned)
-          .as(
-            (
-              (),
-              s.copy(
-                game = s.game.withCurrentState(resigned),
-                error = None,
-                output = None
+        for
+          _  <- gs.saveState(s.gameId, resigned)
+          ts <- now
+          _  <- producer.publish(
+                  GameDomainEvent.Forfeited(
+                    gameId       = s.gameId,
+                    resultingFen = FenSerializer.serialize(resigned),
+                    winner       = winner.toString,
+                    occurredAt   = ts
+                  )
+                )
+        yield (
+          (),
+          s.copy(
+            game = s.game.withCurrentState(resigned),
+            error = None,
+            output = None
+          )
+        )
+    }
+
+  private def publishDraw(
+      producer: GameEventProducer,
+      gameId: String,
+      drawState: GameState,
+      reason: DrawReason
+  ): IO[GameError, Unit] =
+    for
+      ts <- now
+      _  <- producer.publish(
+              GameDomainEvent.DrawClaimed(
+                gameId       = gameId,
+                resultingFen = FenSerializer.serialize(drawState),
+                reason       = reason.toString,
+                occurredAt   = ts
               )
             )
-          )
-    }
+    yield ()
 
   /** Counts how many times the current position has occurred in this game,
     * including the current position itself.

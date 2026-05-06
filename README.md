@@ -1,39 +1,60 @@
 # <img src="gateway/src/main/resources/web/peach.svg" alt="🍑" width="32" /> πChess
 
-Welcome to **πChess** (pronounced like *peaches* in German)! 
+Welcome to **πChess** (pronounced like *peaches* in German)!
 
-πChess is a chess game written in **Scala 3** using **ZIO** throughout — from domain validation to HTTP serving. It features a terminal TUI and a browser-based web GUI that stay in sync via `SubscriptionRef` and Server-Sent Events.
-
-This project serves as a foundation for a layered architecture that will progressively evolve through multiple university lecture phases. Starting as a TUI game, it is designed to seamlessly scale into a modern, reactive system featuring HTTP APIs, persistence (MongoDB/PostgreSQL), reactive streams, and Kafka event publishing — all without mutating the core domain model.
+πChess is a chess game written in **Scala 3** using **ZIO** throughout — from domain validation to HTTP serving. The architecture is a four-container microservice setup (gateway, game-service, repository, kafka) with **gRPC** between services, **Kafka** as the event log, and a Laminar/Scala.js web UI served from the gateway.
 
 ## 🚀 Getting Started
 
-Ensure you have Java and `sbt` installed on your machine.
+Ensure you have Java, `sbt`, and Docker installed.
 
-To run the game locally:
+### Integrated stack (Docker, prod-shaped)
+
 ```bash
-sbt run
+./scripts/dev-up.sh
 ```
 
-This starts both the TUI in the terminal and a web GUI at [http://localhost:8090](http://localhost:8090). Moves made in either UI are instantly reflected in the other.
+Spins up `kafka`, `game-service`, `repository`, and `gateway`. Browse [http://localhost:8090](http://localhost:8090) for the web UI. Repository REST is on `:8091`; game-service gRPC is on `:9000`.
 
-To run the tests and verify the strict 100% test coverage:
+### Single-service rebuild after a code change
+
 ```bash
-sbt clean coverage test coverageReport
+./scripts/dev-up.sh gateway        # also: game-service | repository
 ```
+
+Rebuilds only the touched service's Docker image and restarts that container. Layered images mean a one-file edit only invalidates the small project-jar layer, so wall-clock should be under ~20s.
+
+### Inner loop (host JVM, only Kafka in Docker)
+
+```bash
+docker compose up -d kafka
+# In three terminals:
+GRPC_PORT=9000 KAFKA_BOOTSTRAP_SERVERS=localhost:9092         sbt gameService/run
+KAFKA_BOOTSTRAP_SERVERS=localhost:9092 REPOSITORY_PORT=8091   sbt repository/run
+HTTP_PORT=8090 GAME_SERVICE_GRPC=localhost:9000               sbt gateway/run
+```
+
+> **Note:** `sbt run` at the project root is no longer wired — the previous monolithic `app` module was split into the three services above. Use `sbt <svc>/run` or the dev scripts.
+
+### Tests + coverage
+
+```bash
+sbt test                                    # full suite
+sbt clean coverage test coverageReport      # 100% coverage gate on JVM modules
+```
+
+Kafka- and gRPC-server-Main code is excluded from unit coverage (it needs a live broker / port to exercise) and verified instead by docker-compose smoke tests.
 
 ## 📖 Documentation
 
-Dive deeper into the project structure, our development workflow, and where the project is heading next:
-
-- 🍑 **[Game Rules](docs/game-rules.md)**: A breakdown of the currently implemented chess piece mechanics, move notations, and missing rules.
-- 🍑 **[Architecture](docs/architecture.md)**: Details on the layered architecture, ZIO effects, dependency injection via ZLayer, and ADRs.
-- 🍑 **[Development Workflow](docs/development.md)**: Guidelines on our strict TDD rules, code formatting, and the `sbt` pipeline.
-- 🍑 **[Roadmap](docs/roadmap.md)**: The 14-phase evolution plan of this project, taking it from a TUI game to a fully-distributed reactive microservice architecture.
+- 🍑 **[Game Rules](docs/game-rules.md)** — implemented chess mechanics, move notations.
+- 🍑 **[Architecture](docs/architecture.md)** — the microservice graph, event log, gRPC contract, ADRs.
+- 🍑 **[Development Workflow](docs/development.md)** — TDD rules, sbt pipeline, troubleshooting.
+- 🍑 **[Roadmap](docs/roadmap.md)** — the 14-phase evolution plan.
 
 ## 🛠️ Current Status
 
-Phases 1 (TUI Chess), 2 (Functional Style), 3 (Parser Combinators), 4 (REST API), and 5 (Microservices + Docker) are complete. The web GUI from Phase 7 was built ahead of schedule. **Phase 6 (Slick / PostgreSQL)** is the next milestone.
+Phases 1 (TUI Chess), 2 (Functional Style), 3 (Parser Combinators), 4 (REST API), 5 (Microservices + Docker), 7 (Web GUI), and 11 (Kafka event log) are complete. **Phase 6 (Slick / PostgreSQL)** is the next milestone — a persistent `GameRepository` backing the existing REST + Kafka-consumer surface.
 
 **What works:**
 - Full piece movement validation (all piece types)
@@ -42,15 +63,17 @@ Phases 1 (TUI Chess), 2 (Functional Style), 3 (Parser Combinators), 4 (REST API)
 - Undo/redo support
 - Coordinate notation and Standard Algebraic Notation (SAN) with disambiguation
 - FEN, PGN, and JSON codecs for game state import/export
-- ANSI-colored TUI with board flipping and move log
-- Browser GUI (Scala.js + Laminar) with drag-and-drop, promotion dialog, and live sync via SSE
-- REST API with Tapir endpoint contracts and Swagger UI at `/docs`
-- SBT multi-project build (13 modules) with Docker packaging
-- Two Docker-packaged microservices (`app` on port 8090, `repository` on port 8091) orchestrated via `docker-compose.yml`
+- Browser GUI (Scala.js + Laminar) with drag-and-drop, promotion dialog, and live sync via SSE (fed by gRPC server-stream from gameService)
+- REST API with Tapir endpoint contracts + Swagger UI at `/docs`
+- gRPC contract (zio-grpc) between gateway and game-service
+- Kafka event log (`chess.game-events`, KRaft mode); repository persists asynchronously by consuming the topic
+- SBT multi-project build (14 modules) with **per-service** Docker images and layered packaging
 - Typed error handling with `IO[GameError, A]` throughout
-- 100% test coverage with zio-test
+- 100% test coverage on JVM modules (Kafka/gRPC-Main paths excluded)
 
-**What's next:** Slick persistence layer (Phase 6) — a `PostgresGameRepository` behind the existing `GameRepository` trait.
+**What's deferred:**
+- TUI rewrite to talk to the gateway over REST (currently the `tui` module is a parser-only library; runtime is documented future work).
+- gameService restart resilience (replay state from Kafka on startup).
 
 ---
 *Built with pure functions, immutability, and plenty of 🍑.*

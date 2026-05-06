@@ -11,21 +11,44 @@
 
 | Command | Purpose |
 |---|---|
-| `sbt run` | Start TUI + GUI (opens browser on port 8090) |
-| `sbt "run --headless"` | Start TUI only (no web server, no browser) |
+| `./scripts/dev-up.sh` | Build + start the integrated stack (kafka, game-service, repository, gateway) |
+| `./scripts/dev-up.sh gateway` | Rebuild + restart only the gateway image (also: `game-service`, `repository`) |
+| `./scripts/dev-logs.sh` | Tail logs for all services (or pass service names to filter) |
 | `sbt test` | Run all tests across all modules |
 | `sbt scalafmtAll` | Format all source files (required before committing) |
 | `sbt coverage test coverageReport` | Run tests with coverage report |
-| `sbt app/run` | Run only the `app` module (equivalent to `sbt run`) |
-| `sbt repository/run` | Run the standalone repository microservice (port 8091) |
-| `sbt Docker/publishLocal` | Build Docker images for `app` and `repository` |
-| `docker compose up` | Start both microservices via Docker Compose |
+| `sbt gameService/run` | Run game-service (gRPC :9000) on the host JVM |
+| `sbt gateway/run` | Run gateway (HTTP :8090) on the host JVM |
+| `sbt repository/run` | Run repository (REST :8091, optionally Kafka consumer) on the host |
+| `sbt <svc>/Docker/publishLocal` | Build a single service's Docker image |
+| `docker compose up` | Start the full stack |
+
+> **`sbt run` at the root is no longer wired** — the previous `app` monolith was split into three services. Use the per-service commands above. See [ADR 013](adr/013-deletion-of-app-module-and-sbt-run.md).
+
+### Inner-loop env vars (host JVM)
+
+| Service       | Env var                  | Default            |
+|---------------|--------------------------|--------------------|
+| game-service  | `GRPC_PORT`              | `9000`             |
+| game-service  | `KAFKA_BOOTSTRAP_SERVERS`| (unset → in-memory recorder, no Kafka required) |
+| repository    | `REPOSITORY_PORT`        | `8091`             |
+| repository    | `KAFKA_BOOTSTRAP_SERVERS`| (unset → HTTP-only, no consumer) |
+| repository    | `KAFKA_CONSUMER_GROUP`   | `pichess-repository` |
+| gateway       | `HTTP_PORT`              | `8090`             |
+| gateway       | `GAME_SERVICE_GRPC`      | `localhost:9000`   |
 
 ### Multi-Project Tips
 
-The project has 13 SBT sub-projects. To run commands against a single module, prefix with the module name: `sbt codec/test`, `sbt gateway/compile`, etc. `sbt test` runs tests across all modules.
+The project has 14 SBT sub-projects. To run commands against a single module, prefix with the module name: `sbt codec/test`, `sbt gateway/compile`, etc. `sbt test` runs tests across all modules.
 
-Coverage is enforced at 100% on all JVM modules. The build fails if any line is uncovered. Scala.js modules (`web-ui`, `domain.js`, `api.js`) have coverage disabled since scoverage doesn't instrument JS output. Use `scripts/check-coverage.py` after a `coverageReport` run to inspect uncovered lines per file.
+Coverage is enforced at 100% on all JVM modules. The build fails if any line is uncovered. Scala.js modules (`web-ui`, `domain.js`, `api.js`) have coverage disabled since scoverage doesn't instrument JS output. The `proto` module has coverage disabled (generated code) and `KafkaGameEventProducer`/`KafkaGameEventConsumer`/`GameServiceMain`/`GatewayMain` are excluded via `coverageExcludedFiles` (they need a live broker / port to exercise; covered by docker-compose smoke tests instead). Use `scripts/check-coverage.py` after a `coverageReport` run to inspect uncovered lines per file.
+
+### Troubleshooting
+
+- **"Kafka not reachable"** — confirm `docker compose ps kafka` shows `healthy`. The healthcheck calls `kafka-topics --bootstrap-server localhost:9092 --list`; if it fails, check broker logs with `./scripts/dev-logs.sh kafka`.
+- **"gRPC handshake failure" from gateway** — game-service hasn't started yet, or `GAME_SERVICE_GRPC` points to the wrong target. The gateway retries on connect via the gRPC client; persistent failure usually means a port mismatch.
+- **"Stale image after publishLocal"** — `docker compose up -d --no-deps --build <svc>` forces compose to recreate the container with the freshly published image.
+- **`sbt run` errors with "No main class detected"** — that's the intended signal; use `./scripts/dev-up.sh` or `sbt <svc>/run`.
 
 Tests use **zio-test** (`ZIOSpecDefault`). Each test spec is an `object` extending `ZIOSpecDefault` with a `def spec` that returns a `Spec` tree of `suite(...)` and `test(...)` blocks. Assertions use `assertTrue(...)`. Service/repository tests provide layers via `.provide(layer)` on the suite.
 

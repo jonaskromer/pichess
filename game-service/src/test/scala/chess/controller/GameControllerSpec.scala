@@ -1,10 +1,11 @@
 package chess.controller
 
+import chess.events.{GameEventProducer, InMemoryGameEventProducer}
+import chess.gameservice.InMemoryGameStore
 import chess.model.{GameSnapshot, SessionState}
 import chess.model.board.{DrawReason, GameState, GameStatus, Move, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.notation.SanSerializer
-import chess.repository.InMemoryGameRepository
 import chess.service.{GameService, GameServiceLive}
 import zio.*
 import zio.stream.SubscriptionRef
@@ -12,24 +13,29 @@ import zio.test.*
 
 object GameControllerSpec extends ZIOSpecDefault:
 
-  private val appLayer: ULayer[GameService] =
-    InMemoryGameRepository.layer >>> GameServiceLive.layer
+  private val appLayer: ULayer[GameService & GameEventProducer] =
+    ZLayer.make[GameService & GameEventProducer](
+      GameServiceLive.layer,
+      InMemoryGameStore.layer,
+      InMemoryGameEventProducer.layer
+    )
 
   private def withSession =
     for
       gs <- ZIO.service[GameService]
+      producer <- ZIO.service[GameEventProducer]
       event <- gs.newGame()
       session <- SubscriptionRef.make(
         SessionState(GameSnapshot.fresh(event.gameId, event.initialState))
       )
-    yield (gs, session)
+    yield (gs, producer, session)
 
   def spec = suite("GameController")(
     suite("makeMove")(
       test("update session state after a valid move") {
         for
-          (gs, session) <- withSession
-          _ <- GameController.makeMove(gs, session, "e2 e4")
+          (gs, producer, session) <- withSession
+          _ <- GameController.makeMove(gs, producer, session, "e2 e4")
           s <- session.get
         yield assertTrue(
           s.state.board.get(Position('e', 4)) == Some(
@@ -40,8 +46,8 @@ object GameControllerSpec extends ZIOSpecDefault:
       },
       test("append Move to the moves list") {
         for
-          (gs, session) <- withSession
-          _ <- GameController.makeMove(gs, session, "e2 e4")
+          (gs, producer, session) <- withSession
+          _ <- GameController.makeMove(gs, producer, session, "e2 e4")
           s <- session.get
         yield assertTrue(
           s.moves.length == 1,
@@ -50,8 +56,8 @@ object GameControllerSpec extends ZIOSpecDefault:
       },
       test("derive correct SAN from moves") {
         for
-          (gs, session) <- withSession
-          _ <- GameController.makeMove(gs, session, "e2 e4")
+          (gs, producer, session) <- withSession
+          _ <- GameController.makeMove(gs, producer, session, "e2 e4")
           s <- session.get
           sanLog <- SanSerializer.deriveMoveLog(s.initialState, s.history)
         yield assertTrue(
@@ -60,37 +66,37 @@ object GameControllerSpec extends ZIOSpecDefault:
       },
       test("clear error on successful move") {
         for
-          (gs, session) <- withSession
+          (gs, producer, session) <- withSession
           _ <- session.update(_.copy(error = Some("previous error")))
-          _ <- GameController.makeMove(gs, session, "e2 e4")
+          _ <- GameController.makeMove(gs, producer, session, "e2 e4")
           s <- session.get
         yield assertTrue(s.error.isEmpty)
       },
       test("clear redo stack on new move") {
         for
-          (gs, session) <- withSession
-          _ <- GameController.makeMove(gs, session, "e2 e4")
-          _ <- GameController.undo(gs, session)
-          _ <- GameController.makeMove(gs, session, "d2 d4")
+          (gs, producer, session) <- withSession
+          _ <- GameController.makeMove(gs, producer, session, "e2 e4")
+          _ <- GameController.undo(gs, producer, session)
+          _ <- GameController.makeMove(gs, producer, session, "d2 d4")
           s <- session.get
         yield assertTrue(s.redoStack.isEmpty)
       },
       test("fail for an illegal move") {
         for
-          (gs, session) <- withSession
-          exit <- GameController.makeMove(gs, session, "e2 e5").exit
+          (gs, producer, session) <- withSession
+          exit <- GameController.makeMove(gs, producer, session, "e2 e5").exit
         yield assertTrue(exit.isFailure)
       },
       test("fail for a parse error") {
         for
-          (gs, session) <- withSession
-          exit <- GameController.makeMove(gs, session, "garbage").exit
+          (gs, producer, session) <- withSession
+          exit <- GameController.makeMove(gs, producer, session, "garbage").exit
         yield assertTrue(exit.isFailure)
       },
       test("accept SAN notation") {
         for
-          (gs, session) <- withSession
-          _ <- GameController.makeMove(gs, session, "Nf3")
+          (gs, producer, session) <- withSession
+          _ <- GameController.makeMove(gs, producer, session, "Nf3")
           s <- session.get
           sanLog <- SanSerializer.deriveMoveLog(s.initialState, s.history)
         yield assertTrue(
@@ -102,9 +108,9 @@ object GameControllerSpec extends ZIOSpecDefault:
       },
       test("chain multiple moves") {
         for
-          (gs, session) <- withSession
-          _ <- GameController.makeMove(gs, session, "e4")
-          _ <- GameController.makeMove(gs, session, "e5")
+          (gs, producer, session) <- withSession
+          _ <- GameController.makeMove(gs, producer, session, "e4")
+          _ <- GameController.makeMove(gs, producer, session, "e5")
           s <- session.get
           sanLog <- SanSerializer.deriveMoveLog(s.initialState, s.history)
         yield assertTrue(
@@ -116,9 +122,9 @@ object GameControllerSpec extends ZIOSpecDefault:
     suite("undo")(
       test("restore previous state") {
         for
-          (gs, session) <- withSession
-          _ <- GameController.makeMove(gs, session, "e2 e4")
-          _ <- GameController.undo(gs, session)
+          (gs, producer, session) <- withSession
+          _ <- GameController.makeMove(gs, producer, session, "e2 e4")
+          _ <- GameController.undo(gs, producer, session)
           s <- session.get
         yield assertTrue(
           s.state == GameState.initial,
@@ -127,9 +133,9 @@ object GameControllerSpec extends ZIOSpecDefault:
       },
       test("push undone move to redo stack") {
         for
-          (gs, session) <- withSession
-          _ <- GameController.makeMove(gs, session, "e2 e4")
-          _ <- GameController.undo(gs, session)
+          (gs, producer, session) <- withSession
+          _ <- GameController.makeMove(gs, producer, session, "e2 e4")
+          _ <- GameController.undo(gs, producer, session)
           s <- session.get
         yield assertTrue(
           s.redoStack.map(_._1) == List(
@@ -139,18 +145,18 @@ object GameControllerSpec extends ZIOSpecDefault:
       },
       test("fail when no moves to undo") {
         for
-          (gs, session) <- withSession
-          exit <- GameController.undo(gs, session).exit
+          (gs, producer, session) <- withSession
+          exit <- GameController.undo(gs, producer, session).exit
         yield assertTrue(exit.isFailure)
       },
       test("undo multiple moves in sequence") {
         for
-          (gs, session) <- withSession
-          _ <- GameController.makeMove(gs, session, "e2 e4")
-          _ <- GameController.makeMove(gs, session, "e7 e5")
-          _ <- GameController.undo(gs, session)
+          (gs, producer, session) <- withSession
+          _ <- GameController.makeMove(gs, producer, session, "e2 e4")
+          _ <- GameController.makeMove(gs, producer, session, "e7 e5")
+          _ <- GameController.undo(gs, producer, session)
           s1 <- session.get
-          _ <- GameController.undo(gs, session)
+          _ <- GameController.undo(gs, producer, session)
           s2 <- session.get
         yield assertTrue(
           s1.moves.length == 1,
@@ -163,10 +169,10 @@ object GameControllerSpec extends ZIOSpecDefault:
     suite("redo")(
       test("reapply undone move") {
         for
-          (gs, session) <- withSession
-          _ <- GameController.makeMove(gs, session, "e2 e4")
-          _ <- GameController.undo(gs, session)
-          _ <- GameController.redo(gs, session)
+          (gs, producer, session) <- withSession
+          _ <- GameController.makeMove(gs, producer, session, "e2 e4")
+          _ <- GameController.undo(gs, producer, session)
+          _ <- GameController.redo(gs, producer, session)
           s <- session.get
         yield assertTrue(
           s.moves.length == 1,
@@ -178,19 +184,19 @@ object GameControllerSpec extends ZIOSpecDefault:
       },
       test("fail when no moves to redo") {
         for
-          (gs, session) <- withSession
-          exit <- GameController.redo(gs, session).exit
+          (gs, producer, session) <- withSession
+          exit <- GameController.redo(gs, producer, session).exit
         yield assertTrue(exit.isFailure)
       },
       test("redo multiple moves in sequence") {
         for
-          (gs, session) <- withSession
-          _ <- GameController.makeMove(gs, session, "e2 e4")
-          _ <- GameController.makeMove(gs, session, "e7 e5")
-          _ <- GameController.undo(gs, session)
-          _ <- GameController.undo(gs, session)
-          _ <- GameController.redo(gs, session)
-          _ <- GameController.redo(gs, session)
+          (gs, producer, session) <- withSession
+          _ <- GameController.makeMove(gs, producer, session, "e2 e4")
+          _ <- GameController.makeMove(gs, producer, session, "e7 e5")
+          _ <- GameController.undo(gs, producer, session)
+          _ <- GameController.undo(gs, producer, session)
+          _ <- GameController.redo(gs, producer, session)
+          _ <- GameController.redo(gs, producer, session)
           s <- session.get
         yield assertTrue(
           s.moves.length == 2,
@@ -201,14 +207,14 @@ object GameControllerSpec extends ZIOSpecDefault:
     suite("claimDraw")(
       test("fail when halfmove clock is below 100") {
         for
-          (gs, session) <- withSession
-          exit <- GameController.claimDraw(gs, session).exit
+          (gs, producer, session) <- withSession
+          exit <- GameController.claimDraw(gs, producer, session).exit
         yield assertTrue(exit.isFailure)
       },
       test("fail with descriptive message about remaining moves") {
         for
-          (gs, session) <- withSession
-          err <- GameController.claimDraw(gs, session).flip
+          (gs, producer, session) <- withSession
+          err <- GameController.claimDraw(gs, producer, session).flip
         yield assertTrue(err.message.contains("Cannot claim draw"))
       },
       test("succeed when halfmove clock reaches 100") {
@@ -222,7 +228,7 @@ object GameControllerSpec extends ZIOSpecDefault:
         )
         val dummyMove = Move(Position('e', 1), Position('e', 1))
         for
-          (gs, session) <- withSession
+          (gs, producer, session) <- withSession
           gameId <- session.get.map(_.gameId)
           _ <- gs.saveState(gameId, drawableState)
           _ <- session.update(st =>
@@ -232,7 +238,7 @@ object GameControllerSpec extends ZIOSpecDefault:
               )
             )
           )
-          _ <- GameController.claimDraw(gs, session)
+          _ <- GameController.claimDraw(gs, producer, session)
           s <- session.get
         yield assertTrue(
           s.state.status == GameStatus.Draw(DrawReason.FiftyMoveRule)
@@ -250,7 +256,7 @@ object GameControllerSpec extends ZIOSpecDefault:
         )
         val dummyMove = Move(Position('e', 1), Position('e', 1))
         for
-          (gs, session) <- withSession
+          (gs, producer, session) <- withSession
           _ <- session.update(st =>
             st.copy(game =
               st.game.copy(
@@ -258,7 +264,7 @@ object GameControllerSpec extends ZIOSpecDefault:
               )
             )
           )
-          exit <- GameController.claimDraw(gs, session).exit
+          exit <- GameController.claimDraw(gs, producer, session).exit
         yield assertTrue(exit.isFailure)
       }
     ),
@@ -270,8 +276,8 @@ object GameControllerSpec extends ZIOSpecDefault:
         // Black is recorded as the winner. The empty-history path of
         // GameSnapshot.withCurrentState is exercised here.
         for
-          (gs, session) <- withSession
-          _ <- GameController.forfeit(gs, session)
+          (gs, producer, session) <- withSession
+          _ <- GameController.forfeit(gs, producer, session)
           s <- session.get
         yield assertTrue(
           s.state.status == GameStatus.Resignation(Color.Black),
@@ -281,9 +287,9 @@ object GameControllerSpec extends ZIOSpecDefault:
       },
       test("after a move, the side to move (Black) forfeits and White wins") {
         for
-          (gs, session) <- withSession
-          _ <- GameController.makeMove(gs, session, "e2 e4")
-          _ <- GameController.forfeit(gs, session)
+          (gs, producer, session) <- withSession
+          _ <- GameController.makeMove(gs, producer, session, "e2 e4")
+          _ <- GameController.forfeit(gs, producer, session)
           s <- session.get
         yield assertTrue(
           s.state.status == GameStatus.Resignation(Color.White),
@@ -292,9 +298,9 @@ object GameControllerSpec extends ZIOSpecDefault:
       },
       test("persists the resignation state to the repository") {
         for
-          (gs, session) <- withSession
+          (gs, producer, session) <- withSession
           gameId <- session.get.map(_.gameId)
-          _ <- GameController.forfeit(gs, session)
+          _ <- GameController.forfeit(gs, producer, session)
           persisted <- gs.getState(gameId)
         yield assertTrue(
           persisted.exists(_.status == GameStatus.Resignation(Color.Black))
@@ -304,12 +310,12 @@ object GameControllerSpec extends ZIOSpecDefault:
         // After Black checkmates with Fool's Mate, forfeit must be rejected
         // — you can't resign a finished game.
         for
-          (gs, session) <- withSession
-          _ <- GameController.makeMove(gs, session, "f3")
-          _ <- GameController.makeMove(gs, session, "e5")
-          _ <- GameController.makeMove(gs, session, "g4")
-          _ <- GameController.makeMove(gs, session, "Qh4")
-          err <- GameController.forfeit(gs, session).flip
+          (gs, producer, session) <- withSession
+          _ <- GameController.makeMove(gs, producer, session, "f3")
+          _ <- GameController.makeMove(gs, producer, session, "e5")
+          _ <- GameController.makeMove(gs, producer, session, "g4")
+          _ <- GameController.makeMove(gs, producer, session, "Qh4")
+          err <- GameController.forfeit(gs, producer, session).flip
         yield assertTrue(err.message.contains("already over"))
       }
     ),
@@ -317,16 +323,16 @@ object GameControllerSpec extends ZIOSpecDefault:
       test("claim draw after position occurs 3 times") {
         // Initial → Nf3 → Nf6 → Ng1 → Ng8 (back to initial) → Nf3 → Nf6 → Ng1 → Ng8 (3rd time)
         for
-          (gs, session) <- withSession
-          _ <- GameController.makeMove(gs, session, "Nf3")
-          _ <- GameController.makeMove(gs, session, "Nf6")
-          _ <- GameController.makeMove(gs, session, "Ng1")
-          _ <- GameController.makeMove(gs, session, "Ng8")
-          _ <- GameController.makeMove(gs, session, "Nf3")
-          _ <- GameController.makeMove(gs, session, "Nf6")
-          _ <- GameController.makeMove(gs, session, "Ng1")
-          _ <- GameController.makeMove(gs, session, "Ng8")
-          _ <- GameController.claimDraw(gs, session)
+          (gs, producer, session) <- withSession
+          _ <- GameController.makeMove(gs, producer, session, "Nf3")
+          _ <- GameController.makeMove(gs, producer, session, "Nf6")
+          _ <- GameController.makeMove(gs, producer, session, "Ng1")
+          _ <- GameController.makeMove(gs, producer, session, "Ng8")
+          _ <- GameController.makeMove(gs, producer, session, "Nf3")
+          _ <- GameController.makeMove(gs, producer, session, "Nf6")
+          _ <- GameController.makeMove(gs, producer, session, "Ng1")
+          _ <- GameController.makeMove(gs, producer, session, "Ng8")
+          _ <- GameController.claimDraw(gs, producer, session)
           s <- session.get
         yield assertTrue(
           s.state.status == GameStatus.Draw(DrawReason.ThreefoldRepetition)
@@ -334,35 +340,35 @@ object GameControllerSpec extends ZIOSpecDefault:
       },
       test("reject claim when position has not occurred 3 times") {
         for
-          (gs, session) <- withSession
-          _ <- GameController.makeMove(gs, session, "Nf3")
-          _ <- GameController.makeMove(gs, session, "Nf6")
-          _ <- GameController.makeMove(gs, session, "Ng1")
-          _ <- GameController.makeMove(gs, session, "Ng8")
-          exit <- GameController.claimDraw(gs, session).exit
+          (gs, producer, session) <- withSession
+          _ <- GameController.makeMove(gs, producer, session, "Nf3")
+          _ <- GameController.makeMove(gs, producer, session, "Nf6")
+          _ <- GameController.makeMove(gs, producer, session, "Ng1")
+          _ <- GameController.makeMove(gs, producer, session, "Ng8")
+          exit <- GameController.claimDraw(gs, producer, session).exit
         yield assertTrue(exit.isFailure)
       }
     ),
     suite("fivefold repetition")(
       test("automatic draw after position occurs 5 times") {
         for
-          (gs, session) <- withSession
-          _ <- GameController.makeMove(gs, session, "Nf3")
-          _ <- GameController.makeMove(gs, session, "Nf6")
-          _ <- GameController.makeMove(gs, session, "Ng1")
-          _ <- GameController.makeMove(gs, session, "Ng8") // 2nd
-          _ <- GameController.makeMove(gs, session, "Nf3")
-          _ <- GameController.makeMove(gs, session, "Nf6")
-          _ <- GameController.makeMove(gs, session, "Ng1")
-          _ <- GameController.makeMove(gs, session, "Ng8") // 3rd
-          _ <- GameController.makeMove(gs, session, "Nf3")
-          _ <- GameController.makeMove(gs, session, "Nf6")
-          _ <- GameController.makeMove(gs, session, "Ng1")
-          _ <- GameController.makeMove(gs, session, "Ng8") // 4th
-          _ <- GameController.makeMove(gs, session, "Nf3")
-          _ <- GameController.makeMove(gs, session, "Nf6")
-          _ <- GameController.makeMove(gs, session, "Ng1")
-          _ <- GameController.makeMove(gs, session, "Ng8") // 5th
+          (gs, producer, session) <- withSession
+          _ <- GameController.makeMove(gs, producer, session, "Nf3")
+          _ <- GameController.makeMove(gs, producer, session, "Nf6")
+          _ <- GameController.makeMove(gs, producer, session, "Ng1")
+          _ <- GameController.makeMove(gs, producer, session, "Ng8") // 2nd
+          _ <- GameController.makeMove(gs, producer, session, "Nf3")
+          _ <- GameController.makeMove(gs, producer, session, "Nf6")
+          _ <- GameController.makeMove(gs, producer, session, "Ng1")
+          _ <- GameController.makeMove(gs, producer, session, "Ng8") // 3rd
+          _ <- GameController.makeMove(gs, producer, session, "Nf3")
+          _ <- GameController.makeMove(gs, producer, session, "Nf6")
+          _ <- GameController.makeMove(gs, producer, session, "Ng1")
+          _ <- GameController.makeMove(gs, producer, session, "Ng8") // 4th
+          _ <- GameController.makeMove(gs, producer, session, "Nf3")
+          _ <- GameController.makeMove(gs, producer, session, "Nf6")
+          _ <- GameController.makeMove(gs, producer, session, "Ng1")
+          _ <- GameController.makeMove(gs, producer, session, "Ng8") // 5th
           s <- session.get
         yield assertTrue(
           s.state.status == GameStatus.Draw(DrawReason.FivefoldRepetition)
@@ -391,9 +397,9 @@ object GameControllerSpec extends ZIOSpecDefault:
           "Nc6" // X for the 3rd time
         )
         for
-          (gs, session) <- withSession
-          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, session, m))
-          _ <- GameController.claimDraw(gs, session)
+          (gs, producer, session) <- withSession
+          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, producer, session, m))
+          _ <- GameController.claimDraw(gs, producer, session)
           s <- session.get
         yield assertTrue(
           s.state.status == GameStatus.Draw(DrawReason.ThreefoldRepetition)
@@ -416,8 +422,8 @@ object GameControllerSpec extends ZIOSpecDefault:
           "Nb8" // cycle 2: back to initial, total 3 occurrences
         )
         for
-          (gs, session) <- withSession
-          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, session, m))
+          (gs, producer, session) <- withSession
+          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, producer, session, m))
           s <- session.get
         yield assertTrue(
           GameController.countCurrentPosition(s.game) == 3,
@@ -447,15 +453,15 @@ object GameControllerSpec extends ZIOSpecDefault:
           "Nb8"
         )
         for
-          (gs, session) <- withSession
-          _ <- ZIO.foreach(setup)(m => GameController.makeMove(gs, session, m))
+          (gs, producer, session) <- withSession
+          _ <- ZIO.foreach(setup)(m => GameController.makeMove(gs, producer, session, m))
           afterAll <- session.get
-          _ <- GameController.undo(gs, session)
+          _ <- GameController.undo(gs, producer, session)
           afterUndo <- session.get
-          claimAfterUndo <- GameController.claimDraw(gs, session).exit
-          _ <- GameController.redo(gs, session)
+          claimAfterUndo <- GameController.claimDraw(gs, producer, session).exit
+          _ <- GameController.redo(gs, producer, session)
           afterRedo <- session.get
-          _ <- GameController.claimDraw(gs, session)
+          _ <- GameController.claimDraw(gs, producer, session)
           afterClaim <- session.get
         yield assertTrue(
           GameController.countCurrentPosition(afterAll.game) == 3,
@@ -474,10 +480,10 @@ object GameControllerSpec extends ZIOSpecDefault:
         val cycles =
           List.fill(4)(List("Nf3", "Nf6", "Ng1", "Ng8")).flatten
         for
-          (gs, session) <- withSession
-          _ <- ZIO.foreach(cycles)(m => GameController.makeMove(gs, session, m))
+          (gs, producer, session) <- withSession
+          _ <- ZIO.foreach(cycles)(m => GameController.makeMove(gs, producer, session, m))
           afterAll <- session.get
-          _ <- GameController.undo(gs, session)
+          _ <- GameController.undo(gs, producer, session)
           afterUndo <- session.get
         yield assertTrue(
           afterAll.state.status ==
@@ -497,16 +503,16 @@ object GameControllerSpec extends ZIOSpecDefault:
         // by one each ply.
         val moves = List("Nf3", "Nc6", "Nc3", "Nf6")
         for
-          (gs, session) <- withSession
-          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, session, m))
+          (gs, producer, session) <- withSession
+          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, producer, session, m))
           s <- session.get
         yield assertTrue(s.state.halfmoveClock == 4)
       },
       test("halfmove clock resets to zero on a pawn move") {
         val moves = List("Nf3", "Nc6", "Nc3", "Nf6", "e4")
         for
-          (gs, session) <- withSession
-          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, session, m))
+          (gs, producer, session) <- withSession
+          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, producer, session, m))
           s <- session.get
         yield assertTrue(s.state.halfmoveClock == 0)
       },
@@ -514,8 +520,8 @@ object GameControllerSpec extends ZIOSpecDefault:
         // 1.Nf3 Nc6 2.Nc3 d5 3.Nxd5 captures the pawn → halfmove resets.
         val moves = List("Nf3", "Nc6", "Nc3", "d5", "Nxd5")
         for
-          (gs, session) <- withSession
-          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, session, m))
+          (gs, producer, session) <- withSession
+          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, producer, session, m))
           s <- session.get
         yield assertTrue(s.state.halfmoveClock == 0)
       },
@@ -528,13 +534,13 @@ object GameControllerSpec extends ZIOSpecDefault:
         val moves = List("Nc3", "Nc6", "Ne4", "Ne5", "Nc5")
         for
           start <- chess.codec.FenParserRegex.parse(startFen)
-          (gs, session) <- withSession
+          (gs, producer, session) <- withSession
           gameId <- session.get.map(_.gameId)
           _ <- gs.saveState(gameId, start)
           _ <- session.set(SessionState(GameSnapshot.fresh(gameId, start)))
-          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, session, m))
+          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, producer, session, m))
           afterMoves <- session.get
-          _ <- GameController.claimDraw(gs, session)
+          _ <- GameController.claimDraw(gs, producer, session)
           afterClaim <- session.get
         yield assertTrue(
           afterMoves.state.halfmoveClock == 100,
@@ -570,9 +576,9 @@ object GameControllerSpec extends ZIOSpecDefault:
           "Nc3"
         )
         for
-          (gs, session) <- withSession
+          (gs, producer, session) <- withSession
           outcomes <- ZIO.foreachPar(attempts)(m =>
-            GameController.makeMove(gs, session, m).either
+            GameController.makeMove(gs, producer, session, m).either
           )
           s <- session.get
           repoState <- gs.getState(s.gameId)

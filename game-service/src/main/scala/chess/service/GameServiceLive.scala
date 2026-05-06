@@ -1,20 +1,33 @@
 package chess.service
 
-import chess.codec.{FenParserRegex, JsonParser, PgnParser}
-import chess.notation.MoveParser
+import chess.codec.{FenParserRegex, FenSerializer, JsonParser, PgnParser}
+import chess.events.{GameDomainEvent, GameEventProducer}
+import chess.gameservice.GameStore
+import chess.notation.{MoveParser, SanSerializer}
 import chess.model.{GameError, GameEvent, GameId}
 import chess.model.board.{GameState, Move}
 import chess.model.rules.Game
-import chess.repository.GameRepository
 import zio.*
 
-final class GameServiceLive(repo: GameRepository) extends GameService:
+import java.util.concurrent.TimeUnit
+
+final class GameServiceLive(
+    store: GameStore,
+    producer: GameEventProducer
+) extends GameService:
+
+  private val now: UIO[Long] = Clock.currentTime(TimeUnit.MILLISECONDS)
 
   def newGame(): IO[GameError, GameEvent.GameStarted] =
     for
       id <- Random.nextUUID.map(_.toString)
       state = GameState.initial
-      _ <- repo.save(id, state)
+      _  <- store.save(id, state)
+      ts <- now
+      _  <- producer.publish(
+              GameDomainEvent
+                .GameStarted(id, FenSerializer.serialize(state), ts)
+            )
     yield GameEvent.GameStarted(id, state)
 
   def loadGame(
@@ -38,7 +51,17 @@ final class GameServiceLive(repo: GameRepository) extends GameService:
       val currentState = history.lastOption.map(_._2).getOrElse(initialState)
       for
         id <- Random.nextUUID.map(_.toString)
-        _ <- repo.save(id, currentState)
+        _  <- store.save(id, currentState)
+        ts <- now
+        _  <- producer.publish(
+                GameDomainEvent.GameLoaded(
+                  gameId       = id,
+                  resultingFen = FenSerializer.serialize(currentState),
+                  initialFen   = FenSerializer.serialize(initialState),
+                  historyMoves = history.size,
+                  occurredAt   = ts
+                )
+              )
       yield (GameEvent.GameStarted(id, initialState), history)
     }
 
@@ -47,21 +70,38 @@ final class GameServiceLive(repo: GameRepository) extends GameService:
       rawInput: String
   ): IO[GameError, (GameState, GameEvent.MoveMade)] =
     for
-      stateOpt <- repo.load(id)
-      state <- ZIO
-        .fromOption(stateOpt)
-        .orElseFail(GameError.GameNotFound(id))
-      move <- MoveParser.parse(rawInput, state)
+      stateOpt <- store.load(id)
+      state    <- ZIO
+                    .fromOption(stateOpt)
+                    .orElseFail(GameError.GameNotFound(id))
+      move     <- MoveParser.parse(rawInput, state)
       newState <- Game.applyMove(state, move)
-      _ <- repo.save(id, newState)
+      _        <- store.save(id, newState)
+      // SAN derivation needs the pre-move state; if it fails for any reason
+      // (shouldn't, given Game.applyMove just succeeded) we fall back to the
+      // coordinate string so the event always has a non-empty `san` field.
+      san      <- SanSerializer.toSan(move, state).orElseSucceed(coordOf(move))
+      ts       <- now
+      _        <- producer.publish(
+                    GameDomainEvent.MoveMade(
+                      gameId       = id,
+                      resultingFen = FenSerializer.serialize(newState),
+                      moveCoord    = coordOf(move),
+                      san          = san,
+                      occurredAt   = ts
+                    )
+                  )
     yield (newState, GameEvent.MoveMade(id, move, newState))
 
   def getState(id: GameId): IO[GameError, Option[GameState]] =
-    repo.load(id)
+    store.load(id)
 
   def saveState(id: GameId, state: GameState): IO[GameError, Unit] =
-    repo.save(id, state)
+    store.save(id, state)
+
+  private def coordOf(move: Move): String =
+    s"${move.from.col}${move.from.row}-${move.to.col}${move.to.row}"
 
 object GameServiceLive:
-  val layer: URLayer[GameRepository, GameService] =
-    ZLayer.fromFunction(GameServiceLive(_))
+  val layer: URLayer[GameStore & GameEventProducer, GameService] =
+    ZLayer.fromFunction(GameServiceLive(_, _))

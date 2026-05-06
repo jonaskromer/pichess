@@ -598,7 +598,7 @@ object Main:
           // twice per drag) so all 64 squares share one upstream
           // computation instead of running their own predicate on
           // every pointermove.
-          cls.toggle("is-being-dragged") <-- dragFromPosSignal
+          cls("is-being-dragged") <-- dragFromPosSignal
             .map(_.contains(sq.pos))
             .distinct,
           // Only `pointerdown` is wired to the piece. `pointermove`,
@@ -715,7 +715,7 @@ object Main:
     banner("win", s"$winner wins by resignation")
 
   private def capitalize(s: String): String =
-    if s.isEmpty then s else s.head.toUpper + s.tail
+    if s.isEmpty then s else s"${s.head.toUpper}${s.tail}"
 
   private def moveLogContainer(): HtmlElement =
     // The "Moves" heading is rendered ON the paper (inside .move-log-paper)

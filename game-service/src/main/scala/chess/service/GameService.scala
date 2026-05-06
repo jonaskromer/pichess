@@ -1,8 +1,9 @@
 package chess.service
 
+import chess.events.GameEventProducer
+import chess.gameservice.GameStore
 import chess.model.{GameError, GameEvent, GameId}
 import chess.model.board.{GameState, Move}
-import chess.repository.GameRepository
 import zio.*
 
 /** Business-logic layer for managing chess games.
@@ -91,4 +92,5 @@ object GameService:
   ): ZIO[GameService, GameError, Unit] =
     ZIO.serviceWithZIO[GameService](_.saveState(id, state))
 
-  val layer: URLayer[GameRepository, GameService] = GameServiceLive.layer
+  val layer: URLayer[GameStore & GameEventProducer, GameService] =
+    GameServiceLive.layer

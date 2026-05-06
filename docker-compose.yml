@@ -1,24 +1,75 @@
-# Runs pichess as two services:
-#   • repository — REST microservice backing GameRepository (port 8091)
-#   • app        — gateway + game-service + tui + web-ui bundle (port 8090)
+# Pichess microservice stack.
+#
+#   kafka         — single-broker KRaft Kafka (no Zookeeper). Backs the
+#                   chess.game-events event log.
+#   game-service  — authoritative game state. Exposes gRPC on :9000 and
+#                   publishes events to Kafka after each state transition.
+#   repository    — REST surface for read-side queries (Gatling + curl).
+#                   Consumes chess.game-events and persists the latest FEN.
+#   gateway       — public HTTP entry point (REST + SSE + Laminar web-ui).
+#                   Calls game-service over gRPC.
 #
 # Build the images first:
-#   sbt repository/Docker/publishLocal app/Docker/publishLocal
+#   sbt 'gameService/Docker/publishLocal; gateway/Docker/publishLocal; repository/Docker/publishLocal'
 #
 # Then:
 #   docker compose up
 #
-# Browse http://localhost:8090 for the Laminar UI. The app's TUI is attached
-# to stdin inside the app container and is mostly dormant in this mode.
+# Browse http://localhost:8090 for the web UI. Repository REST is on
+# http://localhost:8091, game-service gRPC is on localhost:9000.
 
 services:
+  kafka:
+    image: confluentinc/cp-kafka:7.7.1
+    container_name: pichess-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      CLUSTER_ID: "pichess-cluster-0001"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  game-service:
+    image: pichess-game-service:latest
+    pull_policy: never
+    container_name: pichess-game-service
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "9000:9000"
+    environment:
+      GRPC_PORT: "9000"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+
   repository:
     image: pichess-repository:latest
+    pull_policy: never
     container_name: pichess-repository
+    depends_on:
+      kafka:
+        condition: service_healthy
     ports:
       - "8091:8091"
     environment:
       REPOSITORY_PORT: "8091"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      KAFKA_CONSUMER_GROUP: "pichess-repository"
     healthcheck:
       # Repository exposes no /health yet; hit an arbitrary game ID and
       # treat a 404 as "server is up and responding".
@@ -27,13 +78,19 @@ services:
       timeout: 2s
       retries: 5
 
-  app:
-    image: pichess-app:latest
-    container_name: pichess-app
+  gateway:
+    image: pichess-gateway:latest
+    pull_policy: never
+    container_name: pichess-gateway
     depends_on:
-      repository:
-        condition: service_healthy
+      game-service:
+        condition: service_started
     ports:
       - "8090:8090"
     environment:
-      REPOSITORY_URL: "http://repository:8091"
+      HTTP_PORT: "8090"
+      GAME_SERVICE_GRPC: "game-service:9000"
+
+networks:
+  default:
+    name: pichess
