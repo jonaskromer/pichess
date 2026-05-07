@@ -26,14 +26,20 @@ object CassandraSchema:
               updated_at timestamp
             )""",
         s"""CREATE TABLE IF NOT EXISTS $keyspace.lobbies (
-              lobby_id        text PRIMARY KEY,
-              invite_code     text,
-              host_nickname   text,
-              guest_nickname  text,
-              status          text,
-              game_id         text,
-              created_at      bigint,
-              updated_at      timestamp
+              lobby_id          text PRIMARY KEY,
+              invite_code       text,
+              host_nickname     text,
+              host_session_id   text,
+              guest_nickname    text,
+              guest_session_id  text,
+              visibility        text,
+              allow_undo        boolean,
+              allow_spectate    boolean,
+              spectator_limit   int,
+              status            text,
+              game_id           text,
+              created_at        bigint,
+              updated_at        timestamp
             )""",
         s"""CREATE TABLE IF NOT EXISTS $keyspace.lobbies_by_invite (
               invite_code text PRIMARY KEY,

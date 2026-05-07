@@ -28,9 +28,17 @@ private object LiveAnalyticsProjection extends AnalyticsProjection:
     val (kind, san) = AnalyticsEventMapping.eventTypeAndSan(event)
     val occurredAt = Timestamp(event.occurredAt)
 
-    transaction {
-      sql"""
+    // ClickHouse JDBC doesn't implement the prepareStatement overload
+    // that zio-jdbc's `.insert` uses; see ClickHouseJdbc for the
+    // background and the no-arg-prepareStatement workaround.
+    ClickHouseJdbc.execute(
+      """
         INSERT INTO move_events (game_id, event_type, san, fen, occurred_at)
-        VALUES (${event.gameId}, $kind, $san, ${event.resultingFen}, $occurredAt)
-      """.insert
-    }.unit
+        VALUES (?, ?, ?, ?, ?)
+      """,
+      event.gameId,
+      kind,
+      san,
+      event.resultingFen,
+      occurredAt
+    )

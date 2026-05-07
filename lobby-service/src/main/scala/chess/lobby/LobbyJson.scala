@@ -1,6 +1,6 @@
 package chess.lobby
 
-import chess.model.{InviteCode, Lobby, LobbyStatus}
+import chess.model.{InviteCode, Lobby, LobbyStatus, LobbyVisibility}
 import sttp.tapir.Schema
 import zio.json.*
 
@@ -18,27 +18,45 @@ object LobbyJson:
     _.toString
   )
 
+  given JsonCodec[LobbyVisibility] = JsonCodec[String].transformOrFail(
+    raw =>
+      LobbyVisibility.values
+        .find(_.toString == raw)
+        .toRight(s"Unknown lobby visibility: $raw"),
+    _.toString
+  )
+
   given JsonCodec[InviteCode] = JsonCodec[String].transformOrFail(
     raw => InviteCode(raw).toRight(s"Invalid invite code: $raw"),
     _.value
   )
 
-  // Tapir schemas: InviteCode is an opaque alias of String and LobbyStatus is
-  // a Scala enum, neither of which Tapir's auto derivation can see through.
+  // Tapir schemas: opaque aliases / enums that derivation can't see through.
   given Schema[InviteCode] = Schema.string
   given Schema[LobbyStatus] = Schema.string
+  given Schema[LobbyVisibility] = Schema.string
 
   given JsonCodec[Lobby] = DeriveJsonCodec.gen[Lobby]
 
   /** Inbound request bodies. Kept separate from domain types so HTTP
     * validation errors don't propagate into the domain model.
     */
-  final case class CreateLobbyRequest(hostNickname: String)
+  final case class CreateLobbyRequest(
+      hostNickname: String,
+      hostSessionId: String,
+      visibility: LobbyVisibility,
+      allowUndo: Boolean,
+      allowSpectate: Boolean,
+      spectatorLimit: Int
+  )
   object CreateLobbyRequest:
     given JsonCodec[CreateLobbyRequest] =
       DeriveJsonCodec.gen[CreateLobbyRequest]
 
-  final case class JoinLobbyRequest(guestNickname: String)
+  final case class JoinLobbyRequest(
+      guestNickname: String,
+      guestSessionId: String
+  )
   object JoinLobbyRequest:
     given JsonCodec[JoinLobbyRequest] =
       DeriveJsonCodec.gen[JoinLobbyRequest]
@@ -47,3 +65,11 @@ object LobbyJson:
   object StartGameRequest:
     given JsonCodec[StartGameRequest] =
       DeriveJsonCodec.gen[StartGameRequest]
+
+  /** Response body for `GET /lobbies/public`. List wrapper keeps the wire
+    * shape forward-compatible (we can add total/page later).
+    */
+  final case class PublicLobbiesResponse(lobbies: List[Lobby])
+  object PublicLobbiesResponse:
+    given JsonCodec[PublicLobbiesResponse] =
+      DeriveJsonCodec.gen[PublicLobbiesResponse]

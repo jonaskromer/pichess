@@ -3,6 +3,7 @@ package chess.lobby
 import chess.lobby.LobbyJson.{
   CreateLobbyRequest,
   JoinLobbyRequest,
+  PublicLobbiesResponse,
   StartGameRequest,
   given
 }
@@ -33,6 +34,17 @@ object LobbyEndpoints:
 
   val getLobby: Endpoint[Unit, LobbyId, String, Lobby, Any] =
     base.get.in(path[LobbyId]("id")).out(jsonBody[Lobby])
+
+  /** Lookup a lobby by its short invite code. Used for deep-link refresh
+    * on the web-ui Lobby screen and for the "join by code" flow before
+    * actually joining (so the UI can preview the lobby). */
+  val findByCode: Endpoint[Unit, String, String, Lobby, Any] =
+    base.get
+      .in("by-code" / path[String]("code"))
+      .out(jsonBody[Lobby])
+
+  val listPublic: Endpoint[Unit, Unit, String, PublicLobbiesResponse, Any] =
+    base.get.in("public").out(jsonBody[PublicLobbiesResponse])
 
   val startGame: Endpoint[Unit, (LobbyId, StartGameRequest), String, Lobby, Any] =
     base.post

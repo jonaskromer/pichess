@@ -1,14 +1,23 @@
 package chess.persistence.redis
 
-import chess.model.{InviteCode, Lobby, LobbyError, LobbyId, LobbyStatus}
+import chess.model.{
+  InviteCode,
+  Lobby,
+  LobbyError,
+  LobbyId,
+  LobbyStatus,
+  LobbyVisibility
+}
 import chess.persistence.LobbyRepository
 import zio.*
 import zio.json.*
 import zio.redis.Redis
 
 /** Redis-backed `LobbyRepository`. Lobby state is JSON-encoded under
-  * `lobby:{id}`; a secondary `lobby:invite:{code}` key maps invite codes to
-  * lobby ids for the join lookup.
+  * `lobby:l:{id}`; a secondary `lobby:invite:{code}` key maps invite codes
+  * to lobby ids for the join lookup. The `lobby:l:` prefix lets
+  * `listPublicWaiting` SCAN just the payload keys without picking up the
+  * invite-map keys.
   *
   * Two-key writes here aren't atomic across the two SETs, but since invite
   * codes are reserved unique up-front and lobbies aren't deleted-then-
@@ -19,7 +28,7 @@ final class RedisLobbyRepository(redis: Redis) extends LobbyRepository:
 
   import RedisLobbyRepository.given
 
-  private def lobbyKey(id: LobbyId): String = s"lobby:$id"
+  private def lobbyKey(id: LobbyId): String = s"lobby:l:$id"
   private def inviteKey(code: InviteCode): String = s"lobby:invite:${code.value}"
 
   def create(lobby: Lobby): IO[LobbyError, Unit] =
@@ -61,16 +70,44 @@ final class RedisLobbyRepository(redis: Redis) extends LobbyRepository:
                     case None => ZIO.unit
     yield ()
 
+  def listPublicWaiting(): IO[LobbyError, List[Lobby]] =
+    // SCAN pages through all payload keys; cursor=0 starts a fresh
+    // iteration, the loop terminates when Redis returns cursor=0 again.
+    // Keys here are bounded (one per active lobby) so collecting in
+    // memory is fine for dev / demo scale.
+    def loop(cursor: Long, acc: Vector[String]): IO[LobbyError, Vector[String]] =
+      redis
+        .scan(cursor, Some("lobby:l:*"))
+        .returning[String]
+        .mapError(toInfraError)
+        .flatMap { case (next, keys) =>
+          val gathered = acc ++ keys
+          if next == 0L then ZIO.succeed(gathered)
+          else loop(next, gathered)
+        }
+
+    for
+      keys     <- loop(0L, Vector.empty)
+      payloads <- ZIO.foreach(keys.toList) { key =>
+                    redis.get(key).returning[String].mapError(toInfraError)
+                  }
+      lobbies  <- ZIO.foreach(payloads.flatten)(p => decodeOne(p))
+    yield lobbies
+      .filter(l =>
+        l.visibility == LobbyVisibility.Public &&
+          l.status == LobbyStatus.Waiting
+      )
+      .sortBy(_.createdAt)
+
   private def decode(raw: Option[String]): IO[LobbyError, Option[Lobby]] =
     raw match
-      case None => ZIO.succeed(None)
-      case Some(json) =>
-        ZIO
-          .fromEither(json.fromJson[Lobby])
-          .mapBoth(
-            err => LobbyError.InfrastructureError(s"Invalid lobby JSON: $err"),
-            Some(_)
-          )
+      case None       => ZIO.succeed(None)
+      case Some(json) => decodeOne(json).map(Some(_))
+
+  private def decodeOne(json: String): IO[LobbyError, Lobby] =
+    ZIO
+      .fromEither(json.fromJson[Lobby])
+      .mapError(err => LobbyError.InfrastructureError(s"Invalid lobby JSON: $err"))
 
   private def toInfraError(t: Throwable): LobbyError =
     LobbyError.InfrastructureError(s"Redis error: ${t.getMessage}")
@@ -89,6 +126,13 @@ object RedisLobbyRepository:
       LobbyStatus.values
         .find(_.toString == raw)
         .toRight(s"Unknown lobby status: $raw"),
+    _.toString
+  )
+  private given JsonCodec[LobbyVisibility] = JsonCodec[String].transformOrFail(
+    raw =>
+      LobbyVisibility.values
+        .find(_.toString == raw)
+        .toRight(s"Unknown lobby visibility: $raw"),
     _.toString
   )
   private[redis] given JsonCodec[Lobby] = DeriveJsonCodec.gen[Lobby]

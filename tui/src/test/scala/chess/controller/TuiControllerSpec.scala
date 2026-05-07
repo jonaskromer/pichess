@@ -117,6 +117,56 @@ object TuiControllerSpec extends ZIOSpecDefault:
           TuiController.parseCommand("   ") == TuiController.Command.Noop,
           TuiController.parseCommand("\t") == TuiController.Command.Noop
         )
+      },
+      test("parse host (defaults to public)") {
+        assertTrue(
+          TuiController.parseCommand("host") ==
+            TuiController.Command.Host(TuiController.LobbyVisibility.Public)
+        )
+      },
+      test("parse host public") {
+        assertTrue(
+          TuiController.parseCommand("host public") ==
+            TuiController.Command.Host(TuiController.LobbyVisibility.Public)
+        )
+      },
+      test("parse host private") {
+        assertTrue(
+          TuiController.parseCommand("host private") ==
+            TuiController.Command.Host(TuiController.LobbyVisibility.Private)
+        )
+      },
+      test("parse host with bogus visibility falls through to move") {
+        assertTrue(
+          TuiController.parseCommand("host xyz") ==
+            TuiController.Command.Move("host xyz")
+        )
+      },
+      test("parse join <code> trims and capitalizes nothing — code stored as typed") {
+        assertTrue(
+          TuiController.parseCommand("join abc123") ==
+            TuiController.Command.Join("abc123")
+        )
+      },
+      test("parse lobbies") {
+        assertTrue(
+          TuiController.parseCommand("lobbies") == TuiController.Command.Lobbies
+        )
+      },
+      test("parse lobby") {
+        assertTrue(
+          TuiController.parseCommand("lobby") == TuiController.Command.LobbyStatus
+        )
+      },
+      test("parse start") {
+        assertTrue(
+          TuiController.parseCommand("start") == TuiController.Command.Start
+        )
+      },
+      test("parse local") {
+        assertTrue(
+          TuiController.parseCommand("local") == TuiController.Command.Local
+        )
       }
     )
   )

@@ -101,12 +101,89 @@ object Main:
         dom.window.localStorage.setItem("pichess.sessionId", fresh)
         fresh
       }
+  /** Display nickname. Editable in Settings; persisted to localStorage so a
+    * refresh keeps it. Default "Anonymous" if never set. */
+  private val nicknameVar: Var[String] = Var(
+    Option(dom.window.localStorage.getItem("pichess.nickname"))
+      .filter(_.trim.nonEmpty)
+      .getOrElse("Anonymous")
+  )
+  /** Discord-style four-digit suffix, generated once and pinned to the
+    * session. Two `Alice`s on the same gateway are distinguishable as
+    * `Alice#0473` vs `Alice#1209`. The hash isn't used for any auth — it's
+    * a UI convenience for distinguishing same-named players.
+    */
+  private val playerHash: String =
+    Option(dom.window.localStorage.getItem("pichess.hash"))
+      .filter(_.matches("\\d{4}"))
+      .getOrElse {
+        val fresh =
+          ("0000" + scala.util.Random.nextInt(10000).toString).takeRight(4)
+        dom.window.localStorage.setItem("pichess.hash", fresh)
+        fresh
+      }
+  private def displayName(): String = s"${nicknameVar.now()}#$playerHash"
   /** Current game id. With multi-game routing the gateway no longer tracks
-    * a single "active" game — the client owns this. We mint a fresh game
-    * on first load, capture its id here, then thread it through every
-    * subsequent HTTP call and the SSE subscription URL.
+    * a single "active" game — the client owns this. The id flows from
+    * the URL hash (`#game/<id>`) and is cached here for HTTP / SSE
+    * consumers that don't read the URL directly.
     */
   private val gameIdVar: Var[Option[String]] = Var(None)
+
+  /** Top-level screen the user is on. Mirrors the URL hash — see
+    * `parseHash` / `hashFor`. Treat the URL as the source of truth so
+    * the back button just works.
+    */
+  enum Screen:
+    case Start
+    case NewGameMenu
+    case Join
+    case Lobby(inviteCode: String)
+    case Game(gameId: String)
+    case Settings
+    case Help
+    case Docs
+
+  private val currentScreenVar: Var[Screen] = Var(Screen.Start)
+
+  /** Translate `dom.window.location.hash` into a `Screen`. Anything we
+    * don't recognise falls back to Start.
+    */
+  private def parseHash(raw: String): Screen =
+    val stripped = raw.stripPrefix("#")
+    stripped match
+      case "" | "/"     => Screen.Start
+      case "new"        => Screen.NewGameMenu
+      case "join"       => Screen.Join
+      case "settings"   => Screen.Settings
+      case "help"       => Screen.Help
+      case "docs"       => Screen.Docs
+      case s"lobby/$c"  => Screen.Lobby(c)
+      case s"game/$id"  => Screen.Game(id)
+      case _            => Screen.Start
+
+  private def hashFor(screen: Screen): String = screen match
+    case Screen.Start          => ""
+    case Screen.NewGameMenu    => "#new"
+    case Screen.Join           => "#join"
+    case Screen.Lobby(code)    => s"#lobby/$code"
+    case Screen.Game(id)       => s"#game/$id"
+    case Screen.Settings       => "#settings"
+    case Screen.Help           => "#help"
+    case Screen.Docs           => "#docs"
+
+  /** Navigate to a different screen by mutating the URL hash. The
+    * `hashchange` listener picks it up and updates `currentScreenVar`,
+    * so this is the one and only entry point — never set the var
+    * directly.
+    */
+  private def navigate(screen: Screen): Unit =
+    val next = hashFor(screen)
+    if dom.window.location.hash != next then dom.window.location.hash = next
+    else syncScreenFromHash() // hashchange won't fire for an identical value
+
+  private def syncScreenFromHash(): Unit =
+    currentScreenVar.set(parseHash(dom.window.location.hash))
   private val loadOpenVar: Var[Boolean] = Var(false)
   private val loadInputVar: Var[String] = Var("")
   private val exportVar: Var[Option[ExportResponse]] = Var(None)
@@ -114,7 +191,6 @@ object Main:
   // browser back button returns to the game without a full page reload.
   // We sync this var with `location.hash` so deep-links (#help) and the back
   // button just work via hashchange events.
-  private val helpOpenVar: Var[Boolean] = Var(false)
   // Move input is promoted to object scope so the `moveLogContainer`
   // function can render the form alongside the scrolling history while
   // the rest of the controls live in the sidebar post-its.
@@ -189,15 +265,20 @@ object Main:
         // first paint; this call is the safety net for the (rare) case
         // where the script ran before localStorage was readable.
         applyTheme(themeVar.now())
-        // Mint a fresh game on first load, then pull state + subscribe.
-        // The id flows through gameIdVar so HTTP calls and SSE both pick
-        // it up reactively.
-        bootstrapGame()
-        syncHelpFromHash()
+        // The URL hash drives the active screen. `syncScreenFromHash` runs
+        // once at boot to pick up a deep-link, then on every hashchange
+        // (back/forward, manual edits, anchor links).
+        syncScreenFromHash()
         dom.window.addEventListener(
           "hashchange",
-          (_: dom.Event) => syncHelpFromHash()
+          (_: dom.Event) => syncScreenFromHash()
         )
+        // Whenever we arrive on a Game screen, make sure the game state
+        // is loaded for that id — refresh state + (re)open SSE for it.
+        currentScreenVar.signal.distinct.foreach {
+          case Screen.Game(id) => enterGame(id)
+          case _               => ()
+        }(using ctx.owner)
         // Document-level pointer listeners drive the drag's middle and
         // end. We don't rely on setPointerCapture — when the source
         // piece gets `is-being-dragged`, some engines implicitly drop
@@ -239,27 +320,51 @@ object Main:
             if active then cl.add("is-dragging") else cl.remove("is-dragging")
           }(using ctx.owner)
       },
-      mainUi()
+      child <-- currentScreenVar.signal.distinct.map(renderScreen),
+      // Toast is rendered at App root (not inside mainUi) so error
+      // messages from the lobby/start/settings screens are also visible.
+      // Lobby create/join failures used to fire showToast silently because
+      // the toast element only existed on the game screen.
+      toastElement()
     )
 
-  private def syncHelpFromHash(): Unit =
-    helpOpenVar.set(dom.window.location.hash == "#help")
+  /** Top-level screen dispatcher. The Game screen reuses the existing
+    * `mainUi()` body so the heavy chess UI doesn't get rewritten in
+    * Phase 2. The new screens are deliberately unstyled — text, plain
+    * buttons, simple inputs — visual polish comes later.
+    */
+  private def renderScreen(screen: Screen): HtmlElement = screen match
+    case Screen.Start         => startScreen()
+    case Screen.NewGameMenu   => newGameMenu()
+    case Screen.Join          => joinScreen()
+    case Screen.Lobby(code)   => lobbyScreen(code)
+    case Screen.Game(_)       => mainUi()
+    case Screen.Settings      => settingsScreen()
+    case Screen.Help          => helpScreen()
+    case Screen.Docs          => docsScreen()
+
+  /** Side-effect when entering a Game screen: ensure gameIdVar is set,
+    * pull current state, (re)connect SSE for that id. Idempotent — a
+    * navigation that lands on the same id won't double-subscribe because
+    * `connectEvents` closes any existing stream first.
+    */
+  private def enterGame(id: String): Unit =
+    gameIdVar.set(Some(id))
+    getStateClient((id, None)).foreach(handleStateResult)
+    connectEvents(id)
 
   private def mainUi(): HtmlElement =
     div(
       className := "app-shell",
       pageBackground(),
       header(),
-      // `.distinct` — see the rationale on the App-level signal above.
-      child <-- helpOpenVar.signal.distinct.map {
-        case true  => HelpView.render()
-        case false => gameBody()
-      },
+      // Help is its own routed screen now (#help) — the Game screen body
+      // always shows the board.
+      gameBody(),
       promotionOverlay(),
       loadModal(),
       exportModal(),
       confirmModal(),
-      toastElement(),
       // Floating clone of the dragged piece. Mounted ONCE — the inner
       // piece span is the only thing that re-renders, and only when the
       // piece identity changes (drag start / drag end). The transform
@@ -430,18 +535,12 @@ object Main:
           svg.cls := "header-logo",
           svg.use(svg.href := "/web/peach.svg#peach")
         ),
-        span(
-          child.text <-- helpOpenVar.signal.map(o =>
-            if o then "piChess Help" else "piChess"
-          )
-        )
+        span("piChess")
       ),
       div(className := "header-spacer"),
       div(
         className := "header-actions",
-        children <-- helpOpenVar.signal.map(o =>
-          if o then helpHeaderActions else gameHeaderActions
-        )
+        gameHeaderActions
       )
     )
 
@@ -455,22 +554,6 @@ object Main:
       className := "header-link",
       href := "#help",
       "Help"
-    ),
-    a(
-      className := "header-link",
-      href := "/docs",
-      target := "_blank",
-      rel := "noopener noreferrer",
-      "Docs ↗"
-    )
-  )
-
-  private def helpHeaderActions: List[HtmlElement] = List(
-    themeToggleButton(),
-    a(
-      className := "header-link",
-      href := "#",
-      "← Game"
     ),
     a(
       className := "header-link",
@@ -1488,3 +1571,500 @@ object Main:
           if flipped then (1 + rankIdx).toString
           else (8 - rankIdx).toString
         Some(s"$file$rank")
+
+  // --------------------------------------------------------------------------
+  // Phase 2 screens (unstyled — functionality first; visual polish later)
+  // --------------------------------------------------------------------------
+
+  // All lobby calls go through the gateway's reverse proxy under
+  // /lobbies/... (see chess.controller.LobbyProxy). Empty base = same-
+  // origin request, which means no CORS preflight and no need for the
+  // lobby-service to advertise CORS headers. The gateway forwards
+  // verbatim to whichever lobby-service URL it was configured with.
+  private val lobbyBaseUrl: String = ""
+
+  /** Holds the lobby currently being rendered on the Lobby screen. */
+  private val currentLobbyVar: Var[Option[LobbyJson]] = Var(None)
+  /** Browse list for the Join screen. */
+  private val publicLobbiesVar: Var[List[LobbyJson]] = Var(Nil)
+
+  /** Wire-shape of a Lobby JSON record. We don't depend on the
+    * lobby-service's internal `chess.lobby` package from web-ui, so this
+    * is a small mirror of the fields the screens actually read.
+    */
+  private case class LobbyJson(
+      id: String,
+      inviteCode: String,
+      hostNickname: String,
+      hostSessionId: String,
+      guestNickname: js.UndefOr[String],
+      guestSessionId: js.UndefOr[String],
+      visibility: String,
+      allowUndo: Boolean,
+      allowSpectate: Boolean,
+      spectatorLimit: Int,
+      status: String,
+      createdAt: js.UndefOr[Double],
+      gameId: js.UndefOr[String]
+  )
+
+  /** Tiny JSON helpers — the lobby screens only need a handful of lobby
+    * roundtrips and we don't want to wire a second sttp + Tapir client
+    * setup just for that. Uses the browser's native fetch + JSON.parse.
+    */
+  private def fetchJson(
+      method: String,
+      url: String,
+      body: Option[String]
+  ): scala.concurrent.Future[String] =
+    val init = new dom.RequestInit {}
+    init.method = method.asInstanceOf[dom.HttpMethod]
+    val headers = new dom.Headers()
+    headers.append("Content-Type", "application/json")
+    headers.append("Accept", "application/json")
+    headers.append("X-Session-Id", sessionId)
+    init.headers = headers
+    body.foreach(b => init.body = b)
+    dom.window
+      .fetch(url, init)
+      .toFuture
+      .flatMap(r =>
+        r.text().toFuture.map(t =>
+          if r.ok then t
+          else throw new RuntimeException(s"HTTP ${r.status}: $t")
+        )
+      )
+
+  private def parseLobbyJson(raw: String): Option[LobbyJson] =
+    try
+      val obj = js.JSON.parse(raw).asInstanceOf[js.Dynamic]
+      Some(
+        LobbyJson(
+          id = obj.id.asInstanceOf[String],
+          inviteCode = obj.inviteCode.asInstanceOf[String],
+          hostNickname = obj.hostNickname.asInstanceOf[String],
+          hostSessionId = obj.hostSessionId.asInstanceOf[String],
+          guestNickname = obj.guestNickname.asInstanceOf[js.UndefOr[String]],
+          guestSessionId =
+            obj.guestSessionId.asInstanceOf[js.UndefOr[String]],
+          visibility = obj.visibility.asInstanceOf[String],
+          allowUndo = obj.allowUndo.asInstanceOf[Boolean],
+          allowSpectate = obj.allowSpectate.asInstanceOf[Boolean],
+          spectatorLimit = obj.spectatorLimit.asInstanceOf[Int],
+          status = obj.status.asInstanceOf[String],
+          createdAt = obj.createdAt.asInstanceOf[js.UndefOr[Double]],
+          gameId = obj.gameId.asInstanceOf[js.UndefOr[String]]
+        )
+      )
+    catch case _: Throwable => None
+
+  private def parseLobbyList(raw: String): List[LobbyJson] =
+    try
+      val obj = js.JSON.parse(raw).asInstanceOf[js.Dynamic]
+      val arr = obj.lobbies.asInstanceOf[js.Array[js.Dynamic]]
+      arr.toList.flatMap(d => parseLobbyJson(js.JSON.stringify(d)))
+    catch case _: Throwable => Nil
+
+  // -- Start screen ---------------------------------------------------------
+
+  private def startScreen(): HtmlElement =
+    div(
+      className := "screen screen-start",
+      h1("piChess"),
+      p(s"Welcome, ", strong(displayName())),
+      div(
+        className := "start-buttons",
+        button(
+          "New Game",
+          onClick --> { _ => navigate(Screen.NewGameMenu) }
+        ),
+        button(
+          "Join",
+          onClick --> { _ => navigate(Screen.Join) }
+        ),
+        a(
+          href := "#docs",
+          "Docs"
+        ),
+        a(
+          href := "#help",
+          "Help"
+        ),
+        button(
+          "Settings",
+          onClick --> { _ => navigate(Screen.Settings) }
+        )
+      )
+    )
+
+  // -- Settings screen ------------------------------------------------------
+
+  private def settingsScreen(): HtmlElement =
+    div(
+      className := "screen screen-settings",
+      h1("Settings"),
+      backLink(),
+      div(
+        label("Nickname"),
+        input(
+          typ := "text",
+          value <-- nicknameVar.signal,
+          onInput.mapToValue --> { v =>
+            val cleaned = v.trim
+            val effective = if cleaned.isEmpty then "Anonymous" else cleaned
+            nicknameVar.set(effective)
+            dom.window.localStorage.setItem("pichess.nickname", effective)
+          }
+        )
+      ),
+      p(
+        "You'll appear as ",
+        span(child.text <-- nicknameVar.signal.map(n => s"$n#$playerHash"))
+      ),
+      div(
+        label("Theme"),
+        themeToggleButton()
+      )
+    )
+
+  // -- Help / Docs ----------------------------------------------------------
+
+  private def helpScreen(): HtmlElement =
+    div(
+      className := "screen screen-help",
+      h1("Help"),
+      backLink(),
+      HelpView.render()
+    )
+
+  private def docsScreen(): HtmlElement =
+    div(
+      className := "screen screen-docs",
+      h1("API Docs"),
+      backLink(),
+      // The gateway already exposes Tapir-generated Swagger UI at /docs;
+      // an iframe is the simplest way to embed it without recreating the
+      // doc UI inside Laminar.
+      iframe(
+        src := "/docs",
+        styleAttr := "width:100%;height:80vh;border:1px solid #ccc;"
+      )
+    )
+
+  // -- New-game menu --------------------------------------------------------
+
+  private def newGameMenu(): HtmlElement =
+    div(
+      className := "screen screen-new-game",
+      h1("New Game"),
+      backLink(),
+      hostGameForm(),
+      div(
+        button("Bot Game (coming soon)", disabled := true)
+      ),
+      div(
+        button(
+          "Local Game",
+          onClick --> { _ => createLocalGame() }
+        )
+      )
+    )
+
+  /** Inline host-game form. Visibility / allowUndo / allowSpectate are
+    * controlled via plain HTML inputs and submitted as a CreateLobby POST.
+    * On success we route to the lobby waiting room.
+    */
+  private val hostVisibilityVar: Var[String] = Var("Public")
+  private val hostAllowUndoVar: Var[Boolean] = Var(true)
+  private val hostAllowSpectateVar: Var[Boolean] = Var(true)
+  private val hostSpectatorLimitVar: Var[Int] = Var(8)
+
+  private def hostGameForm(): HtmlElement =
+    fieldSet(
+      legend("Host options"),
+      div(
+        label("Visibility"),
+        select(
+          value <-- hostVisibilityVar.signal,
+          onChange.mapToValue --> hostVisibilityVar.writer,
+          option(value := "Public", "Public"),
+          option(value := "Private", "Private")
+        )
+      ),
+      div(
+        label(
+          input(
+            typ := "checkbox",
+            checked <-- hostAllowUndoVar.signal,
+            onChange.mapToChecked --> hostAllowUndoVar.writer
+          ),
+          " Allow undo"
+        )
+      ),
+      div(
+        label(
+          input(
+            typ := "checkbox",
+            checked <-- hostAllowSpectateVar.signal,
+            onChange.mapToChecked --> hostAllowSpectateVar.writer
+          ),
+          " Allow spectators"
+        )
+      ),
+      div(
+        label("Spectator limit"),
+        input(
+          typ := "number",
+          value <-- hostSpectatorLimitVar.signal.map(_.toString),
+          onInput.mapToValue --> { s =>
+            hostSpectatorLimitVar.set(s.toIntOption.getOrElse(8).max(0))
+          }
+        )
+      ),
+      button(
+        "Create lobby",
+        onClick --> { _ => createHostedLobby() }
+      )
+    )
+
+  private def createHostedLobby(): Unit =
+    val payload = js.JSON.stringify(
+      js.Dynamic.literal(
+        hostNickname = nicknameVar.now(),
+        hostSessionId = sessionId,
+        visibility = hostVisibilityVar.now(),
+        allowUndo = hostAllowUndoVar.now(),
+        allowSpectate = hostAllowSpectateVar.now(),
+        spectatorLimit = hostSpectatorLimitVar.now()
+      )
+    )
+    fetchJson("POST", s"$lobbyBaseUrl/lobbies", Some(payload)).onComplete {
+      case scala.util.Success(raw) =>
+        parseLobbyJson(raw) match
+          case Some(l) =>
+            currentLobbyVar.set(Some(l))
+            navigate(Screen.Lobby(l.inviteCode))
+          case None =>
+            showToast("Could not parse lobby response")
+      case scala.util.Failure(err) =>
+        showToast(s"Create lobby failed: ${err.getMessage}")
+    }
+
+  private def createLocalGame(): Unit =
+    postCreateGameClient((sessionId, CreateGameRequest(None))).foreach {
+      case Right(snapshot) =>
+        gameIdVar.set(Some(snapshot.id))
+        stateVar.set(Some(snapshot.state))
+        navigate(Screen.Game(snapshot.id))
+      case Left(err) => showToast(err.error)
+    }
+
+  // -- Join screen ----------------------------------------------------------
+
+  private val joinCodeVar: Var[String] = Var("")
+
+  private def joinScreen(): HtmlElement =
+    div(
+      className := "screen screen-join",
+      h1("Join Game"),
+      backLink(),
+      div(
+        label("Invite code"),
+        input(
+          typ := "text",
+          value <-- joinCodeVar.signal,
+          onInput.mapToValue --> joinCodeVar.writer,
+          placeholder := "ABCDEF"
+        ),
+        button(
+          "Join",
+          onClick --> { _ => joinByCode(joinCodeVar.now()) }
+        )
+      ),
+      hr(),
+      h2("Public lobbies"),
+      button(
+        "Refresh",
+        onClick --> { _ => refreshPublicLobbies() }
+      ),
+      onMountCallback { _ => refreshPublicLobbies() },
+      ul(
+        children <-- publicLobbiesVar.signal.map(_.map { l =>
+          li(
+            s"${l.hostNickname} — ${l.inviteCode}",
+            button(
+              "Join",
+              onClick --> { _ => joinByCode(l.inviteCode) }
+            )
+          )
+        })
+      )
+    )
+
+  private def refreshPublicLobbies(): Unit =
+    fetchJson("GET", s"$lobbyBaseUrl/lobbies/public", None).onComplete {
+      case scala.util.Success(raw) =>
+        publicLobbiesVar.set(parseLobbyList(raw))
+      case scala.util.Failure(err) =>
+        showToast(s"Could not fetch lobbies: ${err.getMessage}")
+    }
+
+  private def joinByCode(rawCode: String): Unit =
+    val code = rawCode.trim.toUpperCase
+    if code.isEmpty then showToast("Enter an invite code first")
+    else
+      val payload = js.JSON.stringify(
+        js.Dynamic.literal(
+          guestNickname = nicknameVar.now(),
+          guestSessionId = sessionId
+        )
+      )
+      fetchJson(
+        "POST",
+        s"$lobbyBaseUrl/lobbies/by-code/$code/join",
+        Some(payload)
+      ).onComplete {
+        case scala.util.Success(raw) =>
+          parseLobbyJson(raw) match
+            case Some(l) =>
+              currentLobbyVar.set(Some(l))
+              navigate(Screen.Lobby(l.inviteCode))
+            case None => showToast("Bad lobby payload")
+        case scala.util.Failure(err) =>
+          showToast(s"Join failed: ${err.getMessage}")
+      }
+
+  // -- Lobby waiting room ---------------------------------------------------
+
+  private def lobbyScreen(code: String): HtmlElement =
+    // Refresh on mount so a deep-link / refresh into the lobby URL works,
+    // and poll while we're on the screen so guest joins / host starts
+    // appear without a page reload. Cleared on unmount via the returned
+    // handle.
+    var pollHandle: Int = 0
+    div(
+      className := "screen screen-lobby",
+      onMountCallback { _ =>
+        refreshLobbyByCode(code)
+        pollHandle = dom.window.setInterval(
+          () => refreshLobbyByCode(code),
+          2000.0
+        )
+      },
+      onUnmountCallback { _ =>
+        if pollHandle != 0 then dom.window.clearInterval(pollHandle)
+        pollHandle = 0
+      },
+      h1("Lobby"),
+      backLink(),
+      child <-- currentLobbyVar.signal.map {
+        case None =>
+          div(p(s"Loading lobby $code…"))
+        case Some(l) =>
+          div(
+            p(
+              "Invite code: ",
+              code,
+              " ",
+              button(
+                "Copy",
+                onClick --> { _ =>
+                  dom.window.navigator.clipboard.writeText(l.inviteCode)
+                  showToast("Invite code copied")
+                }
+              )
+            ),
+            p(
+              "Invite link: ",
+              span(s"${dom.window.location.origin}/#lobby/${l.inviteCode}")
+            ),
+            p(s"Status: ${l.status}"),
+            p(s"Host: ${l.hostNickname}"),
+            p(
+              "Guest: ",
+              if l.guestNickname.isDefined then l.guestNickname.get
+              else "(waiting…)"
+            ),
+            p(s"Visibility: ${l.visibility}"),
+            p(s"Allow undo: ${l.allowUndo}"),
+            p(
+              s"Allow spectate: ${l.allowSpectate} (limit ${l.spectatorLimit})"
+            ),
+            // Show start button to host only, when the lobby is Full.
+            if l.hostSessionId == sessionId && l.status == "Full" then
+              button(
+                "Start game",
+                onClick --> { _ => startHostedGame(l) }
+              )
+            else
+              span(""),
+            // If a guest is connected and we're not the host, we just wait.
+            if l.status == "Started" && l.gameId.isDefined then
+              p(
+                a(
+                  href := s"#game/${l.gameId.get}",
+                  "Game started — go to board"
+                )
+              )
+            else span("")
+          )
+      }
+    )
+
+  private def refreshLobbyByCode(code: String): Unit =
+    fetchJson("GET", s"$lobbyBaseUrl/lobbies/by-code/$code", None).onComplete {
+      case scala.util.Success(raw) =>
+        parseLobbyJson(raw).foreach { l =>
+          currentLobbyVar.set(Some(l))
+          // If the host pressed Start while we were watching, jump straight
+          // to the game screen. Both host (still here from create) and
+          // guest (still here from join) get auto-routed via this code path.
+          if l.status == "Started" && l.gameId.isDefined then
+            navigate(Screen.Game(l.gameId.get))
+        }
+      case scala.util.Failure(_) => ()  // swallow — screen stays on "Loading…"
+    }
+
+  /** Host clicks "Start game". Create the game on the gateway, then ask
+    * the lobby-service to mark the lobby as Started — which in turn
+    * notifies the gateway to swap the role registry to host+guest.
+    */
+  private def startHostedGame(l: LobbyJson): Unit =
+    postCreateGameClient((sessionId, CreateGameRequest(None))).foreach {
+      case Right(snapshot) =>
+        val payload = js.JSON.stringify(
+          js.Dynamic.literal(gameId = snapshot.id)
+        )
+        fetchJson(
+          "POST",
+          s"$lobbyBaseUrl/lobbies/${l.id}/start",
+          Some(payload)
+        ).onComplete {
+          case scala.util.Success(_) =>
+            navigate(Screen.Game(snapshot.id))
+          case scala.util.Failure(err) =>
+            showToast(s"Start failed: ${err.getMessage}")
+        }
+      case Left(err) => showToast(err.error)
+    }
+
+  // -- Shared helpers -------------------------------------------------------
+
+  /** Back link that returns to whatever screen the user came from.
+    * Uses the browser's history stack so it works for hash routes,
+    * deep links, and middle-of-flow navigations alike. We render it as
+    * a button (not an `<a href="#">`) because a hash anchor would
+    * unconditionally reset the URL to `#` and land us on Start.
+    */
+  private def backLink(): HtmlElement =
+    button(
+      typ := "button",
+      "← Back",
+      onClick --> { _ =>
+        // history.length is 1 for a fresh tab opened directly on this URL —
+        // there's nothing to go back to, so fall through to the Start screen
+        // instead of leaving the user stranded.
+        if dom.window.history.length > 1 then dom.window.history.back()
+        else navigate(Screen.Start)
+      }
+    )

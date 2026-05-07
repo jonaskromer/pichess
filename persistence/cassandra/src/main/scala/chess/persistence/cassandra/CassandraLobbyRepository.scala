@@ -1,9 +1,17 @@
 package chess.persistence.cassandra
 
-import chess.model.{InviteCode, Lobby, LobbyError, LobbyId, LobbyStatus}
+import chess.model.{
+  InviteCode,
+  Lobby,
+  LobbyError,
+  LobbyId,
+  LobbyStatus,
+  LobbyVisibility
+}
 import chess.persistence.LobbyRepository
 import com.datastax.oss.driver.api.core.CqlSession
 import com.datastax.oss.driver.api.core.cql.{BatchStatement, BatchType, Row}
+import scala.jdk.CollectionConverters.*
 import zio.*
 
 import java.time.Instant
@@ -16,14 +24,22 @@ import java.time.Instant
   *
   * Two-table writes are bundled into a logged batch so a partial-failure
   * doesn't leave the inverse table dangling.
+  *
+  * `listPublicWaiting` uses `ALLOW FILTERING` against the main table — an
+  * acceptable dev-only shortcut at the scale of an interactive lobby
+  * browser. A production deployment would maintain a third denormalised
+  * `lobbies_public_waiting` table keyed by a composite partition and
+  * synchronise it on every write.
   */
 final class CassandraLobbyRepository(session: CqlSession) extends LobbyRepository:
 
   private val insertLobby = session.prepare("""
     INSERT INTO lobbies
-      (lobby_id, invite_code, host_nickname, guest_nickname, status,
-       game_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      (lobby_id, invite_code, host_nickname, host_session_id,
+       guest_nickname, guest_session_id, visibility, allow_undo,
+       allow_spectate, spectator_limit, status, game_id, created_at,
+       updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   """)
   private val insertInverse =
     session.prepare(
@@ -33,6 +49,10 @@ final class CassandraLobbyRepository(session: CqlSession) extends LobbyRepositor
     session.prepare("SELECT * FROM lobbies WHERE lobby_id = ?")
   private val selectInverse =
     session.prepare("SELECT lobby_id FROM lobbies_by_invite WHERE invite_code = ?")
+  private val selectPublicWaiting =
+    session.prepare(
+      "SELECT * FROM lobbies WHERE visibility = ? AND status = ? ALLOW FILTERING"
+    )
   private val deleteLobby =
     session.prepare("DELETE FROM lobbies WHERE lobby_id = ?")
   private val deleteInverse =
@@ -46,7 +66,13 @@ final class CassandraLobbyRepository(session: CqlSession) extends LobbyRepositor
           lobby.id,
           lobby.inviteCode.value,
           lobby.hostNickname,
+          lobby.hostSessionId,
           lobby.guestNickname.orNull,
+          lobby.guestSessionId.orNull,
+          lobby.visibility.toString,
+          java.lang.Boolean.valueOf(lobby.allowUndo),
+          java.lang.Boolean.valueOf(lobby.allowSpectate),
+          java.lang.Integer.valueOf(lobby.spectatorLimit),
           lobby.status.toString,
           lobby.gameId.orNull,
           java.lang.Long.valueOf(lobby.createdAt),
@@ -101,20 +127,44 @@ final class CassandraLobbyRepository(session: CqlSession) extends LobbyRepositor
                         .mapError(toInfraError)
     yield ()
 
+  def listPublicWaiting(): IO[LobbyError, List[Lobby]] =
+    ZIO
+      .fromCompletionStage(
+        session.executeAsync(
+          selectPublicWaiting.bind(
+            LobbyVisibility.Public.toString,
+            LobbyStatus.Waiting.toString
+          )
+        )
+      )
+      .mapError(toInfraError)
+      .map { rs =>
+        rs.currentPage().asScala.toList.flatMap(rowToLobby).sortBy(_.createdAt)
+      }
+
   private def rowToLobby(row: Row): Option[Lobby] =
     for
-      id      <- Option(row.getString("lobby_id"))
-      rawCode <- Option(row.getString("invite_code"))
-      host    <- Option(row.getString("host_nickname"))
-      status  <- Option(row.getString("status"))
-                   .flatMap(s =>
-                     LobbyStatus.values.find(_.toString == s)
-                   )
+      id          <- Option(row.getString("lobby_id"))
+      rawCode     <- Option(row.getString("invite_code"))
+      host        <- Option(row.getString("host_nickname"))
+      hostSession <- Option(row.getString("host_session_id"))
+      visibility  <- Option(row.getString("visibility"))
+                       .flatMap(s =>
+                         LobbyVisibility.values.find(_.toString == s)
+                       )
+      status      <- Option(row.getString("status"))
+                       .flatMap(s => LobbyStatus.values.find(_.toString == s))
     yield Lobby(
       id = id,
       inviteCode = InviteCode.unsafe(rawCode),
       hostNickname = host,
+      hostSessionId = hostSession,
       guestNickname = Option(row.getString("guest_nickname")),
+      guestSessionId = Option(row.getString("guest_session_id")),
+      visibility = visibility,
+      allowUndo = row.getBoolean("allow_undo"),
+      allowSpectate = row.getBoolean("allow_spectate"),
+      spectatorLimit = row.getInt("spectator_limit"),
       status = status,
       createdAt = row.getLong("created_at"),
       gameId = Option(row.getString("game_id"))

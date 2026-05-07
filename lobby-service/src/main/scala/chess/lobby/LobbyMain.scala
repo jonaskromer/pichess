@@ -18,6 +18,7 @@ object LobbyMain extends ZIOAppDefault:
               )
       _    <- serve(port).provide(
                 lobbyRepoLayer(cfg),
+                GatewayCoordinator.live,
                 LobbyService.layer
               )
     yield ()
@@ -42,6 +43,10 @@ object LobbyMain extends ZIOAppDefault:
         _   <- Console.printLine(
                  s"pichess-lobby-service listening on 0.0.0.0:$port"
                )
+        // No CORS middleware: the lobby-service is reached exclusively
+        // via the gateway's `/lobbies/*` reverse proxy
+        // (`chess.controller.LobbyProxy`). Every request the lobby sees
+        // is server-to-server, so there's no browser CORS check to satisfy.
         _   <- Server.serve(LobbyServer.routes(svc))
       yield ()
 

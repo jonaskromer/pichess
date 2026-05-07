@@ -22,18 +22,27 @@ object PostgresSchema:
       )
     """ >> sqlu"""
       CREATE TABLE IF NOT EXISTS lobbies (
-        id              TEXT PRIMARY KEY,
-        invite_code     TEXT NOT NULL UNIQUE,
-        host_nickname   TEXT NOT NULL,
-        guest_nickname  TEXT,
-        status          TEXT NOT NULL,
-        game_id         TEXT,
-        created_at      BIGINT NOT NULL,
-        updated_at      TIMESTAMP WITH TIME ZONE NOT NULL
+        id                 TEXT PRIMARY KEY,
+        invite_code        TEXT NOT NULL UNIQUE,
+        host_nickname      TEXT NOT NULL,
+        host_session_id    TEXT NOT NULL,
+        guest_nickname     TEXT,
+        guest_session_id   TEXT,
+        visibility         TEXT NOT NULL,
+        allow_undo         BOOLEAN NOT NULL,
+        allow_spectate     BOOLEAN NOT NULL,
+        spectator_limit    INTEGER NOT NULL,
+        status             TEXT NOT NULL,
+        game_id            TEXT,
+        created_at         BIGINT NOT NULL,
+        updated_at         TIMESTAMP WITH TIME ZONE NOT NULL
       )
     """ >> sqlu"""
       CREATE INDEX IF NOT EXISTS lobbies_invite_code_idx
         ON lobbies (invite_code)
+    """ >> sqlu"""
+      CREATE INDEX IF NOT EXISTS lobbies_public_waiting_idx
+        ON lobbies (visibility, status, created_at)
     """
 
     db.run(createIfMissing.transactionally).unit

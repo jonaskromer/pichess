@@ -9,7 +9,13 @@ object LobbySpec extends ZIOSpecDefault:
     id = "lobby-1",
     inviteCode = code,
     hostNickname = "alice",
+    hostSessionId = "session-host",
     guestNickname = None,
+    guestSessionId = None,
+    visibility = LobbyVisibility.Public,
+    allowUndo = true,
+    allowSpectate = true,
+    spectatorLimit = 8,
     status = LobbyStatus.Waiting,
     createdAt = 0L,
     gameId = None
@@ -24,10 +30,11 @@ object LobbySpec extends ZIOSpecDefault:
         LobbyStatus.Closed.isTerminal
       )
     },
-    test("join transitions Waiting → Full and records the guest nickname") {
-      val joined = waiting.join("bob")
+    test("join transitions Waiting → Full and records guest nickname + session") {
+      val joined = waiting.join("bob", "session-guest")
       assertTrue(
         joined.exists(_.guestNickname.contains("bob")),
+        joined.exists(_.guestSessionId.contains("session-guest")),
         joined.exists(_.status == LobbyStatus.Full)
       )
     },
@@ -36,9 +43,9 @@ object LobbySpec extends ZIOSpecDefault:
       val started = waiting.copy(status = LobbyStatus.Started)
       val closed = waiting.copy(status = LobbyStatus.Closed)
       assertTrue(
-        full.join("bob").isLeft,
-        started.join("bob").isLeft,
-        closed.join("bob").isLeft
+        full.join("bob", "session-guest").isLeft,
+        started.join("bob", "session-guest").isLeft,
+        closed.join("bob", "session-guest").isLeft
       )
     },
     test("start transitions Full → Started and pins the gameId") {
@@ -63,5 +70,10 @@ object LobbySpec extends ZIOSpecDefault:
         waiting.copy(status = LobbyStatus.Started).close.status == LobbyStatus.Closed,
         waiting.copy(status = LobbyStatus.Closed).close.status == LobbyStatus.Closed
       )
-    }
+    },
+    suite("LobbyVisibility")(
+      test("Public and Private are distinct") {
+        assertTrue(LobbyVisibility.Public != LobbyVisibility.Private)
+      }
+    )
   )

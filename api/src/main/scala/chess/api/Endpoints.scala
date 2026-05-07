@@ -183,7 +183,10 @@ object Endpoints:
           + "Prefer GET /api/games/{id}/state?format=… for new clients."
       )
 
-  /** All endpoints — useful for generating OpenAPI docs. */
+  /** All public endpoints — useful for generating OpenAPI docs. The
+    * internal coordination endpoint (`postRegisterPlayers`) is not in
+    * this list so it doesn't show up in Swagger.
+    */
   val all: List[AnyEndpoint] = List(
     postCreateGame,
     getState,
@@ -194,3 +197,26 @@ object Endpoints:
     postForfeit,
     getExport
   )
+
+  /** POST /internal/games/{id}/players — lobby-service hand-off.
+    *
+    * Called by the lobby-service when a lobby transitions Waiting→Started
+    * so the gateway's `SessionRegistry` swaps the local-only entry (host
+    * was registered alone via `POST /api/games`) for the lobby's actual
+    * host+guest pair. Returns 200 with no body on success.
+    *
+    * Excluded from `all` so Swagger doesn't expose it. A production
+    * deployment should additionally gate this route with a shared secret;
+    * for the dev demo we rely on the docker-compose network not being
+    * publicly reachable.
+    */
+  val postRegisterPlayers
+      : PublicEndpoint[(GameId, RegisterPlayersRequest), ErrorDto, Unit, Any] =
+    errorBase.post
+      .in("internal" / "games" / path[GameId]("id") / "players")
+      .in(jsonBody[RegisterPlayersRequest])
+      .name("postRegisterPlayers")
+      .description(
+        "Internal: lobby-service informs the gateway of a lobby's host + " +
+          "guest sessions when its game starts."
+      )

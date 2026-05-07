@@ -1,8 +1,15 @@
 package chess.persistence.mongo
 
-import chess.model.{InviteCode, Lobby, LobbyError, LobbyId, LobbyStatus}
+import chess.model.{
+  InviteCode,
+  Lobby,
+  LobbyError,
+  LobbyId,
+  LobbyStatus,
+  LobbyVisibility
+}
 import chess.persistence.LobbyRepository
-import com.mongodb.client.model.{Filters, IndexOptions, Indexes, ReplaceOptions}
+import com.mongodb.client.model.{Filters, IndexOptions, Indexes, ReplaceOptions, Sorts}
 import com.mongodb.reactivestreams.client.MongoDatabase
 import org.bson.Document
 import zio.*
@@ -49,11 +56,32 @@ final class MongoLobbyRepository(db: MongoDatabase) extends LobbyRepository:
       .runDiscard(collection.deleteOne(Filters.eq("_id", id)))
       .mapError(toInfraError)
 
+  def listPublicWaiting(): IO[LobbyError, List[Lobby]] =
+    MongoOps
+      .toList(
+        collection
+          .find(
+            Filters.and(
+              Filters.eq("visibility", LobbyVisibility.Public.toString),
+              Filters.eq("status", LobbyStatus.Waiting.toString)
+            )
+          )
+          .sort(Sorts.ascending("createdAt"))
+      )
+      .mapError(toInfraError)
+      .map(_.flatMap(fromDoc))
+
   private def toDoc(lobby: Lobby): Document =
     val doc = Document("_id", lobby.id)
       .append("inviteCode", lobby.inviteCode.value)
       .append("hostNickname", lobby.hostNickname)
+      .append("hostSessionId", lobby.hostSessionId)
       .append("guestNickname", lobby.guestNickname.orNull)
+      .append("guestSessionId", lobby.guestSessionId.orNull)
+      .append("visibility", lobby.visibility.toString)
+      .append("allowUndo", lobby.allowUndo: java.lang.Boolean)
+      .append("allowSpectate", lobby.allowSpectate: java.lang.Boolean)
+      .append("spectatorLimit", lobby.spectatorLimit: java.lang.Integer)
       .append("status", lobby.status.toString)
       .append("gameId", lobby.gameId.orNull)
       .append("createdAt", lobby.createdAt: java.lang.Long)
@@ -62,19 +90,30 @@ final class MongoLobbyRepository(db: MongoDatabase) extends LobbyRepository:
 
   private def fromDoc(doc: Document): Option[Lobby] =
     for
-      id      <- Option(doc.getString("_id"))
-      rawCode <- Option(doc.getString("inviteCode"))
-      host    <- Option(doc.getString("hostNickname"))
-      status  <- Option(doc.getString("status"))
-                   .flatMap(s =>
-                     LobbyStatus.values.find(_.toString == s)
-                   )
-      created <- Option(doc.getLong("createdAt")).map(_.longValue)
+      id          <- Option(doc.getString("_id"))
+      rawCode     <- Option(doc.getString("inviteCode"))
+      host        <- Option(doc.getString("hostNickname"))
+      hostSession <- Option(doc.getString("hostSessionId"))
+      visibility  <- Option(doc.getString("visibility"))
+                       .flatMap(s =>
+                         LobbyVisibility.values.find(_.toString == s)
+                       )
+      status      <- Option(doc.getString("status"))
+                       .flatMap(s => LobbyStatus.values.find(_.toString == s))
+      created     <- Option(doc.getLong("createdAt")).map(_.longValue)
     yield Lobby(
       id = id,
       inviteCode = InviteCode.unsafe(rawCode),
       hostNickname = host,
+      hostSessionId = hostSession,
       guestNickname = Option(doc.getString("guestNickname")),
+      guestSessionId = Option(doc.getString("guestSessionId")),
+      visibility = visibility,
+      allowUndo = Option(doc.getBoolean("allowUndo")).fold(false)(_.booleanValue),
+      allowSpectate =
+        Option(doc.getBoolean("allowSpectate")).fold(false)(_.booleanValue),
+      spectatorLimit =
+        Option(doc.getInteger("spectatorLimit")).fold(0)(_.intValue),
       status = status,
       createdAt = created,
       gameId = Option(doc.getString("gameId"))
@@ -85,17 +124,21 @@ final class MongoLobbyRepository(db: MongoDatabase) extends LobbyRepository:
 
 object MongoLobbyRepository:
 
-  /** Create the unique invite-code index if it doesn't already exist. Run
-    * once at service startup before serving traffic.
+  /** Create the unique invite-code index + a public-waiting compound index
+    * if they don't already exist. Run once at service startup.
     */
   def ensureIndexes(db: MongoDatabase): Task[Unit] =
-    MongoOps
-      .runDiscard(
-        db.getCollection("lobbies")
-          .createIndex(
-            Indexes.ascending("inviteCode"),
-            IndexOptions().unique(true)
-          )
+    val coll = db.getCollection("lobbies")
+    MongoOps.runDiscard(
+      coll.createIndex(
+        Indexes.ascending("inviteCode"),
+        IndexOptions().unique(true)
+      )
+    ) *>
+      MongoOps.runDiscard(
+        coll.createIndex(
+          Indexes.ascending("visibility", "status", "createdAt")
+        )
       )
 
   val layer: URLayer[MongoDatabase, LobbyRepository] =

@@ -34,6 +34,7 @@ object TuiMain extends ZIOAppDefault:
 
   val EnvGatewayUrl: String = "PICHESS_GATEWAY_URL"
   val EnvSessionId: String = "PICHESS_SESSION_ID"
+  val EnvNickname: String = "PICHESS_NICKNAME"
 
   override def run: ZIO[ZIOAppArgs, Any, Any] =
     val program: ZIO[Scope, Throwable, Unit] =
@@ -59,11 +60,18 @@ object TuiMain extends ZIOAppDefault:
                        case _ =>
                          Random.nextUUID.map(_.toString)
                      }
+        nickname          <- zio.System.env(EnvNickname).map {
+                               case Some(n) if n.trim.nonEmpty => n.trim
+                               case _                          => "Anonymous"
+                             }
         client             = TuiClient(baseUri, backend, sessionId)
         flippedRef        <- Ref.make(false)
         gameIdRef         <- Ref.make[Option[String]](None)
+        // Tracks the lobby the user is currently in (host or guest).
+        // None when the user is in a local game or not in a lobby flow.
+        lobbyRef          <- Ref.make[Option[TuiClient.LobbyView]](None)
         subscriberHandle  <- Ref.make[Option[Fiber.Runtime[Any, Any]]](None)
-        _                 <- Console.printLine(s"pichess-tui connecting to $url")
+        _                 <- Console.printLine(s"pichess-tui connecting to $url as $nickname")
         _                 <- Console.printLine(HelpView.render)
         // Mint a fresh game and prime everything (state print + SSE).
         _                 <- bootstrap(
@@ -78,8 +86,10 @@ object TuiMain extends ZIOAppDefault:
                                client,
                                baseUri,
                                backend,
+                               nickname,
                                gameIdRef,
                                flippedRef,
+                               lobbyRef,
                                subscriberHandle
                              )
         // REPL ended (quit or EOF) — interrupt the subscriber.
@@ -122,8 +132,10 @@ object TuiMain extends ZIOAppDefault:
       client: TuiClient,
       baseUri: sttp.model.Uri,
       backend: sttp.client3.SttpBackend[Task, sttp.capabilities.zio.ZioStreams],
+      nickname: String,
       gameIdRef: Ref[Option[String]],
       flippedRef: Ref[Boolean],
+      lobbyRef: Ref[Option[TuiClient.LobbyView]],
       subscriberHandle: Ref[Option[Fiber.Runtime[Any, Any]]]
   ): Task[Unit] =
     Console.print("> ") *>
@@ -137,8 +149,10 @@ object TuiMain extends ZIOAppDefault:
             baseUri,
             backend,
             command,
+            nickname,
             gameIdRef,
             flippedRef,
+            lobbyRef,
             subscriberHandle
           ).flatMap {
             case true =>
@@ -146,8 +160,10 @@ object TuiMain extends ZIOAppDefault:
                 client,
                 baseUri,
                 backend,
+                nickname,
                 gameIdRef,
                 flippedRef,
+                lobbyRef,
                 subscriberHandle
               )
             case false => ZIO.unit
@@ -162,8 +178,10 @@ object TuiMain extends ZIOAppDefault:
       baseUri: sttp.model.Uri,
       backend: sttp.client3.SttpBackend[Task, sttp.capabilities.zio.ZioStreams],
       command: Command,
+      nickname: String,
       gameIdRef: Ref[Option[String]],
       flippedRef: Ref[Boolean],
+      lobbyRef: Ref[Option[TuiClient.LobbyView]],
       subscriberHandle: Ref[Option[Fiber.Runtime[Any, Any]]]
   ): Task[Boolean] = command match
     case Command.Quit =>
@@ -184,7 +202,7 @@ object TuiMain extends ZIOAppDefault:
       respond(_ => withGameId(gameIdRef)(client.claimDraw(_)), flippedRef)
     case Command.Forfeit =>
       respond(_ => withGameId(gameIdRef)(client.forfeit(_)), flippedRef)
-    case Command.New =>
+    case Command.New | Command.Local =>
       newOrLoad(client, baseUri, backend, gameIdRef, flippedRef, subscriberHandle, None)
     case Command.Load(raw) =>
       newOrLoad(
@@ -216,6 +234,24 @@ object TuiMain extends ZIOAppDefault:
             }
             .as(true)
       }
+    case Command.Host(visibility) =>
+      hostLobby(client, nickname, visibility, lobbyRef)
+    case Command.Join(code) =>
+      joinLobby(client, nickname, code, lobbyRef)
+    case Command.Lobbies =>
+      listLobbies(client)
+    case Command.LobbyStatus =>
+      showLobbyStatus(client, lobbyRef)
+    case Command.Start =>
+      startLobbyGame(
+        client,
+        baseUri,
+        backend,
+        gameIdRef,
+        flippedRef,
+        lobbyRef,
+        subscriberHandle
+      )
 
   /** Mint a new game (or load one), bind the SSE subscription to its id,
     * and render the initial state. Shared by `new` and `load`.
@@ -298,6 +334,160 @@ object TuiMain extends ZIOAppDefault:
                          Console.printLine(s"Error: ${err.error}")
                      }
     yield ()
+
+  // --------------------------------------------------------------------------
+  // Lobby command handlers (Phase 2). Mirrors the web-ui lobby flow:
+  // host → guest joins → host starts → both players land in the same game.
+  // --------------------------------------------------------------------------
+
+  private def hostLobby(
+      client: TuiClient,
+      nickname: String,
+      visibility: TuiController.LobbyVisibility,
+      lobbyRef: Ref[Option[TuiClient.LobbyView]]
+  ): Task[Boolean] =
+    val v = visibility match
+      case TuiController.LobbyVisibility.Public  => TuiClient.Visibility.Public
+      case TuiController.LobbyVisibility.Private => TuiClient.Visibility.Private
+    client.createLobby(nickname, v).flatMap {
+      case Right(lobby) =>
+        lobbyRef.set(Some(lobby)) *>
+          Console.printLine(
+            s"Lobby created: invite code ${lobby.inviteCode} (${lobby.visibility})."
+          ) *>
+          Console.printLine(
+            "Type 'lobby' to refresh status, 'start' once a guest has joined."
+          ).as(true)
+      case Left(err) =>
+        Console.printLine(s"Error: $err").as(true)
+    }
+
+  private def joinLobby(
+      client: TuiClient,
+      nickname: String,
+      code: String,
+      lobbyRef: Ref[Option[TuiClient.LobbyView]]
+  ): Task[Boolean] =
+    if code.isEmpty then
+      Console.printLine("Usage: join <invite-code>").as(true)
+    else
+      client.joinLobbyByCode(code, nickname).flatMap {
+        case Right(lobby) =>
+          lobbyRef.set(Some(lobby)) *>
+            Console.printLine(
+              s"Joined lobby ${lobby.inviteCode}. Waiting for the host " +
+                "to type 'start' — use 'lobby' to recheck status."
+            ).as(true)
+        case Left(err) =>
+          Console.printLine(s"Error: $err").as(true)
+      }
+
+  private def listLobbies(client: TuiClient): Task[Boolean] =
+    client.listPublicLobbies().flatMap {
+      case Right(Nil) =>
+        Console.printLine("(no public lobbies)").as(true)
+      case Right(lobbies) =>
+        ZIO
+          .foreachDiscard(lobbies) { l =>
+            val guest = l.guestNickname.fold("(waiting)")(identity)
+            Console.printLine(
+              s"  ${l.inviteCode} — host=${l.hostNickname} guest=$guest " +
+                s"status=${l.status}"
+            )
+          }
+          .as(true)
+      case Left(err) =>
+        Console.printLine(s"Error: $err").as(true)
+    }
+
+  /** Refresh the cached lobby (by invite code, since that's the durable
+    * handle the user knows) and print a short summary. If the lobby has
+    * already been Started by the host, prints the gameId so the user knows
+    * to switch over.
+    */
+  private def showLobbyStatus(
+      client: TuiClient,
+      lobbyRef: Ref[Option[TuiClient.LobbyView]]
+  ): Task[Boolean] =
+    lobbyRef.get.flatMap {
+      case None =>
+        Console
+          .printLine("(no active lobby — use 'host' or 'join <code>')")
+          .as(true)
+      case Some(cached) =>
+        client.findLobbyByCode(cached.inviteCode).flatMap {
+          case Right(fresh) =>
+            lobbyRef.set(Some(fresh)) *> Console.printLine(formatLobby(fresh)).as(true)
+          case Left(err) =>
+            Console.printLine(s"Error refreshing lobby: $err").as(true)
+        }
+    }
+
+  private def formatLobby(l: TuiClient.LobbyView): String =
+    val guest = l.guestNickname.fold("(waiting)")(identity)
+    val game = l.gameId.fold("")(g => s"  gameId=$g")
+    s"Lobby ${l.inviteCode}: host=${l.hostNickname} guest=$guest " +
+      s"visibility=${l.visibility} status=${l.status}$game"
+
+  /** Host-only: create a fresh game on the gateway, then tell the
+    * lobby-service to mark the lobby as Started. The lobby-service in turn
+    * notifies the gateway so guest+host both become legal players.
+    * Switches the TUI's current game to the new one and rebinds SSE.
+    */
+  private def startLobbyGame(
+      client: TuiClient,
+      baseUri: sttp.model.Uri,
+      backend: sttp.client3.SttpBackend[Task, sttp.capabilities.zio.ZioStreams],
+      gameIdRef: Ref[Option[String]],
+      flippedRef: Ref[Boolean],
+      lobbyRef: Ref[Option[TuiClient.LobbyView]],
+      subscriberHandle: Ref[Option[Fiber.Runtime[Any, Any]]]
+  ): Task[Boolean] =
+    lobbyRef.get.flatMap {
+      case None =>
+        Console
+          .printLine("(no active lobby — use 'host' first)")
+          .as(true)
+      case Some(lobby) =>
+        // Refresh lobby first so the user gets a clear error if the guest
+        // hasn't joined yet (lobby-service rejects start when status != Full).
+        client.findLobbyByCode(lobby.inviteCode).flatMap {
+          case Right(fresh) if fresh.status != "Full" =>
+            Console
+              .printLine(
+                s"Cannot start: lobby status is ${fresh.status} (need Full). " +
+                  "Wait for a guest to join."
+              )
+              .as(true)
+          case Right(fresh) =>
+            client.createGame().flatMap {
+              case Left(err) =>
+                Console.printLine(s"Error creating game: ${err.error}").as(true)
+              case Right(snapshot) =>
+                client.startLobby(fresh.id, snapshot.id).flatMap {
+                  case Right(updated) =>
+                    lobbyRef.set(Some(updated)) *>
+                      gameIdRef.set(Some(snapshot.id)) *>
+                      flippedRef.get.flatMap(flipped =>
+                        Console.printLine(
+                          DtoRenderer.render(snapshot.state, flipped)
+                        )
+                      ) *>
+                      restartSubscriber(
+                        baseUri,
+                        backend,
+                        snapshot.id,
+                        flippedRef,
+                        subscriberHandle
+                      ).as(true)
+                  case Left(err) =>
+                    Console.printLine(s"Error starting lobby: $err").as(true)
+                }
+            }
+          case Left(err) =>
+            Console.printLine(s"Error refreshing lobby: $err").as(true)
+        }
+    }
 
   /** Interrupt the current SSE subscriber (if any) and start a fresh one
     * for the given gameId. Called on initial bootstrap and after each

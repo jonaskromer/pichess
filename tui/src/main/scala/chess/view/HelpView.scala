@@ -20,6 +20,14 @@ object HelpView:
        |  help                 Show this help screen
        |  quit                 Exit this TUI session (gateway keeps running)
        |
+       |LOBBIES
+       |  host [public|private]  Create a lobby (defaults to public)
+       |  join <invite-code>     Join an existing lobby by its 6-char code
+       |  lobbies                List public waiting lobbies
+       |  lobby                  Show current lobby status (refreshes from server)
+       |  start                  Host-only: start the game once a guest has joined
+       |  local                  Start a local game (alias for `new`)
+       |
        |IMPORT / EXPORT
        |  The 'load' command accepts FEN, PGN, or JSON — the format is detected
        |  automatically. The 'export' command requires a format argument.

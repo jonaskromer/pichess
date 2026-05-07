@@ -42,9 +42,12 @@ object WebController:
   def routes(
       client: ZioGameService.GameServiceClient,
       registry: SessionRegistry,
-      cache: AnnotationCache
-  ): Routes[Any, Response] =
-    tapirRoutes(client, registry, cache) ++ rawRoutes(client)
+      cache: AnnotationCache,
+      lobbyBaseUrl: String
+  ): Routes[Client, Response] =
+    tapirRoutes(client, registry, cache) ++
+      rawRoutes(client) ++
+      LobbyProxy.routes(lobbyBaseUrl)
 
   // --------------------------------------------------------------------------
   // Tapir-backed JSON API
@@ -117,6 +120,16 @@ object WebController:
         },
         Endpoints.getExport.zServerLogic[Any] { case (id, format) =>
           exportInFormat(client, id, format)
+        },
+        Endpoints.postRegisterPlayers.zServerLogic[Any] { case (id, req) =>
+          // Internal coordination from lobby-service. Overwrites any
+          // previous local-only registration for `id` so both lobby
+          // players can mutate the game; spectators stay SSE-only.
+          req.guestSessionId match
+            case Some(guest) =>
+              registry.registerLobby(id, req.hostSessionId, guest)
+            case None =>
+              registry.registerLocal(id, req.hostSessionId)
         }
       )
     )

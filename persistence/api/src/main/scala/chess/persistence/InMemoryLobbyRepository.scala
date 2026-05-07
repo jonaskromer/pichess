@@ -1,6 +1,6 @@
 package chess.persistence
 
-import chess.model.{InviteCode, Lobby, LobbyError, LobbyId}
+import chess.model.{InviteCode, Lobby, LobbyError, LobbyId, LobbyStatus, LobbyVisibility}
 import zio.*
 
 final class InMemoryLobbyRepository(store: Ref[Map[LobbyId, Lobby]])
@@ -20,6 +20,17 @@ final class InMemoryLobbyRepository(store: Ref[Map[LobbyId, Lobby]])
 
   def delete(id: LobbyId): IO[LobbyError, Unit] =
     store.update(_ - id)
+
+  def listPublicWaiting(): IO[LobbyError, List[Lobby]] =
+    store.get.map(
+      _.values
+        .filter(l =>
+          l.visibility == LobbyVisibility.Public &&
+            l.status == LobbyStatus.Waiting
+        )
+        .toList
+        .sortBy(_.createdAt)
+    )
 
 object InMemoryLobbyRepository:
   val layer: ULayer[LobbyRepository] =

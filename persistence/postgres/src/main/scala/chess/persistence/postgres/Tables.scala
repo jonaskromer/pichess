@@ -33,7 +33,13 @@ object Tables:
       id: LobbyId,
       inviteCode: String,
       hostNickname: String,
+      hostSessionId: String,
       guestNickname: Option[String],
+      guestSessionId: Option[String],
+      visibility: String,
+      allowUndo: Boolean,
+      allowSpectate: Boolean,
+      spectatorLimit: Int,
       status: String,
       gameId: Option[GameId],
       createdAt: Long,
@@ -45,8 +51,15 @@ object Tables:
     def id: Rep[LobbyId] = column[LobbyId]("id", O.PrimaryKey)
     def inviteCode: Rep[String] = column[String]("invite_code", O.Unique)
     def hostNickname: Rep[String] = column[String]("host_nickname")
+    def hostSessionId: Rep[String] = column[String]("host_session_id")
     def guestNickname: Rep[Option[String]] =
       column[Option[String]]("guest_nickname")
+    def guestSessionId: Rep[Option[String]] =
+      column[Option[String]]("guest_session_id")
+    def visibility: Rep[String] = column[String]("visibility")
+    def allowUndo: Rep[Boolean] = column[Boolean]("allow_undo")
+    def allowSpectate: Rep[Boolean] = column[Boolean]("allow_spectate")
+    def spectatorLimit: Rep[Int] = column[Int]("spectator_limit")
     def status: Rep[String] = column[String]("status")
     def gameId: Rep[Option[GameId]] = column[Option[GameId]]("game_id")
     def createdAt: Rep[Long] = column[Long]("created_at")
@@ -57,7 +70,13 @@ object Tables:
         id,
         inviteCode,
         hostNickname,
+        hostSessionId,
         guestNickname,
+        guestSessionId,
+        visibility,
+        allowUndo,
+        allowSpectate,
+        spectatorLimit,
         status,
         gameId,
         createdAt,

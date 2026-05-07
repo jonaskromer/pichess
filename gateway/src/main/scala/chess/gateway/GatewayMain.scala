@@ -1,6 +1,11 @@
 package chess.gateway
 
-import chess.controller.{AnnotationCache, SessionRegistry, WebController}
+import chess.controller.{
+  AnnotationCache,
+  LobbyProxy,
+  SessionRegistry,
+  WebController
+}
 import io.grpc.ManagedChannelBuilder
 import pichess.game_service.ZioGameService
 import scalapb.zio_grpc.ZManagedChannel
@@ -40,24 +45,31 @@ object GatewayMain extends ZIOAppDefault:
       .map(_.filter(_.trim.nonEmpty).getOrElse(defaultGameServiceTarget))
 
   private def serve(httpPort: Int, target: String): Task[Unit] =
-    val program: ZIO[ZioGameService.GameServiceClient & Server, Throwable, Unit] =
+    val program: ZIO[
+      ZioGameService.GameServiceClient & Server & Client,
+      Throwable,
+      Unit
+    ] =
       for
-        client   <- ZIO.service[ZioGameService.GameServiceClient]
-        registry <- SessionRegistry.make
-        cache    <- AnnotationCache.make
-        _        <- Console.printLine(
-                      s"pichess-gateway HTTP listening on 0.0.0.0:$httpPort (game-service=$target)"
-                    )
-        _        <- Server.install(
-                      WebController.routes(client, registry, cache)
-                    )
+        client       <- ZIO.service[ZioGameService.GameServiceClient]
+        registry     <- SessionRegistry.make
+        cache        <- AnnotationCache.make
+        lobbyBaseUrl <- LobbyProxy.baseUrlFromEnv
+        _            <- Console.printLine(
+                          s"pichess-gateway HTTP listening on 0.0.0.0:$httpPort " +
+                            s"(game-service=$target, lobby-service=$lobbyBaseUrl)"
+                        )
+        _            <- Server.install(
+                          WebController.routes(client, registry, cache, lobbyBaseUrl)
+                        )
         // Run forever; the gateway is no longer killable from a network
         // request — `docker stop` / SIGTERM is the only shutdown path.
-        _      <- ZIO.never
+        _            <- ZIO.never
       yield ()
 
     program.provide(
       Server.defaultWithPort(httpPort),
+      Client.default,
       ZioGameService.GameServiceClient.live(
         ZManagedChannel(
           ManagedChannelBuilder.forTarget(target).usePlaintext()

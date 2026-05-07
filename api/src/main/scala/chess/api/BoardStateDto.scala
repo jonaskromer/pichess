@@ -115,6 +115,26 @@ object GameSnapshot:
   given JsonEncoder[GameSnapshot] = DeriveJsonEncoder.gen[GameSnapshot]
   given JsonDecoder[GameSnapshot] = DeriveJsonDecoder.gen[GameSnapshot]
 
+/** Body for `POST /internal/games/{id}/players`. Lobby-service calls this
+  * when a hosted lobby starts a game so the gateway swaps the local-only
+  * session registration for the lobby's actual host+guest pair.
+  *
+  * Internal coordination only — the endpoint is intentionally absent from
+  * the public Swagger surface (Endpoints.all). Production deployments
+  * should add a shared-secret check before exposing this route on a
+  * public-facing gateway port.
+  */
+final case class RegisterPlayersRequest(
+    hostSessionId: String,
+    guestSessionId: Option[String]
+)
+
+object RegisterPlayersRequest:
+  given JsonEncoder[RegisterPlayersRequest] =
+    DeriveJsonEncoder.gen[RegisterPlayersRequest]
+  given JsonDecoder[RegisterPlayersRequest] =
+    DeriveJsonDecoder.gen[RegisterPlayersRequest]
+
 /** Discriminated response for `GET /api/state`.
   *
   * The endpoint takes an optional `?format=` query parameter:

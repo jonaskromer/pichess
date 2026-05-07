@@ -479,6 +479,7 @@ lazy val lobbyService = project
   .in(file("lobby-service"))
   .dependsOn(
     domain.jvm,
+    api.jvm,
     persistenceApi,
     persistenceRuntime
   )
@@ -493,6 +494,9 @@ lazy val lobbyService = project
       "com.softwaremill.sttp.tapir" %% "tapir-core"            % tapirVersion,
       "com.softwaremill.sttp.tapir" %% "tapir-json-zio"        % tapirVersion,
       "com.softwaremill.sttp.tapir" %% "tapir-zio-http-server" % tapirVersion,
+      // Outbound HTTP to the gateway (internal /players hand-off).
+      "com.softwaremill.sttp.tapir"   %% "tapir-sttp-client" % tapirVersion,
+      "com.softwaremill.sttp.client3" %% "zio"               % "3.11.0",
     ),
     Docker / packageName := "pichess-lobby-service",
     Docker / version     := "latest",
@@ -589,6 +593,10 @@ lazy val tui = project
     libraryDependencies ++= Seq(
       "com.softwaremill.sttp.tapir"   %% "tapir-sttp-client" % tapirVersion,
       "com.softwaremill.sttp.client3" %% "zio"               % "3.11.0",
+      // Lobby JSON wire types are decoded in TuiClient — gateway proxies
+      // /lobbies/* to the lobby-service so we don't need a Tapir contract,
+      // just a small zio-json codec mirror of the fields we read.
+      "dev.zio"                       %% "zio-json"          % zioJsonVersion,
     ),
     Docker / packageName := "pichess-tui",
     Docker / version     := "latest",

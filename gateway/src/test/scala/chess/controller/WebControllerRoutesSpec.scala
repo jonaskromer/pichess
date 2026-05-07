@@ -43,7 +43,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
   private val testSession: String = "session-test-aaa"
 
   private def runWith[A](
-      body: Routes[Any, Response] => ZIO[Scope, Throwable, A]
+      body: Routes[Client, Response] => ZIO[Scope & Client, Throwable, A]
   ): ZIO[Any, Throwable, A] =
     for
       // System.nanoTime gives a unique name across tests; ZIO test's
@@ -54,9 +54,21 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
                  client   <- ZIO.service[ZioGameService.GameServiceClient]
                  registry <- chess.controller.SessionRegistry.make
                  cache    <- chess.controller.AnnotationCache.make
-                 routes    = WebController.routes(client, registry, cache)
+                 // Tests don't exercise the lobby proxy — pass any URL.
+                 routes    = WebController.routes(
+                               client,
+                               registry,
+                               cache,
+                               "http://lobby-service:8092"
+                             )
                  result   <- body(routes)
-               yield result).provideSomeLayer[Scope](grpcLayer(name))
+               // The routes now require a Client because the lobby proxy
+               // forwards via zio-http's outbound client. Tests don't hit
+               // the proxy paths but the routes type carries the Client
+               // requirement, so provide a default one for the layer.
+               yield result).provideSomeLayer[Scope](
+                 grpcLayer(name) ++ Client.default
+               )
              }
     yield out
 
@@ -65,7 +77,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
     req.addHeader(Header.Custom("X-Session-Id", session))
 
   /** Helper: create a fresh game via POST /api/games and return its id. */
-  private def createGame(routes: Routes[Any, Response]): ZIO[Scope, Throwable, String] =
+  private def createGame(routes: Routes[Client, Response]): ZIO[Scope & Client, Throwable, String] =
     for
       response <- routes.runZIO(
                     withSession(

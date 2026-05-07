@@ -1,6 +1,13 @@
 package chess.persistence.cache
 
-import chess.model.{InviteCode, Lobby, LobbyError, LobbyId, LobbyStatus}
+import chess.model.{
+  InviteCode,
+  Lobby,
+  LobbyError,
+  LobbyId,
+  LobbyStatus,
+  LobbyVisibility
+}
 import chess.persistence.{InMemoryLobbyRepository, LobbyRepository}
 import zio.*
 import zio.test.*
@@ -20,6 +27,7 @@ object CachedLobbyRepositorySpec extends ZIOSpecDefault:
       reads.update(_ + 1) *> inner.findByInviteCode(code)
     def update(lobby: Lobby) = updates.update(_ + 1) *> inner.update(lobby)
     def delete(id: LobbyId) = deletes.update(_ + 1) *> inner.delete(id)
+    def listPublicWaiting() = reads.update(_ + 1) *> inner.listPublicWaiting()
 
   private object CountingLobbyRepository:
     def make
@@ -38,7 +46,13 @@ object CachedLobbyRepositorySpec extends ZIOSpecDefault:
     id = "lobby-1",
     inviteCode = code,
     hostNickname = "alice",
+    hostSessionId = "session-host",
     guestNickname = None,
+    guestSessionId = None,
+    visibility = LobbyVisibility.Public,
+    allowUndo = true,
+    allowSpectate = true,
+    spectatorLimit = 8,
     status = LobbyStatus.Waiting,
     createdAt = 0L,
     gameId = None

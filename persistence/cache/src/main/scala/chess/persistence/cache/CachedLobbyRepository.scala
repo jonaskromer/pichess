@@ -38,6 +38,12 @@ final class CachedLobbyRepository(
   def delete(id: LobbyId): IO[LobbyError, Unit] =
     primary.delete(id) *> cache.delete(id)
 
+  /** The public-lobby list isn't worth caching: it's a low-frequency,
+    * always-changing aggregation. Always read straight from primary.
+    */
+  def listPublicWaiting(): IO[LobbyError, List[Lobby]] =
+    primary.listPublicWaiting()
+
 object CachedLobbyRepository:
 
   final case class Cache(repository: LobbyRepository)
