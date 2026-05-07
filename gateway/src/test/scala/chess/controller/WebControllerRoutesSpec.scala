@@ -245,5 +245,82 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
           body.contains("<html")
         )
       }
+    },
+    test("GET /api/games/{id}/legal-moves?from=e2 returns the pawn's targets") {
+      runWith { routes =>
+        for
+          id       <- createGame(routes)
+          response <- routes.runZIO(
+                        Request.get(url"/api/games/$id/legal-moves?from=e2")
+                      )
+          body     <- response.body.asString
+        yield assertTrue(
+          response.status == Status.Ok,
+          // The white e-pawn from the initial position can advance to e3
+          // or e4 — both should appear in the JSON list of moves.
+          body.contains("\"e3\""),
+          body.contains("\"e4\""),
+          body.contains("\"from\":\"e2\"")
+        )
+      }
+    },
+    test("GET /api/games/{id}/threats is empty in the initial position") {
+      runWith { routes =>
+        for
+          id       <- createGame(routes)
+          response <- routes.runZIO(Request.get(url"/api/games/$id/threats"))
+          body     <- response.body.asString
+        yield assertTrue(
+          response.status == Status.Ok,
+          // No piece is attacked at the start — the threatened list is `[]`.
+          body.contains("\"threatened\":[]")
+        )
+      }
+    },
+    test("GET /api/games/{id}/attackers?of=e4 is empty in the initial position") {
+      runWith { routes =>
+        for
+          id       <- createGame(routes)
+          response <- routes.runZIO(
+                        Request.get(url"/api/games/$id/attackers?of=e4")
+                      )
+          body     <- response.body.asString
+        yield assertTrue(
+          response.status == Status.Ok,
+          body.contains("\"of\":\"e4\""),
+          body.contains("\"attackers\":[]")
+        )
+      }
+    },
+    test("legal-moves cache invalidates after a successful move") {
+      // Sanity check that the post-move hook flushes the annotation cache:
+      // before any move, e2 has destinations {e3, e4}; after e2-e4, e2
+      // is empty (piece has moved) — its legal-moves list collapses to [].
+      runWith { routes =>
+        for
+          id       <- createGame(routes)
+          before   <- routes
+                        .runZIO(
+                          Request.get(url"/api/games/$id/legal-moves?from=e2")
+                        )
+                        .flatMap(_.body.asString)
+          _        <- routes.runZIO(
+                        withSession(
+                          Request.post(
+                            url"/api/games/$id/move",
+                            Body.fromString("""{"move":"e2 e4"}""")
+                          )
+                        )
+                      )
+          after    <- routes
+                        .runZIO(
+                          Request.get(url"/api/games/$id/legal-moves?from=e2")
+                        )
+                        .flatMap(_.body.asString)
+        yield assertTrue(
+          before.contains("\"e4\""),
+          after.contains("\"moves\":[]")
+        )
+      }
     }
   )

@@ -183,6 +183,56 @@ object Endpoints:
           + "Prefer GET /api/games/{id}/state?format=… for new clients."
       )
 
+  /** GET /api/games/{id}/legal-moves?from=<sq> — destinations the piece at
+    * `from` can legally move to. Powers the web-ui's move-preview overlay
+    * and the TUI's `preview <sq>` command. Server-side cached per
+    * `(gameId, position)` and invalidated whenever the game state changes.
+    */
+  val getLegalMoves: PublicEndpoint[
+    (GameId, String),
+    ErrorDto,
+    LegalMovesResponse,
+    Any
+  ] =
+    gameBase.get
+      .in("legal-moves")
+      .in(query[String]("from").description("Source square, e.g. e2"))
+      .out(jsonBody[LegalMovesResponse])
+      .name("getLegalMoves")
+      .description(
+        "Squares the piece on `from` can legally move to (king-safety filtered)."
+      )
+
+  /** GET /api/games/{id}/threats — squares of own pieces (active color)
+    * currently under attack. Powers the web-ui's threat-detection overlay.
+    */
+  val getThreats: PublicEndpoint[GameId, ErrorDto, ThreatsResponse, Any] =
+    gameBase.get
+      .in("threats")
+      .out(jsonBody[ThreatsResponse])
+      .name("getThreats")
+      .description("Own pieces (active color) under attack.")
+
+  /** GET /api/games/{id}/attackers?of=<sq> — squares of pieces attacking
+    * `of`. Caller decides which color: typically the UI passes a square
+    * that's currently threatened and gets back the opposing pieces
+    * threatening it.
+    */
+  val getAttackers: PublicEndpoint[
+    (GameId, String),
+    ErrorDto,
+    AttackersResponse,
+    Any
+  ] =
+    gameBase.get
+      .in("attackers")
+      .in(query[String]("of").description("Target square, e.g. e4"))
+      .out(jsonBody[AttackersResponse])
+      .name("getAttackers")
+      .description(
+        "Squares of opposing pieces attacking the given square."
+      )
+
   /** All public endpoints — useful for generating OpenAPI docs. The
     * internal coordination endpoint (`postRegisterPlayers`) is not in
     * this list so it doesn't show up in Swagger.
@@ -195,7 +245,10 @@ object Endpoints:
     postRedo,
     postDraw,
     postForfeit,
-    getExport
+    getExport,
+    getLegalMoves,
+    getThreats,
+    getAttackers
   )
 
   /** POST /internal/games/{id}/players — lobby-service hand-off.

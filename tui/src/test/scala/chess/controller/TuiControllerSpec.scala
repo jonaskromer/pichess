@@ -167,6 +167,17 @@ object TuiControllerSpec extends ZIOSpecDefault:
         assertTrue(
           TuiController.parseCommand("local") == TuiController.Command.Local
         )
+      },
+      test("parse preview <square>") {
+        assertTrue(
+          TuiController.parseCommand("preview e4") ==
+            TuiController.Command.Preview("e4")
+        )
+      },
+      test("parse threats") {
+        assertTrue(
+          TuiController.parseCommand("threats") == TuiController.Command.Threats
+        )
       }
     )
   )

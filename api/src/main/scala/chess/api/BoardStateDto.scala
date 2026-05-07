@@ -135,6 +135,45 @@ object RegisterPlayersRequest:
   given JsonDecoder[RegisterPlayersRequest] =
     DeriveJsonDecoder.gen[RegisterPlayersRequest]
 
+/** Response for `GET /api/games/{id}/legal-moves?from=<sq>` — the
+  * destinations the piece at `from` can legally move to. Pawn promotions
+  * collapse to one entry per destination (the promotion choice happens
+  * client-side via the existing promotion overlay). Empty list means
+  * either the square is empty, holds an opponent piece, or the piece is
+  * pinned with no legal move.
+  */
+final case class LegalMovesResponse(from: String, moves: List[String])
+
+object LegalMovesResponse:
+  given JsonEncoder[LegalMovesResponse] =
+    DeriveJsonEncoder.gen[LegalMovesResponse]
+  given JsonDecoder[LegalMovesResponse] =
+    DeriveJsonDecoder.gen[LegalMovesResponse]
+
+/** Response for `GET /api/games/{id}/threats` — squares of own pieces
+  * (active color) currently under attack by an opposing piece. Drives
+  * the web-ui's "red ring" highlight on threatened pieces.
+  */
+final case class ThreatsResponse(threatened: List[String])
+
+object ThreatsResponse:
+  given JsonEncoder[ThreatsResponse] =
+    DeriveJsonEncoder.gen[ThreatsResponse]
+  given JsonDecoder[ThreatsResponse] =
+    DeriveJsonDecoder.gen[ThreatsResponse]
+
+/** Response for `GET /api/games/{id}/attackers?of=<sq>` — squares of
+  * opposing pieces attacking `of`. Empty list when nothing attacks the
+  * square.
+  */
+final case class AttackersResponse(of: String, attackers: List[String])
+
+object AttackersResponse:
+  given JsonEncoder[AttackersResponse] =
+    DeriveJsonEncoder.gen[AttackersResponse]
+  given JsonDecoder[AttackersResponse] =
+    DeriveJsonDecoder.gen[AttackersResponse]
+
 /** Discriminated response for `GET /api/state`.
   *
   * The endpoint takes an optional `?format=` query parameter:

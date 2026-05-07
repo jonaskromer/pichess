@@ -36,6 +36,9 @@ object TuiController:
     /** Local game — alias for `new` that lines up with the web-ui's
       * "new game → local game" wording. */
     case Local
+    /** Phase 3: in-game annotations. */
+    case Preview(square: String)
+    case Threats
 
     /** Whitespace-only input — re-display the prompt without attempting a move.
       * Without this, an accidental enter would fall through to
@@ -51,6 +54,7 @@ object TuiController:
   private val exportPrefix = "export "
   private val joinPrefix = "join "
   private val hostPrefix = "host"
+  private val previewPrefix = "preview "
 
   def parseCommand(input: String): Command =
     val trimmed = input.trim
@@ -65,6 +69,8 @@ object TuiController:
         case _      => Command.Move(trimmed) // will fail as invalid move
     else if trimmed.startsWith(joinPrefix) then
       Command.Join(trimmed.drop(joinPrefix.length).trim)
+    else if trimmed.startsWith(previewPrefix) then
+      Command.Preview(trimmed.drop(previewPrefix.length).trim)
     else if trimmed == hostPrefix then
       // bare `host` = public lobby (matches the web-ui default)
       Command.Host(LobbyVisibility.Public)
@@ -87,4 +93,5 @@ object TuiController:
         case "lobby"   => Command.LobbyStatus
         case "start"   => Command.Start
         case "local"   => Command.Local
+        case "threats" => Command.Threats
         case raw       => Command.Move(raw)

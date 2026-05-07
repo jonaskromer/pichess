@@ -252,6 +252,10 @@ object TuiMain extends ZIOAppDefault:
         lobbyRef,
         subscriberHandle
       )
+    case Command.Preview(square) =>
+      previewMoves(client, gameIdRef, square)
+    case Command.Threats =>
+      printThreats(client, gameIdRef)
 
   /** Mint a new game (or load one), bind the SSE subscription to its id,
     * and render the initial state. Shared by `new` and `load`.
@@ -486,6 +490,55 @@ object TuiMain extends ZIOAppDefault:
             }
           case Left(err) =>
             Console.printLine(s"Error refreshing lobby: $err").as(true)
+        }
+    }
+
+  // --------------------------------------------------------------------------
+  // Annotation command handlers (Phase 3). Backed by the gateway's cache,
+  // so successive calls between mutations are cheap.
+  // --------------------------------------------------------------------------
+
+  private def previewMoves(
+      client: TuiClient,
+      gameIdRef: Ref[Option[String]],
+      square: String
+  ): Task[Boolean] =
+    val sq = square.trim.toLowerCase
+    if sq.isEmpty then Console.printLine("Usage: preview <square>").as(true)
+    else
+      gameIdRef.get.flatMap {
+        case None =>
+          Console.printLine("(no active game — type 'new' or 'host')").as(true)
+        case Some(id) =>
+          client.legalMoves(id, sq).flatMap {
+            case Right(r) if r.moves.isEmpty =>
+              Console.printLine(s"No legal moves from $sq").as(true)
+            case Right(r) =>
+              Console
+                .printLine(s"From $sq → ${r.moves.mkString(", ")}")
+                .as(true)
+            case Left(err) =>
+              Console.printLine(s"Error: ${err.error}").as(true)
+          }
+      }
+
+  private def printThreats(
+      client: TuiClient,
+      gameIdRef: Ref[Option[String]]
+  ): Task[Boolean] =
+    gameIdRef.get.flatMap {
+      case None =>
+        Console.printLine("(no active game — type 'new' or 'host')").as(true)
+      case Some(id) =>
+        client.threats(id).flatMap {
+          case Right(r) if r.threatened.isEmpty =>
+            Console.printLine("No own pieces under attack.").as(true)
+          case Right(r) =>
+            Console
+              .printLine(s"Threatened: ${r.threatened.mkString(", ")}")
+              .as(true)
+          case Left(err) =>
+            Console.printLine(s"Error: ${err.error}").as(true)
         }
     }
 

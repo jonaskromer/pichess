@@ -130,6 +130,22 @@ object Main:
     */
   private val gameIdVar: Var[Option[String]] = Var(None)
 
+  // --- Phase 3 in-game annotation state ------------------------------------
+  // Per-tab toggles. Off by default so the board behaves the same as before
+  // for users who haven't opted in to the overlay UI.
+  private val movePreviewVar: Var[Boolean] = Var(false)
+  private val threatDetectionVar: Var[Boolean] = Var(false)
+  // Currently-displayed legal-move destinations from a clicked source square.
+  // Cleared on every new state push and on every toggle change.
+  private val previewFromVar: Var[Option[String]] = Var(None)
+  private val previewMovesVar: Var[Set[String]] = Var(Set.empty)
+  // Squares of own pieces under attack — refreshed from /threats whenever
+  // stateVar changes (and threatDetection is on).
+  private val threatsVar: Var[Set[String]] = Var(Set.empty)
+  // When the user clicks a threatened piece, /attackers populates this.
+  // Cleared on state change.
+  private val attackersVar: Var[Set[String]] = Var(Set.empty)
+
   /** Top-level screen the user is on. Mirrors the URL hash — see
     * `parseHash` / `hashFor`. Treat the URL as the source of truth so
     * the back button just works.
@@ -278,6 +294,26 @@ object Main:
         currentScreenVar.signal.distinct.foreach {
           case Screen.Game(id) => enterGame(id)
           case _               => ()
+        }(using ctx.owner)
+        // Phase 3: any state change (move, undo, redo, SSE push) clears
+        // the per-click preview and triggers a fresh /threats fetch
+        // when the toggle is on. `.distinct` so a no-op set doesn't
+        // re-fire the network call.
+        stateVar.signal.distinct.foreach { _ =>
+          clearPreviewState()
+          if threatDetectionVar.now() then refreshThreats()
+        }(using ctx.owner)
+        // Toggling threatDetection on should immediately fetch /threats so
+        // the rings appear without waiting for the next move; toggling off
+        // should clear them.
+        threatDetectionVar.signal.distinct.foreach { on =>
+          if on then refreshThreats()
+          else threatsVar.set(Set.empty)
+        }(using ctx.owner)
+        // movePreview off → drop any in-flight overlay so the board
+        // returns to a clean baseline.
+        movePreviewVar.signal.distinct.foreach { on =>
+          if !on then clearPreviewState()
         }(using ctx.owner)
         // Document-level pointer listeners drive the drag's middle and
         // end. We don't rely on setPointerCapture — when the source
@@ -678,6 +714,23 @@ object Main:
     div(
       className := squareClasses,
       dataAttr("pos") := sq.pos,
+      // Phase 3 annotation classes — driven by the per-tab toggles +
+      // server responses to /legal-moves, /threats, /attackers. Each is
+      // wired through `cls(name) <-- signal` so toggling the var flips
+      // the class without re-rendering the whole board.
+      cls("is-preview-source") <-- previewFromVar.signal
+        .map(_.contains(sq.pos))
+        .distinct,
+      cls("is-preview-dest") <-- previewMovesVar.signal
+        .map(_.contains(sq.pos))
+        .distinct,
+      cls("is-threatened") <-- threatsVar.signal
+        .map(_.contains(sq.pos))
+        .distinct,
+      cls("is-attacker") <-- attackersVar.signal
+        .map(_.contains(sq.pos))
+        .distinct,
+      onClick --> { _ => onSquareClick(sq) },
       sq.piece.map { name =>
         span(
           className := s"piece ${sq.pieceColor.getOrElse("")}-piece",
@@ -761,7 +814,34 @@ object Main:
       // board as a panel header (see boardArea below). Sidebar focuses on
       // the move log + action buttons.
       moveLogContainer(),
+      annotationToggles(),
       controls()
+    )
+
+  /** Per-game annotation toggles. Off by default so users who haven't
+    * opted in keep the original drag-only experience. Both are per-tab
+    * state — a fresh tab boots with both off; the existing settings
+    * screen handles the cross-session bits (nickname, theme).
+    */
+  private def annotationToggles(): HtmlElement =
+    div(
+      className := "annotation-toggles",
+      label(
+        input(
+          typ := "checkbox",
+          checked <-- movePreviewVar.signal,
+          onChange.mapToChecked --> movePreviewVar.writer
+        ),
+        " Move preview"
+      ),
+      label(
+        input(
+          typ := "checkbox",
+          checked <-- threatDetectionVar.signal,
+          onChange.mapToChecked --> threatDetectionVar.writer
+        ),
+        " Threat detection"
+      )
     )
 
   private def statusIndicator(): HtmlElement =
@@ -1311,6 +1391,24 @@ object Main:
       None,
       backend
     )
+  private val getLegalMovesClient =
+    SttpClientInterpreter().toClientThrowDecodeFailures(
+      Endpoints.getLegalMoves,
+      None,
+      backend
+    )
+  private val getThreatsClient =
+    SttpClientInterpreter().toClientThrowDecodeFailures(
+      Endpoints.getThreats,
+      None,
+      backend
+    )
+  private val getAttackersClient =
+    SttpClientInterpreter().toClientThrowDecodeFailures(
+      Endpoints.getAttackers,
+      None,
+      backend
+    )
 
   // Track the SSE handle so we can close + reopen it whenever gameIdVar
   // flips to a new id (e.g. after `new game`).
@@ -1540,6 +1638,82 @@ object Main:
     else if Logic.isPawnPromotion(from, to, state) then
       pendingPromotionVar.set(Some(PendingPromotion(from, to)))
     else postMove(s"$from $to")
+
+  // --------------------------------------------------------------------------
+  // Phase 3: annotation overlay handlers (move preview + threat detection).
+  // --------------------------------------------------------------------------
+
+  /** Square click handler. Drives both the click-to-preview interaction
+    * (movePreview) and click-to-move when a destination on the existing
+    * preview is selected. With both toggles off this is a no-op so the
+    * existing drag-to-move flow is unaffected.
+    */
+  private def onSquareClick(sq: SquareDto): Unit =
+    if !movePreviewVar.now() then ()
+    else
+      val pos = sq.pos
+      val previewing = previewFromVar.now()
+      val moves = previewMovesVar.now()
+      stateVar.now() match
+        case None => ()
+        case Some(state) =>
+          if previewing.contains(pos) then
+            // Clicking the source again deselects.
+            clearPreviewState()
+          else if previewing.isDefined && moves.contains(pos) then
+            // Click-to-move: a preview is open and the user clicked a
+            // destination square — fire the move just like a drag drop.
+            attemptMove(previewing.get, pos, state)
+            clearPreviewState()
+          else
+            sq.piece match
+              case Some(_) if sq.pieceColor.contains(state.activeColor) =>
+                fetchPreview(pos)
+                if threatDetectionVar.now() && threatsVar.now().contains(pos)
+                then fetchAttackers(pos)
+                else attackersVar.set(Set.empty)
+              case _ =>
+                clearPreviewState()
+
+  private def clearPreviewState(): Unit =
+    previewFromVar.set(None)
+    previewMovesVar.set(Set.empty)
+    attackersVar.set(Set.empty)
+
+  private def fetchPreview(from: String): Unit =
+    gameIdVar.now() match
+      case None => ()
+      case Some(id) =>
+        getLegalMovesClient((id, from)).foreach {
+          case Right(resp) =>
+            previewFromVar.set(Some(from))
+            previewMovesVar.set(resp.moves.toSet)
+          case Left(err) =>
+            showToast(err.error)
+            clearPreviewState()
+        }
+
+  private def fetchAttackers(of: String): Unit =
+    gameIdVar.now() match
+      case None => ()
+      case Some(id) =>
+        getAttackersClient((id, of)).foreach {
+          case Right(resp) => attackersVar.set(resp.attackers.toSet)
+          case Left(_)     => attackersVar.set(Set.empty)
+        }
+
+  /** Refresh the threat overlay for the active color. Called whenever
+    * stateVar changes (and threatDetection is on) so the red rings stay
+    * in sync after every move from any source (drag, click, SSE push).
+    */
+  private def refreshThreats(): Unit =
+    gameIdVar.now() match
+      case None => threatsVar.set(Set.empty)
+      case Some(id) =>
+        getThreatsClient(id).foreach {
+          case Right(resp) => threatsVar.set(resp.threatened.toSet)
+          case Left(_)     => threatsVar.set(Set.empty)
+        }
 
   /** Pure-arithmetic hit-test. The board is always 8 × 8 with no gaps,
     * so given its bounding rect we can compute the target square

@@ -683,6 +683,46 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
 .square.last-move-from.dark  { background: rgba(212, 128, 78, 0.85); }
 .square.last-move-to.light   { background: rgba(252, 200, 158, 0.85); }
 .square.last-move-to.dark    { background: rgba(212, 128, 78, 0.85); }
+
+/* Phase 3 annotation overlays. Driven by per-tab toggles in the sidebar
+   (Move preview / Threat detection); rules-engine results stream in via
+   /legal-moves, /threats, /attackers and translate into these classes
+   in renderSquare. Rings + dots so they layer cleanly on top of the
+   existing in-check / last-move styles without changing the base bg. */
+.square.is-preview-source {
+  box-shadow: inset 0 0 0 0.1875rem rgba(54, 122, 189, 0.7);
+}
+.square.is-preview-dest::before {
+  content: '';
+  position: absolute;
+  inset: 30%;
+  border-radius: 50%;
+  background: rgba(54, 122, 189, 0.5);
+  pointer-events: none;
+}
+.square.is-threatened {
+  box-shadow: inset 0 0 0 0.1875rem rgba(220, 40, 40, 0.55);
+}
+.square.is-attacker::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 0.1875rem dashed rgba(220, 40, 40, 0.85);
+  border-radius: 0.25rem;
+  pointer-events: none;
+}
+
+/* Sidebar toggle group for the annotation switches. Compact, inherits
+   the sidebar's existing notebook styling — a more polished pass can
+   come later. */
+.annotation-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.875rem;
+  margin: 0.5rem 0;
+}
+.annotation-toggles label { cursor: pointer; }
 .piece {
   cursor: grab;
   line-height: 1;

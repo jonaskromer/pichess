@@ -172,6 +172,64 @@ object MoveValidator:
 
   // ─── Legal move detection ─────────────────────────────────────────────────
 
+  /** Every square the piece at `from` can legally move to from `state`,
+    * with king-safety filtering applied (i.e. moves that would leave the
+    * active king in check are excluded). Returns `Nil` when:
+    *   - there's no piece at `from`,
+    *   - the piece doesn't belong to the active color,
+    *   - the piece has no legal destination (pinned, blocked, …).
+    *
+    * Used by the gateway's `/legal-moves` annotation endpoint to power the
+    * web-ui's move-preview overlay. Pawn promotions collapse to a single
+    * destination — the UI doesn't need to know which promotion piece.
+    */
+  def legalMovesFrom(
+      state: GameState,
+      from: Position
+  ): IO[GameError, List[Position]] =
+    state.board.get(from) match
+      case None =>
+        ZIO.succeed(Nil)
+      case Some(piece) if piece.color != state.activeColor =>
+        ZIO.succeed(Nil)
+      case Some(piece) =>
+        val candidates = candidateMoves(state, from, piece)
+        ZIO
+          .filter(candidates) { move =>
+            // applyMoveCore runs the same legality + king-safety check the
+            // controller would. A failure means the move is illegal for any
+            // reason (geometry, leaves king in check, castling restriction,
+            // etc.) — squelch it to a `false` for the filter.
+            Game
+              .applyMoveCore(state, move)
+              .as(true)
+              .catchAll(_ => ZIO.succeed(false))
+          }
+          // `candidates` for promotions emits one Move per piece type; the
+          // destinations dedupe naturally via `.distinct` here.
+          .map(_.map(_.to).distinct)
+
+  /** Every square holding a piece of `byColor` that attacks `square`.
+    * Used by the gateway's `/attackers` annotation endpoint to render a
+    * "who's attacking this piece" overlay in the web-ui. Pure — only the
+    * board geometry is consulted, not the rest of the game state.
+    *
+    * `byColor` is the *attacker's* color (e.g. pass `Color.Black` to find
+    * the black pieces threatening a white piece). This deliberately mirrors
+    * the way callers think about it ("who is attacking me?"), unlike
+    * [[isSquareAttacked]] which takes the defender's color.
+    */
+  def attackersOf(
+      board: Board,
+      square: Position,
+      byColor: Color
+  ): List[Position] =
+    board.toList.collect {
+      case (pos, piece)
+          if piece.color == byColor && canAttack(board, pos, piece, square) =>
+        pos
+    }
+
   def hasLegalMove(state: GameState): IO[GameError, Boolean] =
     val color = state.activeColor
     val pieces = state.board.toList.collect {

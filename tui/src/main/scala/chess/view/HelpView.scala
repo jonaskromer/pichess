@@ -28,6 +28,10 @@ object HelpView:
        |  start                  Host-only: start the game once a guest has joined
        |  local                  Start a local game (alias for `new`)
        |
+       |ANNOTATIONS
+       |  preview <square>       Show legal destinations for the piece on <square>
+       |  threats                List own pieces (active color) currently under attack
+       |
        |IMPORT / EXPORT
        |  The 'load' command accepts FEN, PGN, or JSON — the format is detected
        |  automatically. The 'export' command requires a format argument.

@@ -1,15 +1,20 @@
 package chess.controller
 
 import chess.api.{
+  AttackersResponse,
   BoardStateDto,
   Endpoints,
   ErrorDto,
   ExportResponse,
   GameSnapshot,
-  StateResponse
+  LegalMovesResponse,
+  StateResponse,
+  ThreatsResponse
 }
 import chess.codec.FenParserRegex
+import chess.model.board.{GameState, Position}
 import chess.model.piece.Color
+import chess.model.rules.MoveValidator
 import chess.view.{HtmlPage, WebBoardView}
 import io.grpc.StatusException
 import pichess.game_service.{
@@ -130,9 +135,110 @@ object WebController:
               registry.registerLobby(id, req.hostSessionId, guest)
             case None =>
               registry.registerLocal(id, req.hostSessionId)
+        },
+        Endpoints.getLegalMoves.zServerLogic[Any] { case (id, from) =>
+          annotationsFor(client, cache, id).map { ann =>
+            // Empty list when the source square doesn't appear in the cache
+            // (no active-color piece there). Same shape the rules helper
+            // returns directly, so the UI doesn't need a special branch.
+            LegalMovesResponse(
+              from = from,
+              moves = ann.legalMovesFrom.getOrElse(from, Nil)
+            )
+          }
+        },
+        Endpoints.getThreats.zServerLogic[Any] { id =>
+          annotationsFor(client, cache, id).map(ann =>
+            ThreatsResponse(threatened = ann.threats)
+          )
+        },
+        Endpoints.getAttackers.zServerLogic[Any] { case (id, of) =>
+          annotationsFor(client, cache, id).map { ann =>
+            AttackersResponse(
+              of = of,
+              attackers = ann.attackersOf.getOrElse(of, Nil)
+            )
+          }
         }
       )
     )
+
+  /** Cache-aware accessor for the annotation bundle of `gameId`. On hit,
+    * returns the cached bundle directly. On miss, fetches the FEN from
+    * gameService, parses it back into a GameState, computes
+    * legalMovesFrom for every active-color piece + threats + attackersOf
+    * for each threatened square, then writes the bundle to the cache.
+    *
+    * Invalidation is the responsibility of the mutation handlers
+    * (`postMove` / undo / redo / draw / forfeit) — they all call
+    * `cache.invalidate(id)` after a successful mutation.
+    */
+  private def annotationsFor(
+      client: ZioGameService.GameServiceClient,
+      cache: AnnotationCache,
+      gameId: String
+  ): ZIO[Any, ErrorDto, AnnotationCache.Annotations] =
+    cache.get(gameId).flatMap {
+      case Some(cached) => ZIO.succeed(cached)
+      case None         =>
+        for
+          reply  <- client.getState(GameIdRequest(gameId)).mapError(toErrorDto)
+          state  <- FenParserRegex
+                      .parse(reply.fen)
+                      .mapError(err => ErrorDto(err.message))
+          ann    <- computeAnnotations(state)
+          _      <- cache.put(gameId, ann)
+        yield ann
+    }
+
+  /** Build the full annotation bundle from a `GameState`. Iterates every
+    * active-color piece and asks the rules engine for legal moves;
+    * computes the threat list (own pieces attacked); then for each
+    * threatened square asks who's attacking it. Errors out via
+    * `ErrorDto` so the surrounding effect can short-circuit cleanly.
+    */
+  private def computeAnnotations(
+      state: GameState
+  ): ZIO[Any, ErrorDto, AnnotationCache.Annotations] =
+    val ownSquares = state.board.toList.collect {
+      case (pos, piece) if piece.color == state.activeColor => pos
+    }
+    val opponent =
+      if state.activeColor == Color.White then Color.Black else Color.White
+
+    for
+      // legalMovesFrom: per active-color piece, ask the rules engine.
+      perSource <- ZIO.foreach(ownSquares) { src =>
+                     MoveValidator
+                       .legalMovesFrom(state, src)
+                       .mapBoth(
+                         err => ErrorDto(err.toString),
+                         dests => squareKey(src) -> dests.map(squareKey)
+                       )
+                   }
+      legalMap = perSource.toMap.filter { case (_, dests) => dests.nonEmpty }
+      // threats: iterate active-color pieces, keep those squares that
+      // happen to be attacked by any opposing piece.
+      threats = ownSquares.filter(sq =>
+                  MoveValidator.isSquareAttacked(state.board, sq, state.activeColor)
+                )
+      // attackersOf: only build entries for the squares that are actually
+      // threatened — saves work and avoids polluting the cache with empty
+      // lists for every non-threatened own piece.
+      attackerEntries = threats.map { sq =>
+                          squareKey(sq) ->
+                            MoveValidator
+                              .attackersOf(state.board, sq, opponent)
+                              .map(squareKey)
+                        }
+    yield AnnotationCache.Annotations(
+      legalMovesFrom = legalMap,
+      threats = threats.map(squareKey),
+      attackersOf = attackerEntries.toMap
+    )
+
+  /** Canonical square label used on the wire — e.g. Position('e', 4) → "e4". */
+  private def squareKey(p: Position): String = s"${p.col}${p.row}"
 
   /** Wrap a mutation handler in a session-id check. Refuses with a
     * "Forbidden: ..." 400 when the session isn't a registered active

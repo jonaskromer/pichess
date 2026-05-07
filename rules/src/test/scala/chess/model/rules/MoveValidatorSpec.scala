@@ -833,5 +833,190 @@ object MoveValidatorSpec extends ZIOSpecDefault:
         for result <- MoveValidator.hasLegalMove(s)
         yield assertTrue(result)
       }
+    ),
+
+    // ─── legalMovesFrom ─────────────────────────────────────────────────────
+    suite("legalMovesFrom")(
+      test("empty for an empty square") {
+        for result <- MoveValidator.legalMovesFrom(state(), pos('e', 4))
+        yield assertTrue(result.isEmpty)
+      },
+      test("empty when the piece belongs to the inactive color") {
+        // White is to move, ask about a black piece — must come back empty
+        // even though that black piece has legal moves on its own turn.
+        val s = state(pos('e', 7) -> BP, pos('h', 1) -> WK, pos('a', 8) -> BK)
+        for result <- MoveValidator.legalMovesFrom(s, pos('e', 7))
+        yield assertTrue(result.isEmpty)
+      },
+      test("white pawn on starting rank can advance one or two squares") {
+        val s = state(pos('e', 2) -> WP, pos('e', 1) -> WK, pos('e', 8) -> BK)
+        for result <- MoveValidator.legalMovesFrom(s, pos('e', 2))
+        yield assertTrue(
+          result.toSet == Set(pos('e', 3), pos('e', 4))
+        )
+      },
+      test("knight on b1 reaches its three open squares") {
+        // Knight on b1 attacks a3, c3, d2. With only the king elsewhere,
+        // all three are legal (none of them expose the king to check).
+        val s = state(
+          pos('b', 1) -> WN,
+          pos('e', 1) -> WK,
+          pos('e', 8) -> BK
+        )
+        for result <- MoveValidator.legalMovesFrom(s, pos('b', 1))
+        yield assertTrue(
+          result.toSet == Set(pos('a', 3), pos('c', 3), pos('d', 2))
+        )
+      },
+      test("pinned piece has no legal moves") {
+        // White rook on e2 is pinned to the king on e1 by a black queen on e8.
+        // Moving anywhere off the e-file would expose the king to check.
+        val s = state(
+          pos('e', 1) -> WK,
+          pos('e', 2) -> WR,
+          pos('e', 8) -> BQ,
+          pos('a', 8) -> BK
+        )
+        for result <- MoveValidator.legalMovesFrom(s, pos('e', 2))
+        yield assertTrue(
+          // Only legal moves are along the pin ray (e3..e7) — capturing
+          // the queen on e8 is also legal since the rook stays pinned.
+          result.toSet == Set(
+            pos('e', 3),
+            pos('e', 4),
+            pos('e', 5),
+            pos('e', 6),
+            pos('e', 7),
+            pos('e', 8)
+          )
+        )
+      },
+      test("white can castle kingside when the lane is clear") {
+        val s = GameState(
+          Map(
+            pos('e', 1) -> WK,
+            pos('h', 1) -> WR,
+            pos('e', 8) -> BK
+          ),
+          Color.White
+        )
+        for result <- MoveValidator.legalMovesFrom(s, pos('e', 1))
+        yield assertTrue(result.contains(pos('g', 1)))
+      },
+      test("en-passant target appears in the moving pawn's legal squares") {
+        // Black pawn on d5, white pawn on e5, en-passant target d6 (set when
+        // black just played d7-d5). White's exd6 e.p. should appear.
+        val s = GameState(
+          Map(
+            pos('e', 5) -> WP,
+            pos('d', 5) -> BP,
+            pos('e', 1) -> WK,
+            pos('e', 8) -> BK
+          ),
+          Color.White,
+          enPassantTarget = Some(pos('d', 6))
+        )
+        for result <- MoveValidator.legalMovesFrom(s, pos('e', 5))
+        yield assertTrue(result.contains(pos('d', 6)))
+      },
+      test("promotion squares deduped — one entry per destination") {
+        // White pawn on a7 with empty a8 — candidateMoves emits one move
+        // per promotion piece (Q/R/B/N). The destination should appear once.
+        val s = state(pos('a', 7) -> WP, pos('e', 1) -> WK, pos('e', 8) -> BK)
+        for result <- MoveValidator.legalMovesFrom(s, pos('a', 7))
+        yield assertTrue(result.count(_ == pos('a', 8)) == 1)
+      }
+    ),
+
+    // ─── attackersOf ────────────────────────────────────────────────────────
+    suite("attackersOf")(
+      test("empty when no piece of the asked color attacks the square") {
+        val board = Map(pos('a', 1) -> WK, pos('h', 8) -> BK)
+        assertTrue(
+          MoveValidator
+            .attackersOf(board, pos('e', 4), Color.White)
+            .isEmpty
+        )
+      },
+      test("rook attacks along its rank and file") {
+        val board = Map(pos('a', 1) -> WR)
+        assertTrue(
+          MoveValidator
+            .attackersOf(board, pos('a', 5), Color.White)
+            .toSet == Set(pos('a', 1)),
+          MoveValidator
+            .attackersOf(board, pos('e', 1), Color.White)
+            .toSet == Set(pos('a', 1))
+        )
+      },
+      test("knight L-pattern attacks") {
+        val board = Map(pos('e', 4) -> WN)
+        // From e4 a knight attacks f6, d6, c5, c3, d2, f2, g3, g5
+        val expected = Set(
+          pos('f', 6), pos('d', 6), pos('c', 5), pos('c', 3),
+          pos('d', 2), pos('f', 2), pos('g', 3), pos('g', 5)
+        )
+        assertTrue(
+          expected.forall(sq =>
+            MoveValidator.attackersOf(board, sq, Color.White) == List(pos('e', 4))
+          )
+        )
+      },
+      test("bishop attacks diagonals; blocked by intervening piece") {
+        // Use a knight as the blocker so its attack pattern doesn't muddy
+        // the assertions about the bishop's reach.
+        val board = Map(
+          pos('c', 1) -> WB,
+          pos('e', 3) -> WN
+        )
+        assertTrue(
+          // c1 attacks d2 and e3 (capture stops the ray) but not f4.
+          MoveValidator.attackersOf(board, pos('d', 2), Color.White) ==
+            List(pos('c', 1)),
+          MoveValidator
+            .attackersOf(board, pos('e', 3), Color.White) == List(pos('c', 1)),
+          // Bishop's ray from c1 stops at e3, so f4 isn't attacked by the
+          // bishop. The knight on e3 doesn't reach f4 either (its squares
+          // are c2/c4/d1/d5/f1/f5/g2/g4).
+          MoveValidator
+            .attackersOf(board, pos('f', 4), Color.White)
+            .isEmpty
+        )
+      },
+      test("pawn attacks diagonally forward; not the square directly ahead") {
+        val board = Map(pos('e', 4) -> WP)
+        assertTrue(
+          MoveValidator.attackersOf(board, pos('d', 5), Color.White) ==
+            List(pos('e', 4)),
+          MoveValidator.attackersOf(board, pos('f', 5), Color.White) ==
+            List(pos('e', 4)),
+          // The square directly ahead is a push, not an attack.
+          MoveValidator
+            .attackersOf(board, pos('e', 5), Color.White)
+            .isEmpty
+        )
+      },
+      test("multiple attackers of the same color all surface") {
+        // Rook on e1 attacks e3 along the e-file; bishop on c1 attacks e3
+        // along the c1-h6 diagonal (c1, d2, e3).
+        val board = Map(
+          pos('e', 1) -> WR,
+          pos('c', 1) -> WB
+        )
+        assertTrue(
+          MoveValidator
+            .attackersOf(board, pos('e', 3), Color.White)
+            .toSet == Set(pos('e', 1), pos('c', 1))
+        )
+      },
+      test("filters by attacker color — only the asked color is returned") {
+        val board = Map(pos('a', 1) -> WR, pos('a', 8) -> BR)
+        assertTrue(
+          MoveValidator
+            .attackersOf(board, pos('a', 5), Color.White) == List(pos('a', 1)),
+          MoveValidator
+            .attackersOf(board, pos('a', 5), Color.Black) == List(pos('a', 8))
+        )
+      }
     )
   )

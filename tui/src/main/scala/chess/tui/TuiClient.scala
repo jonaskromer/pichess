@@ -1,14 +1,17 @@
 package chess.tui
 
 import chess.api.{
+  AttackersResponse,
   BoardStateDto,
   CreateGameRequest,
   Endpoints,
   ErrorDto,
   ExportResponse,
   GameSnapshot,
+  LegalMovesResponse,
   MoveRequest,
-  StateResponse
+  StateResponse,
+  ThreatsResponse
 }
 import sttp.client3.{SttpBackend, UriContext, basicRequest}
 import sttp.model.Uri
@@ -82,6 +85,21 @@ final class TuiClient(
 
   def exportAs(gameId: String, format: String): Task[Either[ErrorDto, ExportResponse]] =
     call(Endpoints.getExport, (gameId, format))
+
+  def legalMoves(
+      gameId: String,
+      from: String
+  ): Task[Either[ErrorDto, LegalMovesResponse]] =
+    call(Endpoints.getLegalMoves, (gameId, from))
+
+  def threats(gameId: String): Task[Either[ErrorDto, ThreatsResponse]] =
+    call(Endpoints.getThreats, gameId)
+
+  def attackers(
+      gameId: String,
+      of: String
+  ): Task[Either[ErrorDto, AttackersResponse]] =
+    call(Endpoints.getAttackers, (gameId, of))
 
   // --------------------------------------------------------------------------
   // Lobby calls (Phase 2). Routed through the gateway's `/lobbies/*` reverse
