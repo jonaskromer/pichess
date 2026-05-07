@@ -54,8 +54,7 @@ object HelpView:
           "Resign — the side to move loses; the opponent is the winner"
         ),
         row("flip", "Flip the board (toggle White/Black perspective)"),
-        row("new", "Start a fresh game from the initial position"),
-        row("quit", "Shut down the server")
+        row("new", "Start a fresh game from the initial position")
       )
     )
 

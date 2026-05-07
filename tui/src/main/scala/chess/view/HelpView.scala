@@ -1,9 +1,8 @@
 package chess.view
 
-// Sibling of web-ui/src/main/scala/chess/webui/HelpView.scala — text largely
-// shared, but `quit` has different semantics now: the TUI is a stateless
-// client of the gateway, so quitting only ends *this* session, while the
-// web-ui's `quit` still triggers a server shutdown via POST /api/quit.
+// Sibling of web-ui/src/main/scala/chess/webui/HelpView.scala — keep the
+// command list in sync. Both clients' `quit` now ends only the local
+// session; the gateway is no longer killable from a network request.
 object HelpView:
   def render: String =
     """|=== πChess Help ===

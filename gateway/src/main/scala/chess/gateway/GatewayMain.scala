@@ -1,24 +1,20 @@
 package chess.gateway
 
-import chess.controller.WebController
+import chess.controller.{AnnotationCache, SessionRegistry, WebController}
 import io.grpc.ManagedChannelBuilder
-import pichess.game_service.{NewGameRequest, ZioGameService}
+import pichess.game_service.ZioGameService
 import scalapb.zio_grpc.ZManagedChannel
 import zio.*
 import zio.http.*
-import zio.stream.SubscriptionRef
 
 /** Standalone entry point for the gateway microservice.
   *
   * Hosts the public HTTP surface (Tapir REST + SSE + web-ui static) on
-  * `HTTP_PORT` (default 8090). All game commands are forwarded to gameService
-  * via a gRPC client opened against `GAME_SERVICE_GRPC` (default
-  * `localhost:9000`). Holds **no** authoritative game state — the only piece
-  * of mutable per-process state is `activeGameId`, which tracks "the game
-  * this gateway process is currently looking at".
-  *
-  * On startup we call `NewGame` once to seed `activeGameId`. `/api/new` and
-  * `/api/load` re-seed it; the SSE source re-subscribes when it changes.
+  * `HTTP_PORT` (default 8090). All game commands are forwarded to
+  * gameService via a gRPC client opened against `GAME_SERVICE_GRPC`
+  * (default `localhost:9000`). The gateway holds **no** authoritative
+  * state and **no** per-process "active game" — every request carries
+  * its own `gameId` in the URL, so multiple games run side by side.
   */
 object GatewayMain extends ZIOAppDefault:
 
@@ -46,16 +42,18 @@ object GatewayMain extends ZIOAppDefault:
   private def serve(httpPort: Int, target: String): Task[Unit] =
     val program: ZIO[ZioGameService.GameServiceClient & Server, Throwable, Unit] =
       for
-        client       <- ZIO.service[ZioGameService.GameServiceClient]
-        initial      <- client.newGame(NewGameRequest())
-        _            <- Console.printLine(
-                          s"pichess-gateway HTTP listening on 0.0.0.0:$httpPort (game-service=$target, initial gameId=${initial.gameId})"
-                        )
-        activeGameId <- SubscriptionRef.make(initial.gameId)
-        shutdown     <- Promise.make[Nothing, Unit]
-        _            <- Server
-                          .install(WebController.routes(client, activeGameId, shutdown))
-        _            <- shutdown.await.race(ZIO.never)
+        client   <- ZIO.service[ZioGameService.GameServiceClient]
+        registry <- SessionRegistry.make
+        cache    <- AnnotationCache.make
+        _        <- Console.printLine(
+                      s"pichess-gateway HTTP listening on 0.0.0.0:$httpPort (game-service=$target)"
+                    )
+        _        <- Server.install(
+                      WebController.routes(client, registry, cache)
+                    )
+        // Run forever; the gateway is no longer killable from a network
+        // request — `docker stop` / SIGTERM is the only shutdown path.
+        _      <- ZIO.never
       yield ()
 
     program.provide(

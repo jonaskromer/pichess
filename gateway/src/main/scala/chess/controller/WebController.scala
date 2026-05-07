@@ -5,11 +5,10 @@ import chess.api.{
   Endpoints,
   ErrorDto,
   ExportResponse,
+  GameSnapshot,
   StateResponse
 }
-import chess.api.Endpoints.QuitAck
 import chess.codec.FenParserRegex
-import chess.model.GameError
 import chess.model.piece.Color
 import chess.view.{HtmlPage, WebBoardView}
 import io.grpc.StatusException
@@ -27,27 +26,25 @@ import sttp.tapir.swagger.bundle.SwaggerInterpreter
 import sttp.tapir.ztapir.*
 import zio.*
 import zio.http.*
-import zio.stream.SubscriptionRef
 
 /** Tapir-backed REST surface plus raw zio-http routes (HTML, web-ui assets,
   * SSE). Every command endpoint is a thin shim over the gameService gRPC
-  * client; the gateway holds **no** authoritative game state — only the
-  * `activeGameId` ref tracking which game in the gameService cluster this
-  * gateway process is currently focused on.
+  * client; the gateway holds **no** authoritative game state.
   *
-  * `activeGameId` is a `SubscriptionRef[String]` so the SSE source can
-  * re-subscribe to a new game's stream when `/api/new` or `/api/load` is
-  * called.
+  * **Routing**: every per-game endpoint is `/api/games/{id}/...`. The
+  * gateway is stateless — there's no global "active game" any more. The
+  * client tracks its own current gameId (in URL hash on the web-ui, in a
+  * Ref on the TUI). `POST /api/games` mints a new game and returns its
+  * id alongside the initial state.
   */
 object WebController:
 
   def routes(
       client: ZioGameService.GameServiceClient,
-      activeGameId: SubscriptionRef[String],
-      shutdown: Promise[Nothing, Unit]
+      registry: SessionRegistry,
+      cache: AnnotationCache
   ): Routes[Any, Response] =
-    tapirRoutes(client, activeGameId, shutdown) ++
-      rawRoutes(client, activeGameId, shutdown)
+    tapirRoutes(client, registry, cache) ++ rawRoutes(client)
 
   // --------------------------------------------------------------------------
   // Tapir-backed JSON API
@@ -55,81 +52,113 @@ object WebController:
 
   private def tapirRoutes(
       client: ZioGameService.GameServiceClient,
-      activeGameId: SubscriptionRef[String],
-      shutdown: Promise[Nothing, Unit]
+      registry: SessionRegistry,
+      cache: AnnotationCache
   ): Routes[Any, Response] =
     val swagger = SwaggerInterpreter()
       .fromEndpoints[Task](Endpoints.all, "pichess API", "0.1.0")
     ZioHttpInterpreter().toHttp(
       swagger ++ List(
-        Endpoints.getState.zServerLogic[Any] {
-          case None | Some("view") =>
-            currentBoard(client, activeGameId).map(StateResponse.View(_))
-          case Some(other) =>
-            exportInFormat(client, activeGameId, other).map(StateResponse.Export(_))
-        },
-        Endpoints.postMove.zServerLogic[Any] { req =>
+        Endpoints.postCreateGame.zServerLogic[Any] { case (sessionId, req) =>
+          val create = req.load match
+            case None       => client.newGame(NewGameRequest())
+            case Some(load) => client.loadGame(LoadGameRequest(load))
           for
-            id    <- activeGameId.get
-            reply <- client
-                       .makeMove(MoveRequest(id, req.move))
-                       .mapError(toErrorDto)
+            reply <- create.mapError(toErrorDto)
+            // Local-game registration: the creator is the only player and
+            // is allowed to move both colours. Lobby-created games will
+            // overwrite this via `registerLobby` when the lobby starts
+            // (Phase 2).
+            _     <- registry.registerLocal(reply.gameId, sessionId)
             dto   <- replyToDto(reply)
-          yield dto
+          yield GameSnapshot(reply.gameId, dto)
         },
-        Endpoints.postUndo.zServerLogic[Any](_ =>
-          callOnActive(client, activeGameId, c => g => c.undo(GameIdRequest(g)))
-        ),
-        Endpoints.postRedo.zServerLogic[Any](_ =>
-          callOnActive(client, activeGameId, c => g => c.redo(GameIdRequest(g)))
-        ),
-        Endpoints.postDraw.zServerLogic[Any](_ =>
-          callOnActive(client, activeGameId, c => g => c.claimDraw(GameIdRequest(g)))
-        ),
-        Endpoints.postForfeit.zServerLogic[Any](_ =>
-          callOnActive(client, activeGameId, c => g => c.forfeit(GameIdRequest(g)))
-        ),
-        Endpoints.postNew.zServerLogic[Any](_ =>
-          for
-            reply <- client.newGame(NewGameRequest()).mapError(toErrorDto)
-            _     <- activeGameId.set(reply.gameId)
-            dto   <- replyToDto(reply)
-          yield dto
-        ),
-        Endpoints.postQuit.zServerLogic[Any](_ =>
-          shutdown.succeed(()).as(QuitAck(quit = true))
-        ),
-        Endpoints.postLoad.zServerLogic[Any] { req =>
-          for
-            reply <- client.loadGame(LoadGameRequest(req.raw)).mapError(toErrorDto)
-            _     <- activeGameId.set(reply.gameId)
-            dto   <- replyToDto(reply)
-          yield dto
+        Endpoints.getState.zServerLogic[Any] { case (id, format) =>
+          format match
+            case None | Some("view") =>
+              currentBoard(client, id).map(StateResponse.View(_))
+            case Some(other) =>
+              exportInFormat(client, id, other).map(StateResponse.Export(_))
         },
-        Endpoints.getExport.zServerLogic[Any](
-          exportInFormat(client, activeGameId, _)
-        )
+        Endpoints.postMove.zServerLogic[Any] { case (id, sessionId, req) =>
+          gated(registry, id, sessionId) {
+            for
+              reply <- client
+                         .makeMove(MoveRequest(id, req.move))
+                         .mapError(toErrorDto)
+              _     <- cache.invalidate(id)
+              dto   <- replyToDto(reply)
+            yield dto
+          }
+        },
+        Endpoints.postUndo.zServerLogic[Any] { case (id, sessionId) =>
+          gated(registry, id, sessionId) {
+            callOnGame(client, id, c => g => c.undo(GameIdRequest(g)))
+              .tap(_ => cache.invalidate(id))
+          }
+        },
+        Endpoints.postRedo.zServerLogic[Any] { case (id, sessionId) =>
+          gated(registry, id, sessionId) {
+            callOnGame(client, id, c => g => c.redo(GameIdRequest(g)))
+              .tap(_ => cache.invalidate(id))
+          }
+        },
+        Endpoints.postDraw.zServerLogic[Any] { case (id, sessionId) =>
+          gated(registry, id, sessionId) {
+            callOnGame(client, id, c => g => c.claimDraw(GameIdRequest(g)))
+              .tap(_ => cache.invalidate(id))
+          }
+        },
+        Endpoints.postForfeit.zServerLogic[Any] { case (id, sessionId) =>
+          gated(registry, id, sessionId) {
+            callOnGame(client, id, c => g => c.forfeit(GameIdRequest(g)))
+              .tap(_ => cache.invalidate(id))
+          }
+        },
+        Endpoints.getExport.zServerLogic[Any] { case (id, format) =>
+          exportInFormat(client, id, format)
+        }
       )
     )
 
-  private def callOnActive(
+  /** Wrap a mutation handler in a session-id check. Refuses with a
+    * "Forbidden: ..." 400 when the session isn't a registered active
+    * player on the game. Tapir's `errorOut` gives us 400; spec-wise
+    * this is a 403 in spirit, but adding the second status code would
+    * mean a `oneOf[ApiError]` refactor we don't need yet — the message
+    * carries the intent.
+    */
+  private def gated[A](
+      registry: SessionRegistry,
+      gameId: String,
+      sessionId: String
+  )(action: ZIO[Any, ErrorDto, A]): ZIO[Any, ErrorDto, A] =
+    registry.canMutate(gameId, sessionId).flatMap {
+      case true  => action
+      case false =>
+        ZIO.fail(
+          ErrorDto(
+            s"Forbidden: session $sessionId is not an active player on game $gameId"
+          )
+        )
+    }
+
+  private def callOnGame(
       client: ZioGameService.GameServiceClient,
-      activeGameId: SubscriptionRef[String],
+      id: String,
       action: ZioGameService.GameServiceClient => String => IO[StatusException, StateReply]
   ): ZIO[Any, ErrorDto, BoardStateDto] =
     for
-      id    <- activeGameId.get
       reply <- action(client)(id).mapError(toErrorDto)
       dto   <- replyToDto(reply)
     yield dto
 
   private def exportInFormat(
       client: ZioGameService.GameServiceClient,
-      activeGameId: SubscriptionRef[String],
+      id: String,
       format: String
   ): ZIO[Any, ErrorDto, ExportResponse] =
     for
-      id    <- activeGameId.get
       reply <- client.exportGame(ExportRequest(id, format)).mapError(toErrorDto)
     yield ExportResponse(reply.format, reply.body)
 
@@ -139,10 +168,9 @@ object WebController:
 
   private def currentBoard(
       client: ZioGameService.GameServiceClient,
-      activeGameId: SubscriptionRef[String]
+      id: String
   ): ZIO[Any, ErrorDto, BoardStateDto] =
     for
-      id    <- activeGameId.get
       reply <- client.getState(GameIdRequest(id)).mapError(toErrorDto)
       dto   <- replyToDto(reply)
     yield dto
@@ -169,17 +197,15 @@ object WebController:
   // --------------------------------------------------------------------------
 
   private def rawRoutes(
-      client: ZioGameService.GameServiceClient,
-      activeGameId: SubscriptionRef[String],
-      shutdown: Promise[Nothing, Unit]
+      client: ZioGameService.GameServiceClient
   ): Routes[Any, Response] =
     Routes(
       Method.GET / "" -> handler(servePage()),
       Method.GET / "web" / trailing ->
         handler((rest: zio.http.Path, _: Request) => serveAsset(rest)),
-      Method.GET / "api" / "events" -> handler(
-        serveEvents(client, activeGameId, shutdown)
-      )
+      Method.GET / "api" / "games" / string("id") / "events" -> handler {
+        (id: String, _: Request) => serveEvents(client, id)
+      }
     )
 
   private def servePage(): ZIO[Any, Nothing, Response] =
@@ -242,16 +268,12 @@ object WebController:
 
   private def serveEvents(
       client: ZioGameService.GameServiceClient,
-      activeGameId: SubscriptionRef[String],
-      shutdown: Promise[Nothing, Unit]
+      id: String
   ): ZIO[Any, Nothing, Response] =
     ZIO.succeed {
-      val stateEvents = activeGameId.changes
-        .flatMap(id =>
-          client
-            .subscribeGame(GameIdRequest(id))
-            .catchAll(_ => zio.stream.ZStream.empty)
-        )
+      val stateEvents = client
+        .subscribeGame(GameIdRequest(id))
+        .catchAll(_ => zio.stream.ZStream.empty)
         .mapZIO(reply =>
           replyToDto(reply).either.map {
             case Right(dto) =>
@@ -265,13 +287,5 @@ object WebController:
           }
         )
         .collectSome
-      val quitEvent = zio.stream.ZStream
-        .fromZIO(shutdown.await)
-        .map(_ =>
-          ServerSentEvent(
-            data = "quit",
-            eventType = Some("quit")
-          )
-        )
-      Response.fromServerSentEvents(stateEvents.merge(quitEvent))
+      Response.fromServerSentEvents(stateEvents)
     }

@@ -2,10 +2,11 @@ package chess.tui
 
 import chess.api.{
   BoardStateDto,
+  CreateGameRequest,
   Endpoints,
   ErrorDto,
   ExportResponse,
-  LoadRequest,
+  GameSnapshot,
   MoveRequest,
   StateResponse
 }
@@ -16,8 +17,11 @@ import zio.*
 
 /** Typed HTTP client over the gateway's REST surface. Routes every call
   * through the same `chess.api.Endpoints` definitions the gateway serves
-  * and the web-ui consumes — the contract is shared, so a renamed endpoint
-  * is a compile error here.
+  * and the web-ui consumes — the contract is shared, so a renamed
+  * endpoint is a compile error here.
+  *
+  * Every gameplay endpoint takes the gameId as the first argument so a
+  * single client instance handles multiple games (Phase 2 / lobby flows).
   *
   * Each method returns `Either[ErrorDto, A]`. Decode failures (HTTP-level
   * surprises that aren't the documented error envelope) crash the effect;
@@ -25,7 +29,8 @@ import zio.*
   */
 final class TuiClient(
     baseUri: Uri,
-    backend: SttpBackend[Task, Any]
+    backend: SttpBackend[Task, Any],
+    sessionId: String
 ):
 
   private val sttpInterpreter = SttpClientInterpreter()
@@ -40,11 +45,15 @@ final class TuiClient(
         .apply(input)
     backend.send(request).map(_.body)
 
-  def newGame: Task[Either[ErrorDto, BoardStateDto]] =
-    call(Endpoints.postNew, ())
+  /** Create a fresh game (or load one). Returns the new id alongside the
+    * initial state so callers can address subsequent calls without an
+    * extra round-trip.
+    */
+  def createGame(load: Option[String] = None): Task[Either[ErrorDto, GameSnapshot]] =
+    call(Endpoints.postCreateGame, (sessionId, CreateGameRequest(load)))
 
-  def state: Task[Either[ErrorDto, BoardStateDto]] =
-    call(Endpoints.getState, None).map {
+  def state(gameId: String): Task[Either[ErrorDto, BoardStateDto]] =
+    call(Endpoints.getState, (gameId, None)).map {
       case Right(StateResponse.View(dto))    => Right(dto)
       case Right(StateResponse.Export(_))    =>
         // We only ever pass `None` for format above, so the gateway's oneOf
@@ -55,23 +64,20 @@ final class TuiClient(
       case Left(err) => Left(err)
     }
 
-  def move(raw: String): Task[Either[ErrorDto, BoardStateDto]] =
-    call(Endpoints.postMove, MoveRequest(raw))
+  def move(gameId: String, raw: String): Task[Either[ErrorDto, BoardStateDto]] =
+    call(Endpoints.postMove, (gameId, sessionId, MoveRequest(raw)))
 
-  def undo: Task[Either[ErrorDto, BoardStateDto]] =
-    call(Endpoints.postUndo, ())
+  def undo(gameId: String): Task[Either[ErrorDto, BoardStateDto]] =
+    call(Endpoints.postUndo, (gameId, sessionId))
 
-  def redo: Task[Either[ErrorDto, BoardStateDto]] =
-    call(Endpoints.postRedo, ())
+  def redo(gameId: String): Task[Either[ErrorDto, BoardStateDto]] =
+    call(Endpoints.postRedo, (gameId, sessionId))
 
-  def claimDraw: Task[Either[ErrorDto, BoardStateDto]] =
-    call(Endpoints.postDraw, ())
+  def claimDraw(gameId: String): Task[Either[ErrorDto, BoardStateDto]] =
+    call(Endpoints.postDraw, (gameId, sessionId))
 
-  def forfeit: Task[Either[ErrorDto, BoardStateDto]] =
-    call(Endpoints.postForfeit, ())
+  def forfeit(gameId: String): Task[Either[ErrorDto, BoardStateDto]] =
+    call(Endpoints.postForfeit, (gameId, sessionId))
 
-  def load(raw: String): Task[Either[ErrorDto, BoardStateDto]] =
-    call(Endpoints.postLoad, LoadRequest(raw))
-
-  def exportAs(format: String): Task[Either[ErrorDto, ExportResponse]] =
-    call(Endpoints.getExport, format)
+  def exportAs(gameId: String, format: String): Task[Either[ErrorDto, ExportResponse]] =
+    call(Endpoints.getExport, (gameId, format))

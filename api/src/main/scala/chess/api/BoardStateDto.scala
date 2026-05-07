@@ -93,6 +93,28 @@ object ExportResponse:
   given JsonEncoder[ExportResponse] = DeriveJsonEncoder.gen[ExportResponse]
   given JsonDecoder[ExportResponse] = DeriveJsonDecoder.gen[ExportResponse]
 
+/** Body for `POST /api/games`. With `load = None` the gateway creates a
+  * fresh game from the standard initial position. With `load = Some(raw)`
+  * it imports a serialised game (FEN, PGN, or JSON, auto-detected). The
+  * old `POST /api/new` and `POST /api/load` collapsed into this one
+  * endpoint when routing went game-scoped.
+  */
+final case class CreateGameRequest(load: Option[String] = None)
+
+object CreateGameRequest:
+  given JsonEncoder[CreateGameRequest] = DeriveJsonEncoder.gen[CreateGameRequest]
+  given JsonDecoder[CreateGameRequest] = DeriveJsonDecoder.gen[CreateGameRequest]
+
+/** Response for `POST /api/games`. Carries the new game's id alongside its
+  * initial state so the client can address subsequent calls without an
+  * extra round-trip.
+  */
+final case class GameSnapshot(id: String, state: BoardStateDto)
+
+object GameSnapshot:
+  given JsonEncoder[GameSnapshot] = DeriveJsonEncoder.gen[GameSnapshot]
+  given JsonDecoder[GameSnapshot] = DeriveJsonDecoder.gen[GameSnapshot]
+
 /** Discriminated response for `GET /api/state`.
   *
   * The endpoint takes an optional `?format=` query parameter:

@@ -25,9 +25,6 @@ object TuiEventStream:
   enum Event:
     /** A state push from the gateway. JSON already decoded. */
     case State(dto: BoardStateDto)
-    /** Server requested shutdown (the gateway sends this on
-      * `POST /api/quit`). */
-    case Quit
 
   /** Subscribe to the SSE feed. Returns a stream of decoded events; decode
     * errors and malformed events are dropped (they're logged at warn).
@@ -38,10 +35,11 @@ object TuiEventStream:
     */
   def subscribe(
       baseUri: Uri,
-      backend: SttpBackend[Task, ZioStreams]
+      backend: SttpBackend[Task, ZioStreams],
+      gameId: String
   ): ZStream[Any, Throwable, Event] =
     val request = basicRequest
-      .get(baseUri.addPath("api", "events"))
+      .get(baseUri.addPath("api", "games", gameId, "events"))
       .header("Accept", "text/event-stream")
       .header("Cache-Control", "no-cache")
       .response(asStreamAlwaysUnsafe(ZioStreams))
@@ -90,7 +88,6 @@ object TuiEventStream:
           payload.fromJson[BoardStateDto] match
             case Right(dto) => Right(Event.State(dto))
             case Left(err)  => Left(s"state decode failed: $err")
-        case Some("quit") => Right(Event.Quit)
         case Some(other)  => Left(s"unknown event type: $other")
         case None if data.isEmpty => Left("empty event")
         case None => Left("event without type")

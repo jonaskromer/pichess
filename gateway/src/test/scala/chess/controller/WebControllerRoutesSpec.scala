@@ -5,11 +5,11 @@ import chess.gameservice.{GameSessions, GrpcServer}
 import chess.persistence.InMemoryGameRepository
 import chess.service.GameServiceLive
 import io.grpc.inprocess.{InProcessChannelBuilder, InProcessServerBuilder}
-import pichess.game_service.{NewGameRequest, ZioGameService}
+import pichess.game_service.ZioGameService
 import scalapb.zio_grpc.{ServerLayer, ZManagedChannel}
 import zio.*
 import zio.http.*
-import zio.stream.SubscriptionRef
+import zio.json.*
 import zio.test.*
 
 /** Smoke tests for the gateway's REST surface. The gateway is wired against
@@ -40,12 +40,10 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
       )
     )
 
+  private val testSession: String = "session-test-aaa"
+
   private def runWith[A](
-      body: (
-          Routes[Any, Response],
-          SubscriptionRef[String],
-          Promise[Nothing, Unit]
-      ) => ZIO[Scope, Throwable, A]
+      body: Routes[Any, Response] => ZIO[Scope, Throwable, A]
   ): ZIO[Any, Throwable, A] =
     for
       // System.nanoTime gives a unique name across tests; ZIO test's
@@ -53,21 +51,55 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
       name <- ZIO.succeed(s"pichess-test-${java.lang.System.nanoTime()}")
       out <- ZIO.scoped {
                (for
-                 client       <- ZIO.service[ZioGameService.GameServiceClient]
-                 initial      <- client.newGame(NewGameRequest()).orDie
-                 activeGameId <- SubscriptionRef.make(initial.gameId)
-                 shutdown     <- Promise.make[Nothing, Unit]
-                 routes        = WebController.routes(client, activeGameId, shutdown)
-                 result       <- body(routes, activeGameId, shutdown)
+                 client   <- ZIO.service[ZioGameService.GameServiceClient]
+                 registry <- chess.controller.SessionRegistry.make
+                 cache    <- chess.controller.AnnotationCache.make
+                 routes    = WebController.routes(client, registry, cache)
+                 result   <- body(routes)
                yield result).provideSomeLayer[Scope](grpcLayer(name))
              }
     yield out
 
+  /** Helper: attach the test session header to a request. */
+  private def withSession(req: Request, session: String = testSession): Request =
+    req.addHeader(Header.Custom("X-Session-Id", session))
+
+  /** Helper: create a fresh game via POST /api/games and return its id. */
+  private def createGame(routes: Routes[Any, Response]): ZIO[Scope, Throwable, String] =
+    for
+      response <- routes.runZIO(
+                    withSession(
+                      Request.post(url"/api/games", Body.fromString("""{}"""))
+                    )
+                  )
+      body     <- response.body.asString
+      // Snapshot shape: {"id": "...", "state": {...}} — pluck the id with a
+      // regex to keep the test free of full DTO decoding plumbing.
+      id        = """"id":"([^"]+)"""".r.findFirstMatchIn(body).get.group(1)
+    yield id
+
   def spec = suite("WebController routes")(
-    test("GET /api/state returns JSON with activeColor") {
-      runWith { (routes, _, _) =>
+    test("POST /api/games returns a new game id and initial state") {
+      runWith { routes =>
         for
-          response <- routes.runZIO(Request.get(url"/api/state"))
+          response <- routes.runZIO(
+                        withSession(
+                          Request.post(url"/api/games", Body.fromString("""{}"""))
+                        )
+                      )
+          body     <- response.body.asString
+        yield assertTrue(
+          response.status == Status.Ok,
+          body.contains("\"id\":\""),
+          body.contains("\"activeColor\":\"white\"")
+        )
+      }
+    },
+    test("GET /api/games/{id}/state returns JSON with activeColor") {
+      runWith { routes =>
+        for
+          id       <- createGame(routes)
+          response <- routes.runZIO(Request.get(url"/api/games/$id/state"))
           body     <- response.body.asString
         yield assertTrue(
           response.status == Status.Ok,
@@ -75,13 +107,16 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         )
       }
     },
-    test("POST /api/move applies a legal move and returns the updated state") {
-      runWith { (routes, _, _) =>
+    test("POST /api/games/{id}/move applies a legal move and returns the updated state") {
+      runWith { routes =>
         for
+          id       <- createGame(routes)
           response <- routes.runZIO(
-                        Request.post(
-                          url"/api/move",
-                          Body.fromString("""{"move":"e2 e4"}""")
+                        withSession(
+                          Request.post(
+                            url"/api/games/$id/move",
+                            Body.fromString("""{"move":"e2 e4"}""")
+                          )
                         )
                       )
           body     <- response.body.asString
@@ -92,49 +127,86 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         )
       }
     },
-    test("POST /api/move returns 400 for an illegal move") {
-      runWith { (routes, _, _) =>
+    test("POST /api/games/{id}/move returns 400 for an illegal move") {
+      runWith { routes =>
         for
+          id       <- createGame(routes)
           response <- routes.runZIO(
-                        Request.post(
-                          url"/api/move",
-                          Body.fromString("""{"move":"e2 e5"}""")
+                        withSession(
+                          Request.post(
+                            url"/api/games/$id/move",
+                            Body.fromString("""{"move":"e2 e5"}""")
+                          )
                         )
                       )
         yield assertTrue(response.status == Status.BadRequest)
       }
     },
-    test("POST /api/undo with no moves returns 400") {
-      runWith { (routes, _, _) =>
-        for response <- routes.runZIO(Request.post(url"/api/undo", Body.empty))
-        yield assertTrue(response.status == Status.BadRequest)
-      }
-    },
-    test("POST /api/new starts a fresh game and updates activeGameId") {
-      runWith { (routes, activeGameId, _) =>
+    test("POST /api/games/{id}/move from a different session returns 400 (forbidden)") {
+      runWith { routes =>
         for
-          before   <- activeGameId.get
-          _        <- routes.runZIO(
-                        Request.post(
-                          url"/api/move",
-                          Body.fromString("""{"move":"e2 e4"}""")
+          id       <- createGame(routes)  // creator session = testSession
+          response <- routes.runZIO(
+                        withSession(
+                          Request.post(
+                            url"/api/games/$id/move",
+                            Body.fromString("""{"move":"e2 e4"}""")
+                          ),
+                          session = "session-other-bbb"
                         )
                       )
-          response <- routes.runZIO(Request.post(url"/api/new", Body.empty))
-          after    <- activeGameId.get
           body     <- response.body.asString
         yield assertTrue(
-          response.status == Status.Ok,
-          before != after,
-          body.contains("\"activeColor\":\"white\""),
-          body.contains("\"moveLog\":[]")
+          response.status == Status.BadRequest,
+          body.contains("Forbidden")
         )
       }
     },
-    test("GET /api/export/fen returns the FEN of the current position") {
-      runWith { (routes, _, _) =>
+    test("POST /api/games/{id}/undo with no moves returns 400") {
+      runWith { routes =>
         for
-          response <- routes.runZIO(Request.get(url"/api/export/fen"))
+          id       <- createGame(routes)
+          response <- routes.runZIO(
+                        withSession(
+                          Request.post(url"/api/games/$id/undo", Body.empty)
+                        )
+                      )
+        yield assertTrue(response.status == Status.BadRequest)
+      }
+    },
+    test("multiple games run side by side without interfering") {
+      runWith { routes =>
+        for
+          g1 <- createGame(routes)
+          g2 <- createGame(routes)
+          // Move on g1 only.
+          _  <- routes.runZIO(
+                  withSession(
+                    Request.post(
+                      url"/api/games/$g1/move",
+                      Body.fromString("""{"move":"e2 e4"}""")
+                    )
+                  )
+                )
+          s1 <- routes.runZIO(Request.get(url"/api/games/$g1/state"))
+                  .flatMap(_.body.asString)
+          s2 <- routes.runZIO(Request.get(url"/api/games/$g2/state"))
+                  .flatMap(_.body.asString)
+        yield assertTrue(
+          g1 != g2,
+          s1.contains("\"san\":\"e4\""),  // g1 advanced
+          !s2.contains("\"san\":\"e4\""), // g2 untouched
+          s2.contains("\"activeColor\":\"white\"")
+        )
+      }
+    },
+    test("GET /api/games/{id}/export/fen returns the FEN of the position") {
+      runWith { routes =>
+        for
+          id       <- createGame(routes)
+          response <- routes.runZIO(
+                        Request.get(url"/api/games/$id/export/fen")
+                      )
           body     <- response.body.asString
         yield assertTrue(
           response.status == Status.Ok,
@@ -142,8 +214,14 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
         )
       }
     },
+    test("POST /api/quit no longer exists") {
+      runWith { routes =>
+        for response <- routes.runZIO(Request.post(url"/api/quit", Body.empty))
+        yield assertTrue(response.status == Status.NotFound)
+      }
+    },
     test("GET / serves the HTML page") {
-      runWith { (routes, _, _) =>
+      runWith { routes =>
         for
           response <- routes.runZIO(Request.get(url"/"))
           body     <- response.body.asString

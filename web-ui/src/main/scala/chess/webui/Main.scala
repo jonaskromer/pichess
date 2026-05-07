@@ -2,9 +2,11 @@ package chess.webui
 
 import chess.api.{
   BoardStateDto,
+  CreateGameRequest,
   Endpoints,
   ErrorDto,
   ExportResponse,
+  GameSnapshot,
   GameStatusDto,
   LoadRequest,
   MoveEntryDto,
@@ -84,8 +86,27 @@ object Main:
 
   private val pendingPromotionVar: Var[Option[PendingPromotion]] = Var(None)
   private val toastVar: Var[Option[String]] = Var(None)
-  private val goodbyeVar: Var[Boolean] = Var(false)
   private val flippedVar: Var[Boolean] = Var(false)
+  /** Per-tab session id, generated on first load and persisted in
+    * localStorage. Sent as `X-Session-Id` on every mutating request so the
+    * gateway can refuse moves from sessions that aren't an active player.
+    * For local games this id is registered as the sole permitted mover
+    * when the game is created.
+    */
+  private val sessionId: String =
+    Option(dom.window.localStorage.getItem("pichess.sessionId"))
+      .filter(_.nonEmpty)
+      .getOrElse {
+        val fresh = java.util.UUID.randomUUID().toString
+        dom.window.localStorage.setItem("pichess.sessionId", fresh)
+        fresh
+      }
+  /** Current game id. With multi-game routing the gateway no longer tracks
+    * a single "active" game — the client owns this. We mint a fresh game
+    * on first load, capture its id here, then thread it through every
+    * subsequent HTTP call and the SSE subscription URL.
+    */
+  private val gameIdVar: Var[Option[String]] = Var(None)
   private val loadOpenVar: Var[Boolean] = Var(false)
   private val loadInputVar: Var[String] = Var("")
   private val exportVar: Var[Option[ExportResponse]] = Var(None)
@@ -168,8 +189,10 @@ object Main:
         // first paint; this call is the safety net for the (rare) case
         // where the script ran before localStorage was readable.
         applyTheme(themeVar.now())
-        fetchState()
-        connectEvents()
+        // Mint a fresh game on first load, then pull state + subscribe.
+        // The id flows through gameIdVar so HTTP calls and SSE both pick
+        // it up reactively.
+        bootstrapGame()
         syncHelpFromHash()
         dom.window.addEventListener(
           "hashchange",
@@ -216,27 +239,11 @@ object Main:
             if active then cl.add("is-dragging") else cl.remove("is-dragging")
           }(using ctx.owner)
       },
-      // `.distinct` is load-bearing: without it, `Var.set(value)` re-emits
-      // even when the value didn't change, which causes `child <--` to
-      // unmount + remount the entire UI tree. That tear-down was racing
-      // with `boardElementVar`'s mount/unmount callbacks and leaving us
-      // holding a stale reference to a detached `.board` element — which
-      // returned a 0×0 rect at hit-test time, breaking drag-drop.
-      child <-- goodbyeVar.signal.distinct.map {
-        case true  => goodbyeScreen()
-        case false => mainUi()
-      }
+      mainUi()
     )
 
   private def syncHelpFromHash(): Unit =
     helpOpenVar.set(dom.window.location.hash == "#help")
-
-  private def goodbyeScreen(): HtmlElement =
-    div(
-      styleAttr := "display:flex;justify-content:center;align-items:center;" +
-        "height:100vh;font-size:24px;color:#f7a072;",
-      "Goodbye!"
-    )
 
   private def mainUi(): HtmlElement =
     div(
@@ -883,12 +890,6 @@ object Main:
           "Forfeit",
           modifier = "action-forfeit",
           () => askConfirm(confirmForfeit)
-        ),
-        underlinedActionButton(
-          "quit",
-          "Quit",
-          modifier = "action-quit",
-          () => askConfirm(confirmQuit)
         )
       )
     )
@@ -994,15 +995,6 @@ object Main:
     confirmLabel = "Claim Draw",
     destructive = false,
     action = () => postDraw()
-  )
-
-  private val confirmQuit: ConfirmRequest = ConfirmRequest(
-    title = "Shut down the server?",
-    message =
-      "This stops piChess and closes the page. Make sure to save anything you want to keep.",
-    confirmLabel = "Quit",
-    destructive = true,
-    action = () => postQuit()
   )
 
   private val confirmForfeit: ConfirmRequest = ConfirmRequest(
@@ -1194,6 +1186,12 @@ object Main:
 
   private val backend = FetchBackend()
 
+  private val postCreateGameClient =
+    SttpClientInterpreter().toClientThrowDecodeFailures(
+      Endpoints.postCreateGame,
+      None,
+      backend
+    )
   private val getStateClient =
     SttpClientInterpreter().toClientThrowDecodeFailures(
       Endpoints.getState,
@@ -1224,24 +1222,6 @@ object Main:
       None,
       backend
     )
-  private val postNewClient =
-    SttpClientInterpreter().toClientThrowDecodeFailures(
-      Endpoints.postNew,
-      None,
-      backend
-    )
-  private val postQuitClient =
-    SttpClientInterpreter().toClientThrowDecodeFailures(
-      Endpoints.postQuit,
-      None,
-      backend
-    )
-  private val postLoadClient =
-    SttpClientInterpreter().toClientThrowDecodeFailures(
-      Endpoints.postLoad,
-      None,
-      backend
-    )
   private val postForfeitClient =
     SttpClientInterpreter().toClientThrowDecodeFailures(
       Endpoints.postForfeit,
@@ -1249,23 +1229,34 @@ object Main:
       backend
     )
 
-  private def fetchState(): Unit =
-    getStateClient(None).foreach(handleStateResult)
+  // Track the SSE handle so we can close + reopen it whenever gameIdVar
+  // flips to a new id (e.g. after `new game`).
+  private var sseHandle: Option[dom.EventSource] = None
 
-  private def connectEvents(): Unit =
-    val source = new dom.EventSource("/api/events")
+  /** Mint a fresh game (or load one), capture its id, and resubscribe SSE
+    * to that game's stream. Used both at first paint and whenever the
+    * user clicks "new game" or loads a serialized payload.
+    */
+  private def bootstrapGame(load: Option[String] = None): Unit =
+    postCreateGameClient((sessionId, CreateGameRequest(load))).foreach {
+      case Right(snapshot) =>
+        gameIdVar.set(Some(snapshot.id))
+        stateVar.set(Some(snapshot.state))
+        connectEvents(snapshot.id)
+      case Left(err) =>
+        showToast(err.error)
+    }
+
+  private def connectEvents(gameId: String): Unit =
+    sseHandle.foreach(_.close())
+    val source = new dom.EventSource(s"/api/games/$gameId/events")
+    sseHandle = Some(source)
     source.addEventListener(
       "state",
       (e: dom.MessageEvent) =>
         e.data.asInstanceOf[String].fromJson[BoardStateDto] match
           case Right(state) => stateVar.set(Some(state))
           case Left(err)    => showToast(s"Bad state payload: $err")
-    )
-    source.addEventListener(
-      "quit",
-      (_: dom.MessageEvent) =>
-        source.close()
-        goodbyeVar.set(true)
     )
 
   private def handleStateResult(
@@ -1276,31 +1267,43 @@ object Main:
       case Right(_: StateResponse.Export)   => ()
       case Left(err)                        => showToast(err.error)
 
+  /** Run a request that needs the current gameId; toasts if no game is
+    * active (shouldn't normally happen post-bootstrap).
+    */
+  private def withGameId(
+      action: String => Future[Either[ErrorDto, BoardStateDto]]
+  ): Unit =
+    gameIdVar.now() match
+      case Some(id) => postAndToastErrors(action(id))
+      case None     => showToast("No active game")
+
   private def postMove(move: String): Unit =
-    postMoveClient(MoveRequest(move)).foreach {
-      case Right(_)  => ()
-      case Left(err) => showToast(err.error)
-    }
+    gameIdVar.now() match
+      case Some(id) =>
+        postMoveClient((id, sessionId, MoveRequest(move))).foreach {
+          case Right(_)  => ()
+          case Left(err) => showToast(err.error)
+        }
+      case None => showToast("No active game")
 
-  private def postUndo(): Unit = postAndToastErrors(postUndoClient(()))
-  private def postRedo(): Unit = postAndToastErrors(postRedoClient(()))
-  private def postDraw(): Unit = postAndToastErrors(postDrawClient(()))
-  private def postNew(): Unit = postAndToastErrors(postNewClient(()))
-  private def postForfeit(): Unit = postAndToastErrors(postForfeitClient(()))
-  private def postQuit(): Unit = postQuitClient(()).foreach(_ => ())
+  private def postUndo(): Unit = withGameId(id => postUndoClient((id, sessionId)))
+  private def postRedo(): Unit = withGameId(id => postRedoClient((id, sessionId)))
+  private def postDraw(): Unit = withGameId(id => postDrawClient((id, sessionId)))
+  private def postNew(): Unit = bootstrapGame(load = None)
+  private def postForfeit(): Unit =
+    withGameId(id => postForfeitClient((id, sessionId)))
 
-  private def postLoad(raw: String): Unit =
-    postLoadClient(LoadRequest(raw)).foreach {
-      case Right(_)  => ()
-      case Left(err) => showToast(err.error)
-    }
+  private def postLoad(raw: String): Unit = bootstrapGame(load = Some(raw))
 
   private def doExport(format: String): Unit =
-    getStateClient(Some(format)).foreach {
-      case Right(StateResponse.Export(resp)) => exportVar.set(Some(resp))
-      case Right(_: StateResponse.View)      => ()
-      case Left(err)                         => showToast(err.error)
-    }
+    gameIdVar.now() match
+      case Some(id) =>
+        getStateClient((id, Some(format))).foreach {
+          case Right(StateResponse.Export(resp)) => exportVar.set(Some(resp))
+          case Right(_: StateResponse.View)      => ()
+          case Left(err)                         => showToast(err.error)
+        }
+      case None => showToast("No active game")
 
   private def postAndToastErrors(
       f: Future[Either[ErrorDto, BoardStateDto]]
