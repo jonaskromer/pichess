@@ -1,7 +1,7 @@
 package chess.service
 
 import chess.events.GameEventProducer
-import chess.gameservice.GameStore
+import chess.persistence.GameRepository
 import chess.model.{GameError, GameEvent, GameId}
 import chess.model.board.{GameState, Move}
 import zio.*
@@ -92,5 +92,5 @@ object GameService:
   ): ZIO[GameService, GameError, Unit] =
     ZIO.serviceWithZIO[GameService](_.saveState(id, state))
 
-  val layer: URLayer[GameStore & GameEventProducer, GameService] =
+  val layer: URLayer[GameRepository & GameEventProducer, GameService] =
     GameServiceLive.layer

@@ -2,7 +2,7 @@ package chess.service
 
 import chess.codec.{FenParserRegex, FenSerializer, JsonParser, PgnParser}
 import chess.events.{GameDomainEvent, GameEventProducer}
-import chess.gameservice.GameStore
+import chess.persistence.GameRepository
 import chess.notation.{MoveParser, SanSerializer}
 import chess.model.{GameError, GameEvent, GameId}
 import chess.model.board.{GameState, Move}
@@ -12,7 +12,7 @@ import zio.*
 import java.util.concurrent.TimeUnit
 
 final class GameServiceLive(
-    store: GameStore,
+    store: GameRepository,
     producer: GameEventProducer
 ) extends GameService:
 
@@ -103,5 +103,5 @@ final class GameServiceLive(
     s"${move.from.col}${move.from.row}-${move.to.col}${move.to.row}"
 
 object GameServiceLive:
-  val layer: URLayer[GameStore & GameEventProducer, GameService] =
+  val layer: URLayer[GameRepository & GameEventProducer, GameService] =
     ZLayer.fromFunction(GameServiceLive(_, _))

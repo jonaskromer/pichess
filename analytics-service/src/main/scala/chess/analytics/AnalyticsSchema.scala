@@ -1,0 +1,30 @@
+package chess.analytics
+
+import zio.*
+import zio.jdbc.*
+
+/** Idempotent DDL for the analytics tables. Mirrors `PostgresSchema` —
+  * production deployments would replace this with cassandra-migrate /
+  * Flyway-style migrations.
+  *
+  * `move_events` is a flat append-only table — every domain event becomes
+  * one row. ClickHouse's MergeTree handles dedupe via `ReplacingMergeTree`
+  * if we ever need exactly-once semantics, but for the demo at-least-once
+  * is fine — duplicates inflate counts proportionally without changing
+  * relative rankings.
+  */
+object AnalyticsSchema:
+
+  val ensure: ZIO[ZConnectionPool, Throwable, Unit] =
+    transaction {
+      sql"""
+        CREATE TABLE IF NOT EXISTS move_events (
+          game_id     String,
+          event_type  String,
+          san         String,
+          fen         String,
+          occurred_at DateTime64(3)
+        ) ENGINE = MergeTree()
+        ORDER BY (occurred_at, game_id)
+      """.execute
+    }

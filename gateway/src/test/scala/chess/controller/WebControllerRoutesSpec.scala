@@ -1,7 +1,8 @@
 package chess.controller
 
 import chess.events.InMemoryGameEventProducer
-import chess.gameservice.{GameSessions, GrpcServer, InMemoryGameStore}
+import chess.gameservice.{GameSessions, GrpcServer}
+import chess.persistence.InMemoryGameRepository
 import chess.service.GameServiceLive
 import io.grpc.inprocess.{InProcessChannelBuilder, InProcessServerBuilder}
 import pichess.game_service.{NewGameRequest, ZioGameService}
@@ -23,7 +24,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
 
   private def grpcLayer(name: String) =
     ZLayer.make[ZioGameService.GameServiceClient & scalapb.zio_grpc.Server](
-      InMemoryGameStore.layer,
+      InMemoryGameRepository.layer,
       GameSessions.layer,
       GameServiceLive.layer,
       InMemoryGameEventProducer.layer,

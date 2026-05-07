@@ -1,7 +1,7 @@
 package chess.service
 
 import chess.events.InMemoryGameEventProducer
-import chess.gameservice.InMemoryGameStore
+import chess.persistence.InMemoryGameRepository
 import chess.model.GameEvent
 import chess.model.board.{GameState, Position}
 import chess.model.piece.{Color, Piece, PieceType}
@@ -13,7 +13,7 @@ object GameServiceSpec extends ZIOSpecDefault:
   private val appLayer: ULayer[GameService] =
     ZLayer.make[GameService](
       GameServiceLive.layer,
-      InMemoryGameStore.layer,
+      InMemoryGameRepository.layer,
       InMemoryGameEventProducer.layer
     )
 

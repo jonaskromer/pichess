@@ -1,5 +1,6 @@
 package chess.repository
 
+import chess.persistence.{Backend, BackendConfig, CacheBackend, InMemoryGameRepository}
 import zio.*
 import zio.test.*
 
@@ -37,7 +38,10 @@ object RepositoryMainSpec extends ZIOSpecDefault:
       // Port 0 lets the OS pick a free port — keeps the test independent
       // of any service bound to the canonical 8091.
       for
-        fiber <- RepositoryMain.serve(0).fork
+        fiber <- RepositoryMain
+          .serve(0)
+          .provide(InMemoryGameRepository.layer)
+          .fork
         _ <- Live.live(ZIO.sleep(300.millis))
         _ <- fiber.interrupt
       yield assertCompletes
@@ -51,5 +55,26 @@ object RepositoryMainSpec extends ZIOSpecDefault:
         _ <- Live.live(ZIO.sleep(300.millis))
         _ <- fiber.interrupt
       yield assertCompletes
-    }
+    },
+    suite("gameRepoLayer")(
+      test("InMemory selection produces a working repository layer") {
+        val layer = RepositoryMain.gameRepoLayer(
+          BackendConfig(Backend.InMemory, CacheBackend.NoCache)
+        )
+        for repo <- ZIO.service[chess.persistence.GameRepository].provide(layer)
+        yield assertTrue(repo != null)
+      },
+      test("backend with missing connection env fails layer construction") {
+        // No PICHESS_MONGO_URL set => Mongo settings fail at startup. The
+        // exact exception class depends on the backend; we just assert
+        // failure (any cause), since that's the contract: a misconfigured
+        // backend MUST refuse to start rather than fall back silently.
+        val layer = RepositoryMain.gameRepoLayer(
+          BackendConfig(Backend.Mongo, CacheBackend.NoCache)
+        )
+        for
+          exit <- ZIO.service[chess.persistence.GameRepository].provide(layer).exit
+        yield assertTrue(exit.isFailure)
+      }
+    )
   )

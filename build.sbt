@@ -8,16 +8,36 @@ ThisBuild / scalaVersion := "3.8.2"
 // @jsonExplicitNull), so whitelist only that exact conflict. Other
 // cross-version evictions will still surface as errors.
 ThisBuild / libraryDependencySchemes ++= Seq(
-  "dev.zio" %% "zio-json"                    % VersionScheme.Always,
-  "dev.zio" % "zio-json_sjs1_3"              % VersionScheme.Always,
+  "dev.zio" %% "zio-json"        % VersionScheme.Always,
+  "dev.zio" % "zio-json_sjs1_3"  % VersionScheme.Always,
+  // zio-jdbc 0.1.2 still pins zio-schema 0.4.x; the transitive 1.x bumps
+  // pulled in by zio-http and zio-redis ARE binary-compatible at the
+  // surface zio-jdbc uses (Schema, BinaryCodec). Whitelist the eviction
+  // rather than pin zio-jdbc to an older line.
+  "dev.zio" %% "zio-schema"             % VersionScheme.Always,
+  "dev.zio" %% "zio-schema-derivation"  % VersionScheme.Always,
+  "dev.zio" %% "zio-schema-json"        % VersionScheme.Always,
+  "dev.zio" %% "zio-schema-protobuf"    % VersionScheme.Always,
 )
 
-val zioVersion      = "2.1.24"
-val zioHttpVersion  = "3.10.1"
-val zioJsonVersion  = "0.9.0"
-val zioKafkaVersion = "2.10.0"
-val laminarVersion  = "17.2.0"
-val tapirVersion    = "1.11.36"
+val zioVersion       = "2.1.24"
+val zioHttpVersion   = "3.10.1"
+val zioJsonVersion   = "0.9.0"
+val zioKafkaVersion  = "2.10.0"
+val laminarVersion   = "17.2.0"
+val tapirVersion     = "1.11.36"
+val slickVersion          = "3.6.1"
+val postgresVersion       = "42.7.4"
+val testcontainersVersion = "0.43.0"
+val zioRedisVersion       = "1.1.3"
+val zioSchemaVersion      = "1.7.2"
+val mongoDriverVersion    = "5.5.1"
+val zioRsInteropVersion   = "2.0.2"
+val cassandraDriverVersion = "4.17.0"
+val neo4jDriverVersion     = "5.28.5"
+val clickhouseJdbcVersion  = "0.9.0"
+val zioJdbcVersion         = "0.1.2"
+val gatlingVersion         = "3.13.5"
 
 /** Group jars into separate Docker layers so a one-file source change only
   * invalidates the (small) project-jar layer, not the (large) 3rd-party-jar
@@ -130,6 +150,160 @@ lazy val repositoryApi = project
     ),
   )
 
+// Backend-agnostic persistence interface. Defines GameRepository and
+// LobbyRepository traits + an in-memory impl that's the dev/test default.
+// All real backends (Postgres, Mongo, Redis, Cassandra) live in their own
+// downstream modules and depend on this one.
+lazy val persistenceApi = project
+  .in(file("persistence/api"))
+  .dependsOn(domain.jvm)
+  .settings(commonSettings)
+  .settings(
+    name := "pichess-persistence-api",
+  )
+
+// Aggregator that knows how to wire every backend impl into a working
+// `GameRepository` / `LobbyRepository` layer based on `BackendConfig`. The
+// service Mains depend on just this one module instead of every backend
+// module + the cache decorator individually.
+lazy val persistenceRuntime = project
+  .in(file("persistence/runtime"))
+  .dependsOn(
+    domain.jvm,
+    persistenceApi,
+    persistencePostgres,
+    persistenceRedis,
+    persistenceMongo,
+    persistenceCassandra,
+    persistenceCache
+  )
+  .settings(commonSettings)
+  .settings(
+    name := "pichess-persistence-runtime",
+    // Layer-selection logic is exercised end-to-end in service-Main tests
+    // and the contract module; not unit-coverable in isolation since each
+    // branch needs the matching DB to be reachable.
+    coverageEnabled := false,
+  )
+
+// Cache decorator: wraps any primary GameRepository/LobbyRepository with a
+// Redis-backed front cache. Same pattern Phase 1's plan called out — flip
+// PICHESS_CACHE=redis and the decorator slots in via ZLayer composition,
+// no impl change needed at the call sites.
+lazy val persistenceCache = project
+  .in(file("persistence/cache"))
+  .dependsOn(domain.jvm, persistenceApi, persistenceRedis)
+  .settings(commonSettings)
+  .settings(
+    name := "pichess-persistence-cache",
+    libraryDependencies ++= Seq(
+      "dev.zio" %% "zio-redis"           % zioRedisVersion,
+      "dev.zio" %% "zio-schema"          % zioSchemaVersion,
+      "dev.zio" %% "zio-schema-protobuf" % zioSchemaVersion,
+      "dev.zio" %% "zio-json"            % zioJsonVersion,
+    ),
+  )
+
+// Cassandra backend: DataStax Java driver wrapped via ZIO.fromCompletionStage.
+// (cassandra4io has no Scala 3 build, so we go straight to the Java API.)
+lazy val persistenceCassandra = project
+  .in(file("persistence/cassandra"))
+  .dependsOn(domain.jvm, codec, persistenceApi)
+  .settings(commonSettings)
+  .settings(
+    name := "pichess-persistence-cassandra",
+    libraryDependencies ++= Seq(
+      "com.datastax.oss" % "java-driver-core" % cassandraDriverVersion,
+    ),
+    coverageEnabled := false,
+  )
+
+// MongoDB backend: official Java reactive-streams driver wrapped via
+// zio-interop-reactivestreams. (mongo-scala-driver has no Scala 3 build, so
+// we go straight to the Java API + a thin ZIO bridge.)
+lazy val persistenceMongo = project
+  .in(file("persistence/mongo"))
+  .dependsOn(domain.jvm, codec, persistenceApi)
+  .settings(commonSettings)
+  .settings(
+    name := "pichess-persistence-mongo",
+    libraryDependencies ++= Seq(
+      "org.mongodb" %  "mongodb-driver-reactivestreams" % mongoDriverVersion,
+      "dev.zio"     %% "zio-interop-reactivestreams"    % zioRsInteropVersion,
+      "dev.zio"     %% "zio-json"                       % zioJsonVersion,
+    ),
+    coverageEnabled := false,
+  )
+
+// Redis backend: native zio-redis. Same impl is reused by persistence-cache
+// as the cache backing store, so the trait we implement here is the
+// boundary the decorator hits.
+lazy val persistenceRedis = project
+  .in(file("persistence/redis"))
+  .dependsOn(domain.jvm, codec, persistenceApi)
+  .settings(commonSettings)
+  .settings(
+    name := "pichess-persistence-redis",
+    libraryDependencies ++= Seq(
+      "dev.zio" %% "zio-redis"            % zioRedisVersion,
+      "dev.zio" %% "zio-schema"           % zioSchemaVersion,
+      "dev.zio" %% "zio-schema-protobuf"  % zioSchemaVersion,
+      "dev.zio" %% "zio-json"             % zioJsonVersion,
+    ),
+    // Real-Redis tests live in persistence-contract via Testcontainers.
+    coverageEnabled := false,
+  )
+
+// Shared zio-test contract suites that every backend impl must satisfy. Each
+// concrete subclass provides a `ZLayer[Any, Throwable, GameRepository]` —
+// usually built around a Testcontainers DB instance — and the contract suite
+// runs the same set of save/load/delete invariants against it. A backend
+// failing the contract is, by definition, not a drop-in replacement.
+//
+// Testcontainers needs Docker available at test time; CI gates on it.
+lazy val persistenceContract = project
+  .in(file("persistence/contract"))
+  .dependsOn(
+    domain.jvm,
+    persistenceApi,
+    persistencePostgres,
+    persistenceRedis,
+    persistenceMongo,
+    persistenceCassandra
+  )
+  .settings(commonSettings)
+  .settings(
+    name := "pichess-persistence-contract",
+    libraryDependencies ++= Seq(
+      "com.dimafeng" %% "testcontainers-scala-postgresql" % testcontainersVersion % Test,
+      "com.dimafeng" %% "testcontainers-scala-mongodb"    % testcontainersVersion % Test,
+      "com.dimafeng" %% "testcontainers-scala-cassandra"  % testcontainersVersion % Test,
+      "com.dimafeng" %% "testcontainers-scala-core"       % testcontainersVersion % Test,
+    ),
+    coverageEnabled := false,
+  )
+
+// PostgreSQL backend: Slick 3.6 + a tiny inline Future->ZIO bridge.
+// (The community zio-slick-interop only publishes for Scala 2.13; the bridge
+// it would have provided is a few lines of `ZIO.fromFuture` so we inline it
+// here rather than block on a Scala 3 fork.)
+lazy val persistencePostgres = project
+  .in(file("persistence/postgres"))
+  .dependsOn(domain.jvm, codec, persistenceApi)
+  .settings(commonSettings)
+  .settings(
+    name := "pichess-persistence-postgres",
+    libraryDependencies ++= Seq(
+      "com.typesafe.slick" %% "slick"          % slickVersion,
+      "com.typesafe.slick" %% "slick-hikaricp" % slickVersion,
+      "org.postgresql"     %  "postgresql"     % postgresVersion,
+    ),
+    // Real-DB integration tests live in persistence-contract and run via
+    // Testcontainers; the impls in this module are exercised end-to-end there.
+    // Coverage measured at the contract module, not here.
+    coverageEnabled := false,
+  )
+
 // Kafka event ADT shared by gameService (producer) and repository (consumer).
 // Single source of truth for what flows on the `chess.game-events` topic.
 lazy val events = project
@@ -170,7 +344,14 @@ lazy val proto = project
 
 lazy val repository = project
   .in(file("repository"))
-  .dependsOn(domain.jvm, repositoryApi, codec, events)
+  .dependsOn(
+    domain.jvm,
+    repositoryApi,
+    codec,
+    events,
+    persistenceApi,
+    persistenceRuntime
+  )
   .enablePlugins(JavaAppPackaging, DockerPlugin)
   .settings(commonSettings)
   .settings(
@@ -197,7 +378,15 @@ lazy val repository = project
 
 lazy val gameService = project
   .in(file("game-service"))
-  .dependsOn(domain.jvm, rules, codec, events, proto)
+  .dependsOn(
+    domain.jvm,
+    rules,
+    codec,
+    events,
+    proto,
+    persistenceApi,
+    persistenceRuntime
+  )
   .enablePlugins(JavaAppPackaging, DockerPlugin)
   .settings(commonSettings)
   .settings(
@@ -218,6 +407,103 @@ lazy val gameService = project
     // exercise; covered by docker-compose smoke tests, not unit coverage.
     coverageExcludedFiles :=
       ".*Kafka.*;.*GameServiceMain.*;.*GrpcServer.*",
+  )
+
+// Supplementary projection: builds a graph of opening positions by
+// consuming chess.game-events and walking each MoveMade into Neo4j as a
+// (Position{fen})-[:MOVE{san,count}]->(Position{fen}) edge. Read-only from
+// the perspective of game state — never serves the primary GameRepository.
+lazy val openingService = project
+  .in(file("opening-service"))
+  .dependsOn(domain.jvm, codec, events)
+  .enablePlugins(JavaAppPackaging, DockerPlugin)
+  .settings(commonSettings)
+  .settings(
+    name := "pichess-opening-service",
+    Compile / mainClass := Some("chess.opening.OpeningMain"),
+    libraryDependencies ++= Seq(
+      "dev.zio"          %% "zio-kafka"        % zioKafkaVersion,
+      "org.neo4j.driver" %  "neo4j-java-driver" % neo4jDriverVersion,
+    ),
+    Docker / packageName := "pichess-opening-service",
+    Docker / version     := "latest",
+    dockerBaseImage      := "eclipse-temurin:23-jre",
+    dockerUpdateLatest   := true,
+    Docker / dockerGroupLayers := pichessLayerGrouping,
+    coverageExcludedFiles :=
+      ".*OpeningMain.*;.*Kafka.*;.*Neo4j.*",
+  )
+
+// Supplementary projection: ClickHouse OLAP store fed by chess.game-events.
+// Holds an append-only `move_events` table plus aggregate views; serves
+// canonical aggregate queries over a small REST surface so the future
+// admin panel can call it without speaking JDBC.
+lazy val analyticsService = project
+  .in(file("analytics-service"))
+  .dependsOn(domain.jvm, codec, events)
+  .enablePlugins(JavaAppPackaging, DockerPlugin)
+  .settings(commonSettings)
+  .settings(
+    name := "pichess-analytics-service",
+    Compile / mainClass := Some("chess.analytics.AnalyticsMain"),
+    libraryDependencies ++= Seq(
+      "dev.zio"                     %% "zio-kafka"             % zioKafkaVersion,
+      "dev.zio"                     %% "zio-jdbc"              % zioJdbcVersion,
+      "dev.zio"                     %% "zio-http"              % zioHttpVersion,
+      "dev.zio"                     %% "zio-json"              % zioJsonVersion,
+      "com.softwaremill.sttp.tapir" %% "tapir-core"            % tapirVersion,
+      "com.softwaremill.sttp.tapir" %% "tapir-json-zio"        % tapirVersion,
+      "com.softwaremill.sttp.tapir" %% "tapir-zio-http-server" % tapirVersion,
+      "com.clickhouse"              %  "clickhouse-jdbc"       % clickhouseJdbcVersion,
+    ),
+    Docker / packageName := "pichess-analytics-service",
+    Docker / version     := "latest",
+    dockerBaseImage      := "eclipse-temurin:23-jre",
+    dockerExposedPorts   := Seq(8093),
+    dockerUpdateLatest   := true,
+    Docker / dockerGroupLayers := pichessLayerGrouping,
+    // DB-touching files (projection, service, schema, JSON codecs, HTTP
+    // wiring) are exercised end-to-end against a live ClickHouse, not as
+    // unit tests. Pure logic in AnalyticsEventMapping IS unit-tested.
+    coverageExcludedFiles :=
+      ".*AnalyticsMain.*;.*Kafka.*;.*ClickHouse.*;.*AnalyticsServer.*;" +
+        ".*AnalyticsEndpoints.*;.*AnalyticsProjection.*;.*AnalyticsService.*;" +
+        ".*AnalyticsJson.*;.*AnalyticsSchema.*",
+  )
+
+// New microservice for lobby management. REST-only on :8092 — no gRPC, no
+// Kafka in Phase 1 (lobby events come later, see plan §"Future scope"). Uses
+// `LobbyRepository` from persistence-api so it inherits the same backend
+// swap as game state.
+lazy val lobbyService = project
+  .in(file("lobby-service"))
+  .dependsOn(
+    domain.jvm,
+    persistenceApi,
+    persistenceRuntime
+  )
+  .enablePlugins(JavaAppPackaging, DockerPlugin)
+  .settings(commonSettings)
+  .settings(
+    name := "pichess-lobby-service",
+    Compile / mainClass := Some("chess.lobby.LobbyMain"),
+    libraryDependencies ++= Seq(
+      "dev.zio"                     %% "zio-http"              % zioHttpVersion,
+      "dev.zio"                     %% "zio-json"              % zioJsonVersion,
+      "com.softwaremill.sttp.tapir" %% "tapir-core"            % tapirVersion,
+      "com.softwaremill.sttp.tapir" %% "tapir-json-zio"        % tapirVersion,
+      "com.softwaremill.sttp.tapir" %% "tapir-zio-http-server" % tapirVersion,
+    ),
+    Docker / packageName := "pichess-lobby-service",
+    Docker / version     := "latest",
+    dockerBaseImage      := "eclipse-temurin:23-jre",
+    dockerExposedPorts   := Seq(8092),
+    dockerUpdateLatest   := true,
+    Docker / dockerGroupLayers := pichessLayerGrouping,
+    // HTTP wiring (Main, server, endpoint defs) is exercised by docker-compose
+    // smoke tests, not unit coverage. LobbyService logic is covered here.
+    coverageExcludedFiles :=
+      ".*LobbyMain.*;.*LobbyServer.*;.*LobbyEndpoints.*;.*LobbyJson.*",
   )
 
 lazy val gateway = project
@@ -266,6 +552,26 @@ lazy val gateway = project
     }.taskValue,
   )
 
+// Stress / load tests via Gatling. Hits the gateway's HTTP surface; doesn't
+// know which backend is wired in — that's the point. Run the same scenario
+// with PICHESS_BACKEND=postgres / mongo / redis / cassandra to produce
+// comparative throughput numbers under `gatling/target/gatling/`.
+//
+// Run with:  sbt 'gatling/Gatling/test'      (all simulations)
+//            sbt 'gatling/Gatling/testOnly chess.gatling.GameSimulation'
+lazy val gatling = project
+  .in(file("gatling"))
+  .enablePlugins(GatlingPlugin)
+  .settings(
+    name := "pichess-gatling",
+    scalaVersion := "3.8.2",
+    libraryDependencies ++= Seq(
+      "io.gatling.highcharts" % "gatling-charts-highcharts" % gatlingVersion % Test,
+      "io.gatling"            % "gatling-test-framework"    % gatlingVersion % Test,
+    ),
+    coverageEnabled := false,
+  )
+
 // TUI is currently a parser-only library. Runtime (stdin loop + REST client
 // to the gateway) is documented future work — see docs/roadmap.md "TUI to
 // REST". Once implemented, depends on api.jvm for the Tapir contract.
@@ -304,13 +610,25 @@ lazy val root = project
     rules,
     codec,
     repositoryApi,
+    persistenceApi,
+    persistencePostgres,
+    persistenceRedis,
+    persistenceMongo,
+    persistenceCassandra,
+    persistenceCache,
+    persistenceRuntime,
+    persistenceContract,
     events,
     proto,
     repository,
     gameService,
+    lobbyService,
+    openingService,
+    analyticsService,
     gateway,
     tui,
     webUi,
+    gatling,
   )
   .settings(
     name := "pichess",
@@ -319,3 +637,19 @@ lazy val root = project
     // `sbt <svc>/run` for individual services or `docker compose up` for the
     // integrated stack.
   )
+
+// Build all six service images into the local Docker daemon. Run this once
+// before `docker compose up` (and after every service-side change). Listed
+// in dependency order — domain/persistence libs are pulled in transitively
+// — so a single `sbt dockerBuildAll` is enough.
+addCommandAlias(
+  "dockerBuildAll",
+  Seq(
+    "gameService/Docker/publishLocal",
+    "repository/Docker/publishLocal",
+    "lobbyService/Docker/publishLocal",
+    "openingService/Docker/publishLocal",
+    "analyticsService/Docker/publishLocal",
+    "gateway/Docker/publishLocal"
+  ).mkString(";", ";", "")
+)

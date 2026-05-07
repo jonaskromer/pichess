@@ -1,7 +1,7 @@
 package chess.controller
 
 import chess.events.{GameEventProducer, InMemoryGameEventProducer}
-import chess.gameservice.InMemoryGameStore
+import chess.persistence.InMemoryGameRepository
 import chess.model.{GameSnapshot, SessionState}
 import chess.model.board.{DrawReason, GameState, GameStatus, Move, Position}
 import chess.model.piece.{Color, Piece, PieceType}
@@ -16,7 +16,7 @@ object GameControllerSpec extends ZIOSpecDefault:
   private val appLayer: ULayer[GameService & GameEventProducer] =
     ZLayer.make[GameService & GameEventProducer](
       GameServiceLive.layer,
-      InMemoryGameStore.layer,
+      InMemoryGameRepository.layer,
       InMemoryGameEventProducer.layer
     )
 

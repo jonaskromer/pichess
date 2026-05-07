@@ -3,6 +3,7 @@ package chess.repository
 import chess.codec.FenParserRegex
 import chess.events.{GameDomainEvent, Topics}
 import chess.model.GameError
+import chess.persistence.GameRepository
 import zio.*
 import zio.json.*
 import zio.kafka.consumer.{Consumer, ConsumerSettings, Subscription}

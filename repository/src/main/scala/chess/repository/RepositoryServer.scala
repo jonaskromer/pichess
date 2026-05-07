@@ -1,6 +1,7 @@
 package chess.repository
 
 import chess.codec.{FenParserRegex, FenSerializer}
+import chess.persistence.GameRepository
 import chess.repository.api.{
   GameStateEnvelope,
   LoadFailure,

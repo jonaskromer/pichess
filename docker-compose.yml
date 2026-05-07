@@ -1,24 +1,132 @@
 # Pichess microservice stack.
 #
-#   kafka         — single-broker KRaft Kafka (no Zookeeper). Backs the
-#                   chess.game-events event log.
-#   game-service  — authoritative game state. Exposes gRPC on :9000 and
-#                   publishes events to Kafka after each state transition.
-#   repository    — REST surface for read-side queries (Gatling + curl).
-#                   Consumes chess.game-events and persists the latest FEN.
-#   gateway       — public HTTP entry point (REST + SSE + Laminar web-ui).
-#                   Calls game-service over gRPC.
+#   postgres       — relational primary store for the polyglot persistence
+#                    demo. Active when PICHESS_BACKEND=postgres.
+#   mongodb        — document primary store. Active when PICHESS_BACKEND=mongo.
+#   redis          — key-value primary store AND optional always-on cache
+#                    decorator. Active for primary when PICHESS_BACKEND=redis;
+#                    active as cache when PICHESS_CACHE=redis (any backend).
+#   cassandra      — wide-column primary store. Active when
+#                    PICHESS_BACKEND=cassandra.
+#   neo4j          — graph DB; supplementary projection (always-on).
+#                    opening-service consumes Kafka and builds an opening
+#                    tree of (Position)-[:MOVE]->(Position) edges.
+#   clickhouse     — OLAP DB; supplementary projection (always-on).
+#                    analytics-service consumes Kafka into a flat
+#                    move_events table and serves aggregate queries on :8093.
+#   kafka          — single-broker KRaft Kafka (no Zookeeper). Backs the
+#                    chess.game-events event log.
+#   game-service   — authoritative game state. Exposes gRPC on :9000 and
+#                    publishes events to Kafka after each state transition.
+#                    Persistence backend selected by PICHESS_BACKEND.
+#   repository     — REST surface for read-side queries (Gatling + curl).
+#                    Consumes chess.game-events and persists the latest FEN.
+#   lobby-service  — REST surface for 2-player lobby management on :8092.
+#                    Generates invite codes, tracks join/start/close.
+#   gateway        — public HTTP entry point (REST + SSE + Laminar web-ui).
+#                    Calls game-service over gRPC.
 #
 # Build the images first:
-#   sbt 'gameService/Docker/publishLocal; gateway/Docker/publishLocal; repository/Docker/publishLocal'
+#   sbt dockerBuildAll
 #
 # Then:
 #   docker compose up
 #
 # Browse http://localhost:8090 for the web UI. Repository REST is on
-# http://localhost:8091, game-service gRPC is on localhost:9000.
+# http://localhost:8091, lobby REST on http://localhost:8092, game-service
+# gRPC on localhost:9000.
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: pichess-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "postgres"
+      POSTGRES_DB: "pichess"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pichess"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mongodb:
+    image: mongo:7
+    container_name: pichess-mongodb
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'db.runCommand({ping:1}).ok' | mongosh --quiet | grep -q 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: pichess-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  cassandra:
+    image: cassandra:4.1
+    container_name: pichess-cassandra
+    ports:
+      - "9042:9042"
+    environment:
+      CASSANDRA_CLUSTER_NAME: "pichess"
+      CASSANDRA_DC: "datacenter1"
+      # Single-node cluster — no need for the JVM heap defaults for a small
+      # dev container. Keeps ~3GB off the host.
+      MAX_HEAP_SIZE: "512M"
+      HEAP_NEWSIZE: "100M"
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe keyspaces'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  neo4j:
+    image: neo4j:5
+    container_name: pichess-neo4j
+    ports:
+      - "7474:7474"   # Neo4j Browser (web UI)
+      - "7687:7687"   # Bolt protocol
+    environment:
+      NEO4J_AUTH: "neo4j/password"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    container_name: pichess-clickhouse
+    ports:
+      - "8123:8123"   # HTTP (also what JDBC speaks)
+      - "9009:9000"   # Native TCP — remapped so it doesn't collide with gameService
+    environment:
+      CLICKHOUSE_DB: "default"
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping | grep -q Ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
   kafka:
     image: confluentinc/cp-kafka:7.7.1
     container_name: pichess-kafka
@@ -51,11 +159,41 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      cassandra:
+        condition: service_healthy
     ports:
       - "9000:9000"
-    environment:
+    environment: &persistence-env
       GRPC_PORT: "9000"
       KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      # Persistence selection. Default `inmemory` keeps state in-process.
+      # Set PICHESS_BACKEND to one of: inmemory, postgres, mongo, redis,
+      # cassandra. Set PICHESS_CACHE=redis to wrap the primary in a Redis
+      # cache decorator (orthogonal to backend choice).
+      PICHESS_BACKEND: "${PICHESS_BACKEND:-inmemory}"
+      PICHESS_CACHE: "${PICHESS_CACHE:-none}"
+      PICHESS_PG_URL: "jdbc:postgresql://postgres:5432/pichess"
+      PICHESS_PG_USER: "postgres"
+      PICHESS_PG_PASSWORD: "postgres"
+      PICHESS_MONGO_URL: "mongodb://mongodb:27017"
+      PICHESS_MONGO_DB: "pichess"
+      PICHESS_REDIS_HOST: "redis"
+      PICHESS_REDIS_PORT: "6379"
+      PICHESS_CASSANDRA_CONTACT_POINTS: "cassandra:9042"
+      PICHESS_CASSANDRA_DC: "datacenter1"
+      PICHESS_CASSANDRA_KEYSPACE: "pichess"
+      PICHESS_NEO4J_URL: "bolt://neo4j:7687"
+      PICHESS_NEO4J_USER: "neo4j"
+      PICHESS_NEO4J_PASSWORD: "password"
+      PICHESS_CLICKHOUSE_URL: "jdbc:clickhouse://clickhouse:8123/default"
+      PICHESS_CLICKHOUSE_USER: "default"
+      PICHESS_CLICKHOUSE_PASSWORD: ""
 
   repository:
     image: pichess-repository:latest
@@ -64,16 +202,88 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      cassandra:
+        condition: service_healthy
     ports:
       - "8091:8091"
     environment:
+      <<: *persistence-env
       REPOSITORY_PORT: "8091"
-      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
       KAFKA_CONSUMER_GROUP: "pichess-repository"
     healthcheck:
       # Repository exposes no /health yet; hit an arbitrary game ID and
       # treat a 404 as "server is up and responding".
       test: ["CMD-SHELL", "wget -qO- --server-response http://localhost:8091/games/healthcheck 2>&1 | grep -q '404'"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+
+  lobby-service:
+    image: pichess-lobby-service:latest
+    pull_policy: never
+    container_name: pichess-lobby-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      cassandra:
+        condition: service_healthy
+    ports:
+      - "8092:8092"
+    environment:
+      <<: *persistence-env
+      LOBBY_PORT: "8092"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8092/healthcheck 2>&1 | grep -q ok"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+
+  opening-service:
+    image: pichess-opening-service:latest
+    pull_policy: never
+    container_name: pichess-opening-service
+    depends_on:
+      kafka:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      KAFKA_CONSUMER_GROUP: "pichess-opening"
+      PICHESS_NEO4J_URL: "bolt://neo4j:7687"
+      PICHESS_NEO4J_USER: "neo4j"
+      PICHESS_NEO4J_PASSWORD: "password"
+
+  analytics-service:
+    image: pichess-analytics-service:latest
+    pull_policy: never
+    container_name: pichess-analytics-service
+    depends_on:
+      kafka:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    ports:
+      - "8093:8093"
+    environment:
+      ANALYTICS_PORT: "8093"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      KAFKA_CONSUMER_GROUP: "pichess-analytics"
+      PICHESS_CLICKHOUSE_URL: "jdbc:clickhouse://clickhouse:8123/default"
+      PICHESS_CLICKHOUSE_USER: "default"
+      PICHESS_CLICKHOUSE_PASSWORD: ""
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8093/healthcheck 2>&1 | grep -q ok"]
       interval: 5s
       timeout: 2s
       retries: 5

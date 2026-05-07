@@ -1,0 +1,49 @@
+package chess.lobby
+
+import chess.model.{InviteCode, Lobby, LobbyStatus}
+import sttp.tapir.Schema
+import zio.json.*
+
+/** Wire codecs for the lobby REST API. Lives here (not in `domain`) so the
+  * cross-compiled `domain` module stays free of JSON deps; once lobby state
+  * needs to flow through web-ui too, codecs migrate to a shared `lobby-api`.
+  */
+object LobbyJson:
+
+  given JsonCodec[LobbyStatus] = JsonCodec[String].transformOrFail(
+    raw =>
+      LobbyStatus.values
+        .find(_.toString == raw)
+        .toRight(s"Unknown lobby status: $raw"),
+    _.toString
+  )
+
+  given JsonCodec[InviteCode] = JsonCodec[String].transformOrFail(
+    raw => InviteCode(raw).toRight(s"Invalid invite code: $raw"),
+    _.value
+  )
+
+  // Tapir schemas: InviteCode is an opaque alias of String and LobbyStatus is
+  // a Scala enum, neither of which Tapir's auto derivation can see through.
+  given Schema[InviteCode] = Schema.string
+  given Schema[LobbyStatus] = Schema.string
+
+  given JsonCodec[Lobby] = DeriveJsonCodec.gen[Lobby]
+
+  /** Inbound request bodies. Kept separate from domain types so HTTP
+    * validation errors don't propagate into the domain model.
+    */
+  final case class CreateLobbyRequest(hostNickname: String)
+  object CreateLobbyRequest:
+    given JsonCodec[CreateLobbyRequest] =
+      DeriveJsonCodec.gen[CreateLobbyRequest]
+
+  final case class JoinLobbyRequest(guestNickname: String)
+  object JoinLobbyRequest:
+    given JsonCodec[JoinLobbyRequest] =
+      DeriveJsonCodec.gen[JoinLobbyRequest]
+
+  final case class StartGameRequest(gameId: String)
+  object StartGameRequest:
+    given JsonCodec[StartGameRequest] =
+      DeriveJsonCodec.gen[StartGameRequest]

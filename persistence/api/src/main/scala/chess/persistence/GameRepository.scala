@@ -1,9 +1,20 @@
-package chess.repository
+package chess.persistence
 
 import chess.model.{GameError, GameId}
 import chess.model.board.GameState
 import zio.*
 
+/** Backend-agnostic CRUD on game state, keyed by `GameId`.
+  *
+  * Implementations live in sibling modules (persistence-postgres, persistence-
+  * mongo, persistence-redis, persistence-cassandra) plus the in-memory dev
+  * default in this module. All implementations must satisfy the contract
+  * spec in persistence-contract — anything that doesn't is not actually a
+  * drop-in.
+  *
+  * Returns `IO[GameError, A]` only; driver-specific types (DBIO, Future,
+  * BsonDocument, …) must not leak through this trait.
+  */
 trait GameRepository:
   def save(id: GameId, state: GameState): IO[GameError, Unit]
   def load(id: GameId): IO[GameError, Option[GameState]]

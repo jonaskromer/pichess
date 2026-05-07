@@ -5,6 +5,8 @@ import chess.events.{
   InMemoryGameEventProducer,
   KafkaGameEventProducer
 }
+import chess.persistence.{BackendConfig, GameRepository}
+import chess.persistence.runtime.PersistenceLayers
 import chess.service.{GameService, GameServiceLive}
 import io.grpc.ServerBuilder
 import pichess.game_service.ZioGameService
@@ -14,19 +16,28 @@ import zio.*
 /** Standalone entry point for the gameService microservice.
   *
   * Exposes a zio-grpc server on `GRPC_PORT` (default 9000), backed by:
-  *   - `InMemoryGameStore` for in-flight game state
+  *   - The `GameRepository` impl selected by [[BackendConfig]]
+  *     (`InMemoryGameRepository` by default; `PostgresGameRepository` when
+  *     `PICHESS_BACKEND=postgres`; others as they come online)
   *   - `KafkaGameEventProducer` when `KAFKA_BOOTSTRAP_SERVERS` is set,
   *     `InMemoryGameEventProducer` otherwise (so dev runs without a broker)
   *
-  * State is non-durable; restart drops every active game. Replay-from-Kafka
-  * on startup is the documented next iteration.
+  * In-memory mode loses state on restart. Postgres mode is durable and
+  * replays via Kafka on the read-side (the repository service).
   */
 object GameServiceMain extends ZIOAppDefault:
 
   private val defaultPort = 9000
 
   override def run: ZIO[ZIOAppArgs, Throwable, Unit] =
-    portFromEnv.flatMap(serve)
+    for
+      port <- portFromEnv
+      cfg  <- BackendConfig.fromEnv
+      _    <- Console.printLine(
+                s"pichess-game-service backend=${cfg.backend} cache=${cfg.cache}"
+              )
+      _    <- serve(port, cfg)
+    yield ()
 
   private[gameservice] def portFromEnv: Task[Int] =
     zio.System.env("GRPC_PORT").map(parsePort)
@@ -41,17 +52,25 @@ object GameServiceMain extends ZIOAppDefault:
       case Some(servers) => KafkaGameEventProducer.layer(servers)
       case None          => InMemoryGameEventProducer.layer
 
-  private val producerLayer: ZLayer[Any, Throwable, GameEventProducer] =
-    selectProducerLayer(sys.env.get("KAFKA_BOOTSTRAP_SERVERS"))
+  /** Pick the `GameRepository` layer for the configured backend. Selection
+    * lives in `PersistenceLayers` — see [[chess.persistence.runtime.PersistenceLayers]].
+    */
+  private[gameservice] def gameRepoLayer(
+      cfg: BackendConfig
+  ): TaskLayer[GameRepository] =
+    PersistenceLayers.gameRepository(cfg)
 
-  private def serve(port: Int): Task[Unit] =
+  private def serve(port: Int, cfg: BackendConfig): Task[Unit] =
     val program: ZIO[scalapb.zio_grpc.Server, Throwable, Unit] =
       Console.printLine(
         s"pichess-game-service gRPC listening on 0.0.0.0:$port"
       ) *> ZIO.service[scalapb.zio_grpc.Server].flatMap(_.awaitTermination)
 
+    val producerLayer: ZLayer[Any, Throwable, GameEventProducer] =
+      selectProducerLayer(sys.env.get("KAFKA_BOOTSTRAP_SERVERS"))
+
     program.provide(
-      InMemoryGameStore.layer,
+      gameRepoLayer(cfg),
       GameSessions.layer,
       GameServiceLive.layer,
       GrpcServer.asServiceLayer,
