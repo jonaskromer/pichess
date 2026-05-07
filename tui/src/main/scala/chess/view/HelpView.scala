@@ -1,6 +1,9 @@
 package chess.view
 
-// Mirror of web-ui/src/main/scala/chess/webui/HelpView.scala — keep in sync.
+// Sibling of web-ui/src/main/scala/chess/webui/HelpView.scala — text largely
+// shared, but `quit` has different semantics now: the TUI is a stateless
+// client of the gateway, so quitting only ends *this* session, while the
+// web-ui's `quit` still triggers a server shutdown via POST /api/quit.
 object HelpView:
   def render: String =
     """|=== πChess Help ===
@@ -9,12 +12,14 @@ object HelpView:
        |  <from> <to>          Move a piece  (e.g. e2 e4)
        |  load <FEN|PGN|JSON>  Load a game (format is auto-detected)
        |  export fen|pgn|json  Export the current game in the given format
+       |  new                  Start a fresh game from the initial position
        |  undo                 Undo the last move
        |  redo                 Redo the last undone move
        |  draw                 Claim a draw (50-move rule or threefold repetition)
+       |  forfeit              Resign — the side to move loses, the opponent wins
        |  flip                 Flip the board (toggle White/Black perspective)
        |  help                 Show this help screen
-       |  quit                 Exit the game
+       |  quit                 Exit this TUI session (gateway keeps running)
        |
        |IMPORT / EXPORT
        |  The 'load' command accepts FEN, PGN, or JSON — the format is detected

@@ -573,13 +573,31 @@ lazy val gatling = project
   )
 
 // TUI is currently a parser-only library. Runtime (stdin loop + REST client
-// to the gateway) is documented future work — see docs/roadmap.md "TUI to
-// REST". Once implemented, depends on api.jvm for the Tapir contract.
+// Container-friendly text UI. Reads commands from stdin, calls the gateway
+// over HTTP using the typed `chess.api.Endpoints` (same Tapir contract the
+// web-ui uses), and renders results back to stdout. Runs in its own
+// container so a TUI crash can't kill the gateway and so spinning up
+// multiple instances (e.g. bots-vs-bots) doesn't require gateway changes.
 lazy val tui = project
   .in(file("tui"))
-  .dependsOn(domain.jvm, codec)
+  .dependsOn(domain.jvm, codec, api.jvm)
+  .enablePlugins(JavaAppPackaging, DockerPlugin)
   .settings(commonSettings)
-  .settings(name := "pichess-tui")
+  .settings(
+    name := "pichess-tui",
+    Compile / mainClass := Some("chess.tui.TuiMain"),
+    libraryDependencies ++= Seq(
+      "com.softwaremill.sttp.tapir"   %% "tapir-sttp-client" % tapirVersion,
+      "com.softwaremill.sttp.client3" %% "zio"               % "3.11.0",
+    ),
+    Docker / packageName := "pichess-tui",
+    Docker / version     := "latest",
+    dockerBaseImage      := "eclipse-temurin:23-jre",
+    dockerUpdateLatest   := true,
+    Docker / dockerGroupLayers := pichessLayerGrouping,
+    coverageExcludedFiles :=
+      ".*TuiMain.*;.*TuiClient.*;.*TuiEventStream.*",
+  )
 
 lazy val webUi = project
   .in(file("web-ui"))
@@ -638,10 +656,10 @@ lazy val root = project
     // integrated stack.
   )
 
-// Build all six service images into the local Docker daemon. Run this once
-// before `docker compose up` (and after every service-side change). Listed
-// in dependency order — domain/persistence libs are pulled in transitively
-// — so a single `sbt dockerBuildAll` is enough.
+// Build all seven service images into the local Docker daemon. Run this
+// once before `docker compose up` (and after every service-side change).
+// Listed in dependency order — domain/persistence libs are pulled in
+// transitively — so a single `sbt dockerBuildAll` is enough.
 addCommandAlias(
   "dockerBuildAll",
   Seq(
@@ -650,6 +668,7 @@ addCommandAlias(
     "lobbyService/Docker/publishLocal",
     "openingService/Docker/publishLocal",
     "analyticsService/Docker/publishLocal",
-    "gateway/Docker/publishLocal"
+    "gateway/Docker/publishLocal",
+    "tui/Docker/publishLocal"
   ).mkString(";", ";", "")
 )

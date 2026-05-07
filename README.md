@@ -1,4 +1,4 @@
-# <img src="gateway/src/main/resources/web/peach.svg" alt="🍑" width="32" /> πChess
+# <img src="gateway/src/main/resources/web/peach.svg" alt="🍑" width="32" /> piChess
 
 Welcome to **πChess** (pronounced like *peaches* in German)!
 
@@ -11,18 +11,21 @@ Ensure you have Java, `sbt`, and Docker installed.
 ### Integrated stack (Docker, prod-shaped)
 
 ```bash
-./scripts/dev-up.sh
+make build && make up
 ```
 
-Spins up `kafka`, `game-service`, `repository`, and `gateway`. Browse [http://localhost:8090](http://localhost:8090) for the web UI. Repository REST is on `:8091`; game-service gRPC is on `:9000`.
+Builds every service image then spins up the full stack (DBs, Kafka, services). Browse [http://localhost:8090](http://localhost:8090) for the web UI. Repository REST is on `:8091`; lobby-service REST is on `:8092`; analytics REST is on `:8093`; game-service gRPC is on `:9000`.
+
+`make` (no args) lists every available target — `up`, `down`, `logs`, `psql` / `mongo` / `redis-cli` / `cqlsh` / `cypher` / `clickhouse-cli`, etc.
 
 ### Single-service rebuild after a code change
 
 ```bash
-./scripts/dev-up.sh gateway        # also: game-service | repository
+make dev-gateway        # also: dev-game-service | dev-repository | dev-lobby-service
+                        #       dev-opening-service | dev-analytics-service
 ```
 
-Rebuilds only the touched service's Docker image and restarts that container. Layered images mean a one-file edit only invalidates the small project-jar layer, so wall-clock should be under ~20s.
+Rebuilds only the touched service's Docker image and restarts that container with `--no-deps`. Layered images mean a one-file edit only invalidates the small project-jar layer, so wall-clock should be under ~20s.
 
 ### Inner loop (host JVM, only Kafka in Docker)
 
@@ -34,7 +37,7 @@ KAFKA_BOOTSTRAP_SERVERS=localhost:9092 REPOSITORY_PORT=8091   sbt repository/run
 HTTP_PORT=8090 GAME_SERVICE_GRPC=localhost:9000               sbt gateway/run
 ```
 
-> **Note:** `sbt run` at the project root is no longer wired — the previous monolithic `app` module was split into the three services above. Use `sbt <svc>/run` or the dev scripts.
+> **Note:** `sbt run` at the project root is no longer wired — the previous monolithic `app` module was split into the three services above. Use `sbt <svc>/run` or the `make` targets.
 
 ### Tests + coverage
 

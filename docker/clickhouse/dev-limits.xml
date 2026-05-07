@@ -1,0 +1,43 @@
+<?xml version="1.0"?>
+<!--
+  Conservative ClickHouse config for local docker-compose. Just MergeTree
+  tweaks for the (small) datasets the analytics-service produces — no
+  global server-wide caps. Memory budget is governed entirely by
+  `mem_limit` in docker-compose.yml; cgroup auto-tuning derives sensible
+  cache / merges / pool sizes from that.
+
+  Earlier versions of this file also overrode background_pool_size,
+  max_concurrent_queries, max_server_memory_usage, and friends. Each set of
+  overrides we tried fought ClickHouse's auto-tuning in a different way and
+  the server would refuse to bind HTTP/TCP, leaving the container "running
+  but unhealthy" forever. The defaults at 4 GiB cgroup actually produce
+  sensible numbers — overriding them caused more problems than it solved.
+
+  Reference (with caveats):
+    https://altinity.com/blog/deploying-single-node-clickhouse-on-small-servers
+-->
+<clickhouse>
+
+  <!-- ===== MergeTree tweaks for our small datasets =================== -->
+  <!-- Compact-part defaults so a 12-row parts table doesn't pay for the
+       wide-part metadata overhead. Plus insert-rate backpressure so a
+       burst of writes can't outrun the merge pool. Values from the
+       Altinity small-server guide.
+
+       Note: we DO NOT override the background_pool_size or the
+       "free entries" thresholds here. Touching those was what made
+       ClickHouse refuse to come up cleanly. -->
+  <merge_tree>
+    <min_bytes_for_wide_part>10485760</min_bytes_for_wide_part>
+    <min_rows_for_wide_part>100000</min_rows_for_wide_part>
+
+    <parts_to_throw_insert>1500</parts_to_throw_insert>
+    <parts_to_delay_insert>750</parts_to_delay_insert>
+  </merge_tree>
+
+  <!-- Cut log noise so the container's stdout doesn't spam during boot. -->
+  <logger>
+    <level>warning</level>
+  </logger>
+
+</clickhouse>

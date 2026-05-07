@@ -114,18 +114,40 @@ services:
     ports:
       - "8123:8123"   # HTTP (also what JDBC speaks)
       - "9009:9000"   # Native TCP — remapped so it doesn't collide with gameService
-    environment:
-      CLICKHOUSE_DB: "default"
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    # No CLICKHOUSE_DB / CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT here, by
+    # design. Setting either of them flips the entrypoint into an "init
+    # phase" that binds clickhouse-server to 127.0.0.1 only and ping-loops
+    # on http_port until ready, then restarts on 0.0.0.0. Under our tight
+    # resource limits that init loop can hang indefinitely (and `default`
+    # already exists out of the box, so creating it would be a no-op).
+    # AnalyticsSchema.ensure handles `CREATE TABLE IF NOT EXISTS
+    # move_events` at the application layer, which is the correct seam.
+    # ClickHouse defaults still assume a multi-core production server, so
+    # dev-limits.xml drops memory/cache/pool knobs to something a laptop
+    # can survive.
+    volumes:
+      - ./docker/clickhouse/dev-limits.xml:/etc/clickhouse-server/config.d/dev-limits.xml:ro
+    # Hard-cap container memory. ClickHouse refuses to come up cleanly
+    # below ~4 GiB — auto-tuning needs the headroom for query cache,
+    # merges buffer, and Jemalloc arenas. Matches the Altinity small-
+    # server guide's stated minimum. dev-limits.xml does NOT override
+    # these caps any more; ClickHouse's cgroup auto-tuning produces
+    # sensible numbers from `mem_limit` on its own.
+    mem_limit: 4g
     ulimits:
       nofile:
-        soft: 262144
-        hard: 262144
+        soft: 65536
+        hard: 65536
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping | grep -q Ok"]
+      # `clickhouse-client` ships with the server image and speaks the
+      # native protocol on port 9000 — same path the JDBC driver and the
+      # analytics-service use, so a passing healthcheck means we're
+      # actually serving queries (not merely "process is up").
+      test: ["CMD-SHELL", "clickhouse-client --query 'SELECT 1' >/dev/null 2>&1 || exit 1"]
       interval: 5s
-      timeout: 3s
-      retries: 12
+      timeout: 5s
+      retries: 24
+      start_period: 15s
 
   kafka:
     image: confluentinc/cp-kafka:7.7.1
@@ -300,6 +322,24 @@ services:
     environment:
       HTTP_PORT: "8090"
       GAME_SERVICE_GRPC: "game-service:9000"
+
+  # Headless control surface. Not in the default compose profile — `up`
+  # doesn't start it. Spawn one via `make tui` (or
+  # `docker compose run --rm tui-service`) to drop into an interactive
+  # session against the gateway. Multiple instances can be run side-by-side
+  # for bots-vs-bots scenarios; they all hit the same gateway over HTTP.
+  tui-service:
+    image: pichess-tui:latest
+    pull_policy: never
+    container_name: pichess-tui
+    profiles: ["tui"]
+    depends_on:
+      gateway:
+        condition: service_started
+    stdin_open: true
+    tty: true
+    environment:
+      PICHESS_GATEWAY_URL: "http://gateway:8090"
 
 networks:
   default:

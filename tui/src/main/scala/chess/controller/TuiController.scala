@@ -19,6 +19,8 @@ object TuiController:
     case Undo
     case Redo
     case Draw
+    case Forfeit
+    case New
     case Load(raw: String)
     case Export(format: ExportFormat)
     case Move(raw: String)
@@ -49,10 +51,12 @@ object TuiController:
         case _      => Command.Move(trimmed) // will fail as invalid move
     else
       trimmed match
-        case "quit" => Command.Quit
-        case "help" => Command.Help
-        case "flip" => Command.Flip
-        case "undo" => Command.Undo
-        case "redo" => Command.Redo
-        case "draw" => Command.Draw
-        case raw    => Command.Move(raw)
+        case "quit"    => Command.Quit
+        case "help"    => Command.Help
+        case "flip"    => Command.Flip
+        case "undo"    => Command.Undo
+        case "redo"    => Command.Redo
+        case "draw"    => Command.Draw
+        case "forfeit" => Command.Forfeit
+        case "new"     => Command.New
+        case raw       => Command.Move(raw)

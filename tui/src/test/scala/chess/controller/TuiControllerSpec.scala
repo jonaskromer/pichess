@@ -45,6 +45,16 @@ object TuiControllerSpec extends ZIOSpecDefault:
           TuiController.parseCommand("draw") == TuiController.Command.Draw
         )
       },
+      test("parse forfeit") {
+        assertTrue(
+          TuiController.parseCommand("forfeit") == TuiController.Command.Forfeit
+        )
+      },
+      test("parse new") {
+        assertTrue(
+          TuiController.parseCommand("new") == TuiController.Command.New
+        )
+      },
       test("parse move input") {
         assertTrue(
           TuiController.parseCommand("e2 e4") == TuiController.Command.Move(

@@ -11,9 +11,14 @@
 
 | Command | Purpose |
 |---|---|
-| `./scripts/dev-up.sh` | Build + start the integrated stack (kafka, game-service, repository, gateway) |
-| `./scripts/dev-up.sh gateway` | Rebuild + restart only the gateway image (also: `game-service`, `repository`) |
-| `./scripts/dev-logs.sh` | Tail logs for all services (or pass service names to filter) |
+| `make` | List every available developer target with its description |
+| `make build` | Build all service Docker images (alias for `sbt dockerBuildAll`) |
+| `make up` / `make down` | Start / stop the integrated stack |
+| `make dev-gateway` | Rebuild + restart only the gateway container (also: `dev-game-service`, `dev-repository`, `dev-lobby-service`, `dev-opening-service`, `dev-analytics-service`) |
+| `make logs` | Tail logs for every service in the stack |
+| `make psql` / `mongo` / `redis-cli` / `cqlsh` / `cypher` / `clickhouse-cli` | Drop into the matching DB console |
+| `make shell-gateway` etc. | Open a shell inside a running service container |
+| `make tui` | Run an interactive TUI session against the gateway (requires `tui-service`) |
 | `sbt test` | Run all tests across all modules |
 | `sbt scalafmtAll` | Format all source files (required before committing) |
 | `sbt coverage test coverageReport` | Run tests with coverage report |
@@ -21,7 +26,6 @@
 | `sbt gateway/run` | Run gateway (HTTP :8090) on the host JVM |
 | `sbt repository/run` | Run repository (REST :8091, optionally Kafka consumer) on the host |
 | `sbt <svc>/Docker/publishLocal` | Build a single service's Docker image |
-| `docker compose up` | Start the full stack |
 
 > **`sbt run` at the root is no longer wired** — the previous `app` monolith was split into three services. Use the per-service commands above. See [ADR 013](adr/013-deletion-of-app-module-and-sbt-run.md).
 
@@ -45,10 +49,10 @@ Coverage is enforced at 100% on all JVM modules. The build fails if any line is 
 
 ### Troubleshooting
 
-- **"Kafka not reachable"** — confirm `docker compose ps kafka` shows `healthy`. The healthcheck calls `kafka-topics --bootstrap-server localhost:9092 --list`; if it fails, check broker logs with `./scripts/dev-logs.sh kafka`.
+- **"Kafka not reachable"** — confirm `make ps` shows the kafka container as `healthy`. The healthcheck calls `kafka-topics --bootstrap-server localhost:9092 --list`; if it fails, check broker logs with `docker compose logs kafka`.
 - **"gRPC handshake failure" from gateway** — game-service hasn't started yet, or `GAME_SERVICE_GRPC` points to the wrong target. The gateway retries on connect via the gRPC client; persistent failure usually means a port mismatch.
 - **"Stale image after publishLocal"** — `docker compose up -d --no-deps --build <svc>` forces compose to recreate the container with the freshly published image.
-- **`sbt run` errors with "No main class detected"** — that's the intended signal; use `./scripts/dev-up.sh` or `sbt <svc>/run`.
+- **`sbt run` errors with "No main class detected"** — that's the intended signal; use `make up` (or `sbt <svc>/run` for a host-JVM single service).
 
 Tests use **zio-test** (`ZIOSpecDefault`). Each test spec is an `object` extending `ZIOSpecDefault` with a `def spec` that returns a `Spec` tree of `suite(...)` and `test(...)` blocks. Assertions use `assertTrue(...)`. Service/repository tests provide layers via `.provide(layer)` on the suite.
 
