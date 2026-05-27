@@ -4,6 +4,7 @@ import chess.controller.{
   AnnotationCache,
   LobbyProxy,
   SessionRegistry,
+  StackInfo,
   WebController
 }
 import io.grpc.ManagedChannelBuilder
@@ -55,12 +56,22 @@ object GatewayMain extends ZIOAppDefault:
         registry     <- SessionRegistry.make
         cache        <- AnnotationCache.make
         lobbyBaseUrl <- LobbyProxy.baseUrlFromEnv
+        stackInfo    <- StackInfo.fromEnv
         _            <- Console.printLine(
                           s"pichess-gateway HTTP listening on 0.0.0.0:$httpPort " +
-                            s"(game-service=$target, lobby-service=$lobbyBaseUrl)"
+                            s"(game-service=$target, lobby-service=$lobbyBaseUrl, " +
+                            s"stack=${stackInfo.backend}" +
+                            (if stackInfo.extras.isEmpty then ""
+                             else s"+${stackInfo.extras.mkString(",")}") + ")"
                         )
         _            <- Server.install(
-                          WebController.routes(client, registry, cache, lobbyBaseUrl)
+                          WebController.routes(
+                            client,
+                            registry,
+                            cache,
+                            lobbyBaseUrl,
+                            stackInfo
+                          )
                         )
         // Run forever; the gateway is no longer killable from a network
         // request — `docker stop` / SIGTERM is the only shutdown path.

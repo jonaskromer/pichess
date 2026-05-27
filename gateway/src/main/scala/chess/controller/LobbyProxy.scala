@@ -26,27 +26,45 @@ object LobbyProxy:
 
   private val DefaultLobbyUrl: String = "http://lobby-service:8092"
 
+  /** Normalise the trailing-path segment so it always starts with a
+    * single `/`. zio-http currently hands us a `Path` whose `toString`
+    * has no leading slash, but a future bump might change that — the
+    * guard keeps us correct either way.
+    */
+  private[controller] def joinPath(rest: Path): String =
+    val s = rest.toString
+    if s.startsWith("/") then s else s"/$s"
+
+  /** Compose the upstream URL string + parse it. Pulled out of
+    * `forward` so the `URL.decode` failure arm — which can be hit by
+    * passing a base URL with control characters — is unit-testable
+    * without standing up a proxy.
+    */
+  private[controller] def buildTarget(
+      base: String,
+      prefix: String,
+      rest: Path,
+      queryParams: QueryParams
+  ): Either[String, URL] =
+    val targetStr =
+      s"${base.stripSuffix("/")}/$prefix${joinPath(rest)}" +
+        (if queryParams.isEmpty then "" else "?" + queryParams.encode)
+    URL.decode(targetStr).left.map(_ => targetStr)
+
   def routes(baseUrl: String): Routes[Client, Response] =
     val base = baseUrl.stripSuffix("/")
 
-    /** Build a forwarded request: same method, body, query string and
-      * headers, with the URL rewritten onto the lobby-service host.
-      * `Host` and `Content-Length` are dropped because the underlying
-      * HTTP client recomputes them.
+    /** Forward a request: same method, body, query string and headers,
+      * URL rewritten onto the lobby-service host. `Host` and
+      * `Content-Length` are dropped because the underlying HTTP client
+      * recomputes them.
       */
     def forward(prefix: String)(rest: Path, req: Request): ZIO[Client, Nothing, Response] =
-      val pathSuffix =
-        val s = rest.toString
-        if s.startsWith("/") then s else s"/$s"
-      val targetStr =
-        s"$base/$prefix$pathSuffix" +
-          (if req.url.queryParams.isEmpty then ""
-           else "?" + req.url.queryParams.encode)
-      URL.decode(targetStr) match
-        case Left(_) =>
+      buildTarget(base, prefix, rest, req.url.queryParams) match
+        case Left(badStr) =>
           ZIO.succeed(
             Response
-              .text(s"lobby proxy: invalid URL $targetStr")
+              .text(s"lobby proxy: invalid URL $badStr")
               .status(Status.BadGateway)
           )
         case Right(target) =>

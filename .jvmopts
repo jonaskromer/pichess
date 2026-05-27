@@ -1,0 +1,24 @@
+# JVM options for sbt. Read automatically by the `sbt` launcher when
+# sitting next to build.sbt — every line is passed directly to java
+# (in contrast to .sbtopts, where every line is an sbt CLI arg and
+# JVM flags need a `-J` prefix). Keep this committed — every
+# developer / CI run gets the same heap settings.
+#
+# Why these values:
+#   • -Xmx4G  — the default ~1 GB cap is too small for our multi-module
+#     build. sbt's incremental compiler + Scala 3 macro expansion +
+#     scoverage instrumentation regularly push past 1 GB; we'd see GC
+#     thrash warnings like "11.6s of the last 10s spent in GC" without
+#     the bump.
+#   • -Xss4m  — bigger stack for deep type-class resolution chains
+#     (tapir + zio-json derive recursive givens).
+#   • -XX:+UseG1GC — pause-time-targeted collector. With a 4 GB heap
+#     the default ParallelGC has multi-second STW pauses on full GC;
+#     G1 keeps pauses bounded and is what's recommended for builds.
+#   • -XX:MaxMetaspaceSize=1G — Scala 3 generates a lot of classes
+#     (givens, lambdas, every match anonymous fn). Default Metaspace
+#     can fill up across long `~compile` watch sessions.
+-Xmx4G
+-Xss4m
+-XX:+UseG1GC
+-XX:MaxMetaspaceSize=1G

@@ -4,12 +4,20 @@ import scala.io.Source
 
 object HtmlPage:
 
-  def render: String =
+  /** Render the SPA shell. `devMode` controls whether the web-ui
+    * surfaces the /dev link on the start screen + activates the
+    * #dev/… hash routes. The flag is read by the SPA from the
+    * `<meta name="pichess-dev">` tag injected here.
+    */
+  def render(devMode: Boolean = false): String =
+    val devMeta =
+      s"""<meta name="pichess-dev" content="${devMode.toString}">"""
     s"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+$devMeta
 <title>piChess</title>
 <link rel="icon" type="image/png" sizes="32x32" href="/web/peach-32.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/web/peach.png">

@@ -2,6 +2,7 @@ package chess.webui
 
 import com.raquo.laminar.api.L.*
 import com.raquo.laminar.modifiers.Modifier
+import chess.webui.components.Components
 
 // Mirror of tui/src/main/scala/chess/view/HelpView.scala — keep in sync.
 // The TUI version is plain monospaced text; this one is Laminar so the
@@ -20,9 +21,13 @@ object HelpView:
       rulesSection
     )
 
+  /** Each section is its own paper panel — first child is the paper-layer
+    * SVG backdrop (drives the crumple + grid via CSS variables), real
+    * content stacks above via `.help-section`'s `isolation: isolate`. */
   private def section(title: String, body: HtmlElement*): HtmlElement =
     sectionTag(
       className := "help-section",
+      Components.paperLayer(),
       h2(title),
       body
     )
@@ -30,10 +35,33 @@ object HelpView:
   // Variadic-Modifier signature so each row can mix raw strings and `code(...)`
   // elements freely. Strings are auto-lifted to text nodes by Laminar.
   private def row(cmd: String, desc: Modifier[HtmlElement]*): HtmlElement =
-    tr(td(cmd), td(desc*))
+    tr(td(code(cmd)), td(desc*))
 
+  /** Newspaper-clipping pill. The cutting itself (`.code-inline`) has
+    * the jagged clip-path; the parent `.newsprint-shadow` carries the
+    * drop-shadow — drop-shadow on a clipped element gets clipped to the
+    * same silhouette and disappears, so the wrapper is structural. */
   private def code(text: String): HtmlElement =
-    span(className := "code-inline", text)
+    span(
+      className := "newsprint-shadow",
+      span(className := "code-inline", text)
+    )
+
+  /** Definition-list term as a newspaper clipping (Special Elite + cut). */
+  private def term(label: String): HtmlElement =
+    dt(
+      span(
+        className := "newsprint-shadow",
+        span(className := "code-inline", label)
+      )
+    )
+
+  /** Block-sized newspaper clipping for the multi-line `<pre>` listing. */
+  private def helpPre(text: String): HtmlElement =
+    div(
+      className := "newsprint-shadow is-block",
+      pre(className := "help-pre", text)
+    )
 
   private val commandsSection: HtmlElement =
     section(
@@ -68,8 +96,7 @@ object HelpView:
         code("export"),
         " requires a format argument."
       ),
-      pre(
-        className := "help-pre",
+      helpPre(
         """load rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1
 load 1. e4 e5 2. Nf3 Nc6 *
 load {"board": {...}, "activeColor": "white", ...}
@@ -96,13 +123,13 @@ export json"""
       ),
       dl(
         className := "help-dl",
-        dt("Placement"),
+        term("Placement"),
         dd(
           "8 ranks separated by /, from rank 8 (top) to rank 1. Letters are pieces (KQRBNPkqrbnp), digits are empty squares. Uppercase = White, lowercase = Black."
         ),
-        dt("Active"),
+        term("Active"),
         dd(code("w"), " or ", code("b"), " — whose turn it is."),
-        dt("Castling"),
+        term("Castling"),
         dd(
           "Combination of ",
           code("K Q k q"),
@@ -110,13 +137,13 @@ export json"""
           code("-"),
           " for none."
         ),
-        dt("En passant"),
+        term("En passant"),
         dd("Target square (e.g. ", code("e3"), ") or ", code("-"), "."),
-        dt("Halfmove"),
+        term("Halfmove"),
         dd(
           "Moves since the last pawn push or capture (drives the 50-move rule)."
         ),
-        dt("Fullmove"),
+        term("Fullmove"),
         dd("Incremented after Black's move; starts at 1.")
       )
     )
@@ -211,19 +238,19 @@ export json"""
       "Implemented Rules",
       dl(
         className := "help-dl",
-        dt("Pawn"),
+        term("Pawn"),
         dd(
           "One square forward; two from the starting rank; diagonal capture; en passant; promotion on the back rank."
         ),
-        dt("Rook"),
+        term("Rook"),
         dd("Any distance horizontally or vertically; blocked by pieces."),
-        dt("Bishop"),
+        term("Bishop"),
         dd("Any distance diagonally; blocked by pieces."),
-        dt("Queen"),
+        term("Queen"),
         dd("Any distance in any direction; blocked by pieces."),
-        dt("Knight"),
+        term("Knight"),
         dd("L-shape (2+1 squares); jumps over pieces."),
-        dt("King"),
+        term("King"),
         dd(
           "One square in any direction; castling (",
           code("O-O"),
@@ -231,43 +258,43 @@ export json"""
           code("O-O-O"),
           ")."
         ),
-        dt("Check"),
+        term("Check"),
         dd(
           "Moves leaving your own king in check are rejected. The checked king is highlighted in both TUI and GUI."
         ),
-        dt("Castling"),
+        term("Castling"),
         dd(
           "King moves two squares toward the rook; rook jumps over. Requires neither piece moved, the path clear, and no check on the king's path."
         ),
-        dt("Checkmate"),
+        term("Checkmate"),
         dd(
           "Detected automatically; the game ends and the winner is announced. SAN appends ",
           code("#"),
           "."
         ),
-        dt("Stalemate"),
+        term("Stalemate"),
         dd(
           "Detected automatically; drawn when the side to move has no legal move but is not in check."
         ),
-        dt("50-move rule"),
+        term("50-move rule"),
         dd(
           "Claim a draw with ",
           code("draw"),
           " after 50 moves with no pawn push or capture."
         ),
-        dt("Insufficient material"),
+        term("Insufficient material"),
         dd(
           "Drawn automatically when neither side can checkmate (K vs K, K+B vs K, K+N vs K, K+B vs K+B with same-colored bishops)."
         ),
-        dt("Threefold repetition"),
+        term("Threefold repetition"),
         dd(
           "Claim a draw with ",
           code("draw"),
           " when the same position has occurred at least three times."
         ),
-        dt("Fivefold repetition"),
+        term("Fivefold repetition"),
         dd("Drawn automatically when the same position occurs five times."),
-        dt("Turn order"),
+        term("Turn order"),
         dd("White moves first, then alternates.")
       )
     )

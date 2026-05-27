@@ -7,6 +7,18 @@
 
 .DEFAULT_GOAL := help
 
+# --- Env-file layering ----------------------------------------------------
+#
+# `.env` ships in the repo with dev-friendly defaults (e.g. PICHESS_DEV=true).
+# `.env.local` is per-developer and gitignored — override anything you want
+# without touching the committed file. `-include` is silent when the file
+# doesn't exist, so a fresh checkout still works. `export` puts every var
+# read here into the recipe shell's environment, where docker compose picks
+# them up (and any inline `VAR=value` on a stack-* recipe wins as usual).
+-include .env
+-include .env.local
+export
+
 # --- Stack-wide targets ---------------------------------------------------
 
 .PHONY: help
@@ -15,8 +27,56 @@ help: ## Show this target list
 	  awk -F ':.*?##' '{printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: build
-build: ## Build all service images via sbt dockerBuildAll
+build: tailwind-build ## Build all service images via sbt dockerBuildAll
 	sbt dockerBuildAll
+
+# --- Tailwind CSS pipeline ------------------------------------------------
+# We use the v4 standalone binary so the project doesn't grow a Node
+# toolchain just to build CSS. The binary is fetched once into ./bin/
+# (gitignored); CI / a fresh checkout just runs `make tailwind-install`.
+
+TAILWIND_VERSION := v4.3.0
+TAILWIND_BINARY  := bin/tailwindcss
+TAILWIND_INPUT   := gateway/src/main/tailwind/input.css
+TAILWIND_OUTPUT  := gateway/src/main/resources/web/style.css
+
+# Detect host OS / arch for the standalone binary download. macOS ships
+# both intel and arm64; Linux mostly x64 / arm64. The CLI release page
+# uses the same naming convention either way.
+TAILWIND_OS_RAW   := $(shell uname -s)
+TAILWIND_ARCH_RAW := $(shell uname -m)
+ifeq ($(TAILWIND_OS_RAW),Darwin)
+  TAILWIND_OS := macos
+else
+  TAILWIND_OS := linux
+endif
+ifeq ($(TAILWIND_ARCH_RAW),x86_64)
+  TAILWIND_ARCH := x64
+else ifeq ($(TAILWIND_ARCH_RAW),aarch64)
+  TAILWIND_ARCH := arm64
+else ifeq ($(TAILWIND_ARCH_RAW),arm64)
+  TAILWIND_ARCH := arm64
+else
+  TAILWIND_ARCH := $(TAILWIND_ARCH_RAW)
+endif
+
+.PHONY: tailwind-install
+tailwind-install: ## Download the Tailwind v4 standalone CLI into bin/
+	@mkdir -p bin
+	@if [ ! -x $(TAILWIND_BINARY) ]; then \
+	  echo "fetching tailwindcss $(TAILWIND_VERSION) for $(TAILWIND_OS)-$(TAILWIND_ARCH)"; \
+	  curl -fsSL -o $(TAILWIND_BINARY) \
+	    https://github.com/tailwindlabs/tailwindcss/releases/download/$(TAILWIND_VERSION)/tailwindcss-$(TAILWIND_OS)-$(TAILWIND_ARCH); \
+	  chmod +x $(TAILWIND_BINARY); \
+	fi
+
+.PHONY: tailwind-build
+tailwind-build: tailwind-install ## Generate the production stylesheet (one-shot, minified)
+	$(TAILWIND_BINARY) -i $(TAILWIND_INPUT) -o $(TAILWIND_OUTPUT) --minify
+
+.PHONY: tailwind-watch
+tailwind-watch: tailwind-install ## Watch Scala sources + input.css and rebuild on change
+	$(TAILWIND_BINARY) -i $(TAILWIND_INPUT) -o $(TAILWIND_OUTPUT) --watch
 
 .PHONY: up
 up: ## Start the integrated stack (assumes images already built)
@@ -38,6 +98,153 @@ ps: ## List running containers in the stack
 logs: ## Tail logs for every service in the stack
 	docker compose logs -f
 
+# --- Stack switcher -------------------------------------------------------
+#
+# Performance / profiling setups want exactly one persistence backend
+# active at a time. Compose profiles (`profiles: ["postgres"]` etc.) on
+# each backend service let us bring up only the wanted stack. The
+# Makefile passes both `--profile <name>` to compose AND
+# `PICHESS_BACKEND=<name>` as an env var so the services pick the
+# matching impl at runtime.
+#
+# Optional projection stacks (`opening`, `analytics`) can be layered on:
+#
+#   make stack-postgres EXTRA=opening,analytics
+#
+# Last-selected profile is persisted to .pichess-stack so `make
+# stack-status` and `make stack-restart` know what's "current". Data
+# loss is acceptable — these flows are dev-only.
+
+STACK_STATE_FILE := .pichess-stack
+EXTRA            ?=
+# All known profiles. `docker compose down` without `--profile` only
+# stops unprofiled services, so we enumerate every profile here when
+# tearing down to make sure nothing left over from a previous run
+# survives a stack switch.
+ALL_PROFILES := --profile postgres --profile mongo --profile cassandra \
+                --profile redis --profile opening --profile analytics \
+                --profile tui
+
+# Convert "opening,analytics" → "--profile opening --profile analytics"
+# (empty string when EXTRA is unset). `empty :=` is the standard Make
+# idiom for capturing a single space between two empty values.
+empty :=
+space := $(empty) $(empty)
+comma := ,
+EXTRA_PROFILES = $(foreach p,$(subst $(comma),$(space),$(EXTRA)),--profile $(p))
+
+# Set PICHESS_KAFKA only when the user's EXTRA includes `opening` or
+# `analytics` — those are the profiles that bring Kafka up. Otherwise
+# leave it empty so game-service falls back to its in-memory event
+# producer (kafka:9092 wouldn't resolve and the service would crash).
+KAFKA_FOR_EXTRA = $(if $(findstring opening,$(EXTRA))$(findstring analytics,$(EXTRA)),kafka:9092,)
+
+define _stack_up
+	@mkdir -p $(dir $(STACK_STATE_FILE)) || true
+	@echo "PICHESS_BACKEND=$(1) PICHESS_EXTRAS=$(EXTRA)" > $(STACK_STATE_FILE)
+	docker compose $(ALL_PROFILES) down 2>/dev/null || true
+	PICHESS_BACKEND=$(1) PICHESS_EXTRAS=$(EXTRA) \
+	  PICHESS_KAFKA="$(KAFKA_FOR_EXTRA)" \
+	  docker compose --profile $(1) $(EXTRA_PROFILES) up -d
+endef
+
+.PHONY: stack-postgres
+stack-postgres: ## Start the stack with PICHESS_BACKEND=postgres
+	$(call _stack_up,postgres)
+
+.PHONY: stack-mongo
+stack-mongo: ## Start the stack with PICHESS_BACKEND=mongo
+	$(call _stack_up,mongo)
+
+.PHONY: stack-cassandra
+stack-cassandra: ## Start the stack with PICHESS_BACKEND=cassandra
+	$(call _stack_up,cassandra)
+
+.PHONY: stack-redis
+stack-redis: ## Start the stack with PICHESS_BACKEND=redis
+	$(call _stack_up,redis)
+
+.PHONY: stack-inmemory
+stack-inmemory: ## Start the stack with no DB (PICHESS_BACKEND=inmemory)
+	@mkdir -p $(dir $(STACK_STATE_FILE)) || true
+	@echo "PICHESS_BACKEND=inmemory PICHESS_EXTRAS=$(EXTRA)" > $(STACK_STATE_FILE)
+	docker compose $(ALL_PROFILES) down 2>/dev/null || true
+	PICHESS_BACKEND=inmemory PICHESS_EXTRAS=$(EXTRA) \
+	  PICHESS_KAFKA="$(KAFKA_FOR_EXTRA)" \
+	  docker compose $(EXTRA_PROFILES) up -d
+
+.PHONY: stack-down
+stack-down: ## Stop the active stack and clear the state file
+	docker compose $(ALL_PROFILES) down
+	@rm -f $(STACK_STATE_FILE)
+
+.PHONY: stack-status
+stack-status: ## Show the active stack profile + running containers
+	@if [ -f $(STACK_STATE_FILE) ]; then \
+	  echo "Active stack:"; cat $(STACK_STATE_FILE); \
+	else \
+	  echo "No stack selected (run 'make stack-postgres' etc.)"; \
+	fi
+	@echo ""
+	@echo "Running containers:"
+	@docker compose ps
+
+# --- Dev report bake-in ---------------------------------------------------
+#
+# The /dev/test/coverage and /dev/test/performance pages iframe static
+# HTML reports baked into the gateway image. These targets generate
+# fresh reports + copy them into gateway resources. They're explicit
+# (NOT chained off `make build-gateway`) because both are slow — the
+# user runs them when they want to refresh the bundled artifacts, then
+# rebuilds the gateway image to ship them.
+
+COVERAGE_SRC := target/scala-3.8.2/scoverage-report
+COVERAGE_DST := gateway/src/main/resources/dev/coverage/report
+
+GATLING_SRC  := gatling/target/gatling
+GATLING_DST  := gateway/src/main/resources/dev/performance/report
+
+.PHONY: coverage-build
+coverage-build: ## Run coverage + bake the aggregated HTML report into the gateway resources
+	sbt clean coverage test coverageReport coverageAggregate
+	@mkdir -p $(COVERAGE_DST)
+	@rm -rf $(COVERAGE_DST)/*
+	@if [ -d $(COVERAGE_SRC) ]; then \
+	  cp -R $(COVERAGE_SRC)/* $(COVERAGE_DST)/; \
+	  echo "coverage report copied → $(COVERAGE_DST)/"; \
+	else \
+	  echo "warning: $(COVERAGE_SRC) not found (did sbt coverageAggregate succeed?)"; \
+	  exit 1; \
+	fi
+
+.PHONY: gatling-build
+gatling-build: ## Run gatling + bake the latest report into the gateway resources
+	sbt 'gatling/Gatling/test'
+	@mkdir -p $(GATLING_DST)
+	@rm -rf $(GATLING_DST)/*
+	@latest=$$(ls -dt $(GATLING_SRC)/*/ 2>/dev/null | head -1); \
+	if [ -z "$$latest" ]; then \
+	  echo "warning: no gatling run found under $(GATLING_SRC)/"; \
+	  exit 1; \
+	else \
+	  cp -R "$$latest"* $(GATLING_DST)/; \
+	  echo "gatling report copied from $$latest → $(GATLING_DST)/"; \
+	fi
+
+.PHONY: stack-restart
+stack-restart: ## Re-up the last-selected stack (reads $(STACK_STATE_FILE))
+	@if [ ! -f $(STACK_STATE_FILE) ]; then \
+	  echo "No previous stack — run a stack-<name> target first."; exit 1; \
+	fi
+	@set -a; . ./$(STACK_STATE_FILE); set +a; \
+	  docker compose down 2>/dev/null || true; \
+	  EXTRA_PROF=""; \
+	  for p in $$(echo "$$PICHESS_EXTRAS" | tr ',' ' '); do \
+	    if [ -n "$$p" ]; then EXTRA_PROF="$$EXTRA_PROF --profile $$p"; fi; \
+	  done; \
+	  PICHESS_BACKEND=$$PICHESS_BACKEND PICHESS_EXTRAS=$$PICHESS_EXTRAS \
+	    docker compose --profile $$PICHESS_BACKEND $$EXTRA_PROF up -d
+
 # --- Per-service rebuild + restart ----------------------------------------
 #
 # Each `build-X` republishes the image to the local Docker daemon; each
@@ -45,7 +252,7 @@ logs: ## Tail logs for every service in the stack
 # the DBs and other services keep running.
 
 .PHONY: build-gateway
-build-gateway: ## Rebuild gateway image
+build-gateway: tailwind-build ## Rebuild gateway image
 	sbt gateway/Docker/publishLocal
 
 .PHONY: build-game-service

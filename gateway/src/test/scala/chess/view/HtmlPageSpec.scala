@@ -4,7 +4,7 @@ import zio.test.*
 
 object HtmlPageSpec extends ZIOSpecDefault:
 
-  private val html = HtmlPage.render
+  private val html = HtmlPage.render()
 
   def spec = suite("HtmlPage.render")(
     test("produce a valid HTML document") {
@@ -24,9 +24,13 @@ object HtmlPageSpec extends ZIOSpecDefault:
       assertTrue(html.contains("""<script src="/web/main.js"></script>"""))
     },
     test("inline the stylesheet") {
+      // The stylesheet ships minified via the Tailwind pipeline, so the
+      // assertion has to be space-tolerant. `repeat(8,` survives the
+      // minifier (no space after the comma) and is unique enough to be
+      // a good "is the chess-board grid actually in here" probe.
       assertTrue(
         html.contains("<style>"),
-        html.contains("grid-template-columns: repeat(8,")
+        html.contains("repeat(8,")
       )
     },
     test("link rasterised peach favicons in three sizes") {

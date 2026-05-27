@@ -35,3 +35,17 @@ metals.sbt
 .scala-build/
 
 /META-INF/
+# Tailwind standalone CLI fetched by 'make tailwind-install'
+/bin/
+
+# Dev stack selector state file (written by 'make stack-*')
+/.pichess-stack
+
+# Generated dev reports baked into gateway image
+/gateway/src/main/resources/dev/coverage/report/*
+!/gateway/src/main/resources/dev/coverage/report/.gitkeep
+/gateway/src/main/resources/dev/performance/report/*
+!/gateway/src/main/resources/dev/performance/report/.gitkeep
+
+# Per-developer Make/compose env overrides (committed: .env)
+/.env.local

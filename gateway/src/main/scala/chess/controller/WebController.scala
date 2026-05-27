@@ -8,6 +8,7 @@ import chess.api.{
   ExportResponse,
   GameSnapshot,
   LegalMovesResponse,
+  StackInfoResponse,
   StateResponse,
   ThreatsResponse
 }
@@ -48,10 +49,11 @@ object WebController:
       client: ZioGameService.GameServiceClient,
       registry: SessionRegistry,
       cache: AnnotationCache,
-      lobbyBaseUrl: String
+      lobbyBaseUrl: String,
+      stackInfo: StackInfo
   ): Routes[Client, Response] =
-    tapirRoutes(client, registry, cache) ++
-      rawRoutes(client) ++
+    tapirRoutes(client, registry, cache, stackInfo) ++
+      rawRoutes(client, stackInfo) ++
       LobbyProxy.routes(lobbyBaseUrl)
 
   // --------------------------------------------------------------------------
@@ -61,7 +63,8 @@ object WebController:
   private def tapirRoutes(
       client: ZioGameService.GameServiceClient,
       registry: SessionRegistry,
-      cache: AnnotationCache
+      cache: AnnotationCache,
+      stackInfo: StackInfo
   ): Routes[Any, Response] =
     val swagger = SwaggerInterpreter()
       .fromEndpoints[Task](Endpoints.all, "pichess API", "0.1.0")
@@ -136,6 +139,10 @@ object WebController:
             case None =>
               registry.registerLocal(id, req.hostSessionId)
         },
+        Endpoints.getStackInfo.zServerLogic[Any] { _ =>
+          // Pure config lookup — no I/O, no game-service hop.
+          ZIO.succeed(StackInfoResponse(stackInfo.backend, stackInfo.extras))
+        },
         Endpoints.getLegalMoves.zServerLogic[Any] { case (id, from) =>
           annotationsFor(client, cache, id).map { ann =>
             // Empty list when the source square doesn't appear in the cache
@@ -183,19 +190,34 @@ object WebController:
       case None         =>
         for
           reply  <- client.getState(GameIdRequest(gameId)).mapError(toErrorDto)
-          state  <- FenParserRegex
-                      .parse(reply.fen)
-                      .mapError(err => ErrorDto(err.message))
-          ann    <- computeAnnotations(state)
+          ann    <- fenToAnnotations(reply.fen)
           _      <- cache.put(gameId, ann)
         yield ann
     }
 
+  /** Pure transformation: FEN string → annotation bundle. Extracted from
+    * `annotationsFor` so the FenParser-error guard can be unit-tested
+    * directly with a malformed FEN — game-service in production only
+    * ever emits valid FENs so it's otherwise unreachable.
+    */
+  private[controller] def fenToAnnotations(
+      fen: String
+  ): ZIO[Any, ErrorDto, AnnotationCache.Annotations] =
+    FenParserRegex
+      .parse(fen)
+      .mapError(err => ErrorDto(err.message))
+      .flatMap(computeAnnotations)
+
   /** Build the full annotation bundle from a `GameState`. Iterates every
     * active-color piece and asks the rules engine for legal moves;
     * computes the threat list (own pieces attacked); then for each
-    * threatened square asks who's attacking it. Errors out via
-    * `ErrorDto` so the surrounding effect can short-circuit cleanly.
+    * threatened square asks who's attacking it.
+    *
+    * `MoveValidator.legalMovesFrom` returns `IO[GameError, _]` but its
+    * internal `catchAll` squelches every failure to a boolean `false`
+    * — the outer effect can't actually fail with `GameError` on a
+    * well-formed state. We `.orDie` here to make that explicit: any
+    * surface-level failure would be a defect in the rules engine.
     */
   private def computeAnnotations(
       state: GameState
@@ -207,14 +229,11 @@ object WebController:
       if state.activeColor == Color.White then Color.Black else Color.White
 
     for
-      // legalMovesFrom: per active-color piece, ask the rules engine.
       perSource <- ZIO.foreach(ownSquares) { src =>
                      MoveValidator
                        .legalMovesFrom(state, src)
-                       .mapBoth(
-                         err => ErrorDto(err.toString),
-                         dests => squareKey(src) -> dests.map(squareKey)
-                       )
+                       .orDie
+                       .map(dests => squareKey(src) -> dests.map(squareKey))
                    }
       legalMap = perSource.toMap.filter { case (_, dests) => dests.nonEmpty }
       // threats: iterate active-color pieces, keep those squares that
@@ -281,7 +300,7 @@ object WebController:
       reply <- client.exportGame(ExportRequest(id, format)).mapError(toErrorDto)
     yield ExportResponse(reply.format, reply.body)
 
-  private def toErrorDto(err: StatusException): ErrorDto =
+  private[controller] def toErrorDto(err: StatusException): ErrorDto =
     val description = Option(err.getStatus.getDescription).getOrElse(err.getMessage)
     ErrorDto(description)
 
@@ -294,7 +313,7 @@ object WebController:
       dto   <- replyToDto(reply)
     yield dto
 
-  private def replyToDto(reply: StateReply): ZIO[Any, ErrorDto, BoardStateDto] =
+  private[controller] def replyToDto(reply: StateReply): ZIO[Any, ErrorDto, BoardStateDto] =
     FenParserRegex
       .parse(reply.fen)
       .mapError(err => ErrorDto(err.message))
@@ -306,7 +325,7 @@ object WebController:
         )
       }
 
-  private def parseColor(s: String): Color = s match
+  private[controller] def parseColor(s: String): Color = s match
     case "White" => Color.White
     case "Black" => Color.Black
     case _       => Color.White // gameService never emits anything else
@@ -316,23 +335,43 @@ object WebController:
   // --------------------------------------------------------------------------
 
   private def rawRoutes(
-      client: ZioGameService.GameServiceClient
+      client: ZioGameService.GameServiceClient,
+      stackInfo: StackInfo
   ): Routes[Any, Response] =
-    Routes(
-      Method.GET / "" -> handler(servePage()),
+    val core = Routes(
+      Method.GET / "" -> handler(servePage(stackInfo)),
       Method.GET / "web" / trailing ->
         handler((rest: zio.http.Path, _: Request) => serveAsset(rest)),
       Method.GET / "api" / "games" / string("id") / "events" -> handler {
         (id: String, _: Request) => serveEvents(client, id)
       }
     )
+    // /dev/coverage/report/** and /dev/performance/report/** are baked
+    // into the gateway image at build time by `make coverage-build` /
+    // `make gatling-build`. They're gated behind PICHESS_DEV — the
+    // routes return 404 when the flag is off so the dev surface
+    // doesn't ship in non-dev deployments.
+    val dev =
+      if stackInfo.devMode then
+        Routes(
+          Method.GET / "dev" / "coverage" / "report" / trailing ->
+            handler((rest: zio.http.Path, _: Request) =>
+              serveDevAsset("coverage/report", rest)
+            ),
+          Method.GET / "dev" / "performance" / "report" / trailing ->
+            handler((rest: zio.http.Path, _: Request) =>
+              serveDevAsset("performance/report", rest)
+            )
+        )
+      else Routes.empty
+    core ++ dev
 
-  private def servePage(): ZIO[Any, Nothing, Response] =
+  private def servePage(stackInfo: StackInfo): ZIO[Any, Nothing, Response] =
     ZIO.succeed(
       Response(
         status = Status.Ok,
         headers = Headers(Header.ContentType(MediaType.text.html)),
-        body = Body.fromString(HtmlPage.render)
+        body = Body.fromString(HtmlPage.render(devMode = stackInfo.devMode))
       )
     )
 
@@ -347,6 +386,24 @@ object WebController:
     contentTypeFor(relative) match
       case Some(contentType) if isSafeAssetPath(relative) =>
         serveClasspathResource(s"web/$relative", contentType)
+      case _ =>
+        ZIO.succeed(Response(status = Status.NotFound))
+
+  /** Serve a file from `dev/<subdir>/` in the gateway resources tree.
+    * Same path-traversal + extension allow-list as `serveAsset`. Returns
+    * `index.html` when the request lands on the directory root (e.g.
+    * `/dev/coverage/report/`). The dev report HTMLs link out to .css /
+    * .js / .png siblings — the existing allow-list already covers them. */
+  private def serveDevAsset(
+      subdir: String,
+      rest: zio.http.Path
+  ): ZIO[Any, Nothing, Response] =
+    val raw      = rest.toString.stripPrefix("/")
+    val relative = if raw.isEmpty || raw.endsWith("/") then raw + "index.html"
+                   else raw
+    contentTypeFor(relative) match
+      case Some(contentType) if isSafeAssetPath(relative) =>
+        serveClasspathResource(s"dev/$subdir/$relative", contentType)
       case _ =>
         ZIO.succeed(Response(status = Status.NotFound))
 
@@ -365,6 +422,8 @@ object WebController:
     else if lower.endsWith(".svg") then Some(MediaType.image.`svg+xml`)
     else if lower.endsWith(".css") then Some(MediaType.text.css)
     else if lower.endsWith(".png") then Some(MediaType.image.png)
+    else if lower.endsWith(".html") then Some(MediaType.text.html)
+    else if lower.endsWith(".json") then Some(MediaType.application.json)
     else None
 
   private def serveClasspathResource(

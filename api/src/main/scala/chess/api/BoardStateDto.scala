@@ -135,6 +135,21 @@ object RegisterPlayersRequest:
   given JsonDecoder[RegisterPlayersRequest] =
     DeriveJsonDecoder.gen[RegisterPlayersRequest]
 
+/** Response for `GET /api/stack-info` — read-only identification of
+  * which persistence stack the running gateway has been configured
+  * with (driven by the `PICHESS_BACKEND` / `PICHESS_EXTRAS` env vars
+  * the Makefile's `stack-*` targets set). The UI's `/dev` index
+  * surfaces this as a chip so an operator can tell at a glance which
+  * backend is being exercised during a perf-test run.
+  */
+final case class StackInfoResponse(backend: String, extras: List[String])
+
+object StackInfoResponse:
+  given JsonEncoder[StackInfoResponse] =
+    DeriveJsonEncoder.gen[StackInfoResponse]
+  given JsonDecoder[StackInfoResponse] =
+    DeriveJsonDecoder.gen[StackInfoResponse]
+
 /** Response for `GET /api/games/{id}/legal-moves?from=<sq>` — the
   * destinations the piece at `from` can legally move to. Pawn promotions
   * collapse to one entry per destination (the promotion choice happens

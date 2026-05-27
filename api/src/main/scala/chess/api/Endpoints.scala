@@ -183,6 +183,20 @@ object Endpoints:
           + "Prefer GET /api/games/{id}/state?format=… for new clients."
       )
 
+  /** GET /api/stack-info — read-only "which backend is this gateway
+    * configured for" probe. Surfaced as a chip on the `/dev` index in
+    * the web-ui and inside the TUI prompt during perf testing. Public,
+    * not dev-gated — knowing the backend is useful in any deployment.
+    */
+  val getStackInfo: PublicEndpoint[Unit, ErrorDto, StackInfoResponse, Any] =
+    errorBase.get
+      .in("api" / "stack-info")
+      .out(jsonBody[StackInfoResponse])
+      .name("getStackInfo")
+      .description(
+        "Identify the persistence backend + active projection extras."
+      )
+
   /** GET /api/games/{id}/legal-moves?from=<sq> — destinations the piece at
     * `from` can legally move to. Powers the web-ui's move-preview overlay
     * and the TUI's `preview <sq>` command. Server-side cached per
@@ -248,7 +262,8 @@ object Endpoints:
     getExport,
     getLegalMoves,
     getThreats,
-    getAttackers
+    getAttackers,
+    getStackInfo
   )
 
   /** POST /internal/games/{id}/players — lobby-service hand-off.

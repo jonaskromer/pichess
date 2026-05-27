@@ -12,8 +12,10 @@ import chess.api.{
   MoveEntryDto,
   MoveRequest,
   SquareDto,
+  StackInfoResponse,
   StateResponse
 }
+import chess.webui.components.{Components, ModalRegistry}
 import com.raquo.laminar.api.L.*
 import org.scalajs.dom
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -131,10 +133,14 @@ object Main:
   private val gameIdVar: Var[Option[String]] = Var(None)
 
   // --- Phase 3 in-game annotation state ------------------------------------
-  // Per-tab toggles. Off by default so the board behaves the same as before
-  // for users who haven't opted in to the overlay UI.
-  private val movePreviewVar: Var[Boolean] = Var(false)
-  private val threatDetectionVar: Var[Boolean] = Var(false)
+  // Toggles persisted to localStorage so a refresh / fresh tab keeps the
+  // user's last setting; off by default if never set.
+  private def readBoolPref(key: String): Boolean =
+    Option(dom.window.localStorage.getItem(key)).contains("true")
+  private val movePreviewVar: Var[Boolean] =
+    Var(readBoolPref("pichess.movePreview"))
+  private val threatDetectionVar: Var[Boolean] =
+    Var(readBoolPref("pichess.threatDetection"))
   // Currently-displayed legal-move destinations from a clicked source square.
   // Cleared on every new state push and on every toggle change.
   private val previewFromVar: Var[Option[String]] = Var(None)
@@ -145,6 +151,11 @@ object Main:
   // When the user clicks a threatened piece, /attackers populates this.
   // Cleared on state change.
   private val attackersVar: Var[Set[String]] = Var(Set.empty)
+
+  /** Cached `/api/stack-info` payload. Fetched once at App mount;
+    * surfaced as a chip on the Dev pages so an operator can tell
+    * which backend the running gateway is configured for. */
+  private val stackInfoVar: Var[Option[StackInfoResponse]] = Var(None)
 
   /** Top-level screen the user is on. Mirrors the URL hash — see
     * `parseHash` / `hashFor`. Treat the URL as the source of truth so
@@ -158,9 +169,29 @@ object Main:
     case Game(gameId: String)
     case Settings
     case Help
-    case Docs
+    // Dev surface, gated by PICHESS_DEV (see `devMode` below). Routes
+    // exist regardless of devMode (parseHash always recognises them) so
+    // a deep-link still works; the dev pages themselves render a
+    // "not enabled" message when devMode is false.
+    case Dev
+    case DevTest
+    case DevCoverage
+    case DevPerformance
 
   private val currentScreenVar: Var[Screen] = Var(Screen.Start)
+
+  /** Whether the gateway exposes its dev surface (routes under /dev/…).
+    * Set from the `<meta name="pichess-dev">` tag the gateway injects
+    * per `PICHESS_DEV`. Read once at App mount; the Dev link on the
+    * start screen is conditional on this flag. */
+  private val devMode: Boolean =
+    Option(
+      dom.document
+        .querySelector("meta[name='pichess-dev']")
+        .asInstanceOf[dom.html.Meta]
+    )
+      .map(_.content.trim.toLowerCase)
+      .contains("true")
 
   /** Translate `dom.window.location.hash` into a `Screen`. Anything we
     * don't recognise falls back to Start.
@@ -168,15 +199,18 @@ object Main:
   private def parseHash(raw: String): Screen =
     val stripped = raw.stripPrefix("#")
     stripped match
-      case "" | "/"     => Screen.Start
-      case "new"        => Screen.NewGameMenu
-      case "join"       => Screen.Join
-      case "settings"   => Screen.Settings
-      case "help"       => Screen.Help
-      case "docs"       => Screen.Docs
-      case s"lobby/$c"  => Screen.Lobby(c)
-      case s"game/$id"  => Screen.Game(id)
-      case _            => Screen.Start
+      case "" | "/"             => Screen.Start
+      case "new"                => Screen.NewGameMenu
+      case "join"               => Screen.Join
+      case "settings"           => Screen.Settings
+      case "help"               => Screen.Help
+      case "dev"                => Screen.Dev
+      case "dev/test"           => Screen.DevTest
+      case "dev/test/coverage"  => Screen.DevCoverage
+      case "dev/test/performance" => Screen.DevPerformance
+      case s"lobby/$c"          => Screen.Lobby(c)
+      case s"game/$id"          => Screen.Game(id)
+      case _                    => Screen.Start
 
   private def hashFor(screen: Screen): String = screen match
     case Screen.Start          => ""
@@ -186,7 +220,10 @@ object Main:
     case Screen.Game(id)       => s"#game/$id"
     case Screen.Settings       => "#settings"
     case Screen.Help           => "#help"
-    case Screen.Docs           => "#docs"
+    case Screen.Dev            => "#dev"
+    case Screen.DevTest        => "#dev/test"
+    case Screen.DevCoverage    => "#dev/test/coverage"
+    case Screen.DevPerformance => "#dev/test/performance"
 
   /** Navigate to a different screen by mutating the URL hash. The
     * `hashchange` listener picks it up and updates `currentScreenVar`,
@@ -305,14 +342,17 @@ object Main:
         }(using ctx.owner)
         // Toggling threatDetection on should immediately fetch /threats so
         // the rings appear without waiting for the next move; toggling off
-        // should clear them.
+        // should clear them. Same subscription persists the new value to
+        // localStorage so the setting survives a reload.
         threatDetectionVar.signal.distinct.foreach { on =>
+          dom.window.localStorage.setItem("pichess.threatDetection", on.toString)
           if on then refreshThreats()
           else threatsVar.set(Set.empty)
         }(using ctx.owner)
         // movePreview off → drop any in-flight overlay so the board
-        // returns to a clean baseline.
+        // returns to a clean baseline. Also persisted.
         movePreviewVar.signal.distinct.foreach { on =>
+          dom.window.localStorage.setItem("pichess.movePreview", on.toString)
           if !on then clearPreviewState()
         }(using ctx.owner)
         // Document-level pointer listeners drive the drag's middle and
@@ -355,7 +395,35 @@ object Main:
             val cl = dom.document.body.classList
             if active then cl.add("is-dragging") else cl.remove("is-dragging")
           }(using ctx.owner)
+        // Modal scroll lock — see `ModalRegistry`. Each modal
+        // self-registers with a stable name + its own open signal;
+        // bindBodyClass() flips `body.modal-open` when the registry
+        // becomes non-empty. New modals just add a register() call —
+        // no Signal.combine needs to grow.
+        {
+          given Owner = ctx.owner
+          ModalRegistry.bindBodyClass()
+          ModalRegistry.register(
+            "promotion",
+            pendingPromotionVar.signal.map(_.isDefined)
+          )
+          ModalRegistry.register("load",    loadOpenVar.signal)
+          ModalRegistry.register("confirm", confirmVar.signal.map(_.isDefined))
+          ModalRegistry.register("export",  exportVar.signal.map(_.isDefined))
+        }
+        // Fetch the active stack identity once at boot. Used by the
+        // Dev page's stack chip. Silent on failure — the chip just
+        // doesn't render. Public endpoint, no gating.
+        getStackInfoClient(()).foreach {
+          case Right(info) => stackInfoVar.set(Some(info))
+          case Left(_)     => ()
+        }
       },
+      // Crumpled-paper background lives at the App root so every screen
+      // (start / lobby / settings / help / docs / game) shares the same
+      // texture — was previously only mounted inside `mainUi()`. The svg
+      // is `position: fixed; z-index: -1` so it sits behind everything.
+      pageBackground(),
       child <-- currentScreenVar.signal.distinct.map(renderScreen),
       // Toast is rendered at App root (not inside mainUi) so error
       // messages from the lobby/start/settings screens are also visible.
@@ -370,14 +438,17 @@ object Main:
     * buttons, simple inputs — visual polish comes later.
     */
   private def renderScreen(screen: Screen): HtmlElement = screen match
-    case Screen.Start         => startScreen()
-    case Screen.NewGameMenu   => newGameMenu()
-    case Screen.Join          => joinScreen()
-    case Screen.Lobby(code)   => lobbyScreen(code)
-    case Screen.Game(_)       => mainUi()
-    case Screen.Settings      => settingsScreen()
-    case Screen.Help          => helpScreen()
-    case Screen.Docs          => docsScreen()
+    case Screen.Start           => startScreen()
+    case Screen.NewGameMenu     => newGameMenu()
+    case Screen.Join            => joinScreen()
+    case Screen.Lobby(code)     => lobbyScreen(code)
+    case Screen.Game(_)         => mainUi()
+    case Screen.Settings        => settingsScreen()
+    case Screen.Help            => helpScreen()
+    case Screen.Dev             => devIndexScreen()
+    case Screen.DevTest         => devTestScreen()
+    case Screen.DevCoverage     => devCoverageScreen()
+    case Screen.DevPerformance  => devPerformanceScreen()
 
   /** Side-effect when entering a Game screen: ensure gameIdVar is set,
     * pull current state, (re)connect SSE for that id. Idempotent — a
@@ -392,7 +463,8 @@ object Main:
   private def mainUi(): HtmlElement =
     div(
       className := "app-shell",
-      pageBackground(),
+      // pageBackground is now mounted at App root so it spans every
+      // screen (see App()); no longer needed here.
       header(),
       // Help is its own routed screen now (#help) — the Game screen body
       // always shows the board.
@@ -559,8 +631,12 @@ object Main:
     headerTag(
       className := "header",
       paperLayer(crumpled = true),
-      div(
+      // Brand is a real anchor so right-click → open-in-new-tab + middle-
+      // click work, and screen readers announce it as navigation. The
+      // hash-based router picks up the `#` change via the popstate listener.
+      a(
         className := "header-brand",
+        href := "#",
         // Inline SVG so the host's CSS variables (--peach-color, --leaf-color,
         // …) cascade through the <use> reference into the symbol's paths.
         // <img src=…> would isolate the SVG and prevent any theming. The
@@ -608,7 +684,9 @@ object Main:
     // Board sits on a sheet of crumpled paper. statusIndicator at the top
     // (panel header). board-row puts board-wrapper next to capturedPile —
     // captured pieces stick to the right of the board, mirroring the
-    // rank-label gutter on the left.
+    // rank-label gutter on the left. Below the paper, `.board-post-its`
+    // is a row of three equal-sized square sticky notes that overhang
+    // the board's bottom edge via a negative top margin.
     div(
       className := "board-area",
       div(
@@ -625,7 +703,80 @@ object Main:
           ),
           capturedPile()
         )
+      ),
+      boardPostIt()
+    )
+
+  /** Merged yellow post-it that sticks to the bottom of the board.
+    * Top row holds the three board-view actions (Undo / Redo / Flip);
+    * below that, Export and Annotations sit as two side-by-side
+    * columns so the card stays denser than the previous one-section-
+    * per-post-it layout. */
+  private def boardPostIt(): HtmlElement =
+    div(
+      className := "post-it-shadow board-post-it",
+      div(
+        className := "post-it-card",
+        div(
+          className := "post-it-row",
+          actionButton("undo", "Undo", modifier = "", () => postUndo()),
+          actionButton("redo", "Redo", modifier = "", () => postRedo()),
+          flipActionButton()
+        ),
+        div(
+          className := "board-post-it-cols",
+          // Left column — Export.
+          div(
+            className := "board-post-it-col",
+            h3(className := "post-it-subheading", "Export"),
+            ul(
+              className := "export-list",
+              li(textActionButton("FEN", () => doExport("fen"))),
+              li(textActionButton("PGN", () => doExport("pgn"))),
+              li(textActionButton("JSON", () => doExport("json")))
+            )
+          ),
+          // Right column — annotation toggles.
+          div(
+            className := "board-post-it-col",
+            h3(className := "post-it-subheading", "Annotations"),
+            Components.checkboxRow(movePreviewVar,     "Moves"),
+            Components.checkboxRow(threatDetectionVar, "Threats")
+          )
+        )
       )
+    )
+
+  /** Cyan post-it: game-state actions — start a new game, load a saved
+    * one, agree on a draw, resign. Per-action classes
+    * (`action-new`, `action-forfeit`, …) drive the per-button hover
+    * marker colour overrides in CSS so each carries its own emotional
+    * weight (green starter, pink give-up, etc.). */
+  private def gameStatePostIt(): HtmlElement =
+    div(
+      className := "post-it-shadow cyan",
+      div(
+        className := "post-it-card cyan",
+        actionButton("new",     "New Game", "action-new",     () => askConfirm(confirmNewGame)),
+        actionButton("load",    "Load",     "action-load",    () => loadOpenVar.set(true)),
+        actionButton("draw",    "Draw",     "action-draw",    () => askConfirm(confirmDraw)),
+        actionButton("forfeit", "Forfeit",  "action-forfeit", () => askConfirm(confirmForfeit))
+      )
+    )
+
+  /** Flip / unflip board button — both the label and the aria-label
+    * track `flippedVar` so the button text always names the *destination*
+    * of the action (Flip while upright, Unflip while flipped). Used in
+    * the compact board-controls post-it below the board. */
+  private def flipActionButton(): HtmlElement =
+    button(
+      className := "post-it-action",
+      aria.label <-- flippedVar.signal.map(f =>
+        if f then "Unflip board" else "Flip board"
+      ),
+      onClick --> { _ => flippedVar.update(!_) },
+      icon("flip"),
+      child.text <-- flippedVar.signal.map(f => if f then "Unflip" else "Flip")
     )
 
   // Captured pieces in the right gutter, split into two sections by who
@@ -810,38 +961,12 @@ object Main:
   private def sidebar(): HtmlElement =
     div(
       className := "sidebar",
-      // statusIndicator moved out of the sidebar — it now sits above the
-      // board as a panel header (see boardArea below). Sidebar focuses on
-      // the move log + action buttons.
+      // Move log sits at the top; the cyan game-state post-it (New /
+      // Load / Draw / Forfeit) hangs below it. The board-local controls
+      // (Undo / Redo / Flip + annotation toggles + Export) live in the
+      // merged yellow post-it under the board itself.
       moveLogContainer(),
-      annotationToggles(),
-      controls()
-    )
-
-  /** Per-game annotation toggles. Off by default so users who haven't
-    * opted in keep the original drag-only experience. Both are per-tab
-    * state — a fresh tab boots with both off; the existing settings
-    * screen handles the cross-session bits (nickname, theme).
-    */
-  private def annotationToggles(): HtmlElement =
-    div(
-      className := "annotation-toggles",
-      label(
-        input(
-          typ := "checkbox",
-          checked <-- movePreviewVar.signal,
-          onChange.mapToChecked --> movePreviewVar.writer
-        ),
-        " Move preview"
-      ),
-      label(
-        input(
-          typ := "checkbox",
-          checked <-- threatDetectionVar.signal,
-          onChange.mapToChecked --> threatDetectionVar.writer
-        ),
-        " Threat detection"
-      )
+      gameStatePostIt()
     )
 
   private def statusIndicator(): HtmlElement =
@@ -902,7 +1027,17 @@ object Main:
       div(
         className := "move-log-paper",
         paperLayer(crumpled = true),
-        h2(className := "section-title", "Moves"),
+        // "Moves" heading as a newspaper clipping — the Special Elite
+        // font + cut-paper background ties it to the same design rule
+        // used on the help page (Special Elite → newsprint clipping)
+        // rather than reading as another button.
+        h2(
+          className := "section-title",
+          span(
+            className := "newsprint-shadow",
+            span(className := "code-inline", "Moves")
+          )
+        ),
         div(
           // Stable outer — OS wraps this on mount. Laminar's `children <--`
           // can't go on this element because OS rewrites the DOM under it
@@ -944,13 +1079,14 @@ object Main:
               moveInputVar.set("")
           },
           // The wrapper carries the hand-drawn underline pseudo so the
-          // input itself can stay borderless. Also lets the underline
-          // span the input width without the input's own box model
-          // pushing the line around.
+          // input itself can stay borderless. `min-w-[8rem]` is the
+          // wrap-floor: when the sidebar narrows, the input shrinks
+          // to that width before the form wraps onto a new line.
           span(
-            className := "move-input-wrap",
+            className := "text-field-wrap min-w-[8rem]",
             input(
               tpe := "text",
+              className := "text-field",
               idAttr := "moveInput",
               placeholder := "e.g. e2e4 or Nf3",
               autoComplete := "off",
@@ -987,76 +1123,6 @@ object Main:
         div(className := "move-row", cells)
       }
 
-  private def controls(): HtmlElement =
-    div(
-      className := "controls",
-      // Post-it 1 (yellow): board controls + Export. The icon-only row
-      // covers "universal-meaning" actions; the text-only row covers the
-      // data formats (no icon mapping fits FEN/PGN/JSON).
-      div(
-        className := "post-it-card",
-        div(
-          className := "post-it-row",
-          iconOnlyButton(
-            "undo",
-            "Undo last move",
-            () => postUndo()
-          ),
-          iconOnlyButton(
-            "redo",
-            "Redo move",
-            () => postRedo()
-          ),
-          flipIconButton()
-        ),
-        h3(className := "post-it-subheading", "Export"),
-        ul(
-          className := "export-list",
-          li(textActionButton("FEN", () => doExport("fen"))),
-          li(textActionButton("PGN", () => doExport("pgn"))),
-          li(textActionButton("JSON", () => doExport("json")))
-        )
-      ),
-      // Post-it 2 (cyan): game-state actions — start a new one, load a
-      // saved game, agree on a draw, resign, or shut down the server.
-      // Cyan keeps the palette calmer than the previous coral; Quit
-      // breaks out of the row visually via the `underlined` modifier so
-      // the "shut everything down" option reads as distinct from the
-      // in-game state changes.
-      div(
-        className := "post-it-card cyan",
-        // Per-action classes (`action-new`, `action-forfeit`, etc.) drive
-        // the per-button hover marker colour overrides in CSS so each
-        // action carries its own emotional weight: green = positive
-        // start, pink = give up, red = power off, neutral cyan default
-        // for the in-game state changes (Load, Draw).
-        actionButton(
-          "new",
-          "New Game",
-          modifier = "action-new",
-          () => askConfirm(confirmNewGame)
-        ),
-        actionButton(
-          "load",
-          "Load",
-          modifier = "action-load",
-          () => loadOpenVar.set(true)
-        ),
-        actionButton(
-          "draw",
-          "Draw",
-          modifier = "action-draw",
-          () => askConfirm(confirmDraw)
-        ),
-        actionButton(
-          "forfeit",
-          "Forfeit",
-          modifier = "action-forfeit",
-          () => askConfirm(confirmForfeit)
-        )
-      )
-    )
-
   /** A doodle icon inlined as a `<span>` whose backing CSS rule (`.icon-…`)
     * sets `--icon-url` and the masking machinery — keeps Laminar-side code
     * declarative ("show the undo glyph") and the styling decisions (size,
@@ -1064,18 +1130,6 @@ object Main:
     */
   private def icon(name: String): HtmlElement =
     span(className := s"icon icon-$name", aria.hidden := true)
-
-  private def iconOnlyButton(
-      iconName: String,
-      ariaLabel: String,
-      action: () => Unit
-  ): HtmlElement =
-    button(
-      className := "post-it-action icon-only",
-      aria.label := ariaLabel,
-      onClick --> { _ => action() },
-      icon(iconName)
-    )
 
   /** Icon + text action button. The optional `modifier` adds an extra
     * class (e.g. `action-new`) so per-button styling — typically the
@@ -1127,19 +1181,6 @@ object Main:
       onClick --> { _ => action() },
       icon(iconName),
       span(className := "label", label)
-    )
-
-  // Flip toggles its own state, so both the aria-label and (potentially) the
-  // icon need to track flippedVar. The icon stays the same — flipping a
-  // flipped board is still "flip" — and the label flips Flip ↔ Unflip.
-  private def flipIconButton(): HtmlElement =
-    button(
-      className := "post-it-action icon-only",
-      aria.label <-- flippedVar.signal.map(f =>
-        if f then "Unflip board" else "Flip board"
-      ),
-      onClick --> { _ => flippedVar.update(!_) },
-      icon("flip")
     )
 
   private val confirmNewGame: ConfirmRequest = ConfirmRequest(
@@ -1244,23 +1285,15 @@ object Main:
           )
         ),
         div(
-          className := "modal-actions",
-          button(
-            className := "secondary-btn",
-            onClick --> { _ =>
-              val raw = loadInputVar.now().trim
-              if raw.nonEmpty then
-                postLoad(raw)
-                loadInputVar.set("")
-                loadOpenVar.set(false)
-            },
-            "Load"
-          ),
-          button(
-            className := "secondary-btn",
-            onClick --> { _ => loadOpenVar.set(false) },
-            "Cancel"
-          )
+          className := "modal-actions flex flex-row gap-3 justify-end",
+          Components.ctaButton("Load") { _ =>
+            val raw = loadInputVar.now().trim
+            if raw.nonEmpty then
+              postLoad(raw)
+              loadInputVar.set("")
+              loadOpenVar.set(false)
+          },
+          Components.secondaryButton("Cancel") { _ => loadOpenVar.set(false) }
         )
       )
     )
@@ -1278,15 +1311,19 @@ object Main:
         h2(child.text <-- confirmVar.signal.map(_.map(_.title).getOrElse(""))),
         p(child.text <-- confirmVar.signal.map(_.map(_.message).getOrElse(""))),
         div(
-          className := "modal-actions",
+          className := "modal-actions flex flex-row gap-3 justify-end",
+          Components.secondaryButton("Cancel") { _ => confirmVar.set(None) },
+          // The confirm button swaps between destructive (coral) and
+          // secondary (cyan) based on the request's `destructive` flag.
+          // Build it inline so the className can flip reactively
+          // — Components helpers hard-code their variant class.
           button(
-            className := "secondary-btn",
-            onClick --> { _ => confirmVar.set(None) },
-            "Cancel"
-          ),
-          button(
+            typ := "button",
             className <-- confirmVar.signal.map(c =>
-              if c.exists(_.destructive) then "quit-btn" else "secondary-btn"
+              if c.exists(_.destructive) then
+                "btn-destructive inline-flex items-center justify-center px-6 py-2 cursor-pointer outline-none"
+              else
+                "btn-secondary inline-flex items-center justify-center px-6 py-2 cursor-pointer outline-none"
             ),
             onClick --> { _ =>
               confirmVar.now().foreach(_.action())
@@ -1406,6 +1443,12 @@ object Main:
   private val getAttackersClient =
     SttpClientInterpreter().toClientThrowDecodeFailures(
       Endpoints.getAttackers,
+      None,
+      backend
+    )
+  private val getStackInfoClient =
+    SttpClientInterpreter().toClientThrowDecodeFailures(
+      Endpoints.getStackInfo,
       None,
       backend
     )
@@ -1841,164 +1884,361 @@ object Main:
 
   // -- Start screen ---------------------------------------------------------
 
+  /** Start screen — uses the canonical layout helpers (`screenLayout` /
+    * `titleCard` / `contentCard` / `sidePostIt` / `linkButton` /
+    * `linkAnchor`) per design.md §6 + §12.3. The only screen-local bit
+    * is the brand wordmark inside the title card (poster-sized peach +
+    * "piChess") and the decorative `pieceShelf()` along the bottom
+    * — both are landing-page-specific decorations.
+    */
   private def startScreen(): HtmlElement =
-    div(
-      className := "screen screen-start",
-      h1("piChess"),
-      p(s"Welcome, ", strong(displayName())),
-      div(
-        className := "start-buttons",
-        button(
-          "New Game",
-          onClick --> { _ => navigate(Screen.NewGameMenu) }
+    Components.screenLayout("start")(
+      Components.titleCard(startBrand()),
+      Components.contentCard(
+        div(
+          className := "flex flex-col gap-1 items-center",
+          Components.linkButton("New Game") { _ => navigate(Screen.NewGameMenu) },
+          Components.linkButton("Join")     { _ => navigate(Screen.Join) },
+          Components.linkButton("Settings") { _ => navigate(Screen.Settings) }
         ),
-        button(
-          "Join",
-          onClick --> { _ => navigate(Screen.Join) }
-        ),
-        a(
-          href := "#docs",
-          "Docs"
-        ),
-        a(
-          href := "#help",
-          "Help"
-        ),
-        button(
-          "Settings",
-          onClick --> { _ => navigate(Screen.Settings) }
+        Components.sidePostIt(
+          // /docs is the Tapir-generated Swagger UI served by the gateway;
+          // open it in its own tab rather than wrapping the iframe in our
+          // own styled page (the wrapper read as visually broken — Swagger
+          // styles fight the notebook look).
+          a(
+            className := "btn-link",
+            href := "/docs",
+            target := "_blank",
+            rel := "noopener noreferrer",
+            "Docs"
+          ),
+          Components.linkAnchor("Help", "#help"),
+          // Dev surface only shows when the gateway was launched with
+          // PICHESS_DEV=true. Operator-only entry point — regular users
+          // never see it.
+          if devMode then Components.linkAnchor("Dev", "#dev")
+          else emptyNode
         )
-      )
+      ),
+      pieceShelf()
+    )
+
+  /** Poster-sized brand wordmark used inside the start-screen title
+    * card. Reuses the same peach SVG + "piChess" markup as the header,
+    * just scaled up via the `.start-brand` bespoke rule. */
+  private def startBrand(): HtmlElement =
+    div(
+      className := "start-brand",
+      svg.svg(
+        svg.viewBox := "-3 -3 43 44",
+        svg.cls := "start-logo",
+        svg.use(svg.href := "/web/peach.svg#peach")
+      ),
+      span("piChess")
+    )
+
+  /** Decorative row of large chess pieces along the bottom of the start
+    * screen. Both colours, all six piece types — laid out left to right
+    * with a small randomised tilt per piece so the row reads as
+    * hand-arranged rather than a sterile grid. Pure presentation —
+    * non-interactive (`pointer-events: none` in CSS).
+    */
+  private def pieceShelf(): HtmlElement =
+    val pieces: List[(String, String)] = List(
+      "rook"   -> "white",
+      "knight" -> "white",
+      "bishop" -> "white",
+      "queen"  -> "white",
+      "king"   -> "white",
+      "pawn"   -> "white",
+      "pawn"   -> "black",
+      "king"   -> "black",
+      "queen"  -> "black",
+      "bishop" -> "black",
+      "knight" -> "black",
+      "rook"   -> "black"
+    )
+    div(
+      className := "start-piece-shelf",
+      pieces.map { case (name, color) =>
+        // Per-piece tilt: -8°..+8°, picked once at render time so each
+        // page load gets a different arrangement (matches the rest of
+        // the start screen's "fresh notebook page" feeling).
+        val tilt = scala.util.Random.between(-8.0, 8.0)
+        val drop = scala.util.Random.between(-0.4, 0.4)  // small vertical jitter
+        span(
+          className := s"shelf-piece $color-piece",
+          styleAttr := s"transform: rotate(${"%.2f".format(tilt)}deg) " +
+            s"translateY(${"%.2f".format(drop)}rem);",
+          pieceSvg(name)
+        )
+      }
     )
 
   // -- Settings screen ------------------------------------------------------
 
   private def settingsScreen(): HtmlElement =
-    div(
-      className := "screen screen-settings",
-      h1("Settings"),
-      backLink(),
-      div(
-        label("Nickname"),
-        input(
-          typ := "text",
-          value <-- nicknameVar.signal,
-          onInput.mapToValue --> { v =>
-            val cleaned = v.trim
-            val effective = if cleaned.isEmpty then "Anonymous" else cleaned
-            nicknameVar.set(effective)
-            dom.window.localStorage.setItem("pichess.nickname", effective)
-          }
-        )
+    Components.screenLayout("settings")(
+      Components.titleCard(
+        Components.backLink(() => navigate(Screen.Start)),
+        Components.screenHeading("Settings")
       ),
-      p(
-        "You'll appear as ",
-        span(child.text <-- nicknameVar.signal.map(n => s"$n#$playerHash"))
-      ),
-      div(
-        label("Theme"),
-        themeToggleButton()
+      Components.contentCard(
+        Components.formRow("Nickname")(
+          span(
+            className := "text-field-wrap",
+            input(
+              typ := "text",
+              className := "text-field",
+              value <-- nicknameVar.signal,
+              onInput.mapToValue --> { v =>
+                val cleaned = v.trim
+                val effective = if cleaned.isEmpty then "Anonymous" else cleaned
+                nicknameVar.set(effective)
+                dom.window.localStorage.setItem("pichess.nickname", effective)
+              }
+            )
+          )
+        ),
+        p(
+          className := "settings-hint",
+          "You'll appear as ",
+          span(child.text <-- nicknameVar.signal.map(n => s"$n#$playerHash"))
+        ),
+        Components.formRow("Theme")(themeToggleButton())
       )
     )
 
   // -- Help / Docs ----------------------------------------------------------
 
   private def helpScreen(): HtmlElement =
-    div(
-      className := "screen screen-help",
-      h1("Help"),
-      backLink(),
+    Components.screenLayout("help")(
+      Components.titleCard(
+        Components.backLink(() => navigate(Screen.Start)),
+        Components.screenHeading("Help")
+      ),
+      // No outer content-card: each `.help-section` is its own paper
+      // panel, so a wrapper card would just nest cards inside a card.
       HelpView.render()
     )
 
-  private def docsScreen(): HtmlElement =
+  // -- Dev section ----------------------------------------------------------
+
+  /** Stack-identity chip — small handwritten badge naming the active
+    * backend + any projection extras. Driven by `stackInfoVar`, which
+    * is populated once at App mount from `/api/stack-info`. Shown only
+    * when the fetch succeeded. */
+  private def stackChip(): HtmlElement =
     div(
-      className := "screen screen-docs",
-      h1("API Docs"),
-      backLink(),
-      // The gateway already exposes Tapir-generated Swagger UI at /docs;
-      // an iframe is the simplest way to embed it without recreating the
-      // doc UI inside Laminar.
-      iframe(
-        src := "/docs",
-        styleAttr := "width:100%;height:80vh;border:1px solid #ccc;"
+      className := "stack-chip flex flex-row items-center gap-2",
+      child <-- stackInfoVar.signal.map {
+        case None       => span(className := "stack-chip-empty", "")
+        case Some(info) =>
+          val extrasSuffix =
+            if info.extras.isEmpty then ""
+            else s" + ${info.extras.mkString(", ")}"
+          span(
+            className := "stack-chip-text",
+            "Active stack: ",
+            strong(className := "font-press", info.backend),
+            extrasSuffix
+          )
+      }
+    )
+
+  /** "Dev mode isn't enabled" placeholder. Shown on any /dev/...
+    * screen when the gateway didn't ship `PICHESS_DEV=true` — better
+    * than a 404 since the URL still routes (the operator can tell
+    * they got here, just that the surface is off). */
+  private def devDisabledNotice(): HtmlElement =
+    Components.contentCard(
+      p(
+        className := "settings-hint",
+        "Dev tools are not enabled in this deployment. Restart the gateway with ",
+        code(className := "font-press", "PICHESS_DEV=true"),
+        " to surface the coverage / performance / docs pages."
       )
+    )
+
+  private def devIndexScreen(): HtmlElement =
+    Components.screenLayout("dev")(
+      Components.titleCard(
+        Components.backLink(() => navigate(Screen.Start)),
+        Components.screenHeading("Dev")
+      ),
+      if !devMode then devDisabledNotice()
+      else
+        Components.contentCard(
+          stackChip(),
+          p(
+            className := "settings-hint",
+            "Switch stacks from the terminal: ",
+            code(className := "font-press", "make stack-postgres"),
+            ", ",
+            code(className := "font-press", "make stack-mongo"),
+            ", etc."
+          ),
+          div(
+            className := "flex flex-col gap-2 items-stretch",
+            a(
+              className := "btn-link",
+              href := "/docs",
+              target := "_blank",
+              rel := "noopener noreferrer",
+              "API docs (Swagger) ↗"
+            ),
+            Components.linkAnchor("Tests + reports",   "#dev/test")
+          )
+        )
+    )
+
+  private def devTestScreen(): HtmlElement =
+    Components.screenLayout("dev-test")(
+      Components.titleCard(
+        Components.backLink(() => navigate(Screen.Dev)),
+        Components.screenHeading("Tests")
+      ),
+      if !devMode then devDisabledNotice()
+      else
+        Components.contentCard(
+          stackChip(),
+          div(
+            className := "flex flex-col gap-2 items-stretch",
+            Components.linkAnchor("Coverage report",    "#dev/test/coverage"),
+            Components.linkAnchor("Performance report", "#dev/test/performance")
+          )
+        )
+    )
+
+  private def devCoverageScreen(): HtmlElement =
+    Components.screenLayout("dev-coverage")(
+      Components.titleCard(
+        Components.backLink(() => navigate(Screen.DevTest)),
+        Components.screenHeading("Coverage")
+      ),
+      if !devMode then devDisabledNotice()
+      else
+        Components.contentCard(
+          p(
+            className := "settings-hint",
+            "Baked into the gateway image by ",
+            code(className := "font-press", "make coverage-build"),
+            ". Re-run that target + ",
+            code(className := "font-press", "make dev-gateway"),
+            " to refresh."
+          ),
+          iframe(
+            src := "/dev/coverage/report/",
+            className := "docs-iframe w-full h-[80vh] border border-hairline"
+          )
+        )
+    )
+
+  private def devPerformanceScreen(): HtmlElement =
+    Components.screenLayout("dev-performance")(
+      Components.titleCard(
+        Components.backLink(() => navigate(Screen.DevTest)),
+        Components.screenHeading("Performance")
+      ),
+      if !devMode then devDisabledNotice()
+      else
+        Components.contentCard(
+          p(
+            className := "settings-hint",
+            "Generated by ",
+            code(className := "font-press", "make gatling-build"),
+            " and baked into the gateway image. Each run lands in ",
+            code(className := "font-press", "/dev/performance/report/"),
+            "."
+          ),
+          iframe(
+            src := "/dev/performance/report/",
+            className := "docs-iframe w-full h-[80vh] border border-hairline"
+          )
+        )
     )
 
   // -- New-game menu --------------------------------------------------------
 
-  private def newGameMenu(): HtmlElement =
-    div(
-      className := "screen screen-new-game",
-      h1("New Game"),
-      backLink(),
-      hostGameForm(),
-      div(
-        button("Bot Game (coming soon)", disabled := true)
-      ),
-      div(
-        button(
-          "Local Game",
-          onClick --> { _ => createLocalGame() }
-        )
-      )
-    )
+  // -- New-game screen ------------------------------------------------------
 
-  /** Inline host-game form. Visibility / allowUndo / allowSpectate are
-    * controlled via plain HTML inputs and submitted as a CreateLobby POST.
-    * On success we route to the lobby waiting room.
-    */
+  /** Three game modes the user can choose between on the new-game screen. */
+  enum NewGameMode:
+    case Local, Host, Bot
+
+  /** Currently-selected tab. Local first because it's the fastest path
+    * (zero clicks of configuration). */
+  private val newGameModeVar: Var[NewGameMode] = Var(NewGameMode.Local)
+
+  /** Host-game form state. Submitted via `createHostedLobby`. */
   private val hostVisibilityVar: Var[String] = Var("Public")
   private val hostAllowUndoVar: Var[Boolean] = Var(true)
   private val hostAllowSpectateVar: Var[Boolean] = Var(true)
   private val hostSpectatorLimitVar: Var[Int] = Var(8)
 
-  private def hostGameForm(): HtmlElement =
-    fieldSet(
-      legend("Host options"),
-      div(
-        label("Visibility"),
-        select(
-          value <-- hostVisibilityVar.signal,
-          onChange.mapToValue --> hostVisibilityVar.writer,
-          option(value := "Public", "Public"),
-          option(value := "Private", "Private")
-        )
+  private def newGameMenu(): HtmlElement =
+    Components.screenLayout("new-game")(
+      Components.titleCard(
+        Components.backLink(() => navigate(Screen.Start)),
+        Components.screenHeading("New Game")
       ),
-      div(
-        label(
-          input(
-            typ := "checkbox",
-            checked <-- hostAllowUndoVar.signal,
-            onChange.mapToChecked --> hostAllowUndoVar.writer
-          ),
-          " Allow undo"
-        )
-      ),
-      div(
-        label(
-          input(
-            typ := "checkbox",
-            checked <-- hostAllowSpectateVar.signal,
-            onChange.mapToChecked --> hostAllowSpectateVar.writer
-          ),
-          " Allow spectators"
-        )
-      ),
-      div(
-        label("Spectator limit"),
-        input(
-          typ := "number",
-          value <-- hostSpectatorLimitVar.signal.map(_.toString),
-          onInput.mapToValue --> { s =>
-            hostSpectatorLimitVar.set(s.toIntOption.getOrElse(8).max(0))
-          }
-        )
-      ),
-      button(
-        "Create lobby",
-        onClick --> { _ => createHostedLobby() }
+      Components.contentCard(
+        Components.tabStrip[NewGameMode](
+          newGameModeVar,
+          Seq(
+            (NewGameMode.Local, "Local",  true),
+            (NewGameMode.Host,  "Host",   true),
+            (NewGameMode.Bot,   "Vs Bot", false)
+          )
+        ),
+        child <-- newGameModeVar.signal.distinct.map(modeDetails)
       )
+    )
+
+  private def modeDetails(mode: NewGameMode): HtmlElement = mode match
+    case NewGameMode.Local => localModeDetails()
+    case NewGameMode.Host  => hostModeDetails()
+    case NewGameMode.Bot   => botModeDetails()
+
+  private def localModeDetails(): HtmlElement =
+    div(
+      className := "mode-details flex flex-col gap-4 items-stretch",
+      p(
+        className := "mode-blurb",
+        "Both colours are played from this browser tab. " +
+          "No invite code, no opponent — just a board."
+      ),
+      Components.linkButton("Start local game") { _ => createLocalGame() }
+    )
+
+  private def botModeDetails(): HtmlElement =
+    div(
+      className := "mode-details flex flex-col gap-4 items-stretch",
+      p(
+        className := "mode-blurb",
+        "Coming soon — engine integration is on the roadmap."
+      )
+    )
+
+  private def hostModeDetails(): HtmlElement =
+    div(
+      className := "mode-details flex flex-col gap-4 items-stretch",
+      div(
+        className := "host-form flex flex-col gap-3",
+        Components.formRow("Visibility")(
+          Components.selectInput(
+            hostVisibilityVar,
+            Seq("Public" -> "Public", "Private" -> "Private")
+          )
+        ),
+        Components.checkboxRow(hostAllowUndoVar,     "Allow undo"),
+        Components.checkboxRow(hostAllowSpectateVar, "Allow spectators"),
+        Components.formRow("Spectator limit")(
+          Components.numberInput(hostSpectatorLimitVar, min = 0, max = 64)
+        )
+      ),
+      Components.linkButton("Create lobby") { _ => createHostedLobby() }
     )
 
   private def createHostedLobby(): Unit =
@@ -2038,40 +2278,35 @@ object Main:
   private val joinCodeVar: Var[String] = Var("")
 
   private def joinScreen(): HtmlElement =
-    div(
-      className := "screen screen-join",
-      h1("Join Game"),
-      backLink(),
-      div(
-        label("Invite code"),
-        input(
-          typ := "text",
-          value <-- joinCodeVar.signal,
-          onInput.mapToValue --> joinCodeVar.writer,
-          placeholder := "ABCDEF"
+    Components.screenLayout("join")(
+      Components.titleCard(
+        Components.backLink(() => navigate(Screen.Start)),
+        Components.screenHeading("Join Game")
+      ),
+      Components.contentCard(
+        onMountCallback { _ => refreshPublicLobbies() },
+        Components.formRow("Invite code")(
+          Components.textInput(joinCodeVar, placeholder := "ABCDEF")
         ),
-        button(
-          "Join",
-          onClick --> { _ => joinByCode(joinCodeVar.now()) }
-        )
-      ),
-      hr(),
-      h2("Public lobbies"),
-      button(
-        "Refresh",
-        onClick --> { _ => refreshPublicLobbies() }
-      ),
-      onMountCallback { _ => refreshPublicLobbies() },
-      ul(
-        children <-- publicLobbiesVar.signal.map(_.map { l =>
-          li(
-            s"${l.hostNickname} — ${l.inviteCode}",
-            button(
-              "Join",
-              onClick --> { _ => joinByCode(l.inviteCode) }
-            )
+        Components.ctaButton("Join") { _ => joinByCode(joinCodeVar.now()) },
+        div(
+          className := "join-public flex flex-col gap-2",
+          div(
+            className := "flex flex-row items-center justify-between",
+            h2(className := "section-heading", "Public lobbies"),
+            Components.iconButton("⟳") { _ => refreshPublicLobbies() }
+          ),
+          ul(
+            className := "public-list flex flex-col gap-1 list-none p-0",
+            children <-- publicLobbiesVar.signal.map(_.map { l =>
+              li(
+                className := "public-list-item flex flex-row items-center justify-between gap-3",
+                span(s"${l.hostNickname} — ${l.inviteCode}"),
+                Components.linkButton("Join") { _ => joinByCode(l.inviteCode) }
+              )
+            })
           )
-        })
+        )
       )
     )
 
@@ -2116,8 +2351,7 @@ object Main:
     // appear without a page reload. Cleared on unmount via the returned
     // handle.
     var pollHandle: Int = 0
-    div(
-      className := "screen screen-lobby",
+    Components.screenLayout("lobby")(
       onMountCallback { _ =>
         refreshLobbyByCode(code)
         pollHandle = dom.window.setInterval(
@@ -2129,60 +2363,69 @@ object Main:
         if pollHandle != 0 then dom.window.clearInterval(pollHandle)
         pollHandle = 0
       },
-      h1("Lobby"),
-      backLink(),
-      child <-- currentLobbyVar.signal.map {
-        case None =>
-          div(p(s"Loading lobby $code…"))
-        case Some(l) =>
-          div(
-            p(
-              "Invite code: ",
-              code,
-              " ",
-              button(
-                "Copy",
-                onClick --> { _ =>
-                  dom.window.navigator.clipboard.writeText(l.inviteCode)
-                  showToast("Invite code copied")
-                }
-              )
-            ),
-            p(
-              "Invite link: ",
-              span(s"${dom.window.location.origin}/#lobby/${l.inviteCode}")
-            ),
-            p(s"Status: ${l.status}"),
-            p(s"Host: ${l.hostNickname}"),
-            p(
-              "Guest: ",
-              if l.guestNickname.isDefined then l.guestNickname.get
-              else "(waiting…)"
-            ),
-            p(s"Visibility: ${l.visibility}"),
-            p(s"Allow undo: ${l.allowUndo}"),
-            p(
-              s"Allow spectate: ${l.allowSpectate} (limit ${l.spectatorLimit})"
-            ),
-            // Show start button to host only, when the lobby is Full.
-            if l.hostSessionId == sessionId && l.status == "Full" then
-              button(
-                "Start game",
-                onClick --> { _ => startHostedGame(l) }
-              )
-            else
-              span(""),
-            // If a guest is connected and we're not the host, we just wait.
-            if l.status == "Started" && l.gameId.isDefined then
-              p(
-                a(
-                  href := s"#game/${l.gameId.get}",
-                  "Game started — go to board"
-                )
-              )
-            else span("")
-          )
-      }
+      Components.titleCard(
+        Components.backLink(() => navigate(Screen.Start)),
+        Components.screenHeading("Lobby")
+      ),
+      Components.contentCard(
+        child <-- currentLobbyVar.signal.map {
+          case None    => lobbyLoadingBody(code)
+          case Some(l) => lobbyDetailsBody(l)
+        }
+      )
+    )
+
+  private def lobbyLoadingBody(code: String): HtmlElement =
+    p(className := "lobby-blurb", s"Loading lobby $code…")
+
+  private def lobbyDetailsBody(l: LobbyJson): HtmlElement =
+    div(
+      className := "lobby-details flex flex-col gap-2",
+      Components.formRow("Invite code")(
+        div(
+          className := "flex flex-row items-center gap-2",
+          span(className := "lobby-code font-press", l.inviteCode),
+          Components.iconButton("⧉") { _ =>
+            dom.window.navigator.clipboard.writeText(l.inviteCode)
+            showToast("Invite code copied")
+          }
+        )
+      ),
+      Components.formRow("Invite link")(
+        span(
+          className := "lobby-link font-press break-all",
+          s"${dom.window.location.origin}/#lobby/${l.inviteCode}"
+        )
+      ),
+      Components.formRow("Status")(span(className := "lobby-value", l.status)),
+      Components.formRow("Host")(span(className := "lobby-value", l.hostNickname)),
+      Components.formRow("Guest")(
+        span(
+          className := "lobby-value",
+          l.guestNickname.fold("(waiting…)")(identity)
+        )
+      ),
+      Components.formRow("Visibility")(
+        span(className := "lobby-value", l.visibility)
+      ),
+      Components.formRow("Allow undo")(
+        span(className := "lobby-value", l.allowUndo.toString)
+      ),
+      Components.formRow("Spectators")(
+        span(
+          className := "lobby-value",
+          if l.allowSpectate then s"allowed (limit ${l.spectatorLimit})"
+          else "not allowed"
+        )
+      ),
+      // Host-only start button, only when the lobby is Full.
+      if l.hostSessionId == sessionId && l.status == "Full" then
+        Components.ctaButton("Start game") { _ => startHostedGame(l) }
+      else span(),
+      // Once the host has started the game, both sides show a link to the board.
+      if l.status == "Started" && l.gameId.isDefined then
+        Components.linkAnchor("Game started — go to board", s"#game/${l.gameId.get}")
+      else span()
     )
 
   private def refreshLobbyByCode(code: String): Unit =
@@ -2224,21 +2467,3 @@ object Main:
 
   // -- Shared helpers -------------------------------------------------------
 
-  /** Back link that returns to whatever screen the user came from.
-    * Uses the browser's history stack so it works for hash routes,
-    * deep links, and middle-of-flow navigations alike. We render it as
-    * a button (not an `<a href="#">`) because a hash anchor would
-    * unconditionally reset the URL to `#` and land us on Start.
-    */
-  private def backLink(): HtmlElement =
-    button(
-      typ := "button",
-      "← Back",
-      onClick --> { _ =>
-        // history.length is 1 for a fresh tab opened directly on this URL —
-        // there's nothing to go back to, so fall through to the Start screen
-        // instead of leaving the user stranded.
-        if dom.window.history.length > 1 then dom.window.history.back()
-        else navigate(Screen.Start)
-      }
-    )

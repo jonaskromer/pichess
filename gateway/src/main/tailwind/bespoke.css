@@ -1,0 +1,2306 @@
+/* Tailwind's preflight (in @layer base) already provides the universal
+   box-sizing + margin/padding reset; a duplicate unlayered rule here used
+   to outrank every utility (unlayered > layered) and silently neutralise
+   `.px-*` / `.py-*` / `.gap-*` everywhere. Deleted — preflight handles it. */
+
+:root {
+  /* Fluid root font-size — scales with viewport width so the whole UI
+     looks the right size on small laptops AND large/4K desktops. The
+     handwriting fonts (Caveat) read visually smaller than their em-square,
+     so we want the page to land near 22px on a wide desktop while
+     bottoming out around 16px on a 13" laptop.
+
+     The clamp expression is fully relative (no px) so user font-size
+     accessibility settings still flow through:
+       floor    1em    = browser default (≈16px)
+       slope    0.5em + 0.6vw  — rises ~0.6px per 100px of viewport width
+       ceiling  1.375em ≈ 22px (matches the previous fixed value)
+     Curve at 16px-default browsers:
+       1280vw → 16.0px (clamped)
+       1600vw → 17.6px
+       2000vw → 20.0px
+       2400vw → 22.0px (clamped) */
+  font-size: clamp(1em, 0.5em + 0.6vw, 1.375em);
+
+  /* ---------------------------------------------------------------------
+     Legacy token aliases. The canonical names live in input.css's
+     @theme block (so they generate Tailwind utilities AND :root vars).
+     The aliases below are forwarders so existing bespoke CSS reading
+     `var(--paper-color)`, `var(--text-primary)`, etc. continues to
+     work without a sweeping rename. They retint automatically when
+     :root.dark overrides the @theme tokens above.
+
+     Ongoing migration: every consumer of an alias should eventually
+     read the canonical name (`var(--color-paper)`) directly OR move to
+     a Tailwind utility class. Once nothing references an alias, drop
+     the line.
+     --------------------------------------------------------------------- */
+  --paper-color:        var(--color-paper);
+  --paper-grid:         var(--color-paper-grid);
+  --grid-color:         var(--color-grid);
+  --crumple-highlight:  var(--color-crumple-highlight);
+  --bg-page:            var(--color-paper);
+  --text-primary:       var(--color-text-primary);
+  --text-secondary:     var(--color-text-secondary);
+  --text-muted:         var(--color-text-muted);
+  --accent:             var(--color-accent);
+  --accent-strong:      var(--color-accent-strong);
+  --accent-hover:       var(--color-accent-hover);
+  --accent-soft:        var(--color-accent-soft);
+  --header-bg:          var(--color-header-bg);
+  --header-text:        var(--color-header-text);
+  --hairline:           var(--color-hairline);
+  --panel-shadow:       var(--shadow-panel);
+  --overlay-bg:         var(--color-overlay-bg);
+  --code-bg:            var(--color-code-bg);
+  --input-bg:           var(--color-input-bg);
+
+  --post-yellow:        var(--color-post-yellow);
+  --post-yellow-shadow: var(--color-post-yellow-shadow);
+  --post-cyan:          var(--color-post-cyan);
+  --post-cyan-shadow:   var(--color-post-cyan-shadow);
+  --post-coral:         var(--color-post-coral);
+  --post-coral-shadow:  var(--color-post-coral-shadow);
+  --post-text:          var(--color-post-text);
+
+  --newsprint:          var(--color-newsprint);
+  --newsprint-shadow:   var(--color-newsprint-shadow);
+  --newsprint-text:     var(--color-newsprint-text);
+
+  --marker-yellow:      var(--color-marker-yellow);
+  --marker-pink:        var(--color-marker-pink);
+  --marker-blue:        var(--color-marker-blue);
+  --marker-green:       var(--color-marker-green);
+  --marker-red:         var(--color-marker-red);
+
+  /* ---------------------------------------------------------------------
+     Tokens that aren't @theme entries — they don't generate utilities
+     because the value isn't a colour / font / shadow Tailwind would
+     map to one. These stay defined in :root and are referenced via
+     `var(--…)` directly from bespoke rules.
+     --------------------------------------------------------------------- */
+
+  /* RGB triple for tape sheen. Composed at the call site as
+     `rgba(var(--tape-rgb), 0.62)` so the alpha can vary while the hue
+     stays consistent. Light mode = white; dark mode = muted off-white
+     so tape doesn't glow on dark paper. */
+  --tape-rgb:           255, 255, 255;
+
+  /* Two-layer post-it shadow — base. The first drop-shadow is a sharp
+     dark line right under the sticky's contact edge, "the paper is
+     actually on top of the page". Composed at the call site with the
+     per-colour halo, e.g. `filter: var(--post-shadow-base)
+     drop-shadow(0 0.6rem 0.85rem var(--color-post-yellow-shadow));`. */
+  --post-shadow-base:   drop-shadow(0 0.18rem 0.2rem rgb(0 0 0 / 0.18));
+
+  /* ── Paper-on-paper shadow stack ─────────────────────────────────────
+     Reusable building blocks for "a scrap of paper sitting on the page"
+     — currently consumed by `.newsprint-shadow` (the help-page cuttings)
+     and any future surface that wants the same physical look. Each
+     token is a complete `filter` value: a space-separated list of
+     drop-shadow function calls. Compose at the call site as
+     `filter: var(--paper-contact) var(--paper-diffuse)`.
+
+     Contact:  3 stacked drop-shadows at slightly different sub-rem
+               offsets so the silhouette of the contact line is
+               irregular rather than a uniform Gaussian blur — reads as
+               hand-cut paper, not as a perfect rectangle.
+     Diffuse:  a single, very low-opacity halo a few mm out. Almost
+               invisible alone, but pulls the cutting off the page just
+               enough to register as lifted. */
+  --paper-contact:
+    drop-shadow(0      0.04rem 0.06rem rgb(0 0 0 / 0.22))
+    drop-shadow( 0.04rem 0.05rem 0.05rem rgb(0 0 0 / 0.18))
+    drop-shadow(-0.03rem 0.06rem 0.05rem rgb(0 0 0 / 0.16));
+  --paper-diffuse:
+    drop-shadow(0 0.3rem 0.55rem rgb(0 0 0 / 0.06));
+  /* Strong variants — bigger surfaces (blocks like `.help-pre`) need a
+     touch more contact / halo so they read as thicker paper. */
+  --paper-contact-strong:
+    drop-shadow(0      0.06rem 0.08rem rgb(0 0 0 / 0.24))
+    drop-shadow( 0.05rem 0.07rem 0.06rem rgb(0 0 0 / 0.2))
+    drop-shadow(-0.04rem 0.08rem 0.06rem rgb(0 0 0 / 0.18));
+  --paper-diffuse-strong:
+    drop-shadow(0 0.5rem 0.9rem rgb(0 0 0 / 0.08));
+
+  /* Torn-note clip-paths. Three reusable variants for paper panels.
+     Drop-shadow gets clipped by clip-path, so panels using these also need
+     `filter: drop-shadow(...)` on the wrapper to recover it. */
+  --torn-bottom: polygon(
+    0 0,
+    100% 0,
+    100% calc(100% - 0.4rem),
+    92% 100%,
+    84% calc(100% - 0.5rem),
+    76% calc(100% - 0.2rem),
+    68% calc(100% - 0.6rem),
+    60% calc(100% - 0.3rem),
+    52% calc(100% - 0.5rem),
+    44% calc(100% - 0.2rem),
+    36% calc(100% - 0.6rem),
+    28% calc(100% - 0.3rem),
+    20% calc(100% - 0.5rem),
+    12% calc(100% - 0.2rem),
+    4% calc(100% - 0.4rem),
+    0 calc(100% - 0.3rem)
+  );
+  --torn-all: polygon(
+    0.3rem 0.2rem, 12% 0.4rem, 25% 0.1rem, 38% 0.4rem, 50% 0.2rem,
+    62% 0.4rem, 75% 0.1rem, 88% 0.3rem, calc(100% - 0.4rem) 0.2rem,
+    calc(100% - 0.2rem) 12%, calc(100% - 0.4rem) 25%,
+    calc(100% - 0.1rem) 38%, calc(100% - 0.3rem) 50%,
+    calc(100% - 0.4rem) 62%, calc(100% - 0.1rem) 75%,
+    calc(100% - 0.3rem) 88%,
+    calc(100% - 0.2rem) calc(100% - 0.3rem),
+    88% calc(100% - 0.1rem), 75% calc(100% - 0.4rem),
+    62% calc(100% - 0.2rem), 50% calc(100% - 0.5rem),
+    38% calc(100% - 0.2rem), 25% calc(100% - 0.4rem),
+    12% calc(100% - 0.1rem),
+    0.4rem calc(100% - 0.3rem),
+    0.2rem 88%, 0.4rem 75%, 0.1rem 62%, 0.3rem 50%,
+    0.4rem 38%, 0.1rem 25%, 0.3rem 12%
+  );
+  /* Subtle per-tile wobble. The top edge is pushed up far above the tile
+     box (so tall pieces — king, queen — can extend upward without being
+     clipped by the polygon, paired with overflow: visible on .square).
+     Side and bottom edges keep small (~2%) wobble so the board reads as
+     marker-drawn rather than pixel-perfect printed. */
+  --torn-tile: polygon(
+    -10% -300%, 110% -300%,
+    100% 25%, 99% 50%, 100% 75%, 98% 99%,
+    75% 100%, 50% 98%, 25% 100%, 2% 99%,
+    0 75%, 1% 50%, 0 25%
+  );
+  /* Post-it shapes — subtler than the previous 90%-middle curve (which read
+     as deformed) and varied across buttons so a row of post-its doesn't
+     look like stamped duplicates. Three variants:
+       a: top-right corner cut (most common folded look) + gentle bow
+       b: top-left corner cut + gentle bow
+       c: no folded corner, slightly more pronounced bow (for icon buttons
+          where a corner cut would compete with the glyph) */
+  /* Bottom edge is concave — like a sticky note pinned at the top: the
+     corners curl up off the page (smaller Y%), the middle hangs lowest
+     under gravity (largest Y%). Reads as a real lifted post-it rather
+     than a stamped rectangle with a smile in it. */
+  --post-shape-a: polygon(
+    0 0, 92% 0, 100% 8%,
+    100% 95%,
+    92% 96%, 75% 98%, 50% 100%, 25% 98%, 8% 96%,
+    0 95%
+  );
+  --post-shape-b: polygon(
+    0 8%, 8% 0,
+    100% 0,
+    100% 95%,
+    92% 96%, 75% 98%, 50% 100%, 25% 98%, 8% 96%,
+    0 95%
+  );
+  --post-shape-c: polygon(
+    0 0, 100% 0,
+    100% 94%,
+    92% 95%, 75% 97%, 50% 100%, 25% 97%, 8% 95%,
+    0 94%
+  );
+  /* Right + bottom edges torn, top + left straight. Used on the move-log
+     panel where the inner sidebar/board edges should stay clean and the
+     outer edges (toward the page corner) are the ones that look ripped. */
+  --torn-right-bottom: polygon(
+    0 0,
+    100% 0,
+    calc(100% - 0.4rem) 12%, 100% 24%,
+    calc(100% - 0.5rem) 36%, calc(100% - 0.2rem) 48%,
+    calc(100% - 0.6rem) 60%, calc(100% - 0.3rem) 72%,
+    calc(100% - 0.5rem) 84%,
+    100% calc(100% - 0.4rem),
+    92% 100%, 84% calc(100% - 0.5rem),
+    76% calc(100% - 0.2rem), 68% calc(100% - 0.6rem),
+    60% calc(100% - 0.3rem), 52% calc(100% - 0.5rem),
+    44% calc(100% - 0.2rem), 36% calc(100% - 0.6rem),
+    28% calc(100% - 0.3rem), 20% calc(100% - 0.5rem),
+    12% calc(100% - 0.2rem), 4% calc(100% - 0.4rem),
+    0 calc(100% - 0.3rem)
+  );
+  /* Mirror: left + bottom torn, top + right straight. Used on the move-log
+     so the scrollbar lives along the clean right edge (a torn right
+     looked weird with the OS handle running down it). */
+  --torn-left-bottom: polygon(
+    0 0,
+    100% 0,
+    100% 100%,
+    96% calc(100% - 0.4rem), 88% 100%, 80% calc(100% - 0.5rem),
+    72% calc(100% - 0.2rem), 64% calc(100% - 0.6rem),
+    56% calc(100% - 0.3rem), 48% calc(100% - 0.5rem),
+    40% calc(100% - 0.2rem), 32% calc(100% - 0.6rem),
+    24% calc(100% - 0.3rem), 16% calc(100% - 0.5rem),
+    8% calc(100% - 0.2rem),
+    0 calc(100% - 0.4rem),
+    0.5rem 84%, 0.2rem 72%, 0.6rem 60%, 0.3rem 48%,
+    0.5rem 36%, 0.2rem 24%, 0.4rem 12%
+  );
+  --torn-corners: polygon(
+    0.3rem 0,
+    0.5rem 0.4rem,
+    0.2rem 0.6rem,
+    0 1rem,
+    0 calc(100% - 1rem),
+    0.3rem calc(100% - 0.4rem),
+    0.5rem calc(100% - 0.2rem),
+    0.7rem 100%,
+    calc(100% - 0.7rem) 100%,
+    calc(100% - 0.4rem) calc(100% - 0.2rem),
+    calc(100% - 0.6rem) calc(100% - 0.5rem),
+    100% calc(100% - 0.7rem),
+    100% 0.7rem,
+    calc(100% - 0.5rem) 0.4rem,
+    calc(100% - 0.3rem) 0.2rem,
+    calc(100% - 0.7rem) 0
+  );
+  /* Near-straight cut for small inline pills (`.code-inline`, command
+     cells, dt terms). Only the top/bottom horizontal edges carry a
+     small wobble (~0.04–0.06rem) — left and right are corner-to-corner
+     verticals — so the pill reads as "scissors traced just above and
+     below the text line" rather than a tiny saw-tooth. */
+  --newsprint-cut-inline: polygon(
+    0 0.04rem,
+    9% 0, 18% 0.05rem, 27% 0, 36% 0.05rem, 45% 0,
+    54% 0.05rem, 63% 0, 72% 0.05rem, 81% 0, 90% 0.05rem,
+    100% 0,
+    100% calc(100% - 0.04rem),
+    90% 100%, 81% calc(100% - 0.05rem), 72% 100%, 63% calc(100% - 0.05rem),
+    54% 100%, 45% calc(100% - 0.05rem), 36% 100%, 27% calc(100% - 0.05rem),
+    18% 100%, 9% calc(100% - 0.05rem),
+    0 100%
+  );
+
+  /* Subtly irregular perimeter — for newspaper-clipping elements
+     (Special Elite runs). Teeth are sub-rem (~0.05–0.15rem) so the cut
+     reads as a hand-cut edge with mild wobble rather than aggressive
+     saw-tooth. Vertices mix % and `calc(100% - …)` so the wobble
+     covers all four edges at any element size. */
+  --newsprint-cut: polygon(
+    0.05rem 0.1rem,
+    6%  0,    11% 0.12rem, 17% 0.02rem, 23% 0.14rem, 29% 0,
+    35% 0.12rem, 41% 0.02rem, 47% 0.15rem, 53% 0,
+    59% 0.12rem, 65% 0.02rem, 71% 0.14rem, 77% 0,
+    83% 0.12rem, 89% 0.02rem, 95% 0.14rem,
+    calc(100% - 0.05rem) 0.02rem,
+    calc(100% - 0.02rem) 8%,  calc(100% - 0.14rem) 16%,
+    calc(100% - 0.02rem) 25%, calc(100% - 0.12rem) 34%,
+    calc(100% - 0.02rem) 42%, calc(100% - 0.14rem) 51%,
+    calc(100% - 0.04rem) 60%, calc(100% - 0.12rem) 69%,
+    calc(100% - 0.02rem) 78%, calc(100% - 0.14rem) 87%,
+    calc(100% - 0.04rem) 95%,
+    95% calc(100% - 0.02rem), 89% calc(100% - 0.14rem),
+    83% calc(100% - 0.02rem), 77% calc(100% - 0.12rem),
+    71% calc(100% - 0.02rem), 65% calc(100% - 0.14rem),
+    59% calc(100% - 0.02rem), 53% calc(100% - 0.15rem),
+    47% calc(100% - 0.02rem), 41% calc(100% - 0.12rem),
+    35% calc(100% - 0.02rem), 29% calc(100% - 0.14rem),
+    23% calc(100% - 0.02rem), 17% calc(100% - 0.12rem),
+    11% calc(100% - 0.02rem), 6%  calc(100% - 0.14rem),
+    0.05rem calc(100% - 0.02rem),
+    0.02rem 95%, 0.12rem 87%, 0.02rem 78%, 0.14rem 69%,
+    0.04rem 60%, 0.12rem 51%, 0.02rem 42%, 0.14rem 34%,
+    0.02rem 25%, 0.12rem 16%, 0.02rem 8%
+  );
+}
+
+:root.dark {
+  /* Dark-mode override for the non-@theme tokens. The colour /
+     shadow tokens that DO live in @theme are overridden in input.css;
+     the legacy aliases above pick up the dark values via the
+     var(--color-…) chain. Only the few tokens that aren't @theme
+     entries (because they don't fit Tailwind's utility shape) need a
+     bespoke dark variant. */
+  --tape-rgb: 220, 200, 180;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Every rule below lives in `@layer components` so Tailwind utilities (in
+   `@layer utilities`, declared later by the framework) always win over
+   the bespoke baseline. Helper classes that back `Components.scala`
+   use `@apply` to absorb their utility kit, so the Scala side ships a
+   single class name per helper instead of a long utility string.
+
+   What stays as raw CSS: things utilities can't express — clip-paths,
+   SVG-filter compositions, multi-stop gradients, mask images, post-it
+   tilt/shape variations, tape pseudo-elements, paper-layer machinery.
+   ────────────────────────────────────────────────────────────────────── */
+@layer components {
+
+body {
+  font-family: var(--font-hand), 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  min-height: 100vh;
+}
+/* Scroll-lock when any full-page overlay/modal is open. The web-ui
+   toggles `body.modal-open` from a derived signal that combines every
+   modal's open-state Var (see Main.scala App() onMountCallback). The
+   page beneath the overlay stays put — no jitter behind the dialog
+   from inadvertent wheel / trackpad scrolls. */
+body.modal-open { overflow: hidden; }
+/* Browser default form-control fonts override `body` font-family — every
+   button / input would render in some default sans-serif unless we reset
+   here. `inherit` pulls Caveat (or whatever body's font is) through;
+   inputs that want a different font (the typewriter for the move input,
+   help-text, etc.) override `font-family` explicitly below. */
+button, input, select, textarea { font-family: inherit; font-size: inherit; }
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+/* Hidden host for inline-SVG sprite definitions (the two paper symbols).
+   Placing the symbols in the same document as the host page makes the
+   `var(--paper-color)` / `var(--grid-color)` / `var(--crumple-highlight)`
+   cascade work reliably through `<use href="#…">` — cross-document `<use>`
+   to external SVG files has flaky cascade for vars buried inside <pattern>
+   and <feDiffuseLighting> (which is what was breaking grid + highlight
+   theming). */
+.svg-sprite-host {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.page-bg {
+  /* Crumpled paper background. Sits behind everything; the body background
+     colour is the fallback while the SVG is fetching. preserveAspectRatio=
+     "xMidYMid slice" on the svg element fills the viewport without
+     letterboxing. */
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--bg-page);
+}
+.page-bg svg { width: 100%; height: 100%; display: block; }
+/* Clean paper background for large dialogs. Rendered as the first child of
+   a positioned dialog wrapper; the dialog's actual content sits in a
+   sibling .paper-content with z-index: 1 so it renders on top.
+   `preserveAspectRatio: none` lets the paper stretch to the dialog's
+   non-portrait aspect — the grid pattern is forgiving enough that the
+   stretching reads as "a sheet trimmed to fit". */
+.paper-layer {
+  /* The square SVGs intentionally don't have feDropShadow baked in (so
+     they tile cleanly when sliced into varied containers). The shadow
+     comes from CSS filter here, applied to the .paper-layer's rendered
+     alpha so it follows whatever shape the SVG paints.
+
+     `z-index: -1` paints the paper-layer at the bottom of its parent's
+     stacking context, below all sibling content regardless of whether
+     the siblings are positioned. This needs the parent to *establish*
+     a stacking context so the -1 stays inside the panel (otherwise it
+     escapes upward and lands behind the page bg) — see the
+     `isolation: isolate` rule below. */
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  filter: drop-shadow(var(--panel-shadow));
+}
+.paper-layer svg { width: 100%; height: 100%; display: block; }
+/* Adhesive-tape strips at the top corners of paper panels. Pseudo-element
+   pair (left + right) with a vertical sheen gradient + soft shadow + slight
+   rotation per side reads as scotch tape holding a clipping in place. The
+   sheen uses --tape-rgb so the tape mutes in dark mode (otherwise white
+   tape glows against the dark paper). */
+.move-log-paper::before, .move-log-paper::after,
+.board-paper::before,    .board-paper::after,
+.modal-dialog::before,   .modal-dialog::after,
+.promotion-dialog::before, .promotion-dialog::after,
+.title-card::before, .title-card::after,
+.content-card::before, .content-card::after,
+.newsprint-shadow.is-block::before, .newsprint-shadow.is-block::after {
+  content: '';
+  position: absolute;
+  top: -0.45rem;
+  width: 3.5rem;
+  height: 0.95rem;
+  background: linear-gradient(
+    180deg,
+    rgba(var(--tape-rgb), 0.30) 0%,
+    rgba(var(--tape-rgb), 0.62) 35%,
+    rgba(var(--tape-rgb), 0.62) 65%,
+    rgba(var(--tape-rgb), 0.30) 100%
+  );
+  box-shadow: 0 1px 2px rgba(0,0,0,0.18);
+  pointer-events: none;
+  z-index: 2;
+}
+.move-log-paper::before,
+.board-paper::before,
+.modal-dialog::before,
+.promotion-dialog::before,
+.title-card::before,
+.content-card::before,
+.newsprint-shadow.is-block::before {
+  left: 0.6rem;
+  transform: rotate(-4deg);
+}
+.move-log-paper::after,
+.board-paper::after,
+.modal-dialog::after,
+.promotion-dialog::after,
+.title-card::after,
+.content-card::after,
+.newsprint-shadow.is-block::after {
+  right: 0.6rem;
+  transform: rotate(4deg);
+}
+/* The modal scrolls (overflow: auto) so tape that sits above the box's
+   top edge would get clipped. Tuck it just inside instead. */
+.modal-dialog::before, .modal-dialog::after { top: 0.3rem; }
+/* Per-panel grid-cell-size overrides. The square crumpled grid SVG is
+   sliced into each panel via xMidYMid slice, so user-unit cells in the
+   SVG scale by max(panelW, panelH) / 600 when rendered. Setting
+   --grid-minor-size / --grid-major-size on each panel container
+   compensates so the grid renders at roughly the same visible cell size
+   on every surface (target ~24px / 120px).
+   Each panel also overrides --paper-color to the lighter --paper-grid
+   value — convention: gridded surfaces sit slightly brighter than the
+   plain page background so the grid lines have something to read on. */
+.move-log-paper   { --paper-color: var(--paper-grid); --grid-minor-size: 40px; --grid-major-size: 200px; }
+.board-paper      { --paper-color: var(--paper-grid); --grid-minor-size: 18px; --grid-major-size: 90px;  }
+.modal-dialog     { --paper-color: var(--paper-grid); --grid-minor-size: 24px; --grid-major-size: 120px; }
+.promotion-dialog { --paper-color: var(--paper-grid); --grid-minor-size: 32px; --grid-major-size: 160px; }
+.header           { --paper-color: var(--paper-grid); --grid-minor-size: 9px;  --grid-major-size: 45px;  }
+.title-card       { --paper-color: var(--paper-grid); --grid-minor-size: 32px; --grid-major-size: 160px; }
+.content-card     { --paper-color: var(--paper-grid); --grid-minor-size: 24px; --grid-major-size: 120px; }
+/* Each paper-backed panel establishes its own stacking context so the
+   sibling `.paper-layer` (z-index:-1) is scoped to the panel — without
+   isolation the -1 escapes upward and the SVG would paint behind the
+   page background. `isolation: isolate` is the no-side-effect way to
+   create a stacking context (no position / z-index nudging required on
+   the wrapper itself). Replaces a former defensive selector that forced
+   every content sibling to `position: relative; z-index: 1` to clear the
+   paper-layer — siblings no longer need any positioning intervention. */
+.header,
+.modal-dialog,
+.promotion-dialog,
+.move-log-paper,
+.board-paper,
+.title-card,
+.content-card { isolation: isolate; }
+.board-paper {
+  /* Sheet of crumpled paper that the chess board is drawn on. Padding
+     gives the paper a margin past the board grid. Symmetric L/R padding
+     so the captured-pile (right gutter, mirrors the rank-label width on
+     the left) sits in a column-symmetric layout with the board centred. */
+  position: relative;
+  padding: 0.6rem 1.4rem 1.6rem 1.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+.header {
+  /* Strip of crumpled notebook paper torn off the top of the page.
+     Background comes from a paperLayer absolute child; the torn-bottom
+     clip-path is on the paper-layer (not on .header itself) so the
+     drop-shadow can extend past the torn edge — clip-path on the header
+     was clipping the shadow too, and `filter` on a sticky element would
+     also break sticky positioning. */
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.875rem 1.875rem 1.6rem;
+}
+/* Clip-path on the SVG element itself (one level deeper than .paper-layer)
+   so .paper-layer's filter: drop-shadow operates on the SVG's clipped
+   alpha — the shadow follows the silhouette and extends past it into the
+   unclipped panel. Putting clip-path on .paper-layer was clipping the
+   shadow output too, which is what was breaking the panel shadows. */
+.header         > .paper-layer > svg { clip-path: var(--torn-bottom); }
+.board-paper    > .paper-layer > svg { clip-path: var(--torn-corners); }
+.move-log-paper > .paper-layer > svg { clip-path: var(--torn-left-bottom); }
+/* (Legacy `.start-title-card` / `.start-menu-card` clip-path rules
+   removed — the helper-backed `.title-card` / `.content-card` rules
+   below carry the same clips.) */
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-family: var(--font-logo);
+  /* Logo bump on top of the root scale — the wordmark should read as a
+     poster headline, not just "scaled body text". */
+  font-size: 2.25rem;
+  font-weight: 400;
+  color: var(--header-text);
+  /* Brand is now an `<a href="#">` that returns to the start screen —
+     give it the right affordances. */
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+.header-brand:hover, .header-brand:focus-visible {
+  transform: translateY(-1px);
+  outline: none;
+}
+.header-logo {
+  width: 3rem;
+  height: 3rem;
+  display: block;
+  /* Same silhouette drop-shadow used on chess pieces — keeps the brand
+     visually consistent with the board. Sub-pixel offsets stay in `px`
+     since `filter: drop-shadow` doesn't round rem-scaled values cleanly. */
+  filter: drop-shadow(0 1.5px 2px rgba(0,0,0,0.35));
+}
+.header-spacer { flex: 1; }
+.header-actions { display: flex; gap: 0.625rem; }
+/* Post-it buttons — every action button is a sticky note. Per-button colour
+   and shadow tint come from --pn-bg / --pn-shadow set on the rule for each
+   class; the shared selector below carries the common note styling
+   (handwriting font, dark ink, sharp edges, cut top-right corner, slight
+   upward curve at the bottom, drop-shadow that follows the clipped shape).
+   Header-link is intentionally NOT in this list — see newspaper-cutout
+   below. */
+/* The Move submit button used to live in this group as `#moveForm button`,
+   styled like a yellow post-it. It's now a `.post-it-action.primary`
+   inside the move-log paper, so the ID-prefixed selector was removed
+   from this list — `.post-it-action` rules below take over. */
+.header-new-btn,
+.theme-toggle-btn,
+.secondary-btn,
+.quit-btn {
+  position: relative;
+  background: var(--pn-bg);
+  color: var(--post-text);
+  font-family: var(--font-hand);
+  font-size: 1.125rem;
+  line-height: 1.1;
+  border: none;
+  /* Sharp edges — real post-its are paper, not radiused plastic. */
+  border-radius: 0;
+  /* Clip-path picks one of the --post-shape-* polygons defined on :root.
+     Per-button assignments below select different shapes so a row of
+     post-its varies (some have folded TR corner, some folded TL, some
+     no fold). All variants have a subtle upward bottom curve. Filter:
+     drop-shadow follows the clipped alpha so the shadow also curves at
+     the bottom — sells the lift more than box-shadow could (box-shadow
+     is clipped by clip-path). */
+  clip-path: var(--post-shape, var(--post-shape-a));
+  /* Two drop-shadows — a tinted one for the post-it's own colour glow,
+     plus a small neutral dark one so the elevation reads on any
+     background (the per-button --pn-shadow alone is too tinted to
+     reliably suggest "lifted off the page"). */
+  filter: var(--post-shadow-base) drop-shadow(0 0.5rem 0.75rem var(--pn-shadow));
+  padding: 0.45rem 1.1rem 0.7rem 1rem;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  transition: transform 0.15s, filter 0.15s;
+}
+.header-new-btn:hover,
+.theme-toggle-btn:hover,
+.secondary-btn:hover,
+.quit-btn:hover {
+  transform: translateY(-0.12rem);
+  filter: var(--post-shadow-base) drop-shadow(0 0.7rem 1rem var(--pn-shadow));
+}
+.header-new-btn:active,
+.theme-toggle-btn:active,
+.secondary-btn:active,
+.quit-btn:active {
+  transform: translateY(0);
+  filter: var(--post-shadow-base) drop-shadow(0 0.3rem 0.45rem var(--pn-shadow));
+}
+/* Per-button colour + shape assignments. Yellow = primary action ("here,
+   do this"), turquoise = secondary, coral = destructive. The --post-shape
+   override picks one of the polygon variants from :root so a row of
+   buttons isn't a row of identical stamps. */
+.header-new-btn   {
+  --pn-bg: var(--post-yellow); --pn-shadow: var(--post-yellow-shadow);
+  --post-shape: var(--post-shape-a);
+  font-size: 1.25rem;
+}
+
+/* Navigation links (Help, Docs, ← Game) → newspaper clippings: torn-from-
+   newsprint look, typewriter font, slightly ragged corners, crumpled
+   texture. Distinct vocabulary from post-its so the user can tell
+   "go look at this" apart from "do this". */
+.header-link {
+  /* The bg image (square gridless crumple — mostly cream paper with
+     darker wrinkles) blends into the newsprint colour via multiply, so
+     the wrinkle shading shows but the underlying yellow stays. cover
+     keeps the wrinkles native-scale even on tiny buttons. */
+  background-color: var(--newsprint);
+  background-image: url('/web/notebook-page-crumpled-square.svg');
+  background-size: cover;
+  background-position: center;
+  background-blend-mode: multiply;
+  color: var(--newsprint-text);
+  font-family: var(--font-press);
+  font-size: 0.95rem;
+  line-height: 1.2;
+  border: none;
+  padding: 0.45rem 0.95rem;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  /* Torn corners give the "ripped from a newspaper" silhouette without
+     making the whole edge jagged — clippings are usually torn at the
+     corners, not all around. */
+  clip-path: var(--torn-corners);
+  filter: var(--post-shadow-base) drop-shadow(0 0.25rem 0.6rem var(--newsprint-shadow));
+  transition: transform 0.15s, filter 0.15s;
+}
+.header-link:hover {
+  transform: translateY(-0.1rem);
+  filter: var(--post-shadow-base) drop-shadow(0 0.4rem 0.85rem var(--newsprint-shadow));
+}
+.header-link:active {
+  transform: translateY(0);
+  filter: var(--post-shadow-base) drop-shadow(0 0.18rem 0.4rem var(--newsprint-shadow));
+}
+.theme-toggle-btn {
+  --pn-bg: var(--post-yellow);
+  --pn-shadow: var(--post-yellow-shadow);
+  /* Shape c (no folded corner) — the icon glyph occupies the whole
+     button; a corner cut would crop the sun/moon. */
+  --post-shape: var(--post-shape-c);
+  padding: 0.25rem 0.55rem;
+  font-size: 1.4rem;
+  /* min-width keeps the button at the same size when the glyph swaps —
+     ☾ (moon) is narrower than ☼ (sun) and would otherwise jitter on click. */
+  min-width: 2.4rem;
+}
+
+/* Header buttons — marker-stripe-on-paper treatment, applied in BOTH
+   modes (the previous dark-mode-only override left them as bright sticky
+   notes in light mode, which read inconsistent with the rest of the UI).
+   External-link variants (`a.header-link[target=_blank]`, e.g. Docs ↗)
+   are intentionally excluded; they're queued for their own revision. */
+.theme-toggle-btn,
+a.header-link:not([target]) {
+  position: relative;
+  isolation: isolate;
+  background: transparent;
+  background-image: none;
+  color: var(--color-text-primary);
+  clip-path: none;
+  filter: none;
+  padding: 0.4rem 0.75rem;
+}
+.theme-toggle-btn::before,
+a.header-link:not([target])::before {
+  content: '';
+  position: absolute;
+  inset: -0.05rem -0.15rem;
+  z-index: -1;
+  background: var(--marker-yellow);
+  -webkit-mask: url(/web/marker-stripe.svg) center/auto 100% repeat-x;
+          mask: url(/web/marker-stripe.svg) center/auto 100% repeat-x;
+  opacity: 0.7;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+.theme-toggle-btn:hover,
+.theme-toggle-btn:focus-visible,
+a.header-link:not([target]):hover,
+a.header-link:not([target]):focus-visible {
+  transform: translateY(-0.05rem);
+  filter: none;          /* override the colored sticky/newsprint hover-shadow */
+}
+.theme-toggle-btn:hover::before,
+.theme-toggle-btn:focus-visible::before,
+a.header-link:not([target]):hover::before,
+a.header-link:not([target]):focus-visible::before { opacity: 1; }
+.app {
+  display: flex;
+  gap: 2.5rem;
+  padding: 1.875rem;
+  align-items: flex-start;
+  justify-content: center;
+  flex: 1;
+}
+.board-area { display: flex; flex-direction: column; align-items: flex-end; gap: 0.375rem; }
+.board-row {
+  display: flex;
+  align-items: stretch;
+  /* Gap pushes the captured pile a touch farther from the board tiles so
+     captured pieces don't get visually confused with the actual squares. */
+  gap: 0.7rem;
+}
+.captured-pile {
+  /* Right gutter, split top/bottom by who took whom. Width + gap mirror
+     the rank-label gutter on the left so the board reads as visually
+     centred. Pieces sit at full on-board scale (overflow visible because
+     the SVGs are wider than this column). */
+  width: 1.8rem;
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+}
+.captured-section {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  overflow: visible;
+}
+/* Both sections use plain `column`. The top section's DOM order is
+   reversed in Scala (newest first, oldest last) so visual top = newest;
+   plain column flex makes painting order match DOM order, so older
+   pieces (later in reversed-DOM, painted last) overlap newer pieces —
+   the user-requested z-flip relative to the bottom pile. */
+.captured-section-top    { flex-direction: column; }
+.captured-section-bottom { flex-direction: column; }
+.captured-section > .captured-piece {
+  display: block;
+  margin-top: -1.6rem;
+}
+.captured-section > .captured-piece:first-child { margin-top: 0; }
+.captured-section > .captured-piece > .piece-svg {
+  width: 2rem;
+  filter: drop-shadow(0 0.05rem 0.15rem rgba(0,0,0,0.25));
+}
+/* Rotation jitter cycle (7 distinct angles) so captures don't form an
+   obvious repeating pattern. */
+.captured-section > .captured-piece:nth-child(7n)   { transform: rotate(-4deg); }
+.captured-section > .captured-piece:nth-child(7n+1) { transform: rotate(2deg); }
+.captured-section > .captured-piece:nth-child(7n+2) { transform: rotate(-2deg); }
+.captured-section > .captured-piece:nth-child(7n+3) { transform: rotate(5deg); }
+.captured-section > .captured-piece:nth-child(7n+4) { transform: rotate(-3deg); }
+.captured-section > .captured-piece:nth-child(7n+5) { transform: rotate(1deg); }
+.captured-section > .captured-piece:nth-child(7n+6) { transform: rotate(-1deg); }
+.board-wrapper {
+  display: grid;
+  grid-template-columns: 1.5rem 1fr;
+  grid-template-rows: 1fr 1.5rem;
+  gap: 0;
+}
+.rank-labels {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-around;
+  align-items: center;
+  width: 1.5rem;
+  font-size: 1.125rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.file-labels {
+  grid-column: 2;
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  height: 1.5rem;
+  font-size: 1.125rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.board {
+  display: grid;
+  grid-template-columns: repeat(8, 4.5rem);
+  grid-template-rows: repeat(8, 4.5rem);
+  /* No own shadow / border-radius — the board sits inside .board-paper,
+     which provides the paper backdrop and shadow. */
+  /* overflow: visible so tall pieces (king, queen) can extend above the
+     top of their square — paired with align-items: flex-end on .square so
+     pedestals sit at the tile's bottom edge and the body grows upward. */
+  overflow: visible;
+}
+.square {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  cursor: default;
+  position: relative;
+  transition: background-color 0.15s ease;
+  user-select: none;
+  -webkit-user-select: none;
+  padding-bottom: 0.75rem;
+  overflow: visible;
+  /* Slight wobble around each tile edge so the board reads as drawn with
+     a marker rather than printed pixel-precise. */
+  clip-path: var(--torn-tile);
+}
+/* Tiles are translucent so the paper texture and grid show through —
+   reads as marker pen drawn on the page rather than printed pixel-fills. */
+.square.light { background: rgba(253, 232, 208, 0.72); }
+.square.dark  { background: rgba(232, 149, 106, 0.72); }
+/* (in-check styling moved to the shared `.square.in-check::after,
+   .square.is-threatened::after` rule below — wobbly red square mask. */
+.square.last-move-from.light { background: rgba(252, 200, 158, 0.85); }
+.square.last-move-from.dark  { background: rgba(212, 128, 78, 0.85); }
+.square.last-move-to.light   { background: rgba(252, 200, 158, 0.85); }
+.square.last-move-to.dark    { background: rgba(212, 128, 78, 0.85); }
+
+/* Phase 3 annotation overlays. Driven by per-tab toggles in the sidebar
+   (Move preview / Threat detection); rules-engine results stream in via
+   /legal-moves, /threats, /attackers and translate into these classes
+   in renderSquare. Rings + dots so they layer cleanly on top of the
+   existing in-check / last-move styles without changing the base bg. */
+/* Move-preview / threat indicators are rendered as `background-image`
+   on the square's pseudo-elements (NOT `mask`). The parent `.square`
+   carries `clip-path: var(--torn-tile)` for the wobbly tile edge, and
+   in WebKit/Blink mask compositing on a clip-pathed parent's direct
+   pseudo gets dropped silently — the pseudo paints invisibly. Using
+   `background-image` sidesteps the mask layer entirely (it's part of
+   the standard background paint pipeline, applied before the parent
+   clip-path), so the assets render reliably. The colour is baked
+   into each SVG file since `currentColor` in an externally-loaded SVG
+   doesn't inherit from the host's CSS. */
+
+/* Move-preview destination: pure-CSS hatched circle with a wobbly
+   outline. `border-radius: 50%` rounds the square pseudo into a clean
+   circle; a 5px-ish solid border draws the perimeter; a
+   `repeating-linear-gradient` paints diagonal blue stripes inside.
+   `filter: url(#hand-drawn)` (the inline-SVG turbulence/displacement
+   filter shipped in HtmlPage) is then applied to the whole pseudo so
+   both the border outline AND the gradient diagonals come out wobbly
+   together — one filter pass, two visual benefits. No SVG asset, no
+   clip-path. */
+.square.is-preview-dest::before {
+  content: '';
+  position: absolute;
+  inset: 22%;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(54, 122, 189, 0.85) 0,
+    rgba(54, 122, 189, 0.85) 0.18rem,
+    transparent 0.18rem,
+    transparent 0.5rem
+  );
+  border: 0.2rem solid rgba(54, 122, 189, 0.85);
+  border-radius: 50%;
+  filter: url(#hand-drawn);
+  pointer-events: none;
+}
+
+/* Move-preview source: the clicked piece's own square. Wobbly blue
+   square outline. */
+.square.is-preview-source::before {
+  content: '';
+  position: absolute;
+  inset: 4%;
+  background-image: url(/web/doodle_icons/interface/square-blue.svg);
+  background-size: 100% 100%;
+  background-position: center;
+  background-repeat: no-repeat;
+  filter: url(#hand-drawn);
+  pointer-events: none;
+}
+
+/* In-check + threatened square indicators share the same wobbly red
+   square outline — the king-in-check is the canonical "threatened"
+   square. */
+.square.in-check::after,
+.square.is-threatened::after {
+  content: '';
+  position: absolute;
+  inset: 4%;
+  background-image: url(/web/doodle_icons/interface/square-red.svg);
+  background-size: 100% 100%;
+  background-position: center;
+  background-repeat: no-repeat;
+  filter: url(#hand-drawn);
+  pointer-events: none;
+  border: none;
+  border-radius: 0;
+}
+
+/* Attacker pieces (squares of the pieces threatening a threatened
+   square) — dashed red border keeps a distinct vocabulary from the
+   "this square is in danger" wobbly outline above. */
+.square.is-attacker::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 0.1875rem dashed rgba(220, 40, 40, 0.85);
+  border-radius: 0.25rem;
+  pointer-events: none;
+}
+
+/* (Annotation-toggle styles removed — the Move-preview / Threat-
+   detection checkboxes moved into the compact board-controls post-it
+   below the board and use the shared `.form-row` + custom checkbox
+   styling, with post-it-context overrides further down.) */
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Start screen — only the bits that are visually unique to it remain.
+   The two-card paper layout, post-it overhang, marker-stripe menu items,
+   and screen container are all driven by the §5 component helpers and
+   their utility classes. What stays here:
+     • `.start-piece-shelf` / `.shelf-piece` — chess-piece bottom decoration
+     • `.start-brand` / `.start-logo` — poster-sized wordmark inside the title card
+   See `web-ui/.../Main.scala` `startScreen` + `chess.webui.components`. */
+.start-piece-shelf {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -2rem;            /* anchor below the fold so pieces feel "set down" */
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 0 2.5rem;
+  pointer-events: none;
+  z-index: 0;
+}
+.shelf-piece {
+  display: inline-flex;
+  align-items: flex-end;
+  /* Origin at the base of the piece so the per-piece rotation pivots
+     where it would naturally rest on the page. */
+  transform-origin: 50% 100%;
+  filter: drop-shadow(0 2px 3px rgba(0,0,0,0.28));
+  opacity: 0.75;            /* reads as ambient texture, not a UI element */
+}
+.shelf-piece .piece-svg { height: 9rem; width: auto; }
+/* Brand inside the title card. Reuses the same wordmark + peach SVG as
+   the header, just blown up to a poster size and given a touch more
+   horizontal breathing room. */
+.start-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-family: var(--font-logo);
+  font-size: 5.5rem;
+  font-weight: 400;
+  line-height: 1;
+  color: var(--header-text);
+}
+.start-logo {
+  width: 6.5rem;
+  height: 6.5rem;
+  display: block;
+  filter: drop-shadow(0 1.5px 2px rgba(0,0,0,0.35));
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   New-game screen — only `.mode-blurb` (handwritten "what each mode is"
+   text) is unique enough to need its own rule. The screen container,
+   title/content cards, tab picker, mode CTAs, and form rows are all
+   driven by §5 component helpers and utility classes. */
+/* Lock the panel width so flipping Local / Host / Bot doesn't reflow it
+   — the host form is the widest, the bot blurb the narrowest, and a
+   width that jumps with the tab selection feels jittery. 30rem fits
+   the longest host-form row comfortably. */
+.screen-new-game .content-card { width: 30rem; }
+.mode-blurb {
+  font-family: var(--font-hand);
+  font-size: 1.125rem;
+  line-height: 1.3;
+  color: var(--color-text-primary);
+  margin: 0;
+  text-align: center;
+}
+.piece {
+  cursor: grab;
+  line-height: 1;
+  transition: transform 0.1s ease;
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Defensive: piece images aren't selectable text, but without an explicit
+     user-select: none the browser sometimes shows the I-beam (text-select)
+     cursor when hovering. `touch-action: none` prevents the browser from
+     interpreting a touch-drag on a piece as a scroll gesture, so the
+     pointerdown/move/up handlers actually receive the events. */
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.piece:active { cursor: grabbing; }
+
+/* Pointer-driven drag — the source piece is hidden during drag and the
+   floating clone follows the cursor via CSS transform. See Main.scala
+   `handlePointerDown` / `floatingDragLayer`. Hit-testing is now pure
+   coordinate math against `.board.getBoundingClientRect()` so the
+   source piece doesn't need to remain interactive.
+   `visibility: hidden` (rather than `opacity: 0`) is a Safari-friendly
+   pick — visibility flips are compositor-only, while opacity:0 forces
+   a paint pass on the surrounding `.board-paper` layer (which carries
+   the slow feDiffuseLighting filter). The element keeps its layout
+   space either way, so neighbouring squares don't shift. */
+.piece.is-being-dragged {
+  visibility: hidden;
+}
+.drag-floating {
+  position: fixed;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 10000;
+  /* GPU-promoted compositing layer so the per-frame transform updates
+     don't trigger layout/paint, only composite. */
+  will-change: transform;
+}
+/* Belt and braces. The cloned `.piece` inside the floating layer would
+   otherwise inherit `pointer-events: auto` from the more-specific
+   .piece rule above and capture hit-tests from anything that falls back
+   to `elementFromPoint`. We hit-test by coordinate math now, but keeping
+   the floating layer fully non-interactive prevents future regressions. */
+.drag-floating,
+.drag-floating * { pointer-events: none; }
+
+/* All six piece SVGs are pre-mounted as siblings inside the floating
+   layer's inner `.piece` span. The `data-active-piece` attribute on
+   the span selects exactly one to display; the other five stay hidden.
+   The point of pre-mounting is Safari: each fresh `<svg><use href=
+   "#name"/></svg>` mounted on drag start would otherwise re-resolve
+   the symbol on its critical path, and we'd see a perceptible delay
+   before the floating piece appears. With this rule, drag start is
+   a single attribute write — the SVGs are already painted. */
+.drag-floating .piece > .piece-svg { display: none; }
+.drag-floating .piece[data-active-piece="pawn"]   > .piece-svg-pawn,
+.drag-floating .piece[data-active-piece="rook"]   > .piece-svg-rook,
+.drag-floating .piece[data-active-piece="knight"] > .piece-svg-knight,
+.drag-floating .piece[data-active-piece="bishop"] > .piece-svg-bishop,
+.drag-floating .piece[data-active-piece="queen"]  > .piece-svg-queen,
+.drag-floating .piece[data-active-piece="king"]   > .piece-svg-king {
+  display: block;
+}
+/* While a drag is in flight, set the cursor on body so it inherits to
+   anything that doesn't have its own cursor declaration (move log
+   background, page background, etc.). The earlier rule used
+   `body.is-dragging *` to force grabbing on every descendant — that's
+   a universal selector match against thousands of elements on every
+   class flip, and it caused a perceptible hitch at drag start AND end
+   while the engine recomputed styles for the entire tree. Inheritance
+   alone covers the common cases; `.piece { cursor: grab }` on
+   non-source pieces still wins on hover, which is acceptable. */
+body.is-dragging { cursor: grabbing; }
+/* Piece colour schemes — drive the SVG via CSS variables. The defaults
+   inside each SVG match `--piece-primary: rgb(70.117188%, 52.539062%,
+   34.521484%)` so unsetting these vars on a side falls back to the warm
+   "light" palette. The outline colour is currently always white (sticker
+   look) and is set as a literal in each SVG, so we don't expose it as
+   a variable here. */
+.piece.white-piece,
+.captured-piece.white-piece,
+.promotion-choice.white-piece {
+  --piece-primary:   rgb(70.117188%, 52.539062%, 34.521484%);
+  --piece-secondary: rgb(55.664062%, 35.301208%, 18.041992%);
+}
+.piece.black-piece,
+.captured-piece.black-piece,
+.promotion-choice.black-piece {
+  --piece-primary:   rgb(37.646484%, 37.646484%, 37.646484%);
+  --piece-secondary: rgb(25.488281%, 25.488281%, 25.488281%);
+}
+.piece-svg {
+  display: block;
+  height: auto; /* derived from each piece's source viewBox aspect ratio */
+  pointer-events: none; /* drag events bubble to the wrapping .piece span */
+  /* Silhouette drop-shadow. `filter: drop-shadow` runs against the rendered
+     alpha (the piece outline) rather than a bounding rectangle — `box-shadow`
+     would draw a rectangular shadow around the SVG element, which looks
+     wrong for the sticker effect. Sub-pixel offsets stay in `px` since the
+     filter doesn't round rem-scaled values cleanly. */
+  filter: drop-shadow(0 1.5px 2px rgba(0,0,0,0.35));
+}
+/* Common base width per context. Heights come from the host SVG's
+   intrinsic aspect ratio — set per-piece in `pieceViewBox` (Main.scala) —
+   so kings are tall and pawns short while every piece's pedestal sits at
+   the same width. 2rem keeps the tallest piece inside the 4.5rem square. */
+.piece            > .piece-svg { width: 2rem; }
+.captured-piece   > .piece-svg { width: 1.125rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.35)); }
+.promotion-choice > .piece-svg { width: 2.5rem; }
+.sidebar {
+  width: 17.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding-top: 0.5rem;
+}
+/* Status header for the board — sits inside .board-paper at the top. No
+   own paper backdrop (board-paper provides it); just typography on the
+   shared paper. */
+.banner {
+  font-family: var(--font-logo);
+  font-size: 1.5rem;
+  font-weight: 400;
+  text-align: center;
+  padding: 0.2rem 0.5rem;
+  /* --text-primary adapts (dark on light paper, cream on dark paper);
+     --post-text was a fixed dark colour and went invisible in dark mode. */
+  color: var(--text-primary);
+}
+.banner.win  { color: var(--accent-strong); }
+.banner.draw { color: var(--text-secondary); }
+.turn-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  font-family: var(--font-logo);
+  font-size: 1.4rem;
+  font-weight: 400;
+  color: var(--text-primary);
+  padding: 0.2rem 0.5rem;
+}
+.turn-dot {
+  width: 0.875rem;
+  height: 0.875rem;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+}
+.turn-dot.white { background: #fff; box-shadow: 0 0 0.5rem rgba(255,255,255,0.4); }
+.turn-dot.black { background: #1a1a1a; border-color: rgba(255,255,255,0.4); }
+.section-title {
+  /* Section heading shell — the visible cutting is a nested
+     `.newsprint-shadow > .code-inline` (Special Elite + cut-paper) per
+     the global design rule. The h2 itself just handles layout: align to
+     start of the parent flex column so it doesn't stretch, give it a
+     bottom margin, and bump the font-size so the `em`-sized inner
+     clipping reads as a heading (`.code-inline` uses 0.92em). */
+  display: block;
+  align-self: flex-start;
+  margin: 0 0 0.5rem;
+  font-size: 1.25rem;
+  font-weight: 400;
+  line-height: 1;
+}
+.move-log-container { flex: 1; min-height: 0; }
+.move-log-paper {
+  /* Wrapper that holds the paper SVG behind the scrolling .move-log. The
+     SVG can't go inside .move-log because absolute positioning inside a
+     scroll container scrolls with the content; here the SVG sits at the
+     wrap level, fixed behind the viewport, while the move list scrolls
+     above it.
+
+     Padding intentionally exceeds the deepest jag of `--torn-left-bottom`
+     (0.6rem on both bottom and left) so the rectangular .move-log
+     content area sits inside the torn silhouette at every x — without
+     this the bottom strip of move rows would peek past the torn paper
+     edge into the page background. Top + right are straight in the
+     polygon, so they need only enough room for the heading + breathing. */
+  position: relative;
+  padding: 0.9rem 0 0.9rem 1rem;
+}
+.move-log {
+  /* Static height (3/5 of board = 21.6rem) keeps the panel from growing
+     with content and shifting the sidebar layout each move. OS wraps
+     this element in .os-viewport / .os-padding / .os-contents on init
+     and manages overflow itself. Padding lives on .move-log-inner (one
+     level deeper) — keeping .move-log a clean container avoids fighting
+     OS over how target-element padding gets translated into its
+     wrappers. */
+  height: 21.6rem;
+  overflow: hidden;
+  font-family: var(--font-press);
+  font-size: 0.875rem;
+  line-height: 1.8;
+  color: var(--text-primary);
+}
+.move-log-inner {
+  /* Width-bounded so the column of move rows can't stretch past the
+     OS-managed viewport (which sits inside the torn paper) — was
+     overflowing the panel paper backdrop before. */
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem 1rem 1rem;
+}
+
+/* overlayScrollbars custom theme — hand-drawn marker hatch on paper.
+   The handle is a CSS mask of /web/hatch.svg painted in `currentColor`,
+   distorted by the inline `#hand-drawn` SVG filter so the strokes look
+   wobbly rather than CAD-precise. Theming works via:
+     mask-image: url(...) — uses only the SVG's alpha channel
+     background-color: currentColor — sources colour from CSS `color`
+     color: var(--text-secondary) — theme cascades from :root tokens
+   `--` doesn't propagate into data: URLs, so we keep the hatch as a
+   regular file and let the colour come from the host CSS instead. */
+.os-theme-pichess {
+  --os-size: 0.7rem;
+  --os-padding-perpendicular: 0.15rem;
+  --os-padding-axis: 0.2rem;
+}
+.os-theme-pichess .os-scrollbar-track  { background: rgba(0,0,0,0.06); border-radius: 0.35rem; }
+.os-theme-pichess .os-scrollbar-handle {
+  border-radius: 0.35rem;
+  background-color: currentColor;
+  color: var(--text-secondary);
+  -webkit-mask-image: url(/web/hatch.svg);
+          mask-image: url(/web/hatch.svg);
+  -webkit-mask-size: 0.35rem 0.35rem;
+          mask-size: 0.35rem 0.35rem;
+  -webkit-mask-repeat: repeat;
+          mask-repeat: repeat;
+  filter: url(#hand-drawn);
+  /* GPU compositing layer — keeps the displacement filter from re-rasterising
+     on every scroll frame, which would otherwise flicker on big move logs. */
+  will-change: transform;
+}
+.os-theme-pichess .os-scrollbar-handle:hover  { color: var(--text-primary); }
+.os-theme-pichess .os-scrollbar-handle:active { color: var(--accent-strong); }
+.move-log-empty {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 0.8125rem;
+  text-align: center;
+  padding: 0.5rem 0;
+}
+.move-row { display: flex; gap: 0.25rem; }
+.move-number { color: var(--text-secondary); min-width: 1.75rem; text-align: right; margin-right: 0.375rem; }
+.move-san { padding: 1px 0.375rem; border-radius: 0.1875rem; cursor: default; }
+.move-san:hover { background: var(--accent-soft); }
+.controls { display: flex; flex-direction: column; gap: 0.625rem; }
+#moveForm {
+  /* flex-wrap so the button drops below the input when the sidebar is too
+     narrow to fit both side-by-side (was causing the button to overflow
+     the page). min-width on the input keeps it usable when wrapped. */
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+/* Move-form layout: input + Move submit. The move input itself uses the
+   shared `.text-field-wrap` / `.text-field` pattern; this block only
+   handles the form layout. The form sits BELOW the move-log scroll
+   container, on the same paper, separated by a small gap. */
+#moveForm {
+  margin-top: 0.6rem;
+  padding-right: 0.6rem;
+}
+.btn-row { display: flex; gap: 0.5rem; }
+.secondary-btn {
+  --pn-bg: var(--post-cyan);
+  --pn-shadow: var(--post-cyan-shadow);
+  flex: 1;
+}
+/* Vary shape per secondary button so a row doesn't look like stamped
+   duplicates — alternates a / b / c across nth-of-type. */
+.secondary-btn:nth-of-type(3n+1) { --post-shape: var(--post-shape-a); }
+.secondary-btn:nth-of-type(3n+2) { --post-shape: var(--post-shape-b); }
+.secondary-btn:nth-of-type(3n)   { --post-shape: var(--post-shape-c); }
+.quit-btn {
+  --pn-bg: var(--post-coral);
+  --pn-shadow: var(--post-coral-shadow);
+  --post-shape: var(--post-shape-a);
+  flex: 1;
+}
+
+/* ─── Grouped post-it cards (3-card sidebar layout) ──────────────────────
+   Each `.post-it-card` is itself a sticky note (paper colour + clipped
+   shape + drop-shadow), and the buttons inside are PLAIN TEXT by
+   default — the marker stripe behind text only shows on hover. The post-
+   it card itself has no heading; its buttons are the content (with one
+   exception: post-it 2 has a small "Export" sub-heading). */
+.post-it-card {
+  --pn-bg: var(--post-yellow);
+  --pn-shadow: var(--post-yellow-shadow);
+  background: var(--pn-bg);
+  color: var(--post-text);
+  padding: 0.9rem 1.1rem 1.1rem;
+  border-radius: 0;
+  clip-path: var(--post-shape, var(--post-shape-a));
+  /* NOTE: no `filter: drop-shadow(...)` here — drop-shadow on the same
+     element as clip-path gets clipped to the silhouette and disappears
+     past the post-it edge. The shadow lives on the parent
+     `.post-it-shadow` wrapper (added below) which has no clip-path of
+     its own, so the colored halo extends outside the sticky. */
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+/* Shadow wrapper for post-its. Carries the tight contact + colored halo
+   filter; the inner `.post-it-card` carries the clip-path + bg. Per-
+   colour variants ride on the wrapper class so `--pn-shadow` is set
+   from outside and the filter resolves to the right tint. */
+.post-it-shadow {
+  display: inline-block;
+  --pn-shadow: var(--post-yellow-shadow);
+  filter: var(--post-shadow-base) drop-shadow(0 0.6rem 0.9rem var(--pn-shadow));
+}
+.post-it-shadow.cyan  { --pn-shadow: var(--post-cyan-shadow); }
+.post-it-shadow.coral { --pn-shadow: var(--post-coral-shadow); }
+/* Vary shapes across the column so the three cards don't look stamped. */
+.post-it-card:nth-of-type(3n+1) { --post-shape: var(--post-shape-a); }
+.post-it-card:nth-of-type(3n+2) { --post-shape: var(--post-shape-b); }
+.post-it-card:nth-of-type(3n)   { --post-shape: var(--post-shape-c); }
+.post-it-card.coral {
+  --pn-bg: var(--post-coral);
+  --pn-shadow: var(--post-coral-shadow);
+}
+.post-it-card.cyan {
+  --pn-bg: var(--post-cyan);
+  --pn-shadow: var(--post-cyan-shadow);
+  /* Intrinsic-width children — each button is only as wide as its
+     content + padding, so a row of cyan actions reads as a stack of
+     varied-width sticky labels rather than a column of identical bars. */
+  align-items: center;
+  gap: 0.15rem;
+}
+/* Merged board-controls post-it — single yellow sticky pulled up over
+   the board's bottom edge via a negative top margin so it reads as
+   "stuck on" rather than "below". Top row: 3 action buttons (Undo /
+   Redo / Flip); below: Export + Annotations as two side-by-side
+   columns so the card stays dense.
+
+   Positioned off-centre on the right-most third of the board with a
+   slight counter-clockwise tilt so it reads as slapped on, not
+   centred. `align-self: flex-end` claims the right edge of the board-
+   area flex column; `margin-right` then nudges it left from the edge
+   to land inside the right third. */
+.board-post-it {
+  display: block;
+  align-self: flex-end;
+  width: 14rem;
+  margin: -1.5rem 2.5rem 0 0;
+  transform: rotate(-2deg);
+  transform-origin: 60% 30%;
+  z-index: 4;            /* sit above board-paper's drop-shadow */
+  position: relative;
+}
+.board-post-it .post-it-card {
+  padding: 0.7rem 1rem 0.85rem;
+  gap: 0.5rem;
+}
+.board-post-it .post-it-row { gap: 0.4rem; justify-content: center; }
+.board-post-it .post-it-action {
+  font-size: 1rem;
+  padding: 0.15rem 0.55rem;
+  gap: 0.3rem;
+}
+.board-post-it .post-it-action > .icon { width: 1.05em; height: 1.05em; }
+
+/* Two-column section beneath the action row. */
+.board-post-it-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem 0.65rem;
+  align-items: start;
+}
+.board-post-it-col { display: flex; flex-direction: column; gap: 0.1rem; }
+.board-post-it-col .post-it-subheading {
+  font-size: 1rem;
+  margin: 0 0 0.2rem;
+}
+.board-post-it-col .export-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.9rem;
+}
+.board-post-it-col .form-row {
+  color: var(--post-text);
+  font-size: 0.95rem;
+  gap: 0.4rem;
+}
+/* Custom checkbox on a post-it: the box silhouette must stay dark
+   against the yellow / cyan / coral sticky regardless of theme — the
+   default `--color-text-primary` flips light in dark mode, which would
+   bleach the box out against the bright sticky bg. */
+.post-it-card .checkbox-visual::before { background-color: var(--post-text); }
+
+/* Plain-text buttons inside a card. The marker stripe sits behind the
+   text via a ::before pseudo with the same SVG mask used on
+   `.section-title` — alpha-driven so the colour comes from CSS and the
+   stripe shape varies (the mask SVG bakes in shape-warp + streak alpha
+   modulation, no extra setup needed). Default is yellow marker; coral
+   cards swap to pink so the highlight reads as "destructive". */
+.post-it-action {
+  position: relative;
+  /* New stacking context confines the marker pseudo's `z-index: -1` to
+     this button so bare text content (passed as a raw String by
+     `actionButton` / `textActionButton`) still paints above it without
+     needing to be wrapped in a child element. */
+  isolation: isolate;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-hand);
+  font-size: 1.15rem;
+  line-height: 1.1;
+  color: var(--post-text);
+  padding: 0.25rem 0.55rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  text-align: center;
+  transition: color 0.15s, transform 0.1s;
+}
+.post-it-action::before {
+  content: '';
+  position: absolute;
+  inset: -0.05rem -0.2rem;
+  z-index: -1;
+  background: var(--marker-yellow);
+  /* `auto 100%` + `repeat-x` keeps the marker SVG's natural ~3.93:1
+     aspect ratio: it tiles horizontally on wide buttons (multiple
+     overlapping passes look like the highlighter was dragged across
+     twice) and clips to a centred slice on narrow ones — rather than
+     stretching into a flat smear on wide and squishing into a wedge
+     on narrow. */
+  -webkit-mask: url(/web/marker-stripe.svg) center/auto 100% repeat-x;
+          mask: url(/web/marker-stripe.svg) center/auto 100% repeat-x;
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+.post-it-action:hover::before    { opacity: 1; }
+.post-it-action:hover            { transform: translateY(-0.05rem); }
+.post-it-action:active           { transform: translateY(0.05rem); }
+.post-it-action[type="submit"]::before,
+.post-it-card .post-it-action.primary::before { opacity: 0.7; } /* always-on hint for primary */
+/* The submit / primary at-rest rule above sits at the same specificity as
+   the generic `:hover::before { opacity: 1 }` and appears later in source,
+   so without these the stripe stayed at 0.7 on hover too. Bumping the
+   selector specificity (extra attribute / class) reclaims the hover-to-1
+   behaviour. */
+.post-it-action[type="submit"]:hover::before,
+.post-it-action[type="submit"]:focus-visible::before,
+.post-it-card .post-it-action.primary:hover::before,
+.post-it-card .post-it-action.primary:focus-visible::before { opacity: 1; }
+.post-it-card.coral .post-it-action::before { background: var(--marker-pink); }
+.post-it-card.cyan  .post-it-action::before { background: var(--marker-blue); }
+
+/* Per-action hover-marker overrides. Specific actions get their own
+   colour vocabulary on hover so the cyan card mixes calm-cyan defaults
+   (Load, Draw) with action-coded warnings (red Quit, pink Forfeit) and
+   one positive starter (green New Game). The Move submit button uses
+   neon-orange so it matches the heading marker stripes.
+
+   Specificity: the cyan card-level rule above is `.post-it-card.cyan
+   .post-it-action::before` — three classes (0,3,1) when you count the
+   pseudo-element. Per-action overrides need to match or beat that, so
+   they're qualified with `.post-it-card.cyan` to land at (0,4,1) and
+   win cleanly. Move sits outside any post-it card; it still uses the
+   bare selector to override the card-less `.post-it-action::before`. */
+.post-it-card.cyan .post-it-action.action-new::before     { background: var(--marker-green); }
+.post-it-card.cyan .post-it-action.action-forfeit::before { background: var(--marker-pink); }
+.post-it-card.cyan .post-it-action.action-quit::before    { background: var(--marker-red); }
+.post-it-action.action-move::before                       { background: var(--marker-yellow); }
+
+/* "Underlined" modifier — used on Quit so it visually breaks out of its
+   row of post-it actions. The hand-drawn underline now sits beneath the
+   `.label` span only (full-width was visually awkward — a line that
+   stretched past the icon felt like a divider rather than emphasis on
+   the word). Wrap the button's text in <span class="label">…</span>
+   to enable this. Underline in `currentColor` (text colour) — leans on
+   the same #hand-drawn filter as the Export sub-heading. */
+.post-it-action.underlined .label  { position: relative; }
+.post-it-action.underlined .label::after {
+  content: '';
+  position: absolute;
+  left: -0.05rem;
+  right: -0.05rem;
+  bottom: -0.18rem;
+  height: 0.12rem;
+  background: currentColor;
+  filter: url(#hand-drawn);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+/* Icon-only variant — no label text, just the 1.4em-tall masked icon.
+   `aria-label` carries the meaning for screen readers. */
+.post-it-action.icon-only {
+  justify-content: center;
+  padding: 0.35rem 0.45rem;
+}
+.post-it-action.icon-only > .icon { width: 1.4em; height: 1.4em; }
+/* Move-submit arrow runs a touch smaller than the other icon-only glyphs
+   so the marker-stripe highlight has visible breathing room above and
+   below the arrow rather than ending flush with it. */
+.post-it-action.action-move > .icon { width: 1.05em; height: 1.05em; }
+
+/* Row of buttons inside a post-it card. evenly-spaced flex; gap respects
+   the card's overall vertical rhythm. `flex-wrap: wrap` lets a row
+   overflow onto a second line on narrow cards rather than clipping or
+   forcing buttons to shrink past readability. */
+.post-it-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: stretch;
+}
+.post-it-row > .post-it-action { flex: 1 1 auto; }
+
+/* Sub-heading inside a post-it (currently only "Export" in card 2). The
+   hand-drawn underline reuses the inlined #hand-drawn filter to wobble a
+   plain marker rectangle into a sketched stroke. */
+.post-it-subheading {
+  font-family: var(--font-logo);
+  font-size: 1.1rem;
+  letter-spacing: 0.04em;
+  margin: 0.5rem 0 0.15rem;
+  padding-bottom: 0.2rem;
+  position: relative;
+  display: inline-block;
+  align-self: flex-start;
+  color: var(--post-text);
+}
+.post-it-subheading::after {
+  content: '';
+  position: absolute;
+  left: -0.1rem;
+  right: -0.1rem;
+  bottom: 0;
+  height: 0.18rem;
+  background: var(--marker-yellow);
+  filter: url(#hand-drawn);
+  opacity: 0.85;
+}
+
+/* Dark-mode toggle: relies on cascading CSS variables through the inline
+   paper SVGs. Toggling `:root.dark` updates --paper-color, --grid-color,
+   and --crumple-highlight; the SVGs re-rasterise their feTurbulence +
+   feDiffuseLighting chain on each instance. That re-rasterisation is
+   what makes the toggle feel slow on pages with several paper panels —
+   a known browser limitation that no purely-CSS workaround eliminates.
+   Earlier attempts (View Transitions snapshots, dual pre-rendered
+   variants) made the perceived slowness either equivalent or worse, so
+   the simple cascading-vars approach stays. */
+
+/* ─── Doodle-icon mask helper ────────────────────────────────────────────
+   Each icon points at a doodle SVG via a per-class `--icon-url` variable.
+   `mask-image` sources the silhouette; `background-color: currentColor`
+   paints it in the inherited theme colour, so a hovered button or a dark-
+   mode swap re-tints automatically. The doodle SVGs use literal black
+   fills — that's fine, only their alpha matters in mask mode. */
+.icon {
+  display: inline-block;
+  width: 1.05em;
+  height: 1.05em;
+  background-color: currentColor;
+  -webkit-mask: var(--icon-url) center/contain no-repeat;
+          mask: var(--icon-url) center/contain no-repeat;
+  vertical-align: -0.15em;
+  flex-shrink: 0;
+}
+.icon-undo    { --icon-url: url(/web/doodle_icons/interface/backward.svg); }
+.icon-redo    { --icon-url: url(/web/doodle_icons/interface/forward.svg); }
+.icon-flip    { --icon-url: url(/web/doodle_icons/interface/flip.svg); }
+.icon-new     { --icon-url: url(/web/doodle_icons/interface/play.svg); }
+.icon-load    { --icon-url: url(/web/doodle_icons/interface/upload.svg); }
+.icon-draw    { --icon-url: url(/web/doodle_icons/hand-gestures/folded-hands.svg); }
+.icon-forfeit { --icon-url: url(/web/doodle_icons/interface/flag.svg); }
+.icon-quit    { --icon-url: url(/web/doodle_icons/interface/logout.svg); }
+.icon-move    { --icon-url: url(/web/doodle_icons/arrows/arrow-single-right.svg); }
+
+/* Export bullet list inside post-it 2 — buttons sit inside <li> so each
+   format reads as a list entry rather than a row of identical bars. The
+   list bullet (default disc) gives a small visual cue and the buttons
+   stay intrinsic-width since `<button>` defaults to inline-block, no
+   `flex: 1` from the .post-it-row rule. */
+.export-list {
+  list-style: disc;
+  padding-left: 1.4rem;
+  margin: 0.1rem 0 0.3rem;
+  align-self: flex-start;
+  color: var(--text-secondary);
+}
+.export-list li {
+  padding: 0.05rem 0;
+  margin: 0;
+}
+.export-list li > .post-it-action {
+  padding: 0.15rem 0.45rem;
+}
+
+
+.toast {
+  position: fixed;
+  bottom: 1.875rem;
+  left: 50%;
+  transform: translateX(-50%) translateY(1.25rem);
+  background: var(--accent-strong);
+  color: #fff;
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.625rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 0.3s, transform 0.3s;
+  pointer-events: none;
+  z-index: 100;
+  box-shadow: 0 0.25rem 1rem rgba(0,0,0,0.4);
+}
+.toast.visible { opacity: 1; transform: translateX(-50%) translateY(0); }
+.promotion-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: var(--overlay-bg);
+  display: none;
+  justify-content: center;
+  align-items: center;
+  z-index: 200;
+}
+.promotion-overlay.visible { display: flex; }
+/* .promotion-dialog and .modal-dialog are positioning containers — the
+   actual paper background is rendered as a sibling .paper-layer SVG (see
+   Slice C3) so the host's CSS variables cascade into the SVG via <use>. */
+.promotion-dialog {
+  position: relative;
+  border-radius: 0.75rem;
+  padding: 1.25rem;
+  display: flex;
+  gap: 0.75rem;
+}
+.promotion-choice {
+  position: relative;
+  z-index: 1;
+  width: 4.5rem;
+  height: 4.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 3rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  background: var(--accent-soft);
+}
+.promotion-choice:hover { background: var(--accent-soft); transform: scale(1.08); }
+.modal {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: var(--overlay-bg);
+  display: none;
+  justify-content: center;
+  align-items: center;
+  z-index: 300;
+}
+.modal.visible { display: flex; }
+.modal-dialog {
+  position: relative;
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 90vw;
+  max-height: 85vh;
+  overflow: auto;
+  color: var(--text-primary);
+}
+.modal-dialog h2 { color: var(--accent); font-family: var(--font-logo); font-size: 1.625rem; font-weight: 400; }
+.modal-dialog p { color: var(--text-secondary); font-size: 0.875rem; }
+.modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
+.modal-actions .secondary-btn { flex: 0 0 auto; min-width: 5rem; }
+.help-dialog { width: 40rem; }
+.confirm-dialog { width: 26.25rem; }
+.confirm-dialog p { font-size: 0.875rem; line-height: 1.5; color: var(--text-secondary); }
+.help-text {
+  font-family: var(--font-press);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  white-space: pre;
+  background: var(--code-bg);
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+}
+.load-dialog, .export-dialog { width: 35rem; }
+.load-input, .export-output {
+  width: 100%;
+  padding: 0.625rem;
+  background: var(--input-bg);
+  border: 1px solid var(--accent-soft);
+  border-radius: 0.5rem;
+  color: var(--text-primary);
+  font-family: var(--font-press);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  outline: none;
+  resize: vertical;
+}
+.load-input:focus { border-color: var(--accent); }
+/* Help page — vertical stack of paper-panel sections. The outer
+   `.help-page` is just a width-bounded flex column; each `.help-section`
+   below carries its own paper backdrop (no shared content-card wrapper).
+   Each section is also an independent stacking context so its paper
+   layer's `z-index: -1` stays scoped to that section. */
+.help-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  width: 100%;
+  max-width: 42rem;
+  margin: 0 auto;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+.help-section {
+  position: relative;
+  isolation: isolate;
+  padding: 1.25rem 1.75rem 1.5rem;
+  filter: drop-shadow(var(--shadow-panel));
+  /* Same grid-cell + paper-tint convention as the other paper panels. */
+  --paper-color: var(--paper-grid);
+  --grid-minor-size: 24px;
+  --grid-major-size: 120px;
+  margin: 0;
+}
+.help-section > .paper-layer > svg { clip-path: var(--torn-corners); }
+.help-section h2 {
+  color: var(--accent);
+  font-family: var(--font-logo);
+  font-size: 1.5rem;
+  font-weight: 400;
+  margin: 0 0 0.5rem;
+  padding-bottom: 0.375rem;
+  border-bottom: 1px solid var(--hairline);
+}
+.help-section p { margin: 0.4rem 0; color: var(--text-secondary); font-size: 0.875rem; }
+.help-section strong { color: var(--text-primary); }
+.help-table { width: 100%; border-collapse: separate; border-spacing: 0 0.25rem; font-size: 0.875rem; }
+.help-table td { padding: 0.25rem 0.625rem 0.25rem 0; vertical-align: top; }
+.help-table td:last-child { color: var(--text-secondary); }
+.help-dl { margin: 0.5rem 0; font-size: 0.875rem; }
+.help-dl dd { color: var(--text-secondary); margin: 0 0 0.6rem 0; padding-left: 0.75rem; border-left: 2px solid var(--hairline); }
+
+/* ─── Newspaper-clipping treatment for Special Elite text ──────────────
+   Design rule: anywhere the typewriter font (`--font-press`) appears as
+   a visible run, it sits on a cream newsprint background with the same
+   crumpled-paper texture used on the header navigation links — so any
+   stretch of typed text reads as "cut out and pasted into the notebook"
+   instead of plain inline code. Applied to:
+     • `.code-inline`           — small inline snippets inside prose
+     • `.help-pre`              — multi-line code/listing blocks
+     • `.help-table td:first-child` — the command column in help tables
+     • `.help-dl dt`            — the term in definition lists
+   Each one keeps its own padding / sizing; the shared visual ingredients
+   are the four `background-*` + colour rules. */
+/* The cutting itself — newsprint bg + jagged clip + Special Elite font.
+   NO `filter: drop-shadow` here: drop-shadow on an element that also has
+   `clip-path` gets clipped to the same silhouette in the rendering
+   pipeline, so the shadow is invisible. The shadow lives on a parent
+   wrapper class (`.newsprint-shadow` below) which has no clip-path of
+   its own, so its `filter: drop-shadow` operates on the clipped child's
+   alpha and the shadow extends past the jagged edge into the page. */
+.code-inline,
+.help-pre {
+  background-color: var(--newsprint);
+  background-image: url('/web/notebook-page-crumpled-square.svg');
+  background-size: cover;
+  background-blend-mode: multiply;
+  color: var(--newsprint-text);
+  font-family: var(--font-press);
+  clip-path: var(--newsprint-cut);
+  display: inline-block;
+  border-radius: 0;
+}
+.code-inline {
+  /* Override the shared `--newsprint-cut` with the smaller wobble — the
+     all-around teeth read as chunky relative to a small pill. */
+  clip-path: var(--newsprint-cut-inline);
+  padding: 0.05em 0.5em 0.1em;
+  font-size: 0.92em;
+  line-height: 1.2;
+}
+.help-pre {
+  display: block;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  padding: 0.95rem 1.2rem 1.1rem;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+/* Shadow wrapper. Apply on the parent of any `.code-inline` / `.help-pre`
+   so the drop-shadow renders against the page; the cutting inside carries
+   the jagged silhouette. The wrapper is structural — `filter: drop-shadow`
+   applied directly to a clip-pathed element gets clipped to the same
+   silhouette and disappears, so the shadow has to live on a parent that
+   has no clip-path of its own. Shadow geometry comes from the reusable
+   `--paper-contact` / `--paper-diffuse` tokens above. */
+.newsprint-shadow {
+  position: relative;        /* anchor for the tape pseudos on .is-block */
+  display: inline-block;
+  line-height: 0;            /* don't add a phantom baseline gap below the cutting */
+  filter: var(--paper-contact) var(--paper-diffuse);
+}
+/* Block variant for `.help-pre`-sized cuttings — full width with the
+   stronger token set + tape strips on the top corners (defined alongside
+   the panel-tape rules higher up). */
+.newsprint-shadow.is-block {
+  display: block;
+  line-height: normal;
+  margin: 0.7rem 0;
+  filter: var(--paper-contact-strong) var(--paper-diffuse-strong);
+}
+/* Layout for the help table's command column — wraps a `.code-inline`
+   pill (the shadow is on the wrapping `.newsprint-shadow` span inside,
+   not on the cell). */
+.help-table td:first-child {
+  white-space: nowrap;
+  width: 32%;
+  padding: 0.2rem 0.5rem 0.2rem 0;
+}
+.help-dl dt {
+  margin: 0.7rem 0 0.25rem;
+  font-weight: 600;
+}
+/* Mobile breakpoint uses `em` (browser-default-relative, ~16px) instead of
+   `rem` so the breakpoint stays at 900px regardless of the html font-size
+   tweak above — otherwise bumping the root would shift the cutover. */
+@media (max-width: 56.25em) {
+  .app { flex-direction: column; align-items: center; gap: 1.5rem; padding: 1rem; }
+  .sidebar { width: 100%; max-width: 37.5rem; }
+  .board { grid-template-columns: repeat(8, min(4.5rem, calc((100vw - 5rem) / 8))); grid-template-rows: repeat(8, min(4.5rem, calc((100vw - 5rem) / 8))); }
+  .square { font-size: min(3rem, calc((100vw - 5rem) / 12)); }
+  .captured-tray { width: 100%; max-width: calc(4.5rem * 8); font-size: 1.125rem; min-height: 1.75rem; }
+  .header { flex-wrap: wrap; padding: 0.75rem 1rem; }
+  .header-actions { width: 100%; justify-content: flex-end; }
+  .help-page { padding: 1rem 1rem 3rem; }
+}
+
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Helper component classes — back the helpers in `Components.scala`. Each
+   class absorbs its full Tailwind utility kit via `@apply`, so the Scala
+   side ships just `className := "btn-link"` etc. and there is one place to
+   tweak layout/spacing/typography per component (here).
+   ────────────────────────────────────────────────────────────────────── */
+
+/* Outermost screen container (`Components.screenLayout`). The
+   `.screen-<name>` modifier sits beside it for per-screen overrides. */
+.screen {
+  @apply relative flex flex-col items-center justify-center min-h-screen overflow-hidden gap-3 px-4 py-8;
+}
+
+/* Title card (`Components.titleCard`). Tilts left, has a torn bottom so
+   the card below "rips away" from it. */
+.title-card {
+  @apply relative flex items-center justify-center gap-4 px-14 pt-8 pb-7;
+  filter: drop-shadow(var(--shadow-panel));
+  transform: rotate(-1.4deg);
+}
+.title-card > .paper-layer > svg { clip-path: var(--torn-bottom); }
+
+/* Content card (`Components.contentCard`). Counter-tilts the title;
+   right edge stays clean for a side post-it to attach. */
+.content-card {
+  @apply relative flex flex-col gap-5 overflow-visible px-8 pt-2 pb-3 min-w-[22rem];
+  filter: drop-shadow(var(--shadow-panel));
+  transform: rotate(1.1deg);
+}
+.content-card > .paper-layer > svg { clip-path: var(--torn-left-bottom); }
+/* Tape on the lower card extends further up so the strip visibly
+   bridges the gap onto the title card above. */
+.content-card::before, .content-card::after {
+  top: -1.7rem;
+  width: 4.5rem;
+  height: 2.6rem;
+}
+
+/* Side post-it (`Components.sidePostIt`). Pinned to the right edge of
+   its parent content card via structural positioning — `left: 100%`
+   tracks the card's right edge regardless of card width. */
+.side-postit {
+  @apply absolute flex flex-col items-center gap-1 w-40 px-3 py-3;
+  right: -4rem;
+  top: 100%;
+  background: var(--color-post-yellow);
+  color: var(--color-post-text);
+  clip-path: var(--post-shape-b);
+  transform: translateY(-50%) rotate(6deg);
+  transform-origin: 30% 50%;
+  filter: var(--post-shadow-base) drop-shadow(0 0.5rem 0.7rem var(--color-post-yellow-shadow));
+  z-index: 3;
+  pointer-events: auto;
+}
+/* Post-it nav links are denser than the default `.btn-link` — the
+   post-it is a small fixed-width affordance with secondary navigation
+   (Docs / Help / Dev), so a 1.5rem font + py-2 looks oversized. The
+   descendant selector beats `.btn-link` on specificity (both layered
+   under `components`), so this wins without `!important`. */
+.side-postit .btn-link {
+  @apply px-2 py-1;
+  font-size: 1.25rem;
+  /* The sticky stays yellow in dark mode, so restore the post-it ink
+     here (otherwise inherits the paper-surface text colour from
+     `.btn-link`, which would turn light in dark mode and be invisible
+     against yellow). */
+  color: var(--color-post-text);
+}
+/* On the post-it the marker stripe stays hidden until hover — the yellow
+   sticky already carries enough visual weight at rest. */
+.side-postit .btn-link::before { opacity: 0; }
+.side-postit .btn-link:hover::before,
+.side-postit .btn-link:focus-visible::before { opacity: 1; }
+
+/* Buttons. Five canonical variants — see design.md §5.1.
+
+   `.btn-cta` / `.btn-secondary` / `.btn-destructive` are post-it
+   stickers (clip-path + drop-shadow + tilt). `.btn-link` is the
+   transparent text-style button with the marker-stripe hover.
+   `.btn-icon` is for single-glyph affordances. */
+
+.btn-cta,
+.btn-secondary,
+.btn-destructive {
+  @apply inline-flex items-center justify-center px-6 py-2 cursor-pointer outline-none;
+  font-family: var(--font-hand);
+  font-size: 1.5rem;
+  line-height: 1.1;
+  color: var(--color-post-text);
+  background: var(--pn-bg);
+  border: none;
+  clip-path: var(--post-shape-a);
+  filter: var(--post-shadow-base) drop-shadow(0 0.5rem 0.75rem var(--pn-shadow));
+  transform: rotate(-1deg);
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+.btn-cta         { --pn-bg: var(--color-post-yellow); --pn-shadow: var(--color-post-yellow-shadow); }
+.btn-secondary   { --pn-bg: var(--color-post-cyan);   --pn-shadow: var(--color-post-cyan-shadow);   }
+.btn-destructive { --pn-bg: var(--color-post-coral);  --pn-shadow: var(--color-post-coral-shadow);  }
+
+.btn-cta:hover, .btn-secondary:hover, .btn-destructive:hover,
+.btn-cta:focus-visible, .btn-secondary:focus-visible, .btn-destructive:focus-visible {
+  transform: rotate(-1deg) translateY(-1px);
+  filter: var(--post-shadow-base) drop-shadow(0 0.7rem 1rem var(--pn-shadow));
+  outline: none;
+}
+.btn-cta:active, .btn-secondary:active, .btn-destructive:active {
+  transform: rotate(-1deg) translateY(1px);
+  filter: var(--post-shadow-base) drop-shadow(0 0.3rem 0.45rem var(--pn-shadow));
+}
+
+/* In-flow text-style action — handwriting font with a marker-stripe
+   behind the text. Same SVG-mask pattern as `.post-it-action` (the
+   game-board canonical version) so the stripe has an authentic wobbly
+   marker silhouette instead of a flat gradient.
+
+   Default surface = paper: stripe visible at rest (slightly transparent),
+   pumps to full opacity on hover. The post-it variant below
+   (`.side-postit .btn-link`) hides the stripe at rest so the sticky
+   reads cleanly until interacted with.
+
+   `isolation: isolate` confines the negative-z marker pseudo to the
+   button's own stacking context, so plain text content (no wrapping
+   span needed) paints above the stripe automatically. */
+.btn-link {
+  @apply inline-block px-4 py-2 cursor-pointer outline-none border-none bg-transparent text-center;
+  position: relative;
+  isolation: isolate;
+  font-family: var(--font-hand);
+  font-size: 1.5rem;
+  line-height: 1.1;
+  color: var(--color-text-primary);
+  text-decoration: none;
+  transition: transform 0.1s ease;
+}
+.btn-link::before {
+  content: '';
+  position: absolute;
+  inset: -0.05rem -0.2rem;
+  z-index: -1;
+  background: var(--marker-yellow);
+  /* See `.post-it-action::before` for the `auto 100% repeat-x` rationale
+     — keeps the marker SVG's natural aspect so it tiles on wide buttons
+     and centre-clips on narrow ones instead of stretching/squishing. */
+  -webkit-mask: url(/web/marker-stripe.svg) center/auto 100% repeat-x;
+          mask: url(/web/marker-stripe.svg) center/auto 100% repeat-x;
+  /* 0.7 matches `.post-it-action[type="submit"]` (the move submit) so
+     every text-marker button on paper has the same at-rest stripe
+     intensity. */
+  opacity: 0.7;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+.btn-link:hover::before,
+.btn-link:focus-visible::before { opacity: 1; }
+.btn-link:hover,
+.btn-link:focus-visible {
+  transform: translateY(-0.05rem);
+  outline: none;
+}
+.btn-link:active { transform: translateY(0.05rem); }
+
+/* Tab strip items use a different visual vocabulary than other
+   `.btn-link` instances — the marker stripe is suppressed and a
+   scribbled ellipse around the label text takes its place. The
+   `#hand-drawn` SVG filter (turbulence + displacement) warps a clean
+   elliptical border into a wobbly hand-drawn scribble. Hover dims the
+   same shape; active uses near-full opacity. The oval lives on the
+   inner `.tab-label::after` so it sizes to the text — the outer
+   `.tab-item` is the flex track and would otherwise widen the oval. */
+.tab-item::before { display: none; }
+.tab-label {
+  position: relative;
+  isolation: isolate;
+}
+.tab-label::after {
+  content: '';
+  position: absolute;
+  /* Vertical inset pulled out from -0.1rem so the ellipse top/bottom
+     curves don't graze the text; horizontal stays loose for the same
+     reason on the sides. */
+  inset: -0.25rem -0.65rem;
+  border: 0.13rem solid currentColor;
+  border-radius: 50%;
+  filter: url(#hand-drawn);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+  z-index: -1;
+}
+.tab-item:hover .tab-label::after,
+.tab-item:focus-visible .tab-label::after { opacity: 0.45; }
+.tab-item.is-active .tab-label::after { opacity: 0.9; }
+/* Tabs inherit `.btn-link`'s lift-on-hover transform, but on a tab strip
+   the bobbing text reads as wobble rather than interactivity. Pin the
+   text in place; the oval-opacity transition is the affordance. */
+.tab-item:hover,
+.tab-item:focus-visible,
+.tab-item:active { transform: none; }
+.tab-item.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.tab-item.is-disabled .tab-label::after { display: none; }
+
+/* Single-glyph control. Plain transparent button with a slight
+   opacity rest state and an opacity / nudge on hover. */
+.btn-icon {
+  @apply inline-flex items-center justify-center px-2 py-1 cursor-pointer outline-none border-none bg-transparent;
+  font-family: var(--font-hand);
+  font-size: 1.25rem;
+  color: var(--color-text-primary);
+  opacity: 0.75;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.btn-icon:hover, .btn-icon:focus-visible {
+  opacity: 1;
+  transform: translateX(-2px);
+  outline: none;
+}
+
+/* Tab strip — a row of `.btn-link.tab-item` with one wobbly underline
+   segment per tab. Segments share the strip's flex-1 distribution, so
+   they're equal length with equal gaps regardless of label width. */
+.tab-strip {
+  @apply relative flex flex-row items-stretch justify-around gap-2 pb-2;
+}
+/* Per-tab button. `flex-1` claims an equal track for distribution +
+   per-tab underline; the inner `.tab-label` span (sized to text) is
+   where the scribbled oval lives so it hugs the word, not the track. */
+.tab-item {
+  @apply relative flex-1 inline-flex items-center justify-center px-2 py-1;
+}
+/* Per-tab underline — fixed 0.25em insets give a small visual break
+   between adjacent segments regardless of track width (so the gap
+   scales with the strip's font size, not the available room). */
+.tab-item::after {
+  content: '';
+  position: absolute;
+  left: 0.25em;
+  right: 0.25em;
+  bottom: -0.35rem;
+  height: 0.13rem;
+  background: var(--text-muted);
+  filter: url(#hand-drawn);
+  opacity: 0.8;
+  pointer-events: none;
+}
+
+/* Form controls. */
+.form-row {
+  @apply flex flex-row items-center gap-3 cursor-pointer;
+  font-family: var(--font-hand);
+  font-size: 1.125rem;
+  color: var(--color-text-primary);
+}
+/* Checkbox row variant — tighter gap, label fills remaining space. */
+.form-row-checkbox {
+  @apply gap-2;
+}
+.form-row > .form-row-label             { @apply flex-none; }
+.form-row-checkbox > .form-row-label    { @apply flex-1; }
+/* ─── Text field, dropdown, number stepper, custom checkbox ──────────────
+   One canonical text-input look — borderless, typewriter font, a
+   hand-drawn underline on the wrapper. The wrapper is needed because
+   `<input>` / `<select>` can't carry a stable cross-browser ::after, so
+   the underline lives on a `<span>` parent.
+
+   `.text-field`        — the input / select / textarea itself.
+   `.text-field-wrap`   — wrapper carrying the underline pseudo.
+   `.select-field-wrap` — adds a chevron icon at the right edge.
+   `.number-field-wrap` — adds custom up/down stepper buttons.
+
+   The game-board move-input uses these same classes (its old
+   `#moveInput` / `.move-input-wrap` selectors were redundant). */
+
+.text-field {
+  @apply flex-1 w-full bg-transparent border-none outline-none;
+  font-family: var(--font-press);
+  font-size: 1rem;
+  line-height: 1.4;
+  color: var(--color-text-primary);
+  padding: 0.4rem 0.4rem 0.35rem;
+  border-radius: 0;
+}
+.text-field::placeholder { color: var(--text-muted); font-style: italic; }
+
+.text-field-wrap {
+  @apply relative flex-1 min-w-0 inline-flex items-stretch;
+}
+/* Hand-drawn underline — wobbly via the inline `#hand-drawn` SVG filter,
+   colour tracks --text-muted at rest and deepens to --text-secondary on
+   focus. `currentColor` would be wrong here because the field text uses
+   text-primary; the underline is meant to feel like a notebook line, a
+   touch lighter than the writing. */
+.text-field-wrap::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 0.12rem;
+  background: var(--text-muted);
+  filter: url(#hand-drawn);
+  opacity: 0.8;
+  pointer-events: none;
+  transition: background 0.15s ease;
+}
+.text-field-wrap:focus-within::after { background: var(--text-secondary); }
+
+/* Dropdown: same underline + field treatment, plus a chevron painted via
+   mask so the arrow tints with text colour (dark-mode-aware). The native
+   <select>'s own triangle is hidden via `appearance: none` on .text-field. */
+.select-field-wrap {
+  position: relative;
+}
+.select-field-wrap > .text-field {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 1.5rem;
+  cursor: pointer;
+}
+.select-field-wrap::before {
+  content: '';
+  position: absolute;
+  right: 0.25rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0.85rem;
+  height: 0.85rem;
+  background-color: var(--color-text-secondary);
+  -webkit-mask: url(/web/doodle_icons/arrows/arrow-single-down.svg) center/contain no-repeat;
+          mask: url(/web/doodle_icons/arrows/arrow-single-down.svg) center/contain no-repeat;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Number input: same underline + field treatment, plus a column of two
+   tiny doodle arrow buttons replacing the native spin buttons. Native
+   stepper is hidden via `appearance: none` + the per-browser shims below. */
+.number-field-wrap > .text-field {
+  appearance: textfield;
+  -moz-appearance: textfield;
+  padding-right: 1.6rem;
+}
+.number-field-wrap > .text-field::-webkit-outer-spin-button,
+.number-field-wrap > .text-field::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.number-stepper {
+  position: absolute;
+  right: 0.25rem;
+  top: 0.15rem;
+  bottom: 0.15rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  pointer-events: none;
+}
+.number-step {
+  flex: 1;
+  width: 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  pointer-events: auto;
+  opacity: 0.6;
+  transition: opacity 0.12s ease;
+}
+.number-step:hover, .number-step:focus-visible {
+  opacity: 1;
+  outline: none;
+}
+.number-step::before {
+  content: '';
+  display: block;
+  width: 0.7rem;
+  height: 0.7rem;
+  background-color: var(--color-text-secondary);
+  -webkit-mask-position: center;
+          mask-position: center;
+  -webkit-mask-size: contain;
+          mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+          mask-repeat: no-repeat;
+}
+.number-step-up::before    { -webkit-mask-image: url(/web/doodle_icons/arrows/arrow-single-up.svg);
+                                     mask-image: url(/web/doodle_icons/arrows/arrow-single-up.svg); }
+.number-step-down::before  { -webkit-mask-image: url(/web/doodle_icons/arrows/arrow-single-down.svg);
+                                     mask-image: url(/web/doodle_icons/arrows/arrow-single-down.svg); }
+
+/* Custom checkbox. The native `<input>` is visually hidden (kept in the
+   DOM so the wrapping <label> still toggles it on click + keyboard +
+   screen reader). A sibling `.checkbox-visual` carries the doodle box
+   (::before) and the cross (::after) on two independent pseudos —
+   crucial because CSS `mask` clips an element's descendants too, so
+   masking the box on the wrapper itself would clip the cross to the
+   box-stroke alpha and the check would never become visible. */
+input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin: 0;
+}
+.checkbox-visual {
+  position: relative;
+  width: 1.25rem;
+  height: 1.25rem;
+  display: inline-block;
+  flex-shrink: 0;
+  align-self: center;
+  cursor: pointer;
+}
+.checkbox-visual::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-color: var(--color-text-primary);
+  -webkit-mask: url(/web/dddoodle_pack/boxes/box-4-bold.svg) center/contain no-repeat;
+          mask: url(/web/dddoodle_pack/boxes/box-4-bold.svg) center/contain no-repeat;
+}
+.checkbox-visual::after {
+  content: '';
+  position: absolute;
+  inset: 0.2rem;
+  background-color: var(--color-accent);
+  -webkit-mask: url(/web/doodle_icons/interface/cross.svg) center/contain no-repeat;
+          mask: url(/web/doodle_icons/interface/cross.svg) center/contain no-repeat;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+input[type="checkbox"]:checked + .checkbox-visual::after { opacity: 1; }
+input[type="checkbox"]:focus-visible + .checkbox-visual { outline: 2px dashed var(--color-text-secondary); outline-offset: 2px; }
+
+/* Single screen heading — the wordmark-style title above every routed
+   screen's content card. */
+.screen-heading {
+  @apply m-0;
+  font-family: var(--font-logo);
+  font-size: 2.75rem;
+  font-weight: 400;
+  line-height: 1;
+  color: var(--color-header-text);
+}
+
+}  /* end @layer components */
