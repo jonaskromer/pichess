@@ -515,13 +515,38 @@ the dev page after `make perf-bake`.
 
 ### Make targets
 
+The perf suite is exposed as a single menu of Make targets — one per
+layer or surface, plus an orchestrator for the full sweep.
+
+**Run the full suite (Layers 1 + 1b + 2)**
+
 | Target | What it does |
 |---|---|
-| `make bench`                | Run JMH suite, write JSON to `perf-reports/bench-<ts>.json` |
-| `make perf`                 | Run the full backend matrix (vars: `BACKENDS`, `MODE`, `OBS`, …) |
-| `make perf-summary`         | Regenerate `comparison.md` for the most recent run |
-| `make profile-async-cpu`    | Attach async-profiler to `SERVICE` for `DURATION` seconds |
-| `make profile-async-alloc`  | Same but `alloc` event |
+| `make perf-all` | JMH bench → Gatling cross-backend → k6 browser, in that order. Honors `BACKENDS`, `MODE`, `OBS`, `K6_VUS`, `K6_DURATION`. Cleans the stack up via a trap, even on failure. |
+
+**Run a single layer / surface**
+
+| Target | Layer | What it does |
+|---|---|---|
+| `make perf`              | 1   | Cross-backend Gatling harness. Vars: `BACKENDS`, `MODE`, `OBS`, `PEAK_USERS`, … |
+| `make k6-browser`        | 1b  | Real-Chromium flow against the gateway UI. Vars: `K6_VUS`, `K6_DURATION` |
+| `make k6-kafka`          | 1b  | Direct xk6-kafka producer load (deferred — needs xk6 build) |
+| `make k6-grpc`           | 1b  | Native gRPC against game-service (deferred) |
+| `make k6`                | 1b  | All k6 surfaces. Vars: `SURFACES` (default `browser`), `K6_VUS`, `K6_DURATION` |
+| `make bench`             | 2   | JMH microbenchmark suite → `perf-reports/bench-<ts>.json` |
+| `make profile-async-cpu` SERVICE=… | 4   | Attach async-profiler (CPU) to a live service for `DURATION` seconds |
+| `make profile-async-alloc` SERVICE=… | 4   | Same but for the `alloc` event |
+
+Layers 3 (zio-profiling), 5 (Prometheus + Grafana), and 6 (OpenTelemetry
++ Jaeger) are env-driven rather than target-driven — see their sections
+above for the `PICHESS_PROFILE` / `EXTRA=obs` / `TRACING_ENABLED` flags.
+
+**One-shot setup + bake-in**
+
+| Target | What it does |
+|---|---|
+| `make k6-build`             | Build the custom k6 image (one-shot — pulls `grafana/k6:0.55.0`) |
+| `make perf-summary`         | Regenerate `comparison.md` for the most recent perf run |
 | `make perf-bake`            | Copy the most recent `perf-reports/<ts>/` into the gateway's dev resources |
 | `make gatling-build`        | Legacy single-run alias — runs all simulations, bakes the latest into the gateway |
 
@@ -599,6 +624,7 @@ change, with no dependency churn.
 | `k6/`                                                   | k6 scripts (browser / kafka / grpc) + `lib/` shared config + thresholds + `Dockerfile` |
 | `bench/`                                                | JMH benchmarks + `BenchFixtures` + `UnsafeRuntime` |
 | `observability/`                                        | Cross-cutting layers: `MetricsLayer`, `MetricsHttpServer`, `ProfilerLayer`, `TracingLayer`, `TracingMiddleware` |
+| `scripts/perf-all.sh`                                   | Full-suite orchestrator — drives `make perf-all` |
 | `scripts/perf-run.sh`                                   | Backend-comparison harness |
 | `scripts/perf-summary.sh`                               | `comparison.md` generator |
 | `scripts/k6-run.sh`                                     | k6 surface driver (browser / kafka / grpc) |

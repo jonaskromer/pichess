@@ -231,13 +231,23 @@ gatling-build: ## Run gatling + bake the latest report into the gateway resource
 	  echo "gatling report copied from $$latest → $(GATLING_DST)/"; \
 	fi
 
-# --- Performance / profiling -----------------------------------------------
+# --- Performance test suite ------------------------------------------------
 #
-# `bench` runs the JMH microbenchmark suite and writes a JSON result that
-# the perf harness folds into its summary. `perf` switches stacks across
-# the requested backends and runs the chosen Gatling simulation against
-# each. `profile-async-cpu` attaches async-profiler to a running service
-# container for a fixed duration.
+# The piChess perf stack maps to six layers documented in
+# docs/performance.md. The make targets below let you run each layer
+# (or surface) standalone, plus `perf-all` for the full sweep.
+#
+#   Layer 1   — Gatling cross-backend load tests       → make perf
+#   Layer 1b  — k6 (browser / kafka / gRPC surfaces)    → make k6-browser, etc.
+#   Layer 2   — JMH microbenchmarks                     → make bench
+#   Layer 4   — async-profiler (attach to live service) → make profile-async-cpu SERVICE=…
+#
+#   Full suite (Layers 1 + 1b + 2)                       → make perf-all
+#   Summary regenerate                                   → make perf-summary
+#   Bake artifacts into the dev page                     → make perf-bake
+#
+# Layers 3 / 5 / 6 (zio-profiling, Prometheus+Grafana, OTel+Jaeger) are
+# environment-driven rather than target-driven — see docs/performance.md.
 
 PERF_REPORTS_DIR := perf-reports
 
@@ -313,6 +323,12 @@ k6-kafka: ## Run only the xk6-kafka direct producer load (requires xk6-kafka bui
 .PHONY: k6-grpc
 k6-grpc: ## Run only the native k6 gRPC load against game-service
 	SURFACES=grpc scripts/k6-run.sh
+
+# --- Full performance suite -----------------------------------------------
+
+.PHONY: perf-all
+perf-all: ## Run the full perf suite — JMH bench + Gatling cross-backend + k6 browser. Honors BACKENDS, MODE, OBS, K6_VUS, K6_DURATION
+	scripts/perf-all.sh
 
 .PHONY: stack-restart
 stack-restart: ## Re-up the last-selected stack (reads $(STACK_STATE_FILE))
