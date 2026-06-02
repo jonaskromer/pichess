@@ -53,6 +53,7 @@ Kafka- and gRPC-server-Main code is excluded from unit coverage (it needs a live
 - 🍑 **[Game Rules](docs/game-rules.md)** — implemented chess mechanics, move notations.
 - 🍑 **[Architecture](docs/architecture.md)** — the microservice graph, event log, gRPC contract, ADRs.
 - 🍑 **[Development Workflow](docs/development.md)** — TDD rules, sbt pipeline, troubleshooting.
+- 🍑 **[Performance & Profiling](docs/performance.md)** — Gatling, JMH, async-profiler, zio-profiling, Prometheus, Grafana, Jaeger, and the `make perf` harness.
 - 🍑 **[Roadmap](docs/roadmap.md)** — the 14-phase evolution plan.
 
 ## 🛠️ Current Status

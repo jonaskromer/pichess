@@ -38,6 +38,9 @@ root (aggregate)
 ├── gateway               chess.controller.WebController + chess.view (HtmlPage, WebBoardView)
 ├── tui                   chess.controller.TuiController + chess.view (BoardView, HelpView, MoveLogView)
 ├── app                   chess.Main — composition root (TUI + gateway in one process)
+├── observability         chess.obs — MetricsLayer, MetricsHttpServer, ProfilerLayer, TracingLayer, TracingMiddleware (see [performance.md](performance.md))
+├── bench                 chess.bench — JMH microbenchmarks for rules/codec/domain (see [performance.md](performance.md))
+├── gatling               chess.gatling — Gatling simulations + reusable Chains (see [performance.md](performance.md))
 └── web-ui (JS only)      chess.webui — Laminar SPA (compiled to JS, served by gateway)
 ```
 

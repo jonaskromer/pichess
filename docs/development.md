@@ -1,6 +1,6 @@
 # Development Guide
 
-> For the overall layer structure and package responsibilities, see [architecture.md](architecture.md).
+> For the overall layer structure and package responsibilities, see [architecture.md](architecture.md). For load tests, microbenchmarks, profiling, metrics and tracing, see [performance.md](performance.md).
 
 ## Prerequisites
 
