@@ -1,9 +1,11 @@
 package chess.persistence.cassandra
 
 import com.datastax.oss.driver.api.core.{CqlSession, CqlSessionBuilder}
+import com.datastax.oss.driver.api.core.config.{DefaultDriverOption, DriverConfigLoader}
 import zio.*
 
 import java.net.InetSocketAddress
+import java.time.Duration as JDuration
 
 /** Connection-pooled CQL session wired from `PICHESS_CASSANDRA_*` env vars.
   * One session per service; the underlying connection pool the driver
@@ -48,6 +50,22 @@ object CassandraSession:
             )
       }
 
+  /** Request timeout for CQL statements. The DataStax driver defaults to
+    * 2 seconds, which is fine for steady-state queries but too tight for
+    * (a) Testcontainers cold-start when a fresh Cassandra container is
+    * still bootstrapping its system keyspaces, and (b) coverage-instrumented
+    * runs where scoverage's per-statement `Invoker.invoked` writes slow
+    * the netty event loop enough that the sync wait crosses 2 s. 10 s
+    * covers both without masking a genuine network or cluster problem.
+    */
+  private[cassandra] val requestTimeout: JDuration = JDuration.ofSeconds(10)
+
+  private val driverConfig: DriverConfigLoader =
+    DriverConfigLoader
+      .programmaticBuilder()
+      .withDuration(DefaultDriverOption.REQUEST_TIMEOUT, requestTimeout)
+      .build()
+
   /** Build a scoped session against the configured cluster. The keyspace is
     * NOT bound at session-build time so the bootstrap CQL can `CREATE
     * KEYSPACE IF NOT EXISTS` before switching to it.
@@ -57,6 +75,7 @@ object CassandraSession:
       val builder = CqlSession.builder()
       settings.contactPoints.foreach(cp => builder.addContactPoint(cp))
       builder.withLocalDatacenter(settings.datacenter)
+      builder.withConfigLoader(driverConfig)
       builder.build()
     }
     ZIO.acquireRelease(acquire)(s => ZIO.attempt(s.close()).orDie)
