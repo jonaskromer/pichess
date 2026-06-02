@@ -87,10 +87,19 @@ lazy val commonSettings = Seq(
   // Coverage is opt-in via `sbt coverage test coverageReport`. Leaving it on
   // by default bakes scoverage's runtime agent into every compiled class,
   // which tries to write coverage data to the host path at startup and
-  // breaks Docker containers with a FileNotFoundException.
+  // breaks Docker containers with a FileNotFoundException. Do NOT set
+  // `coverageEnabled := true` here for any reason — let scoverage's
+  // default-off hold and let `sbt coverage <task>` flip it on per session.
   coverageMinimumStmtTotal := 100,
   coverageFailOnMinimum    := !profileBuildEnabled,
-  coverageEnabled          := !profileBuildEnabled,
+) ++ (
+  // Profile builds add the tagging compiler plugin which emits synthetic
+  // statements that scoverage would count as uncovered. Hard-force
+  // coverage off in that mode so a `PICHESS_PROFILE_BUILD=true sbt
+  // coverage …` still produces a usable artifact instead of a
+  // scoverage-vs-plugin tug of war.
+  if (profileBuildEnabled) Seq(coverageEnabled := false)
+  else Seq.empty
 )
 
 // domain is shared with the Scala.js web-ui, so deps must resolve on both

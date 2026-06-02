@@ -31,8 +31,46 @@ final class PostgresLobbyRepository(db: PostgresDatabase) extends LobbyRepositor
       .map(_.map(fromRow))
 
   def update(lobby: Lobby): IO[LobbyError, Unit] =
-    db.run(Tables.lobbies.insertOrUpdate(toRow(lobby))).unit
-      .mapError(toInfraError)
+    // Same atomicity caveat as PostgresGameRepository.save — Slick's
+    // `insertOrUpdate` is not atomic under concurrent writes to the same
+    // primary key. Hand-rolled `INSERT … ON CONFLICT DO UPDATE` is.
+    val row = toRow(lobby)
+    // sqlu needs a SetParameter for each interpolated value; Slick ships
+    // one for `java.sql.Timestamp` but not for `java.time.Instant`.
+    val updatedTs = java.sql.Timestamp.from(row.updatedAt)
+    val gameIdOpt: Option[String] = row.gameId.map(identity)
+    val upsert =
+      sqlu"""
+        INSERT INTO lobbies (
+          id, invite_code,
+          host_nickname, host_session_id,
+          guest_nickname, guest_session_id,
+          visibility, allow_undo, allow_spectate, spectator_limit,
+          status, game_id, created_at, updated_at
+        )
+        VALUES (
+          ${row.id}, ${row.inviteCode},
+          ${row.hostNickname}, ${row.hostSessionId},
+          ${row.guestNickname}, ${row.guestSessionId},
+          ${row.visibility}, ${row.allowUndo}, ${row.allowSpectate}, ${row.spectatorLimit},
+          ${row.status}, ${gameIdOpt}, ${row.createdAt}, ${updatedTs}
+        )
+        ON CONFLICT (id) DO UPDATE SET
+          invite_code      = EXCLUDED.invite_code,
+          host_nickname    = EXCLUDED.host_nickname,
+          host_session_id  = EXCLUDED.host_session_id,
+          guest_nickname   = EXCLUDED.guest_nickname,
+          guest_session_id = EXCLUDED.guest_session_id,
+          visibility       = EXCLUDED.visibility,
+          allow_undo       = EXCLUDED.allow_undo,
+          allow_spectate   = EXCLUDED.allow_spectate,
+          spectator_limit  = EXCLUDED.spectator_limit,
+          status           = EXCLUDED.status,
+          game_id          = EXCLUDED.game_id,
+          created_at       = EXCLUDED.created_at,
+          updated_at       = EXCLUDED.updated_at
+      """
+    db.run(upsert).unit.mapError(toInfraError)
 
   def delete(id: LobbyId): IO[LobbyError, Unit] =
     db.run(Tables.lobbies.filter(_.id === id).delete).unit
