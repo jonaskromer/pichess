@@ -1,6 +1,7 @@
 package chess.model
 
 import chess.model.board.{GameState, Move, Position}
+import chess.model.rules.Zobrist
 import zio.test.*
 
 /** Unit tests for the edge cases of [[GameSnapshot]]'s helpers that the
@@ -88,5 +89,26 @@ object GameSnapshotSpec extends ZIOSpecDefault:
         List((move, after))
       )
       assertTrue(viaRecord.positionCounts == viaFromHistory.positionCounts)
+    },
+    test("fromHistory increments counts when the same position recurs") {
+      // The previous test only exercises the "key absent" arm of
+      // `updatedWith(...)(_.map(_ + 1).orElse(Some(1)))` — each Zobrist
+      // hash is unique. A repeated position (the initial position appears
+      // in `allStates` more than once) forces the `_.map(_ + 1)` arm to
+      // fire and `positionCounts` to record >1 for that hash.
+      //
+      // Construct a fake history whose post-move state IS the initial
+      // position: the snapshot then sees initial twice (once as
+      // `initialState`, once as the post-move state of the synthetic
+      // ply), so the hash count for the initial position becomes 2.
+      val dummyMove = Move(Position('e', 2), Position('e', 4))
+      val snapshot = GameSnapshot.fromHistory(
+        "id",
+        GameState.initial,
+        List((dummyMove, GameState.initial))
+      )
+      assertTrue(
+        snapshot.positionCounts(Zobrist.hash(GameState.initial)) == 2
+      )
     }
   )

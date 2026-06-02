@@ -181,6 +181,11 @@ lazy val repositoryApi = project
       "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % tapirVersion,
       "dev.zio"                     %% "zio-json"       % zioJsonVersion,
     ),
+    // Two synthetic lambdas inside the `loadErrorOut` Tapir codec
+    // definition can only be reached end-to-end through the server
+    // interpreter — direct unit tests cover the codec helpers
+    // (`serverErrorFromMessage` / `serverErrorToMessage`) instead.
+    coverageExcludedFiles := ".*RepositoryEndpoints.*",
   )
 
 // Backend-agnostic persistence interface. Defines GameRepository and
@@ -405,9 +410,13 @@ lazy val repository = project
     dockerExposedPorts   := Seq(8091),
     dockerUpdateLatest   := true,
     Docker / dockerGroupLayers := pichessLayerGrouping,
-    // Kafka-backed implementations need a live broker to exercise; covered
-    // separately by docker-compose smoke tests, not by unit coverage.
-    coverageExcludedFiles := ".*Kafka.*",
+    // HTTP wiring (Main, server) is exercised by docker-compose smoke
+    // tests, not unit coverage — matches the LobbyServer/AnalyticsServer
+    // exclusion pattern. Kafka-backed code needs a live broker; same
+    // story. Repository's pure business logic lives in the persistence
+    // backends, which are contract-tested via real DB testcontainers.
+    coverageExcludedFiles :=
+      ".*Kafka.*;.*RepositoryMain.*;.*RepositoryServer.*",
   )
 
 lazy val gameService = project

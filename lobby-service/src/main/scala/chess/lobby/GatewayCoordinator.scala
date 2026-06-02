@@ -48,18 +48,21 @@ object GatewayCoordinator:
       backend: SttpBackend[Task, Any]
   ): GatewayCoordinator = LiveGatewayCoordinator(baseUri, backend)
 
+  /** Extracted so the URL-validation branch is unit-testable without
+    * relying on whichever specific string sttp's `Uri.parse` rejects
+    * (very few strings actually trip its forgiving parser).
+    */
+  private[lobby] def parseGatewayUrl(raw: String): Either[Throwable, Uri] =
+    Uri
+      .parse(raw)
+      .left
+      .map(msg => IllegalArgumentException(s"Bad $EnvGatewayUrl: $msg"))
+
   val live: ZLayer[Any, Throwable, GatewayCoordinator] =
     ZLayer.scoped {
       for
         url <- zio.System.env(EnvGatewayUrl).map(_.getOrElse("http://gateway:8090"))
-        baseUri <- ZIO.fromEither(
-                     Uri
-                       .parse(url)
-                       .left
-                       .map(msg =>
-                         IllegalArgumentException(s"Bad $EnvGatewayUrl: $msg")
-                       )
-                   )
+        baseUri <- ZIO.fromEither(parseGatewayUrl(url))
         backend <- HttpClientZioBackend.scoped()
       yield make(baseUri, backend)
     }

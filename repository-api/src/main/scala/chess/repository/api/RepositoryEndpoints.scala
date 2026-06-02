@@ -44,6 +44,18 @@ object RepositoryEndpoints:
 
   private val gamesBase = endpoint.in("games")
 
+  // Pulled out as named methods so both sides of the [[stringBody]]
+  // codec are directly callable in tests. Lambda expressions inside
+  // Tapir codec definitions are statement-instrumented by scoverage
+  // but can only be reached end-to-end via the server interpreter
+  // — passing methods by name keeps the codec readable AND
+  // unit-testable.
+  private[api] def serverErrorFromMessage(msg: String): LoadFailure.ServerError =
+    LoadFailure.ServerError(msg)
+
+  private[api] def serverErrorToMessage(err: LoadFailure.ServerError): String =
+    err.message
+
   private val loadErrorOut: EndpointOutput[LoadFailure] =
     oneOf[LoadFailure](
       oneOfVariantSingletonMatcher(statusCode(StatusCode.NotFound))(
@@ -51,7 +63,7 @@ object RepositoryEndpoints:
       ),
       oneOfVariant[LoadFailure.ServerError](
         StatusCode.InternalServerError,
-        stringBody.map(LoadFailure.ServerError(_))(_.message)
+        stringBody.map(serverErrorFromMessage)(serverErrorToMessage)
       )
     )
 

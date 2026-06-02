@@ -142,6 +142,27 @@ object CachedLobbyRepositorySpec extends ZIOSpecDefault:
         result <- decorated.findById(baseLobby.id)
       yield assertTrue(cu == 1, pu == 1, result.contains(joined))
     },
+    test("listPublicWaiting bypasses the cache and reads straight from primary") {
+      // The public-lobby list intentionally skips the cache because
+      // it's a low-frequency, always-changing aggregation — so a call
+      // must NEVER increment the cache reads but MUST increment the
+      // primary reads, and must return the primary's data verbatim.
+      for
+        (cache, _, cacheReads, _, _) <- CountingLobbyRepository.make
+        (primary, _, primaryReads, _, _) <- CountingLobbyRepository.make
+        decorated = CachedLobbyRepository(cache, primary)
+        _ <- primary.create(baseLobby)
+        cacheReadsBefore <- cacheReads.get
+        primaryReadsBefore <- primaryReads.get
+        result <- decorated.listPublicWaiting()
+        cacheReadsAfter <- cacheReads.get
+        primaryReadsAfter <- primaryReads.get
+      yield assertTrue(
+        result == List(baseLobby),
+        cacheReadsAfter == cacheReadsBefore,
+        primaryReadsAfter == primaryReadsBefore + 1
+      )
+    },
     test("delete invalidates both") {
       for
         (cache, _, _, _, cacheDeletes) <- CountingLobbyRepository.make

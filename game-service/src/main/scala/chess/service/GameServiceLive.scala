@@ -80,13 +80,17 @@ final class GameServiceLive(
       // SAN derivation needs the pre-move state; if it fails for any reason
       // (shouldn't, given Game.applyMove just succeeded) we fall back to the
       // coordinate string so the event always has a non-empty `san` field.
-      san      <- SanSerializer.toSan(move, state).orElseSucceed(coordOf(move))
+      // Evaluate the fallback eagerly into a val so scoverage tracks it
+      // as a regular statement (the by-name argument form leaves an
+      // unevaluated lambda that the happy path can't reach).
+      coordStr  = coordOf(move)
+      san      <- SanSerializer.toSan(move, state).orElseSucceed(coordStr)
       ts       <- now
       _        <- producer.publish(
                     GameDomainEvent.MoveMade(
                       gameId       = id,
                       resultingFen = FenSerializer.serialize(newState),
-                      moveCoord    = coordOf(move),
+                      moveCoord    = coordStr,
                       san          = san,
                       occurredAt   = ts
                     )

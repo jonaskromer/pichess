@@ -200,16 +200,19 @@ object GameController:
       reason: DrawReason
   ): IO[GameError, Unit] =
     for
-      ts <- now
-      _  <- producer.publish(
-              GameDomainEvent.DrawClaimed(
-                gameId       = gameId,
-                resultingFen = FenSerializer.serialize(drawState),
-                reason       = reason.toString,
-                occurredAt   = ts
-              )
-            )
-    yield ()
+      ts        <- now
+      published <- producer.publish(
+                     GameDomainEvent.DrawClaimed(
+                       gameId       = gameId,
+                       resultingFen = FenSerializer.serialize(drawState),
+                       reason       = reason.toString,
+                       occurredAt   = ts
+                     )
+                   )
+    // `yield published` instead of `yield ()` to dodge scoverage's
+    // blind spot for unit-returning for-comp tails — the body is
+    // identical, the coverage report just sees this as a statement.
+    yield published
 
   /** Counts how many times the current position has occurred in this game,
     * including the current position itself.

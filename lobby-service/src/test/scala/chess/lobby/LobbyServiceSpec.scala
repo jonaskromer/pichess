@@ -174,6 +174,49 @@ object LobbyServiceSpec extends ZIOSpecDefault:
       test("rejects a start for an unknown lobby id") {
         for exit <- LobbyService.startGame("nope", "game-1").exit
         yield assertTrue(exit.isFailure)
+      },
+      test("gateway hand-off failure surfaces as InfrastructureError") {
+        // Stand up a failing gateway and confirm startGame maps the
+        // outbound throwable into a LobbyError.InfrastructureError
+        // carrying the upstream message. The lobby IS still updated
+        // (the repo write happens before the coordinator call); this
+        // is checked separately so a partial-success failure is
+        // visible to the test.
+        val failingGw = new GatewayCoordinator:
+          def registerPlayers(
+              gameId: String,
+              hostSessionId: String,
+              guestSessionId: Option[String]
+          ): IO[Throwable, Unit] =
+            ZIO.fail(new RuntimeException("gateway down"))
+        for
+          mapRef  <- Ref.make(Map.empty[chess.model.LobbyId, Lobby])
+          repo     = InMemoryLobbyRepository(mapRef)
+          svc      = LobbyServiceLive(repo, failingGw)
+          created <- svc.createLobby(sampleInput)
+          _       <- svc.joinLobby(created.inviteCode, "bob", "session-guest")
+          exit    <- svc.startGame(created.id, "game-99").exit
+          stored  <- repo.findById(created.id)
+        yield assertTrue(
+          exit.causeOption.exists(_.failureOption.exists {
+            case LobbyError.InfrastructureError(msg) => msg.contains("gateway down")
+            case _ => false
+          }),
+          // The lobby was still updated locally — the source of truth.
+          stored.exists(_.status == LobbyStatus.Started)
+        )
+      }
+    ),
+    suite("findByCode")(
+      test("returns the lobby when the invite code is known") {
+        for
+          created <- LobbyService.createLobby(sampleInput)
+          fetched <- LobbyService.findByCode(created.inviteCode)
+        yield assertTrue(fetched.exists(_.id == created.id))
+      },
+      test("returns None when the invite code is unknown") {
+        for result <- LobbyService.findByCode(InviteCode.unsafe("UNKWN1"))
+        yield assertTrue(result.isEmpty)
       }
     ),
     suite("listPublic")(
