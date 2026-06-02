@@ -1,6 +1,6 @@
 package chess.repository
 
-import chess.obs.{MetricsHttpServer, ProfilerLayer, TracingLayer, TracingMiddleware}
+import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer, TracingLayer, TracingMiddleware}
 import chess.persistence.{BackendConfig, GameRepository}
 import chess.persistence.runtime.PersistenceLayers
 import zio.*
@@ -62,11 +62,12 @@ object RepositoryMain extends ZIOAppDefault:
       port: Int
   ): ZIO[GameRepository, Throwable, Unit] =
     val program: ZIO[
-      GameRepository & Server & Tracing & ContextStorage,
+      GameRepository & Server & Tracing & ContextStorage & Scope,
       Throwable,
       Unit,
     ] =
       for
+        _           <- MetricsLayer.jvmMetricsBootstrap
         repo        <- ZIO.service[GameRepository]
         bootstrap   <- zio.System.env("KAFKA_BOOTSTRAP_SERVERS")
         group       <- zio.System
@@ -100,6 +101,8 @@ object RepositoryMain extends ZIOAppDefault:
                            )
       yield ()
 
-    program.provideSomeLayer[GameRepository](
-      Server.defaultWithPort(port) ++ TracingLayer.fromEnv("repository")
-    )
+    ZIO.scoped {
+      program.provideSomeLayer[GameRepository & Scope](
+        Server.defaultWithPort(port) ++ TracingLayer.fromEnv("repository")
+      )
+    }

@@ -1,6 +1,6 @@
 package chess.lobby
 
-import chess.obs.{MetricsHttpServer, ProfilerLayer, TracingLayer, TracingMiddleware}
+import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer, TracingLayer, TracingMiddleware}
 import chess.persistence.{BackendConfig, LobbyRepository}
 import chess.persistence.runtime.PersistenceLayers
 import zio.*
@@ -45,11 +45,12 @@ object LobbyMain extends ZIOAppDefault:
       port: Int
   ): ZIO[LobbyService, Throwable, Unit] =
     val program: ZIO[
-      LobbyService & Server & Tracing & ContextStorage,
+      LobbyService & Server & Tracing & ContextStorage & Scope,
       Throwable,
       Unit,
     ] =
       for
+        _           <- MetricsLayer.jvmMetricsBootstrap
         svc         <- ZIO.service[LobbyService]
         metricsPort <- MetricsHttpServer.portFromEnv(defaultMetricsPort)
         _           <- Console.printLine(
@@ -66,6 +67,8 @@ object LobbyMain extends ZIOAppDefault:
                        )
       yield ()
 
-    program.provideSomeLayer[LobbyService](
-      Server.defaultWithPort(port) ++ TracingLayer.fromEnv("lobby-service")
-    )
+    ZIO.scoped {
+      program.provideSomeLayer[LobbyService & Scope](
+        Server.defaultWithPort(port) ++ TracingLayer.fromEnv("lobby-service")
+      )
+    }

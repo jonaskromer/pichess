@@ -335,17 +335,83 @@ gatling-build: ## Run gatling + bake the latest report into the gateway resource
 
 PERF_REPORTS_DIR := perf-reports
 
+# JMH iteration / fork counts. Switchable for the dev vs. publication
+# tradeoff:
+#   default          3 warmup + 3 measurement × 1 fork  — current behaviour
+#   BENCH_QUICK=true 1 warmup + 1 measurement × 1 fork  — ~1/3 runtime, noisy
+#   BENCH_THOROUGH=true 5 warmup + 10 measurement × 2 forks — ~5× runtime,
+#                       publication-grade confidence intervals
+ifeq ($(BENCH_QUICK),true)
+JMH_FLAGS := -i 1 -wi 1 -f1 -r 1s -w 1s
+else ifeq ($(BENCH_THOROUGH),true)
+JMH_FLAGS := -i 10 -wi 5 -f2 -r 1s -w 1s
+else
+JMH_FLAGS := -i 3 -wi 3 -f1 -r 1s -w 1s
+endif
+
+# Subset filters — each bench-<scope> target runs the listed JMH
+# classes. Keeping these in one place so adding a new bench class is
+# a single-line change.
+BENCH_CODEC_CLASSES   := chess.bench.FenParserBenchmark chess.bench.FenSerializerBenchmark chess.bench.SanRoundTripBenchmark chess.bench.PgnParserBenchmark chess.bench.ZobristHashBenchmark
+BENCH_RULES_CLASSES   := chess.bench.MoveValidatorBenchmark chess.bench.RayWalkBenchmark chess.bench.GameApplyMoveBenchmark
+# `bench-persistence` and `bench-wire` slots are stubs at this point —
+# the bench classes land in Phase D alongside the matching optimisations.
+# Running them today errors with "No matching benchmarks" until that work
+# lands; the targets are kept here so wiring is one-line when it does.
+BENCH_PERSISTENCE_CLASSES := chess.bench.persistence
+BENCH_WIRE_CLASSES        := chess.bench.wire
+
 .PHONY: bench
-bench: ## Run the JMH microbenchmark suite + write JSON to perf-reports
+bench: ## Run the full JMH suite (= bench-codec + bench-rules today). Vars: BENCH_QUICK, BENCH_THOROUGH
 	@mkdir -p $(PERF_REPORTS_DIR)
 	@ts=$$(date -u +%Y%m%dT%H%M%SZ); \
 	out="$$PWD/$(PERF_REPORTS_DIR)/bench-$$ts.json"; \
-	sbt "bench/Jmh/run -i 3 -wi 3 -f1 -rf json -rff $$out"; \
+	sbt "bench/Jmh/run $(JMH_FLAGS) -rf json -rff $$out"; \
 	echo "JMH results → $$out"
+
+.PHONY: bench-codec
+bench-codec: ## Codec benches — FEN / SAN / PGN / Zobrist. Pure code, no stack needed.
+	@mkdir -p $(PERF_REPORTS_DIR)
+	@ts=$$(date -u +%Y%m%dT%H%M%SZ); \
+	out="$$PWD/$(PERF_REPORTS_DIR)/bench-codec-$$ts.json"; \
+	sbt "bench/Jmh/run $(JMH_FLAGS) -rf json -rff $$out $(BENCH_CODEC_CLASSES)"; \
+	echo "codec bench results → $$out"
+
+.PHONY: bench-rules
+bench-rules: ## Rules benches — MoveValidator / Ray / GameApplyMove. Pure code, no stack needed.
+	@mkdir -p $(PERF_REPORTS_DIR)
+	@ts=$$(date -u +%Y%m%dT%H%M%SZ); \
+	out="$$PWD/$(PERF_REPORTS_DIR)/bench-rules-$$ts.json"; \
+	sbt "bench/Jmh/run $(JMH_FLAGS) -rf json -rff $$out $(BENCH_RULES_CLASSES)"; \
+	echo "rules bench results → $$out"
+
+.PHONY: bench-persistence
+bench-persistence: ## Per-backend persistence benches (testcontainer-backed). Phase D stub today.
+	@mkdir -p $(PERF_REPORTS_DIR)
+	@ts=$$(date -u +%Y%m%dT%H%M%SZ); \
+	out="$$PWD/$(PERF_REPORTS_DIR)/bench-persistence-$$ts.json"; \
+	sbt "bench/Jmh/run $(JMH_FLAGS) -rf json -rff $$out $(BENCH_PERSISTENCE_CLASSES)"; \
+	echo "persistence bench results → $$out"
+
+.PHONY: bench-wire
+bench-wire: ## Wire-format benches — BoardStateDto JSON, GameDomainEvent JSON, protobuf. Phase D stub today.
+	@mkdir -p $(PERF_REPORTS_DIR)
+	@ts=$$(date -u +%Y%m%dT%H%M%SZ); \
+	out="$$PWD/$(PERF_REPORTS_DIR)/bench-wire-$$ts.json"; \
+	sbt "bench/Jmh/run $(JMH_FLAGS) -rf json -rff $$out $(BENCH_WIRE_CLASSES)"; \
+	echo "wire bench results → $$out"
 
 .PHONY: perf
 perf: ## Cross-backend Gatling harness. Vars: BACKENDS, MODE, OBS, PEAK_USERS, …
 	scripts/perf-run.sh
+
+.PHONY: db-matrix
+db-matrix: ## Persistence experiment — backend×cache×workload matrix. Vars: BACKENDS, WORKLOADS, WARMUP_ITERS, PEAK_USERS, RAMP_SECONDS, HOLD_SECONDS, RATE_PER_SEC
+	scripts/db-matrix.sh
+
+.PHONY: perf-report
+perf-report: ## Generate performance-test-results.md from a perf-reports/<TS>/ dir (defaults to most recent)
+	scripts/perf-report.sh $(RUN_DIR)
 
 .PHONY: perf-summary
 perf-summary: ## Rebuild comparison.md for the most recent perf run

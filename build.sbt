@@ -150,6 +150,16 @@ lazy val api = crossProject(JVMPlatform, JSPlatform)
     coverageEnabled := false,
   )
 
+// Experiment infrastructure for the performance experiment. Tiny module
+// — `Optimisation[T]` typeclass + a `select` method that picks between
+// a `default` and a `baseline` ZLayer based on `PICHESS_OPT_<NAME>` env
+// vars. Lets the perf suite A/B implementations without the service
+// Main having to enumerate every variant. See docs/perf-experiments.md.
+lazy val optimisation = project
+  .in(file("optimisation"))
+  .settings(commonSettings)
+  .settings(name := "pichess-optimisation")
+
 lazy val rules = project
   .in(file("rules"))
   .dependsOn(domain.jvm)
@@ -327,7 +337,7 @@ lazy val persistenceContract = project
 // here rather than block on a Scala 3 fork.)
 lazy val persistencePostgres = project
   .in(file("persistence/postgres"))
-  .dependsOn(domain.jvm, codec, persistenceApi)
+  .dependsOn(domain.jvm, codec, persistenceApi, optimisation)
   .settings(commonSettings)
   .settings(
     name := "pichess-persistence-postgres",
@@ -440,6 +450,16 @@ lazy val gameService = project
       "dev.zio"          %% "zio-kafka"         % zioKafkaVersion,
       "dev.zio"          %% "zio-kafka-testkit" % zioKafkaVersion % Test,
       "io.grpc"          %  "grpc-services"     % "1.68.1",
+    ),
+    // grpc-netty 1.68 ships netty-codec 4.1.x; zio-http 3.10 ships
+    // netty-codec-http 4.2.x. The 4.2.x http codec calls
+    // `DefaultHeaders.containsAny(_, _, BiPredicate)` which doesn't
+    // exist on 4.1.x — manifests at runtime as a NoSuchMethodError on
+    // every metrics scrape. Pin both codec jars to 4.2.x so the http
+    // codec finds the method it expects.
+    dependencyOverrides ++= Seq(
+      "io.netty" % "netty-codec"       % "4.2.10.Final",
+      "io.netty" % "netty-codec-http2" % "4.2.10.Final",
     ),
     Docker / packageName := "pichess-game-service",
     Docker / version     := "latest",

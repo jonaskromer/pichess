@@ -55,6 +55,11 @@ TS="${PERF_TS:-$(date -u +%Y%m%dT%H%M%SZ)}"
 RUN_DIR="perf-reports/$TS"
 mkdir -p "$RUN_DIR"
 
+# Snapshot active PICHESS_OPT_* selectors so the report can show which
+# optimisation pairs were on which side during this run. See
+# `Optimisation` in the `optimisation/` module.
+env | grep -E '^PICHESS_OPT_' | sort > "$RUN_DIR/selectors.env" 2>/dev/null || true
+
 GATEWAY_URL="http://localhost:8090"
 LOBBY_URL="http://localhost:8092"
 PROM_URL="http://localhost:9090"
@@ -151,8 +156,8 @@ extract_summary() {
   local summary="$out_dir/summary.txt"
   local idx="$out_dir/gatling/index.html"
 
-  printf 'backend=%s\nmode=%s\ntimestamp=%s\n' "$backend" "$MODE" "$TS" \
-    > "$summary"
+  printf 'backend=%s\ncache=%s\nmode=%s\ntimestamp=%s\n' \
+    "$backend" "${PICHESS_CACHE:-none}" "$MODE" "$TS" > "$summary"
 
   if [[ -f "$idx" ]]; then
     # Gatling 3.x writes statistics into js/stats.js. The file is JS
@@ -198,19 +203,41 @@ PY
 # ─────────────────────────── main loop ──────────────────────────────────
 
 log "perf run starting → $RUN_DIR"
-log "backends=$BACKENDS mode=$MODE obs=$OBS"
+log "backends=$BACKENDS mode=$MODE obs=$OBS cache=${PICHESS_CACHE:-none}"
 
-OBS_FLAG=""
-if [[ "$OBS" == "true" ]]; then
-  OBS_FLAG="EXTRA=obs"
-fi
+# Build the EXTRA= list passed to `make stack-<bk>`. `obs` activates
+# Prometheus/Grafana/Jaeger; `redis` brings up the redis container so
+# the persistence layer's CachedGameRepository decorator can use it.
+# We deliberately don't activate the redis profile when the *primary*
+# backend is already redis (no double-redis caching).
+build_extras() {
+  local backend="$1"
+  local parts=()
+  if [[ "$OBS" == "true" ]]; then
+    parts+=("obs")
+  fi
+  if [[ -n "${PICHESS_CACHE:-}" && "$PICHESS_CACHE" != "none" && \
+        "$PICHESS_CACHE" != "$backend" ]]; then
+    parts+=("$PICHESS_CACHE")
+  fi
+  if (( ${#parts[@]} == 0 )); then
+    echo ""
+  else
+    local IFS=,
+    echo "EXTRA=${parts[*]}"
+  fi
+}
 
 for backend in ${BACKENDS//,/ }; do
-  log "── backend: $backend ──────────────────────────────"
+  log "── backend: $backend cache: ${PICHESS_CACHE:-none} ──"
   out_dir="$RUN_DIR/$backend"
   mkdir -p "$out_dir"
 
-  make "stack-$backend" $OBS_FLAG
+  extra_flag="$(build_extras "$backend")"
+
+  # PICHESS_CACHE is read by docker-compose at `up -d` time (game-service
+  # + repository both consume it via the persistence layer's BackendConfig).
+  PICHESS_CACHE="${PICHESS_CACHE:-none}" make "stack-$backend" $extra_flag
 
   # Wait for gateway + lobby healthcheck. Gateway has no /healthcheck yet
   # but does serve `/api/stack-info`; that's good enough as a readiness probe.

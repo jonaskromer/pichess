@@ -25,11 +25,17 @@ import chess.persistence.postgres.{
   PostgresGameRepository,
   PostgresLobbyRepository
 }
+// Implicit `Optimisation[PostgresDatabase]` instance — controls whether
+// the HikariCP pool (`default`) or the original `Database.forURL` path
+// (`baseline`) is used. Selection happens via the PICHESS_OPT_PG_POOL
+// env var. See PostgresDatabaseOptimisations + docs/perf-experiments.md.
+import chess.persistence.postgres.PostgresDatabaseOptimisations.given
 import chess.persistence.redis.{
   RedisGameRepository,
   RedisLayers,
   RedisLobbyRepository
 }
+import chess.opt.Optimisation
 import zio.*
 
 /** Maps a [[BackendConfig]] to the right `GameRepository` /
@@ -53,7 +59,7 @@ object PersistenceLayers:
     backend match
       case Backend.InMemory  => InMemoryGameRepository.layer
       case Backend.Postgres  =>
-        PostgresDatabase.withSchemaLayer >>> PostgresGameRepository.layer
+        Optimisation.select[PostgresDatabase] >>> PostgresGameRepository.layer
       case Backend.Mongo     =>
         MongoClientLayer.layer >>> MongoGameRepository.layer
       case Backend.Redis     =>
@@ -84,7 +90,7 @@ object PersistenceLayers:
     backend match
       case Backend.InMemory  => InMemoryLobbyRepository.layer
       case Backend.Postgres  =>
-        PostgresDatabase.withSchemaLayer >>> PostgresLobbyRepository.layer
+        Optimisation.select[PostgresDatabase] >>> PostgresLobbyRepository.layer
       case Backend.Mongo     =>
         MongoClientLayer.layer >>> MongoLobbyRepository.withIndexesLayer
       case Backend.Redis     =>

@@ -5,7 +5,7 @@ import chess.events.{
   InMemoryGameEventProducer,
   KafkaGameEventProducer
 }
-import chess.obs.{MetricsHttpServer, ProfilerLayer}
+import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer}
 import chess.persistence.{BackendConfig, GameRepository}
 import chess.persistence.runtime.PersistenceLayers
 import chess.service.{GameService, GameServiceLive}
@@ -66,8 +66,12 @@ object GameServiceMain extends ZIOAppDefault:
     PersistenceLayers.gameRepository(cfg)
 
   private def serve(port: Int, cfg: BackendConfig): Task[Unit] =
-    val program: ZIO[scalapb.zio_grpc.Server, Throwable, Unit] =
+    val program: ZIO[scalapb.zio_grpc.Server & Scope, Throwable, Unit] =
       for
+        // Start JVM metric trackers — heap / GC / threads flow through
+        // the Prometheus publisher so the persistence-experiment
+        // resource-profile table has signal to read.
+        _           <- MetricsLayer.jvmMetricsBootstrap
         metricsPort <- MetricsHttpServer.portFromEnv(defaultMetricsPort)
         _           <- Console.printLine(
                          s"pichess-game-service gRPC listening on 0.0.0.0:$port " +
@@ -80,13 +84,15 @@ object GameServiceMain extends ZIOAppDefault:
     val producerLayer: ZLayer[Any, Throwable, GameEventProducer] =
       selectProducerLayer(sys.env.get("KAFKA_BOOTSTRAP_SERVERS"))
 
-    program.provide(
-      gameRepoLayer(cfg),
-      GameSessions.layer,
-      GameServiceLive.layer,
-      GrpcServer.asServiceLayer,
-      producerLayer,
-      ServerLayer.fromEnvironment[ZioGameService.GameService](
-        ServerBuilder.forPort(port)
+    ZIO.scoped {
+      program.provideSome[Scope](
+        gameRepoLayer(cfg),
+        GameSessions.layer,
+        GameServiceLive.layer,
+        GrpcServer.asServiceLayer,
+        producerLayer,
+        ServerLayer.fromEnvironment[ZioGameService.GameService](
+          ServerBuilder.forPort(port)
+        )
       )
-    )
+    }

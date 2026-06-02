@@ -1,6 +1,6 @@
 package chess.analytics
 
-import chess.obs.{MetricsHttpServer, ProfilerLayer, TracingLayer, TracingMiddleware}
+import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer, TracingLayer, TracingMiddleware}
 import zio.*
 import zio.http.*
 
@@ -25,11 +25,12 @@ object AnalyticsMain extends ZIOAppDefault:
 
   private def runProfiled: ZIO[ZIOAppArgs, Throwable, Unit] =
     val program: ZIO[
-      AnalyticsProjection & AnalyticsService & zio.jdbc.ZConnectionPool,
+      AnalyticsProjection & AnalyticsService & zio.jdbc.ZConnectionPool & Scope,
       Throwable,
       Unit
     ] =
       for
+        _           <- MetricsLayer.jvmMetricsBootstrap
         port        <- portFromEnv
         bootstrap   <- zio.System.env("KAFKA_BOOTSTRAP_SERVERS")
         group       <- zio.System
@@ -77,11 +78,13 @@ object AnalyticsMain extends ZIOAppDefault:
                              )
       yield ()
 
-    program.provide(
-      ClickHouseLayer.pool,
-      LiveAnalyticsService.layer,
-      AnalyticsProjection.layer
-    )
+    ZIO.scoped {
+      program.provideSome[Scope](
+        ClickHouseLayer.pool,
+        LiveAnalyticsService.layer,
+        AnalyticsProjection.layer
+      )
+    }
 
   private[analytics] def portFromEnv: Task[Int] =
     zio.System.env("ANALYTICS_PORT").map(parsePort)

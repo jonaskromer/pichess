@@ -7,7 +7,7 @@ import chess.controller.{
   StackInfo,
   WebController
 }
-import chess.obs.{MetricsHttpServer, ProfilerLayer, TracingLayer, TracingMiddleware}
+import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer, TracingLayer, TracingMiddleware}
 import io.grpc.ManagedChannelBuilder
 import pichess.game_service.ZioGameService
 import scalapb.zio_grpc.ZManagedChannel
@@ -55,11 +55,16 @@ object GatewayMain extends ZIOAppDefault:
   private def serve(httpPort: Int, target: String): Task[Unit] =
     val program: ZIO[
       ZioGameService.GameServiceClient & Server & Client
-        & Tracing & ContextStorage,
+        & Tracing & ContextStorage & Scope,
       Throwable,
       Unit
     ] =
       for
+        // Start the JVM metric trackers so heap / GC / thread counters
+        // flow into the Prometheus publisher used by /metrics. Built
+        // in the surrounding ZIO.scoped block so the trackers run
+        // for the lifetime of this service rather than per-request.
+        _            <- MetricsLayer.jvmMetricsBootstrap
         client       <- ZIO.service[ZioGameService.GameServiceClient]
         registry     <- SessionRegistry.make
         cache        <- AnnotationCache.make
@@ -91,13 +96,15 @@ object GatewayMain extends ZIOAppDefault:
         _            <- ZIO.never
       yield ()
 
-    program.provide(
-      Server.defaultWithPort(httpPort),
-      Client.default,
-      ZioGameService.GameServiceClient.live(
-        ZManagedChannel(
-          ManagedChannelBuilder.forTarget(target).usePlaintext()
-        )
-      ),
-      TracingLayer.fromEnv("gateway"),
-    )
+    ZIO.scoped {
+      program.provideSome[Scope](
+        Server.defaultWithPort(httpPort),
+        Client.default,
+        ZioGameService.GameServiceClient.live(
+          ZManagedChannel(
+            ManagedChannelBuilder.forTarget(target).usePlaintext()
+          )
+        ),
+        TracingLayer.fromEnv("gateway"),
+      )
+    }

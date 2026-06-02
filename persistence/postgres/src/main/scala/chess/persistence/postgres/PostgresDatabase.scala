@@ -1,5 +1,6 @@
 package chess.persistence.postgres
 
+import com.zaxxer.hikari.{HikariConfig, HikariDataSource}
 import slick.jdbc.PostgresProfile.api.*
 import zio.*
 
@@ -59,9 +60,13 @@ object PostgresDatabase:
   val EnvPassword: String = "PICHESS_PG_PASSWORD"
   val EnvMaxConnections: String = "PICHESS_PG_MAX_CONNECTIONS"
 
-  /** Build a HikariCP-backed Slick `Database` from explicit settings. The
-    * resource is scoped — closing the surrounding ZIO scope tears the pool
-    * down.
+  /** Build a Slick `Database` backed by `Database.forURL`, which uses
+    * `DriverDataSource` under the hood — **a fresh JDBC connection is
+    * opened per query**. The `AsyncExecutor` controls the *thread*
+    * pool but not the *connection* pool (per Slick docs: "numThreads
+    * has no effect on the number of connections in the connection
+    * pool"). This is the baseline path for the `PG_POOL` optimisation;
+    * see [[makeHikari]] for the pooled alternative.
     */
   def make(settings: Settings): ZIO[Scope, Throwable, PostgresDatabase] =
     ZIO.acquireRelease(
@@ -82,22 +87,86 @@ object PostgresDatabase:
       ).map(PostgresDatabase(_))
     )(pg => ZIO.attempt(pg.db.close()).orDie)
 
-  /** Layer that reads settings from env and builds the database. Scoped: the
-    * pool lifecycle matches the consumer service's scope.
+  /** Build a Slick `Database` backed by an explicit HikariCP
+    * `DataSource`. Connections are pooled and reused, so SCRAM/PBKDF2
+    * authentication runs once per pool slot rather than per query —
+    * this is the `default` arm of the `PG_POOL` optimisation.
+    *
+    * Scoped lifecycle: when the surrounding ZIO scope closes, the
+    * Slick `Database` and the HikariCP pool are both shut down.
+    */
+  def makeHikari(settings: Settings): ZIO[Scope, Throwable, PostgresDatabase] =
+    for
+      ds <- ZIO.acquireRelease(
+              ZIO.attempt {
+                val cfg = new HikariConfig()
+                cfg.setJdbcUrl(settings.url)
+                cfg.setUsername(settings.user)
+                cfg.setPassword(settings.password)
+                cfg.setMaximumPoolSize(settings.maxConnections)
+                cfg.setPoolName("pichess-pg-hikari")
+                // Tight init / fail-fast so a misconfigured stack errors
+                // at startup rather than on the first request. Defaults
+                // for everything else.
+                cfg.setInitializationFailTimeout(5_000L)
+                new HikariDataSource(cfg)
+              }
+            )(ds => ZIO.attempt(ds.close()).orDie)
+      db <- ZIO.acquireRelease(
+              ZIO.attempt(
+                Database.forDataSource(
+                  ds = ds,
+                  maxConnections = Some(settings.maxConnections),
+                  executor = slick.util.AsyncExecutor(
+                    name = "pichess-pg-hikari",
+                    minThreads = settings.maxConnections,
+                    maxThreads = settings.maxConnections,
+                    queueSize = 1000,
+                    maxConnections = settings.maxConnections
+                  ),
+                  keepAliveConnection = false
+                )
+              ).map(PostgresDatabase(_))
+            )(pg => ZIO.attempt(pg.db.close()).orDie)
+    yield db
+
+  /** Baseline layer (no connection pooling). Reads settings from env
+    * and builds the database; pool lifecycle matches the consumer
+    * service's scope.
     */
   val layer: ZLayer[Any, Throwable, PostgresDatabase] =
     ZLayer.scoped(settingsFromEnv.flatMap(make))
 
-  /** Variant that also runs `PostgresSchema.ensure` so the database is ready
-    * to accept queries the moment the layer resolves. Use this from service
-    * Mains; the bare `layer` is reserved for tests that want to control
-    * schema lifecycle themselves.
+  /** Default layer: HikariCP-backed. Same env vars, same lifecycle —
+    * just connection pooling. This is the layer the `Optimisation`
+    * instance selects unless `PICHESS_OPT_PG_POOL=baseline` (or the
+    * global `PICHESS_OPT_ALL=baseline`) flips it.
+    */
+  val hikariLayer: ZLayer[Any, Throwable, PostgresDatabase] =
+    ZLayer.scoped(settingsFromEnv.flatMap(makeHikari))
+
+  /** Baseline + schema migration. Use this from service Mains when the
+    * baseline (no-pool) path is selected; the bare `layer` is reserved
+    * for tests that control schema lifecycle themselves.
     */
   val withSchemaLayer: ZLayer[Any, Throwable, PostgresDatabase] =
     ZLayer.scoped {
       for
         settings <- settingsFromEnv
         db       <- make(settings)
+        _        <- PostgresSchema.ensure(db)
+      yield db
+    }
+
+  /** Default + schema migration. The hikariLayer counterpart of
+    * [[withSchemaLayer]] — bootstrap the HikariCP pool and run the
+    * schema migration in one scoped layer.
+    */
+  val withSchemaLayerHikari: ZLayer[Any, Throwable, PostgresDatabase] =
+    ZLayer.scoped {
+      for
+        settings <- settingsFromEnv
+        db       <- makeHikari(settings)
         _        <- PostgresSchema.ensure(db)
       yield db
     }
