@@ -6,13 +6,12 @@ import chess.events.GameEventProducer
 import chess.model.{GameError, GameId, GameSnapshot, SessionState}
 import chess.notation.SanSerializer
 import chess.service.GameService
-import io.grpc.{Status, StatusException}
+import io.grpc.StatusException
 import pichess.game_service.{
   ExportReply,
   ExportRequest,
   GameIdRequest,
   LoadGameRequest,
-  MoveLogEntry,
   MoveRequest,
   NewGameRequest,
   StateReply,
@@ -44,7 +43,7 @@ final class GrpcServer(
       snapshot = GameSnapshot.fresh(event.gameId, event.initialState)
       ref     <- sessions.register(snapshot)
       reply   <- replyFor(event.gameId, ref)
-    yield reply).mapError(toStatusException)
+    yield reply).mapError(GrpcMappers.toStatusException)
 
   def loadGame(request: LoadGameRequest): IO[StatusException, StateReply] =
     (for
@@ -54,7 +53,7 @@ final class GrpcServer(
         GameSnapshot.fromHistory(event.gameId, event.initialState, history.reverse)
       ref     <- sessions.register(snapshot)
       reply   <- replyFor(event.gameId, ref)
-    yield reply).mapError(toStatusException)
+    yield reply).mapError(GrpcMappers.toStatusException)
 
   def makeMove(request: MoveRequest): IO[StatusException, StateReply] =
     runOn(request.gameId) { ref =>
@@ -77,7 +76,7 @@ final class GrpcServer(
     sessions
       .get(request.gameId)
       .flatMap(replyFor(request.gameId, _))
-      .mapError(toStatusException)
+      .mapError(GrpcMappers.toStatusException)
 
   def exportGame(request: ExportRequest): IO[StatusException, ExportReply] =
     (for
@@ -98,15 +97,15 @@ final class GrpcServer(
                     )
                   )
     yield ExportReply(format = request.format.toLowerCase, body = body))
-      .mapError(toStatusException)
+      .mapError(GrpcMappers.toStatusException)
 
   def subscribeGame(
       request: GameIdRequest
   ): Stream[StatusException, StateReply] =
     ZStream
-      .fromZIO(sessions.get(request.gameId).mapError(toStatusException))
+      .fromZIO(sessions.get(request.gameId).mapError(GrpcMappers.toStatusException))
       .flatMap { ref =>
-        ref.changes.mapZIO(state => toStateReply(request.gameId, state))
+        ref.changes.mapZIO(state => GrpcMappers.toStateReply(request.gameId, state))
       }
 
   // ---- helpers ---------------------------------------------------------
@@ -118,39 +117,13 @@ final class GrpcServer(
       ref <- sessions.get(gameId)
       _   <- action(ref)
       out <- replyFor(gameId, ref)
-    yield out).mapError(toStatusException)
+    yield out).mapError(GrpcMappers.toStatusException)
 
   private def replyFor(
       gameId: GameId,
       ref: SubscriptionRef[SessionState]
   ): UIO[StateReply] =
-    ref.get.flatMap(toStateReply(gameId, _))
-
-  private def toStateReply(
-      gameId: GameId,
-      session: SessionState
-  ): UIO[StateReply] =
-    SanSerializer
-      .deriveMoveLog(session.initialState, session.history)
-      .orDie
-      .map { log =>
-        StateReply(
-          gameId      = gameId,
-          fen         = FenSerializer.serialize(session.state),
-          status      = session.state.status.toString,
-          activeColor = session.state.activeColor.toString,
-          moveLog     = log.map((color, san) => MoveLogEntry(color.toString, san)),
-          error       = session.error.getOrElse("")
-        )
-      }
-
-  private def toStatusException(err: GameError): StatusException =
-    val status = err match
-      case _: GameError.GameNotFound      => Status.NOT_FOUND
-      case _: GameError.InvalidMove       => Status.INVALID_ARGUMENT
-      case _: GameError.ParseError        => Status.INVALID_ARGUMENT
-      case _: GameError.InfrastructureError => Status.INTERNAL
-    new StatusException(status.withDescription(err.message))
+    ref.get.flatMap(GrpcMappers.toStateReply(gameId, _))
 
 object GrpcServer:
   val layer: URLayer[

@@ -1,11 +1,9 @@
 package chess.tui
 
-import chess.api.BoardStateDto
 import sttp.capabilities.zio.ZioStreams
 import sttp.client3.*
 import sttp.model.Uri
 import zio.*
-import zio.json.*
 import zio.stream.*
 
 /** Consumes the gateway's SSE stream at `/api/events` and emits the same
@@ -21,10 +19,10 @@ import zio.stream.*
   */
 object TuiEventStream:
 
-  /** One parsed SSE event. */
-  enum Event:
-    /** A state push from the gateway. JSON already decoded. */
-    case State(dto: BoardStateDto)
+  /** Re-exported so existing callers keep their import path. The parser
+    * itself lives in [[SseEventBuilder]] now.
+    */
+  export SseEventBuilder.Event
 
   /** Subscribe to the SSE feed. Returns a stream of decoded events; decode
     * errors and malformed events are dropped (they're logged at warn).
@@ -49,7 +47,7 @@ object TuiEventStream:
       .flatten
       .via(ZPipeline.utf8Decode)
       .via(ZPipeline.splitLines)
-      .scan(Builder.empty) { (acc, line) =>
+      .scan(SseEventBuilder.Builder.empty) { (acc, line) =>
         if line.isEmpty then acc.dispatch else acc.append(line)
       }
       .collect { case b if b.dispatched.isDefined => b.dispatched.get }
@@ -59,39 +57,3 @@ object TuiEventStream:
           ZIO.logWarning(s"SSE decode error: $err").as(None)
       }
       .collectSome
-
-  /** Per-event builder. SSE wire format: lines of `event: <type>` and
-    * `data: <payload>`, terminated by an empty line. Consecutive `data:`
-    * lines concatenate. We don't handle `id:` / `retry:` / comment lines
-    * (the gateway never emits them).
-    */
-  private final case class Builder(
-      eventType: Option[String],
-      data: Vector[String],
-      dispatched: Option[Either[String, Event]]
-  ):
-    def append(line: String): Builder =
-      val cleared = copy(dispatched = None)
-      val (k, v) = line.indexOf(':') match
-        case -1  => (line, "")
-        case idx =>
-          (line.substring(0, idx), line.substring(idx + 1).stripPrefix(" "))
-      k match
-        case "event" => cleared.copy(eventType = Some(v))
-        case "data"  => cleared.copy(data = cleared.data :+ v)
-        case _       => cleared
-
-    def dispatch: Builder =
-      val payload = data.mkString("\n")
-      val event = eventType match
-        case Some("state") =>
-          payload.fromJson[BoardStateDto] match
-            case Right(dto) => Right(Event.State(dto))
-            case Left(err)  => Left(s"state decode failed: $err")
-        case Some(other)  => Left(s"unknown event type: $other")
-        case None if data.isEmpty => Left("empty event")
-        case None => Left("event without type")
-      Builder.empty.copy(dispatched = Some(event))
-
-  private object Builder:
-    val empty: Builder = Builder(None, Vector.empty, None)

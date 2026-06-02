@@ -48,8 +48,8 @@ object RepositoryEndpointsSpec extends ZIOSpecDefault:
         // reachable end-to-end via the server interpreter.
         val err = LoadFailure.ServerError("boom")
         assertTrue(
-          RepositoryEndpoints.serverErrorToMessage(err) == "boom",
-          RepositoryEndpoints.serverErrorFromMessage("boom") == err
+          RepositoryCodecs.serverErrorToMessage(err) == "boom",
+          RepositoryCodecs.serverErrorFromMessage("boom") == err
         )
       }
     ),

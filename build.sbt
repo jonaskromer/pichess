@@ -184,7 +184,7 @@ lazy val repositoryApi = project
     // Two synthetic lambdas inside the `loadErrorOut` Tapir codec
     // definition can only be reached end-to-end through the server
     // interpreter — direct unit tests cover the codec helpers
-    // (`serverErrorFromMessage` / `serverErrorToMessage`) instead.
+    // (in `RepositoryCodecs.scala`, which stays in coverage) instead.
     coverageExcludedFiles := ".*RepositoryEndpoints.*",
   )
 
@@ -511,8 +511,8 @@ lazy val analyticsService = project
     // unit tests. Pure logic in AnalyticsEventMapping IS unit-tested.
     coverageExcludedFiles :=
       ".*AnalyticsMain.*;.*Kafka.*;.*ClickHouse.*;.*AnalyticsServer.*;" +
-        ".*AnalyticsEndpoints.*;.*AnalyticsProjection.*;.*AnalyticsService.*;" +
-        ".*AnalyticsJson.*;.*AnalyticsSchema.*",
+        ".*AnalyticsEndpoints.*;.*AnalyticsProjection.*;.*LiveAnalyticsService.*;" +
+        ".*AnalyticsSchema.*",
   )
 
 // New microservice for lobby management. REST-only on :8092 — no gRPC, no
@@ -551,8 +551,9 @@ lazy val lobbyService = project
     Docker / dockerGroupLayers := pichessLayerGrouping,
     // HTTP wiring (Main, server, endpoint defs) is exercised by docker-compose
     // smoke tests, not unit coverage. LobbyService logic is covered here.
+    // LobbyJson is pure codec/value code — kept in coverage.
     coverageExcludedFiles :=
-      ".*LobbyMain.*;.*LobbyServer.*;.*LobbyEndpoints.*;.*LobbyJson.*",
+      ".*LobbyMain.*;.*LobbyServer.*;.*LobbyEndpoints.*",
   )
 
 lazy val gateway = project

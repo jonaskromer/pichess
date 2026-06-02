@@ -4,7 +4,6 @@ import sttp.model.StatusCode
 import sttp.tapir.*
 import sttp.tapir.generic.auto.*
 import sttp.tapir.json.zio.*
-import zio.json.*
 
 /** REST contract for the game repository service.
   *
@@ -22,39 +21,9 @@ import zio.json.*
   * this contract is [[HttpGameRepository]] and it can't structurally produce
   * malformed input — every reachable failure is server-side.
   */
-final case class GameStateEnvelope(fen: String)
-
-object GameStateEnvelope:
-  given JsonEncoder[GameStateEnvelope] =
-    DeriveJsonEncoder.gen[GameStateEnvelope]
-  given JsonDecoder[GameStateEnvelope] =
-    DeriveJsonDecoder.gen[GameStateEnvelope]
-
-/** Typed error for [[RepositoryEndpoints.loadGame]] — distinguishes "no such
-  * game" (which the client maps to `None`) from a real backend failure (which
-  * the client treats as an infrastructure error).
-  */
-sealed trait LoadFailure
-
-object LoadFailure:
-  case object NotFound extends LoadFailure
-  final case class ServerError(message: String) extends LoadFailure
-
 object RepositoryEndpoints:
 
   private val gamesBase = endpoint.in("games")
-
-  // Pulled out as named methods so both sides of the [[stringBody]]
-  // codec are directly callable in tests. Lambda expressions inside
-  // Tapir codec definitions are statement-instrumented by scoverage
-  // but can only be reached end-to-end via the server interpreter
-  // — passing methods by name keeps the codec readable AND
-  // unit-testable.
-  private[api] def serverErrorFromMessage(msg: String): LoadFailure.ServerError =
-    LoadFailure.ServerError(msg)
-
-  private[api] def serverErrorToMessage(err: LoadFailure.ServerError): String =
-    err.message
 
   private val loadErrorOut: EndpointOutput[LoadFailure] =
     oneOf[LoadFailure](
@@ -63,7 +32,9 @@ object RepositoryEndpoints:
       ),
       oneOfVariant[LoadFailure.ServerError](
         StatusCode.InternalServerError,
-        stringBody.map(serverErrorFromMessage)(serverErrorToMessage)
+        stringBody.map(RepositoryCodecs.serverErrorFromMessage)(
+          RepositoryCodecs.serverErrorToMessage
+        )
       )
     )
 

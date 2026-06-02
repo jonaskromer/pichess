@@ -214,53 +214,15 @@ final class TuiClient(
     )
 
 object TuiClient:
-
-  enum Visibility:
-    case Public, Private
-
-  /** Wire-shape mirror of `chess.lobby.CreateLobbyRequest` — kept here so
-    * the tui module doesn't have to depend on lobby-service.
-    */
-  final case class CreateLobbyPayload(
-      hostNickname: String,
-      hostSessionId: String,
-      visibility: String,
-      allowUndo: Boolean,
-      allowSpectate: Boolean,
-      spectatorLimit: Int
-  )
-  object CreateLobbyPayload:
-    given JsonCodec[CreateLobbyPayload] = DeriveJsonCodec.gen
-
-  final case class JoinLobbyPayload(
-      guestNickname: String,
-      guestSessionId: String
-  )
-  object JoinLobbyPayload:
-    given JsonCodec[JoinLobbyPayload] = DeriveJsonCodec.gen
-
-  final case class StartGamePayload(gameId: String)
-  object StartGamePayload:
-    given JsonCodec[StartGamePayload] = DeriveJsonCodec.gen
-
-  /** Wire-shape mirror of `chess.model.Lobby` — only the fields we render. */
-  final case class LobbyView(
-      id: String,
-      inviteCode: String,
-      hostNickname: String,
-      hostSessionId: String,
-      guestNickname: Option[String],
-      guestSessionId: Option[String],
-      visibility: String,
-      allowUndo: Boolean,
-      allowSpectate: Boolean,
-      spectatorLimit: Int,
-      status: String,
-      gameId: Option[String]
-  )
-  object LobbyView:
-    given JsonCodec[LobbyView] = DeriveJsonCodec.gen
-
-  final case class PublicLobbiesResponse(lobbies: List[LobbyView])
-  object PublicLobbiesResponse:
-    given JsonCodec[PublicLobbiesResponse] = DeriveJsonCodec.gen
+  // Re-export the pure wire-shape types from TuiClientCodecs so existing
+  // callers keep their `TuiClient.LobbyView` / `TuiClient.Visibility`
+  // import path. Codecs themselves live in TuiClientCodecs (covered);
+  // the HTTP wiring in this file stays excluded.
+  export TuiClientCodecs.{
+    Visibility,
+    CreateLobbyPayload,
+    JoinLobbyPayload,
+    StartGamePayload,
+    LobbyView,
+    PublicLobbiesResponse
+  }

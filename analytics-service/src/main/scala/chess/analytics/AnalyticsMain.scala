@@ -79,7 +79,7 @@ object AnalyticsMain extends ZIOAppDefault:
 
     program.provide(
       ClickHouseLayer.pool,
-      AnalyticsService.layer,
+      LiveAnalyticsService.layer,
       AnalyticsProjection.layer
     )
 
