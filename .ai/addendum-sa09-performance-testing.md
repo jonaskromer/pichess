@@ -58,9 +58,32 @@ Performance encompasses: Throughput, Response Time, Scalability, and Memory cons
 
 ---
 
-## Task 9
+## Task 9 — Containerization & Kubernetes Deployment
 
-1. Generate a Performance-Test-Script using the Gatling Recorder.
-2. Optimize the generated script manually.
-3. Analyse the report and optimize your application code.
-4. Repeat the performance test and document the improvement.
+### Dockerfile Review
+1. Audit all existing `Dockerfile`s for best practices:
+   - Multi-stage builds to keep final images lean.
+   - Minimal, pinned base images (e.g., `eclipse-temurin:21-jre-alpine`).
+   - Proper layer ordering to maximize build-cache hits (dependencies before source).
+   - Non-root user inside the container.
+
+### Extended Docker Compose
+1. Extend `docker-compose.yml` so every service in the stack can be started locally in one command: application services, gateway, database(s), and any supporting infrastructure.
+2. Use named volumes for data persistence and health-checks so dependent services wait for their dependencies.
+
+### k3d Cluster + Kubernetes Manifests
+1. Create a local k3d cluster (`k3d cluster create pichess`).
+2. Write Kubernetes manifests for the same stack:
+   - `Deployment` + `Service` per microservice.
+   - `ConfigMap` / `Secret` for environment configuration.
+   - `Ingress` (or `LoadBalancer`) to expose the gateway.
+3. Apply the manifests and verify all pods reach `Running` state.
+
+### Deploy on Virtual Server
+1. Deploy the full stack on the assigned virtual server.
+2. Confirm external reachability (e.g., `curl https://<host>/api/health`).
+
+### Optional — Keycloak
+1. Add Keycloak as a service in Docker Compose.
+2. Create a realm and a confidential client via the Keycloak Admin UI or import a `realm-export.json`.
+3. Protect at least one API endpoint by validating the JWT issued by Keycloak.

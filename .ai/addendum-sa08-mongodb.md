@@ -66,7 +66,31 @@ Because MongoDB's Scala driver natively utilizes `Observable` types, it function
 
 ---
 
-## Task 7
+## Task 8 — Performance Testing + Benchmarking Loop
 
-1. Use MongoDB to build a **second DB implementation** for the persistence layer.
-2. Integrate it via the identically configured DAO Pattern you established for Slick, rendering the interface completely independent of whether MongoDB or Slick powers the backing mechanism.
+### k6 Test
+1. Write a k6 script targeting your REST endpoints (e.g., game creation, move submission, game state retrieval).
+2. Define reproducible thresholds:
+   - `http_req_duration['p(95)'] < 500` — p95 latency under 500 ms
+   - `http_req_failed < 0.01` — error rate below 1%
+3. Fix VU count, duration, and seed data so runs are comparable across machines.
+
+### Gatling Test
+1. Write a Gatling simulation covering the same request scenarios.
+2. Apply the same p95 latency and error-rate thresholds in the `assertions` block.
+3. Produce a reproducible HTML report (fixed injection profile, no randomized think-times without a fixed seed).
+
+### JMH Benchmark
+1. Add a JMH benchmark for a hot function in the codebase — good candidates: FEN string parsing, move serialization/deserialization, game-state validation.
+2. Annotate with `@Benchmark`, `@BenchmarkMode(Mode.AverageTime)`, `@OutputTimeUnit(TimeUnit.MICROSECONDS)`.
+
+### Baseline → Optimize → Rerun
+1. Run all three tools and record baseline numbers.
+2. Identify the primary bottleneck from the reports (e.g., N+1 DB queries, unnecessary allocations, synchronous blocking in an async path).
+3. Apply a targeted optimization.
+4. Rerun and compare against baseline.
+
+### Deliverables
+- **k6 summary** + a short note: what the bottleneck was and what fix was applied.
+- **Gatling summary** + a short note: what the bottleneck was and what fix was applied.
+- **JMH before/after numbers** showing the measured improvement.
