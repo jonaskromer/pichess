@@ -23,7 +23,7 @@ export
 
 .PHONY: help
 help: ## Show this target list
-	@grep -hE '^[a-zA-Z_-]+:[^:]*?##' $(MAKEFILE_LIST) | sort | \
+	@grep -hE '^[a-zA-Z0-9_-]+:[^:]*?##' $(MAKEFILE_LIST) | sort | \
 	  awk -F ':.*?##' '{printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: build
@@ -123,7 +123,7 @@ EXTRA            ?=
 # survives a stack switch.
 ALL_PROFILES := --profile postgres --profile mongo --profile cassandra \
                 --profile redis --profile opening --profile analytics \
-                --profile tui --profile obs
+                --profile tui --profile obs --profile k6
 
 # Convert "opening,analytics" → "--profile opening --profile analytics"
 # (empty string when EXTRA is unset). `empty :=` is the standard Make
@@ -287,6 +287,32 @@ perf-bake: ## Copy the most recent perf-reports/<ts>/ tree into the gateway reso
 	rm -rf $(GATLING_DST)/*; \
 	cp -R "$$latest"* $(GATLING_DST)/; \
 	echo "perf artifacts baked from $$latest → $(GATLING_DST)/"
+
+# --- k6 (Layer 1b — surfaces Gatling can't reach) -------------------------
+#
+# k6 lives parallel to gatling/: same output convention
+# (perf-reports/<UTC-ts>/k6/<surface>/), separate driver. See k6/README.md
+# and docs/performance.md "Layer 1b" for the surface map.
+
+.PHONY: k6-build
+k6-build: ## Build the custom k6 image (pinned grafana/k6 with browser)
+	docker compose --profile k6 build k6
+
+.PHONY: k6
+k6: ## Run all k6 surfaces. Vars: SURFACES (default browser), K6_VUS, K6_DURATION
+	SURFACES=$${SURFACES:-browser} scripts/k6-run.sh
+
+.PHONY: k6-browser
+k6-browser: ## Run only the k6/browser flow against the gateway UI
+	SURFACES=browser scripts/k6-run.sh
+
+.PHONY: k6-kafka
+k6-kafka: ## Run only the xk6-kafka direct producer load (requires xk6-kafka build)
+	SURFACES=kafka scripts/k6-run.sh
+
+.PHONY: k6-grpc
+k6-grpc: ## Run only the native k6 gRPC load against game-service
+	SURFACES=grpc scripts/k6-run.sh
 
 .PHONY: stack-restart
 stack-restart: ## Re-up the last-selected stack (reads $(STACK_STATE_FILE))

@@ -477,6 +477,33 @@ services:
     environment:
       PICHESS_GATEWAY_URL: "http://gateway:8090"
 
+  # k6 — Layer 1b of the perf stack (see docs/performance.md). Covers
+  # surfaces Gatling can't: real-browser Web Vitals, direct Kafka
+  # producer load (later), direct gRPC against game-service (later).
+  # Driven by scripts/k6-run.sh — `docker compose run --rm k6 …` rather
+  # than `up -d` because k6 is a one-shot load generator, not a daemon.
+  k6:
+    build: ./k6
+    image: pichess-k6:latest
+    container_name: pichess-k6
+    profiles: ["k6"]
+    # host networking so localhost:8090 (gateway), localhost:9092 (kafka,
+    # when exposed) and localhost:8091 (game-service gRPC) all resolve
+    # the same way they do from the host's shell.
+    network_mode: host
+    volumes:
+      - ./k6/scripts:/scripts:ro
+      - ./k6/lib:/lib:ro
+      - ./perf-reports:/out
+    environment:
+      K6_GATEWAY_URL: "${K6_GATEWAY_URL:-http://localhost:8090}"
+      K6_LOBBY_URL:   "${K6_LOBBY_URL:-http://localhost:8092}"
+      K6_KAFKA_BROKERS: "${K6_KAFKA_BROKERS:-localhost:9092}"
+      K6_GRPC_TARGET:   "${K6_GRPC_TARGET:-localhost:8091}"
+      K6_VUS:           "${K6_VUS:-5}"
+      K6_DURATION:      "${K6_DURATION:-30s}"
+    mem_limit: 1g
+
 networks:
   default:
     name: pichess

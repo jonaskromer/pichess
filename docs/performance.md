@@ -8,6 +8,7 @@ addressing a different question:
 | Layer | Question it answers | Tool |
 |---|---|---|
 | 1. Load tests | "How does the service behave under N concurrent users?" | Gatling |
+| 1b. Cross-stack load tests | "What can Gatling not see — browser, Kafka, gRPC?" | k6 (+ xk6-kafka, k6/browser) |
 | 2. Microbenchmarks | "Which pure function is the hot path?" | JMH |
 | 3. ZIO profiling | "Which effect is taking the time?" | zio-profiling (sampling) |
 | 4. JVM profiling | "Which JIT-compiled frame is taking the time?" | async-profiler |
@@ -132,6 +133,94 @@ sbt -DpichessPeakUsers=200 -DpichessHoldSeconds=300 \
 
 Output: `gatling/target/gatling/<simulation>-<runId>/`. The latest run is what
 `make perf-bake` / `make gatling-build` pick up for the dev page.
+
+---
+
+## Layer 1b — k6 (surfaces Gatling can't reach)
+
+Module: `k6/`. Image: pinned `grafana/k6:0.55.0` (Chromium + the `k6/browser`
+module bundled in core since 0.50). One JS script per surface.
+
+Layer 1 (Gatling) owns the HTTP load shapes. k6 sits next to it covering
+the three surfaces Gatling can't speak natively:
+
+| Surface | Script | What it measures | Status |
+|---|---|---|---|
+| Browser | `scripts/browser/lobby-flow.js` | Real Chromium → LCP / FCP / CLS on landing, `#new`, `#join` | **Shipped** |
+| Kafka   | `scripts/kafka/game-events.js`  | Direct producer onto `pichess.game.events` (bypasses HTTP) | Deferred — needs xk6-kafka build |
+| gRPC    | `scripts/grpc/game-service.js`  | Native gRPC against game-service (today only reached transitively via gateway) | Deferred |
+
+### Why a second tool
+
+The k6 integration is **additive**, not a replacement for Gatling. Gatling
+already does HTTP load shapes / ramps / SLA-as-code well — see Layer 1.
+What it can't do:
+
+- **Render real pages.** Gatling speaks HTTP, not DOM — it can't measure
+  LCP or FCP. The frontend's perceived performance is a complete blind
+  spot in Layers 1–6.
+- **Saturate Kafka directly.** `opening-service` and `analytics-service`
+  are Kafka-only; the current Gatling sims reach them through the
+  gateway → game-service → Kafka path, which makes the upstream the
+  bottleneck before consumers are ever stressed.
+- **Talk gRPC.** `game-service` is gRPC-only, so Gatling can't hit it
+  directly — every measurement passes through the gateway.
+
+### Shared infrastructure
+
+| File | Purpose |
+|---|---|
+| `k6/lib/config.js`     | `cfg.gatewayUrl`, `cfg.vus`, … — single source for env-var fallbacks |
+| `k6/lib/thresholds.js` | Shared SLA values. `httpThresholds` mirror Gatling assertions; `browserThresholds` use Google's "Good" Web Vitals buckets |
+| `k6/Dockerfile`        | Single-stage from `grafana/k6:0.55.0`. Kafka surface will replace this with a `grafana/xk6` two-stage build |
+
+### Compose / Docker
+
+Service `k6` under the `k6` profile. Bind-mounts `k6/scripts:/scripts`,
+`k6/lib:/lib`, `perf-reports:/out`. Runs with `network_mode: host` so
+the same `localhost:8090` / `localhost:9092` / `localhost:8091` targets
+resolve identically inside the container and from the host shell.
+
+### Invocation
+
+```bash
+make stack-postgres EXTRA=obs                 # gateway must be reachable on :8090
+make k6-build                                 # one-shot — pulls + builds the image
+make k6-browser                               # runs k6/scripts/browser/lobby-flow.js
+K6_VUS=20 K6_DURATION=120s make k6-browser    # tuned
+```
+
+`scripts/k6-run.sh` is the driver. It writes:
+
+```
+perf-reports/<UTC-ts>/k6/
+└── browser/
+    ├── summary.json   ← k6 handleSummary
+    └── stdout.log     ← full run log
+```
+
+A threshold breach exits the surface's container non-zero; the driver
+continues to the next surface and exits non-zero at the end if *any*
+surface failed, so CI sees one pass/fail.
+
+### Wiring to Layer 5 (Prometheus + Grafana)
+
+k6 supports `--out experimental-prometheus-rw=…` for native remote-write
+into the Prometheus container, and a dashboard JSON in
+`docker/grafana/dashboards/k6.json` would be auto-provisioned the same
+way as `pichess.json`. Neither is wired yet — first cut runs the script
+standalone with the JSON summary; the metrics wiring lands when the
+Kafka + gRPC surfaces do.
+
+### Not yet wired
+
+- `kafka` surface — needs an xk6-kafka image build and Kafka exposed
+  on host port 9092 (currently internal-only).
+- `gRPC` surface — needs game-service's gRPC port exposed and the
+  `.proto` files mounted into the container.
+- Backend rotation — `scripts/perf-run.sh` doesn't yet invoke k6 per
+  backend. When folded in, output will move to
+  `perf-reports/<ts>/<backend>/k6/` to match the Gatling layout.
 
 ---
 
@@ -507,10 +596,12 @@ change, with no dependency churn.
 | File / dir | Purpose |
 |---|---|
 | `gatling/`                                              | Gatling simulations + `Chains` + `SharedConfig` |
+| `k6/`                                                   | k6 scripts (browser / kafka / grpc) + `lib/` shared config + thresholds + `Dockerfile` |
 | `bench/`                                                | JMH benchmarks + `BenchFixtures` + `UnsafeRuntime` |
 | `observability/`                                        | Cross-cutting layers: `MetricsLayer`, `MetricsHttpServer`, `ProfilerLayer`, `TracingLayer`, `TracingMiddleware` |
 | `scripts/perf-run.sh`                                   | Backend-comparison harness |
 | `scripts/perf-summary.sh`                               | `comparison.md` generator |
+| `scripts/k6-run.sh`                                     | k6 surface driver (browser / kafka / grpc) |
 | `scripts/profile-async.sh`                              | async-profiler attach driver |
 | `docker/prometheus/prometheus.yml`                      | Scrape config (six static targets) |
 | `docker/grafana/provisioning/`                          | Auto-provisioned datasource + dashboards-from-dir provider |
