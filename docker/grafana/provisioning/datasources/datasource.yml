@@ -1,0 +1,13 @@
+# Auto-provisioned Prometheus datasource. Grafana picks it up at boot
+# from /etc/grafana/provisioning/datasources/, so no manual UI clicks
+# are needed when the obs profile comes up fresh.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true

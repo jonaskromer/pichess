@@ -7,11 +7,14 @@ import chess.controller.{
   StackInfo,
   WebController
 }
+import chess.obs.{MetricsHttpServer, ProfilerLayer, TracingLayer, TracingMiddleware}
 import io.grpc.ManagedChannelBuilder
 import pichess.game_service.ZioGameService
 import scalapb.zio_grpc.ZManagedChannel
 import zio.*
 import zio.http.*
+import zio.telemetry.opentelemetry.context.ContextStorage
+import zio.telemetry.opentelemetry.tracing.Tracing
 
 /** Standalone entry point for the gateway microservice.
   *
@@ -26,13 +29,17 @@ object GatewayMain extends ZIOAppDefault:
 
   private val defaultHttpPort = 8090
   private val defaultGameServiceTarget = "localhost:9000"
+  private val defaultMetricsPort = 9101
 
   override def run: ZIO[ZIOAppArgs, Throwable, Unit] =
-    for
-      httpPort <- portFromEnv("HTTP_PORT", defaultHttpPort)
-      target   <- targetFromEnv
-      _        <- serve(httpPort, target)
-    yield ()
+    ProfilerLayer.wrap(
+      "gateway",
+      for
+        httpPort <- portFromEnv("HTTP_PORT", defaultHttpPort)
+        target   <- targetFromEnv
+        _        <- serve(httpPort, target)
+      yield ()
+    )
 
   private[gateway] def parsePort(envValue: Option[String], default: Int): Int =
     envValue.flatMap(_.toIntOption).getOrElse(default)
@@ -47,7 +54,8 @@ object GatewayMain extends ZIOAppDefault:
 
   private def serve(httpPort: Int, target: String): Task[Unit] =
     val program: ZIO[
-      ZioGameService.GameServiceClient & Server & Client,
+      ZioGameService.GameServiceClient & Server & Client
+        & Tracing & ContextStorage,
       Throwable,
       Unit
     ] =
@@ -57,6 +65,7 @@ object GatewayMain extends ZIOAppDefault:
         cache        <- AnnotationCache.make
         lobbyBaseUrl <- LobbyProxy.baseUrlFromEnv
         stackInfo    <- StackInfo.fromEnv
+        metricsPort  <- MetricsHttpServer.portFromEnv(defaultMetricsPort)
         _            <- Console.printLine(
                           s"pichess-gateway HTTP listening on 0.0.0.0:$httpPort " +
                             s"(game-service=$target, lobby-service=$lobbyBaseUrl, " +
@@ -64,6 +73,10 @@ object GatewayMain extends ZIOAppDefault:
                             (if stackInfo.extras.isEmpty then ""
                              else s"+${stackInfo.extras.mkString(",")}") + ")"
                         )
+        _            <- Console.printLine(
+                          s"pichess-gateway metrics on 0.0.0.0:$metricsPort/metrics"
+                        )
+        _            <- MetricsHttpServer.serve(metricsPort).forkDaemon
         _            <- Server.install(
                           WebController.routes(
                             client,
@@ -71,7 +84,7 @@ object GatewayMain extends ZIOAppDefault:
                             cache,
                             lobbyBaseUrl,
                             stackInfo
-                          )
+                          ) @@ TracingMiddleware.serverSpan
                         )
         // Run forever; the gateway is no longer killable from a network
         // request — `docker stop` / SIGTERM is the only shutdown path.
@@ -85,5 +98,6 @@ object GatewayMain extends ZIOAppDefault:
         ZManagedChannel(
           ManagedChannelBuilder.forTarget(target).usePlaintext()
         )
-      )
+      ),
+      TracingLayer.fromEnv("gateway"),
     )

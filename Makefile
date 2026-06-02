@@ -123,7 +123,7 @@ EXTRA            ?=
 # survives a stack switch.
 ALL_PROFILES := --profile postgres --profile mongo --profile cassandra \
                 --profile redis --profile opening --profile analytics \
-                --profile tui
+                --profile tui --profile obs
 
 # Convert "opening,analytics" → "--profile opening --profile analytics"
 # (empty string when EXTRA is unset). `empty :=` is the standard Make
@@ -230,6 +230,63 @@ gatling-build: ## Run gatling + bake the latest report into the gateway resource
 	  cp -R "$$latest"* $(GATLING_DST)/; \
 	  echo "gatling report copied from $$latest → $(GATLING_DST)/"; \
 	fi
+
+# --- Performance / profiling -----------------------------------------------
+#
+# `bench` runs the JMH microbenchmark suite and writes a JSON result that
+# the perf harness folds into its summary. `perf` switches stacks across
+# the requested backends and runs the chosen Gatling simulation against
+# each. `profile-async-cpu` attaches async-profiler to a running service
+# container for a fixed duration.
+
+PERF_REPORTS_DIR := perf-reports
+
+.PHONY: bench
+bench: ## Run the JMH microbenchmark suite + write JSON to perf-reports
+	@mkdir -p $(PERF_REPORTS_DIR)
+	@ts=$$(date -u +%Y%m%dT%H%M%SZ); \
+	out=$(PERF_REPORTS_DIR)/bench-$$ts.json; \
+	sbt "bench/Jmh/run -i 3 -wi 3 -f1 -rf json -rff $$out"; \
+	echo "JMH results → $$out"
+
+.PHONY: perf
+perf: ## Cross-backend Gatling harness. Vars: BACKENDS, MODE, OBS, PEAK_USERS, …
+	scripts/perf-run.sh
+
+.PHONY: perf-summary
+perf-summary: ## Rebuild comparison.md for the most recent perf run
+	@latest=$$(ls -dt $(PERF_REPORTS_DIR)/*/ 2>/dev/null | head -1); \
+	if [ -z "$$latest" ]; then \
+	  echo "no runs found under $(PERF_REPORTS_DIR)/"; exit 1; \
+	fi; \
+	scripts/perf-summary.sh "$$latest"
+
+.PHONY: profile-async-cpu
+profile-async-cpu: ## Attach async-profiler (cpu) to SERVICE for DURATION seconds
+	@if [ -z "$(SERVICE)" ]; then \
+	  echo "usage: make profile-async-cpu SERVICE=<name> [DURATION=60]"; \
+	  exit 1; \
+	fi
+	scripts/profile-async.sh $(SERVICE) $${DURATION:-60} cpu
+
+.PHONY: profile-async-alloc
+profile-async-alloc: ## Attach async-profiler (alloc) to SERVICE for DURATION seconds
+	@if [ -z "$(SERVICE)" ]; then \
+	  echo "usage: make profile-async-alloc SERVICE=<name> [DURATION=60]"; \
+	  exit 1; \
+	fi
+	scripts/profile-async.sh $(SERVICE) $${DURATION:-60} alloc
+
+.PHONY: perf-bake
+perf-bake: ## Copy the most recent perf-reports/<ts>/ tree into the gateway resources
+	@latest=$$(ls -dt $(PERF_REPORTS_DIR)/*/ 2>/dev/null | head -1); \
+	if [ -z "$$latest" ]; then \
+	  echo "no perf runs found under $(PERF_REPORTS_DIR)/"; exit 1; \
+	fi; \
+	mkdir -p $(GATLING_DST); \
+	rm -rf $(GATLING_DST)/*; \
+	cp -R "$$latest"* $(GATLING_DST)/; \
+	echo "perf artifacts baked from $$latest → $(GATLING_DST)/"
 
 .PHONY: stack-restart
 stack-restart: ## Re-up the last-selected stack (reads $(STACK_STATE_FILE))

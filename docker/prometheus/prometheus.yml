@@ -1,0 +1,28 @@
+# Prometheus scrape config for the piChess stack.
+#
+# Each service exposes Prometheus exposition on its dedicated metrics
+# port (see chess.obs.MetricsHttpServer for the allocation table). All
+# six services are scraped uniformly every 5 seconds — matching the
+# publisher's snapshot interval in `chess.obs.MetricsLayer.defaultInterval`.
+#
+# Service hostnames are the docker-compose service names; the prometheus
+# container shares the `pichess` network so DNS resolves them.
+
+global:
+  scrape_interval:     5s
+  evaluation_interval: 5s
+  external_labels:
+    project: pichess
+
+scrape_configs:
+  - job_name: pichess
+    static_configs:
+      - targets:
+          - gateway:9101
+          - game-service:9102
+          - repository:9103
+          - lobby-service:9104
+          - opening-service:9105
+          - analytics-service:9106
+        labels:
+          stack: pichess

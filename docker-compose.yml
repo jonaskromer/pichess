@@ -252,6 +252,19 @@ services:
       PICHESS_CLICKHOUSE_URL: "jdbc:clickhouse://clickhouse:8123/default"
       PICHESS_CLICKHOUSE_USER: "default"
       PICHESS_CLICKHOUSE_PASSWORD: ""
+      # PICHESS_PROFILE=sampling activates chess.obs.ProfilerLayer; the
+      # service then dumps stack-collapsed profile files to
+      # /var/log/pichess on shutdown, which is bind-mounted below.
+      PICHESS_PROFILE: "${PICHESS_PROFILE:-off}"
+      # TRACING_ENABLED=true makes chess.obs.TracingLayer use the live
+      # OTLP gRPC exporter (pointed at the jaeger container's :4317);
+      # any other value picks the no-op layer that never opens a
+      # connection. Default is off so services that aren't running the
+      # `obs` profile don't churn on a dead exporter.
+      TRACING_ENABLED: "${TRACING_ENABLED:-false}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}"
+    volumes: &profile-volume
+      - ./perf-reports/profiles:/var/log/pichess
 
   repository:
     image: pichess-repository:latest
@@ -279,6 +292,7 @@ services:
       <<: *persistence-env
       REPOSITORY_PORT: "8091"
       KAFKA_CONSUMER_GROUP: "pichess-repository"
+    volumes: *profile-volume
     healthcheck:
       # Repository exposes no /health yet; hit an arbitrary game ID and
       # treat a 404 as "server is up and responding".
@@ -309,6 +323,7 @@ services:
     environment:
       <<: *persistence-env
       LOBBY_PORT: "8092"
+    volumes: *profile-volume
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8092/healthcheck 2>&1 | grep -q ok"]
       interval: 5s
@@ -331,6 +346,7 @@ services:
       PICHESS_NEO4J_URL: "bolt://neo4j:7687"
       PICHESS_NEO4J_USER: "neo4j"
       PICHESS_NEO4J_PASSWORD: "password"
+    volumes: *profile-volume
 
   analytics-service:
     image: pichess-analytics-service:latest
@@ -351,6 +367,7 @@ services:
       PICHESS_CLICKHOUSE_URL: "jdbc:clickhouse://clickhouse:8123/default"
       PICHESS_CLICKHOUSE_USER: "default"
       PICHESS_CLICKHOUSE_PASSWORD: ""
+    volumes: *profile-volume
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8093/healthcheck 2>&1 | grep -q ok"]
       interval: 5s
@@ -377,6 +394,70 @@ services:
       # When set to "true" the /dev/* routes light up and the UI
       # surfaces the Dev link on the start screen post-it.
       PICHESS_DEV: "${PICHESS_DEV:-false}"
+      PICHESS_PROFILE: "${PICHESS_PROFILE:-off}"
+      TRACING_ENABLED: "${TRACING_ENABLED:-false}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}"
+    volumes: *profile-volume
+
+  # ---------------------------------------------------------------------------
+  # Observability — opt-in via `EXTRA=obs` on the make stack-* targets.
+  #
+  # Each microservice exposes Prometheus exposition on its dedicated
+  # metrics port (9101–9106) regardless of profile; the `obs` profile
+  # brings up a Prometheus to scrape them and a Grafana to visualise the
+  # result. Both are memory-capped because the dev rig is a MacBook Air.
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    container_name: pichess-prometheus
+    profiles: ["obs"]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=2h
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+    mem_limit: 256m
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: pichess-grafana
+    profiles: ["obs"]
+    depends_on:
+      prometheus:
+        condition: service_started
+    ports:
+      - "3000:3000"
+    environment:
+      # Anonymous read-only access — the dev rig is single-user, no need
+      # for a login screen. Override these for any non-dev deployment.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_USERS_DEFAULT_THEME: "light"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    mem_limit: 256m
+
+  # Jaeger all-in-one: receives OTLP gRPC on :4317 from every microservice
+  # (via chess.obs.TracingLayer) and serves the trace UI on :16686. Used
+  # as a one-container alternative to running otel-collector + Tempo —
+  # adequate for dev-rig RAM constraints (~500MB instead of ~1.5GB).
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: pichess-jaeger
+    profiles: ["obs"]
+    ports:
+      - "16686:16686"   # web UI
+      - "4317:4317"     # OTLP gRPC receiver
+      - "4318:4318"     # OTLP HTTP receiver
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    mem_limit: 512m
 
   # Headless control surface. Not in the default compose profile — `up`
   # doesn't start it. Spawn one via `make tui` (or

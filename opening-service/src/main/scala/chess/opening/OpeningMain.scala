@@ -1,5 +1,6 @@
 package chess.opening
 
+import chess.obs.{MetricsHttpServer, ProfilerLayer}
 import zio.*
 
 /** Standalone entry point for the opening-service microservice.
@@ -15,16 +16,25 @@ import zio.*
 object OpeningMain extends ZIOAppDefault:
 
   private val defaultConsumerGroup = "pichess-opening"
+  private val defaultMetricsPort = 9105
 
   override def run: ZIO[ZIOAppArgs, Throwable, Unit] =
+    ProfilerLayer.wrap("opening-service", runProfiled)
+
+  private def runProfiled: ZIO[ZIOAppArgs, Throwable, Unit] =
     val program: ZIO[OpeningProjection, Throwable, Unit] =
       for
-        bootstrap  <- zio.System.env("KAFKA_BOOTSTRAP_SERVERS")
-        group      <- zio.System
-                        .env("KAFKA_CONSUMER_GROUP")
-                        .map(_.getOrElse(defaultConsumerGroup))
-        projection <- ZIO.service[OpeningProjection]
-        _          <- bootstrap.filter(_.trim.nonEmpty) match
+        bootstrap   <- zio.System.env("KAFKA_BOOTSTRAP_SERVERS")
+        group       <- zio.System
+                         .env("KAFKA_CONSUMER_GROUP")
+                         .map(_.getOrElse(defaultConsumerGroup))
+        projection  <- ZIO.service[OpeningProjection]
+        metricsPort <- MetricsHttpServer.portFromEnv(defaultMetricsPort)
+        _           <- Console.printLine(
+                         s"pichess-opening-service metrics on 0.0.0.0:$metricsPort/metrics"
+                       )
+        _           <- MetricsHttpServer.serve(metricsPort).forkDaemon
+        _           <- bootstrap.filter(_.trim.nonEmpty) match
                         case Some(servers) =>
                           Console.printLine(
                             s"pichess-opening-service consuming chess.game-events from $servers (group=$group)"

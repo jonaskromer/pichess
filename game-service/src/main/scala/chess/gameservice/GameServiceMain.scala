@@ -5,6 +5,7 @@ import chess.events.{
   InMemoryGameEventProducer,
   KafkaGameEventProducer
 }
+import chess.obs.{MetricsHttpServer, ProfilerLayer}
 import chess.persistence.{BackendConfig, GameRepository}
 import chess.persistence.runtime.PersistenceLayers
 import chess.service.{GameService, GameServiceLive}
@@ -28,16 +29,20 @@ import zio.*
 object GameServiceMain extends ZIOAppDefault:
 
   private val defaultPort = 9000
+  private val defaultMetricsPort = 9102
 
   override def run: ZIO[ZIOAppArgs, Throwable, Unit] =
-    for
-      port <- portFromEnv
-      cfg  <- BackendConfig.fromEnv
-      _    <- Console.printLine(
-                s"pichess-game-service backend=${cfg.backend} cache=${cfg.cache}"
-              )
-      _    <- serve(port, cfg)
-    yield ()
+    ProfilerLayer.wrap(
+      "game-service",
+      for
+        port <- portFromEnv
+        cfg  <- BackendConfig.fromEnv
+        _    <- Console.printLine(
+                  s"pichess-game-service backend=${cfg.backend} cache=${cfg.cache}"
+                )
+        _    <- serve(port, cfg)
+      yield ()
+    )
 
   private[gameservice] def portFromEnv: Task[Int] =
     zio.System.env("GRPC_PORT").map(parsePort)
@@ -62,9 +67,15 @@ object GameServiceMain extends ZIOAppDefault:
 
   private def serve(port: Int, cfg: BackendConfig): Task[Unit] =
     val program: ZIO[scalapb.zio_grpc.Server, Throwable, Unit] =
-      Console.printLine(
-        s"pichess-game-service gRPC listening on 0.0.0.0:$port"
-      ) *> ZIO.service[scalapb.zio_grpc.Server].flatMap(_.awaitTermination)
+      for
+        metricsPort <- MetricsHttpServer.portFromEnv(defaultMetricsPort)
+        _           <- Console.printLine(
+                         s"pichess-game-service gRPC listening on 0.0.0.0:$port " +
+                           s"(metrics on 0.0.0.0:$metricsPort/metrics)"
+                       )
+        _           <- MetricsHttpServer.serve(metricsPort).forkDaemon
+        _           <- ZIO.service[scalapb.zio_grpc.Server].flatMap(_.awaitTermination)
+      yield ()
 
     val producerLayer: ZLayer[Any, Throwable, GameEventProducer] =
       selectProducerLayer(sys.env.get("KAFKA_BOOTSTRAP_SERVERS"))

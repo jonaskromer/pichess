@@ -38,6 +38,10 @@ val neo4jDriverVersion     = "5.28.5"
 val clickhouseJdbcVersion  = "0.9.0"
 val zioJdbcVersion         = "0.1.2"
 val gatlingVersion         = "3.13.5"
+val zioMetricsConnectorsVersion = "2.5.5"
+val zioOpenTelemetryVersion     = "3.0.0-RC24"
+val openTelemetryVersion        = "1.43.0"
+val zioProfilingVersion         = "0.3.3"
 
 /** Group jars into separate Docker layers so a one-file source change only
   * invalidates the (small) project-jar layer, not the (large) 3rd-party-jar
@@ -54,11 +58,30 @@ val pichessLayerGrouping: PartialFunction[(File, String), Int] = {
       4 // layer 4: bin/, conf/, etc.
 }
 
+// When PICHESS_PROFILE_BUILD=true at sbt invocation, the zio-profiling
+// tagging compiler plugin is added everywhere. It rewrites every effect-
+// returning def/val with `CostCenter.withChildCostCenter` so the
+// sampling profiler can attribute time to source lines instead of the
+// ZIO evaluation loop. The rewritten code adds synthetic statements
+// that scoverage would count as uncovered, so coverage is also disabled
+// in this mode — profile builds are *not* the same artifact as the
+// CI/coverage-gated builds.
+val profileBuildEnabled: Boolean =
+  sys.env.get("PICHESS_PROFILE_BUILD").exists(_.equalsIgnoreCase("true"))
+
 lazy val commonSettings = Seq(
   libraryDependencies ++= Seq(
     "dev.zio" %% "zio"          % zioVersion,
     "dev.zio" %% "zio-test"     % zioVersion % Test,
     "dev.zio" %% "zio-test-sbt" % zioVersion % Test,
+  ) ++ (
+    if (profileBuildEnabled)
+      Seq(
+        compilerPlugin(
+          "dev.zio" %% "zio-profiling-tagging-plugin" % zioProfilingVersion
+        )
+      )
+    else Seq.empty
   ),
   testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
   // Coverage is opt-in via `sbt coverage test coverageReport`. Leaving it on
@@ -66,7 +89,8 @@ lazy val commonSettings = Seq(
   // which tries to write coverage data to the host path at startup and
   // breaks Docker containers with a FileNotFoundException.
   coverageMinimumStmtTotal := 100,
-  coverageFailOnMinimum    := true,
+  coverageFailOnMinimum    := !profileBuildEnabled,
+  coverageEnabled          := !profileBuildEnabled,
 )
 
 // domain is shared with the Scala.js web-ui, so deps must resolve on both
@@ -350,7 +374,8 @@ lazy val repository = project
     codec,
     events,
     persistenceApi,
-    persistenceRuntime
+    persistenceRuntime,
+    observability
   )
   .enablePlugins(JavaAppPackaging, DockerPlugin)
   .settings(commonSettings)
@@ -385,7 +410,8 @@ lazy val gameService = project
     events,
     proto,
     persistenceApi,
-    persistenceRuntime
+    persistenceRuntime,
+    observability
   )
   .enablePlugins(JavaAppPackaging, DockerPlugin)
   .settings(commonSettings)
@@ -415,7 +441,7 @@ lazy val gameService = project
 // the perspective of game state — never serves the primary GameRepository.
 lazy val openingService = project
   .in(file("opening-service"))
-  .dependsOn(domain.jvm, codec, events)
+  .dependsOn(domain.jvm, codec, events, observability)
   .enablePlugins(JavaAppPackaging, DockerPlugin)
   .settings(commonSettings)
   .settings(
@@ -440,7 +466,7 @@ lazy val openingService = project
 // admin panel can call it without speaking JDBC.
 lazy val analyticsService = project
   .in(file("analytics-service"))
-  .dependsOn(domain.jvm, codec, events)
+  .dependsOn(domain.jvm, codec, events, observability)
   .enablePlugins(JavaAppPackaging, DockerPlugin)
   .settings(commonSettings)
   .settings(
@@ -481,7 +507,8 @@ lazy val lobbyService = project
     domain.jvm,
     api.jvm,
     persistenceApi,
-    persistenceRuntime
+    persistenceRuntime,
+    observability
   )
   .enablePlugins(JavaAppPackaging, DockerPlugin)
   .settings(commonSettings)
@@ -512,7 +539,7 @@ lazy val lobbyService = project
 
 lazy val gateway = project
   .in(file("gateway"))
-  .dependsOn(gameService, codec, api.jvm, proto)
+  .dependsOn(gameService, codec, api.jvm, proto, observability)
   .enablePlugins(JavaAppPackaging, DockerPlugin)
   .settings(commonSettings)
   .settings(
@@ -572,6 +599,53 @@ lazy val gatling = project
     libraryDependencies ++= Seq(
       "io.gatling.highcharts" % "gatling-charts-highcharts" % gatlingVersion % Test,
       "io.gatling"            % "gatling-test-framework"    % gatlingVersion % Test,
+    ),
+    coverageEnabled := false,
+  )
+
+// Cross-cutting observability layer shared by every service: Prometheus
+// metrics exposition, OpenTelemetry tracing, and zio-profiling sampling.
+// Each service Main pulls these in and wires them next to its main HTTP
+// or gRPC listener — see `chess.obs.MetricsHttpServer` for the
+// per-service `/metrics` endpoint wiring.
+lazy val observability = project
+  .in(file("observability"))
+  .dependsOn(domain.jvm)
+  .settings(commonSettings)
+  .settings(
+    name := "pichess-observability",
+    libraryDependencies ++= Seq(
+      "dev.zio" %% "zio-http"                            % zioHttpVersion,
+      "dev.zio" %% "zio-metrics-connectors"              % zioMetricsConnectorsVersion,
+      "dev.zio" %% "zio-metrics-connectors-prometheus"   % zioMetricsConnectorsVersion,
+      "dev.zio" %% "zio-opentelemetry"                   % zioOpenTelemetryVersion,
+      "io.opentelemetry" %  "opentelemetry-sdk"          % openTelemetryVersion,
+      "io.opentelemetry" %  "opentelemetry-exporter-otlp" % openTelemetryVersion,
+      "io.opentelemetry" %  "opentelemetry-sdk-extension-autoconfigure" % openTelemetryVersion,
+      "dev.zio" %% "zio-profiling"                       % zioProfilingVersion,
+    ),
+    // Coverage is exercised end-to-end via the perf harness once a
+    // service Main mounts these layers; the layer-construction code
+    // itself isn't unit-testable in isolation.
+    coverageEnabled := false,
+  )
+
+// Microbenchmarks for chess-engine internals via JMH. Targets the pure-
+// functional hot paths the gateway-level Gatling suite can't isolate:
+// move generation, legal-move filtering, FEN/SAN parsing, Zobrist
+// hashing. Output is JSON so the perf-run harness can fold it into a
+// cross-backend comparison report.
+//
+// Run with:  sbt 'bench/Jmh/run -i 5 -wi 5 -f1 chess.bench.FenParserBenchmark'
+lazy val bench = project
+  .in(file("bench"))
+  .dependsOn(domain.jvm, rules, codec)
+  .enablePlugins(JmhPlugin)
+  .settings(
+    name         := "pichess-bench",
+    scalaVersion := "3.8.2",
+    libraryDependencies ++= Seq(
+      "dev.zio" %% "zio" % zioVersion,
     ),
     coverageEnabled := false,
   )
@@ -655,6 +729,8 @@ lazy val root = project
     tui,
     webUi,
     gatling,
+    bench,
+    observability,
   )
   .settings(
     name := "pichess",

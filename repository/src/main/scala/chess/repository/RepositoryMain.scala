@@ -1,9 +1,12 @@
 package chess.repository
 
+import chess.obs.{MetricsHttpServer, ProfilerLayer, TracingLayer, TracingMiddleware}
 import chess.persistence.{BackendConfig, GameRepository}
 import chess.persistence.runtime.PersistenceLayers
 import zio.*
 import zio.http.*
+import zio.telemetry.opentelemetry.context.ContextStorage
+import zio.telemetry.opentelemetry.tracing.Tracing
 
 /** Standalone entry point for the repository microservice.
   *
@@ -22,16 +25,20 @@ object RepositoryMain extends ZIOAppDefault:
 
   private[repository] val defaultPort = 8091
   private[repository] val defaultConsumerGroup = "pichess-repository"
+  private val defaultMetricsPort = 9103
 
   override def run: ZIO[ZIOAppArgs, Throwable, Unit] =
-    for
-      port <- portFromEnv
-      cfg  <- BackendConfig.fromEnv
-      _    <- Console.printLine(
-                s"pichess-repository backend=${cfg.backend} cache=${cfg.cache}"
-              )
-      _    <- serve(port).provide(gameRepoLayer(cfg))
-    yield ()
+    ProfilerLayer.wrap(
+      "repository",
+      for
+        port <- portFromEnv
+        cfg  <- BackendConfig.fromEnv
+        _    <- Console.printLine(
+                  s"pichess-repository backend=${cfg.backend} cache=${cfg.cache}"
+                )
+        _    <- serve(port).provide(gameRepoLayer(cfg))
+      yield ()
+    )
 
   /** Read `REPOSITORY_PORT` via the ZIO system service so tests can swap it
     * out with `TestSystem.putEnv` instead of relying on the JVM's real env.
@@ -54,30 +61,45 @@ object RepositoryMain extends ZIOAppDefault:
   private[repository] def serve(
       port: Int
   ): ZIO[GameRepository, Throwable, Unit] =
-    val program: ZIO[GameRepository & Server, Throwable, Unit] =
+    val program: ZIO[
+      GameRepository & Server & Tracing & ContextStorage,
+      Throwable,
+      Unit,
+    ] =
       for
-        repo      <- ZIO.service[GameRepository]
-        bootstrap <- zio.System.env("KAFKA_BOOTSTRAP_SERVERS")
-        group     <- zio.System
-                       .env("KAFKA_CONSUMER_GROUP")
-                       .map(_.getOrElse(defaultConsumerGroup))
-        _         <- Console.printLine(
-                       s"pichess-repository listening on 0.0.0.0:$port"
-                     )
-        _         <- bootstrap.filter(_.trim.nonEmpty) match
-                       case Some(servers) =>
-                         Console.printLine(
-                           s"pichess-repository consuming chess.game-events from $servers (group=$group)"
-                         ) *>
-                           KafkaGameEventConsumer
-                             .run(repo)
-                             .provideSomeLayer(
-                               KafkaGameEventConsumer.consumerLayer(servers, group)
+        repo        <- ZIO.service[GameRepository]
+        bootstrap   <- zio.System.env("KAFKA_BOOTSTRAP_SERVERS")
+        group       <- zio.System
+                         .env("KAFKA_CONSUMER_GROUP")
+                         .map(_.getOrElse(defaultConsumerGroup))
+        metricsPort <- MetricsHttpServer.portFromEnv(defaultMetricsPort)
+        _           <- Console.printLine(
+                         s"pichess-repository listening on 0.0.0.0:$port " +
+                           s"(metrics on 0.0.0.0:$metricsPort/metrics)"
+                       )
+        _           <- MetricsHttpServer.serve(metricsPort).forkDaemon
+        _           <- bootstrap.filter(_.trim.nonEmpty) match
+                         case Some(servers) =>
+                           Console.printLine(
+                             s"pichess-repository consuming chess.game-events from $servers (group=$group)"
+                           ) *>
+                             KafkaGameEventConsumer
+                               .run(repo)
+                               .provideSomeLayer(
+                                 KafkaGameEventConsumer.consumerLayer(servers, group)
+                               )
+                               .forkDaemon *>
+                             Server.serve(
+                               RepositoryServer.routes(repo)
+                                 @@ TracingMiddleware.serverSpan
                              )
-                             .forkDaemon *>
-                           Server.serve(RepositoryServer.routes(repo))
-                       case None =>
-                         Server.serve(RepositoryServer.routes(repo))
+                         case None =>
+                           Server.serve(
+                             RepositoryServer.routes(repo)
+                               @@ TracingMiddleware.serverSpan
+                           )
       yield ()
 
-    program.provideSomeLayer[GameRepository](Server.defaultWithPort(port))
+    program.provideSomeLayer[GameRepository](
+      Server.defaultWithPort(port) ++ TracingLayer.fromEnv("repository")
+    )
