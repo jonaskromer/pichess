@@ -24,8 +24,18 @@ OUT="$RUN_DIR/comparison.md"
 
   for summary in "$RUN_DIR"/*/summary.txt; do
     [[ -f "$summary" ]] || continue
+    # macOS ships bash 3.2 which doesn't propagate assignments from
+    # `source <(...)` process substitution. Route through a temp file
+    # so the keys land in the surrounding shell.
+    tmp_env="$(mktemp)"
+    grep -E '^(backend|mode|requests_ok|requests_ko|mean_rps|p50_ms|p95_ms|p99_ms)=' \
+      "$summary" > "$tmp_env"
+    # Clear any previous run's vars so a missing key in summary.txt
+    # surfaces as "?" rather than the prior backend's value.
+    unset backend mode requests_ok requests_ko mean_rps p50_ms p95_ms p99_ms
     # shellcheck disable=SC1090
-    source <(grep -E '^(backend|mode|requests_ok|requests_ko|mean_rps|p50_ms|p95_ms|p99_ms)=' "$summary")
+    source "$tmp_env"
+    rm -f "$tmp_env"
     printf '| %s | %s | %s | %s | %s | %s | %s | %s |\n' \
       "${backend:-?}" "${mode:-?}" "${requests_ok:-?}" "${requests_ko:-?}" \
       "${mean_rps:-?}" "${p50_ms:-?}" "${p95_ms:-?}" "${p99_ms:-?}"

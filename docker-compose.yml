@@ -175,16 +175,25 @@ services:
     # and `repository` still start (their kafka depends_on is required:false
     # below) and skip event publishing.
     profiles: ["analytics", "opening"]
+    # Two listeners:
+    #   PLAINTEXT      :9092  advertised as kafka:9092       — for in-network containers
+    #                                                          (game-service, repository,
+    #                                                           opening, analytics)
+    #   PLAINTEXT_HOST :29092 advertised as localhost:29092   — for host-side k6 (xk6-kafka)
+    #                                                          and any ad-hoc kcat probes
+    # Keeping the internal advertised listener at kafka:9092 means existing
+    # services don't change their KAFKA_BOOTSTRAP_SERVERS.
     ports:
       - "9092:9092"
+      - "29092:29092"
     environment:
       KAFKA_NODE_ID: "1"
       KAFKA_PROCESS_ROLES: "broker,controller"
-      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
-      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,PLAINTEXT_HOST://:29092,CONTROLLER://:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092"
       KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
       KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
       KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
@@ -493,15 +502,30 @@ services:
     network_mode: host
     volumes:
       - ./k6/scripts:/scripts:ro
-      - ./k6/lib:/lib:ro
+      # Mount lib under /k6lib (NOT /lib) — Alpine ships the musl
+      # dynamic linker (ld-musl-*.so.1) in /lib, which Chromium needs.
+      # Bind-mounting over /lib shadows the linker and every dynamic
+      # binary in the container fails to load (manifests as a misleading
+      # "file does not exist: /usr/lib/chromium/chromium" from k6).
+      - ./k6/lib:/k6lib:ro
+      # Proto definitions for the gRPC surface — k6's client.load(...)
+      # resolves imports relative to the first arg. Mounted read-only.
+      - ./proto/src/main/protobuf:/proto:ro
       - ./perf-reports:/out
     environment:
       K6_GATEWAY_URL: "${K6_GATEWAY_URL:-http://localhost:8090}"
       K6_LOBBY_URL:   "${K6_LOBBY_URL:-http://localhost:8092}"
-      K6_KAFKA_BROKERS: "${K6_KAFKA_BROKERS:-localhost:9092}"
-      K6_GRPC_TARGET:   "${K6_GRPC_TARGET:-localhost:8091}"
-      K6_VUS:           "${K6_VUS:-5}"
-      K6_DURATION:      "${K6_DURATION:-30s}"
+      # Kafka uses the host-side listener (advertised as localhost:29092
+      # by the kafka service above) — the in-network kafka:9092 isn't
+      # resolvable from a network_mode: host container.
+      K6_KAFKA_BROKERS: "${K6_KAFKA_BROKERS:-localhost:29092}"
+      # game-service maps its gRPC port (9000) on the host.
+      K6_GRPC_TARGET:   "${K6_GRPC_TARGET:-localhost:9000}"
+      # PICHESS_K6_* names so k6 doesn't treat them as overrides for
+      # its reserved K6_VUS / K6_DURATION (which would force a default
+      # scenario and skip the browser type wiring).
+      PICHESS_K6_VUS:      "${PICHESS_K6_VUS:-5}"
+      PICHESS_K6_DURATION: "${PICHESS_K6_DURATION:-30s}"
     mem_limit: 1g
 
 networks:

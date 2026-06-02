@@ -522,18 +522,18 @@ layer or surface, plus an orchestrator for the full sweep.
 
 | Target | What it does |
 |---|---|
-| `make perf-all` | JMH bench → Gatling cross-backend → k6 browser, in that order. Honors `BACKENDS`, `MODE`, `OBS`, `K6_VUS`, `K6_DURATION`. Cleans the stack up via a trap, even on failure. |
+| `make perf-all` | JMH bench → Gatling cross-backend → all three k6 surfaces, in that order. Output rooted at one shared `perf-reports/<TS>/` tree. Honors every Layer 1 / 1b var below. Cleans the stack up via a trap, even on failure. |
 
 **Run a single layer / surface**
 
 | Target | Layer | What it does |
 |---|---|---|
 | `make perf`              | 1   | Cross-backend Gatling harness. Vars: `BACKENDS`, `MODE`, `OBS`, `PEAK_USERS`, … |
-| `make k6-browser`        | 1b  | Real-Chromium flow against the gateway UI. Vars: `K6_VUS`, `K6_DURATION` |
-| `make k6-kafka`          | 1b  | Direct xk6-kafka producer load (deferred — needs xk6 build) |
-| `make k6-grpc`           | 1b  | Native gRPC against game-service (deferred) |
-| `make k6`                | 1b  | All k6 surfaces. Vars: `SURFACES` (default `browser`), `K6_VUS`, `K6_DURATION` |
-| `make bench`             | 2   | JMH microbenchmark suite → `perf-reports/bench-<ts>.json` |
+| `make k6-browser`        | 1b  | Real-Chromium flow against the gateway UI. Captures Core Web Vitals (LCP / FCP / CLS). Vars: `PICHESS_K6_VUS`, `PICHESS_K6_DURATION` |
+| `make k6-kafka`          | 1b  | Direct `xk6-kafka` producer load onto `chess.game-events`. Bypasses the HTTP → gRPC → producer path so it stresses Kafka and downstream consumers directly. Needs `EXTRA=opening` (or `analytics`) on the stack so Kafka is up. |
+| `make k6-grpc`           | 1b  | Native gRPC against game-service. Bypasses gateway + JSON entirely, so it isolates game-service's own command latency from the surrounding HTTP stack. Also surfaces a known game-service race under concurrent gameIds (see "k6/grpc state-match diagnostic" in the surface's stdout). |
+| `make k6`                | 1b  | All k6 surfaces. Vars: `SURFACES` (default `browser` — set `SURFACES=browser,grpc,kafka` for the full set), `PICHESS_K6_VUS`, `PICHESS_K6_DURATION` |
+| `make bench`             | 2   | JMH microbenchmark suite → `perf-reports/bench-<ts>.json` (no tunable env vars at the make-target level) |
 | `make profile-async-cpu` SERVICE=… | 4   | Attach async-profiler (CPU) to a live service for `DURATION` seconds |
 | `make profile-async-alloc` SERVICE=… | 4   | Same but for the `alloc` event |
 
@@ -545,10 +545,82 @@ above for the `PICHESS_PROFILE` / `EXTRA=obs` / `TRACING_ENABLED` flags.
 
 | Target | What it does |
 |---|---|
-| `make k6-build`             | Build the custom k6 image (one-shot — pulls `grafana/k6:0.55.0`) |
+| `make k6-build`             | Build the custom k6 image (one-shot — pulls `grafana/k6:0.55.0-with-browser`) |
 | `make perf-summary`         | Regenerate `comparison.md` for the most recent perf run |
 | `make perf-bake`            | Copy the most recent `perf-reports/<ts>/` into the gateway's dev resources |
 | `make gatling-build`        | Legacy single-run alias — runs all simulations, bakes the latest into the gateway |
+
+### Environment variables — full reference
+
+Every tunable env var the perf-suite Make targets honor, grouped by
+target. Defaults match the values in `scripts/perf-run.sh`,
+`scripts/k6-run.sh`, `scripts/perf-all.sh`, and `k6/lib/config.js`.
+
+**Layer 1 — `make perf` and `make perf-all`**
+
+| Var | Default | What it controls |
+|---|---|---|
+| `BACKENDS`      | `inmemory,postgres,mongo,redis,cassandra` | Comma-separated subset of backends to rotate through. |
+| `MODE`          | `Game` | Gatling simulation class name suffix: `Game` / `Lobby` / `Stress` / `Endurance` / `Spike` / `Volume` / `Mixed`. |
+| `OBS`           | `false` (`perf`) / `true` (`perf-all`) | When `true`, also brings up `obs` profile (Prometheus + Grafana + Jaeger) and snapshots Prometheus before/after each run. |
+| `WARMUP_ITERS`  | `50` | Game-replay warm-up cycles before measurement so the JIT has compiled hot paths. |
+| `PEAK_USERS`    | `50` | → Gatling `-DpichessPeakUsers`. Used by stress / spike / volume / mixed simulations. |
+| `RAMP_SECONDS`  | `10` | → Gatling `-DpichessRampSeconds`. Ramp duration. |
+| `HOLD_SECONDS`  | `60` | → Gatling `-DpichessHoldSeconds`. Plateau / endurance hold window. |
+| `RATE_PER_SEC`  | `5`  | → Gatling `-DpichessRatePerSec`. Open-loop arrival rate. |
+| `PERF_TS`       | (auto, UTC stamp) | Override the run directory name. Set by `perf-all` so JMH + Gatling + k6 land in one tree; not normally set by hand. |
+
+**Layer 1b — `make k6-*` and the k6 portion of `make perf-all`**
+
+| Var | Default | What it controls |
+|---|---|---|
+| `SURFACES`            | `browser` (for `make k6`) | Comma-separated subset of `{browser,kafka,grpc}`. Other targets pin this. |
+| `PICHESS_K6_VUS`      | `5`         | Virtual users per surface. **Not** `K6_VUS` — that's k6-reserved and would override the script's scenarios block and silently disable the browser type. |
+| `PICHESS_K6_DURATION` | `30s`       | Per-surface max duration. **Not** `K6_DURATION` — same reasoning. |
+| `K6_GATEWAY_URL`      | `http://localhost:8090` | Target for the browser surface. |
+| `K6_LOBBY_URL`        | `http://localhost:8092` | Target for any lobby-specific browser steps (currently proxied via the gateway). |
+| `K6_KAFKA_BROKERS`    | `localhost:29092` | Kafka bootstrap list for the kafka surface. The kafka service advertises `localhost:29092` on its `PLAINTEXT_HOST` listener so a `network_mode: host` k6 container can reach it (the internal `kafka:9092` is unresolvable from the host network namespace). |
+| `K6_GRPC_TARGET`      | `localhost:9000` | game-service's gRPC target for the grpc surface. `game-service` already maps `9000:9000` on the host. |
+
+**Layer 4 — `make profile-async-{cpu,alloc}`**
+
+| Var | Default | What it controls |
+|---|---|---|
+| `SERVICE`  | (required) | Docker-compose service name to attach to: `gateway`, `game-service`, `repository`, `lobby-service`, `opening-service`, `analytics-service`. |
+| `DURATION` | `60` | Sampling window in seconds. |
+
+**Stack-level vars these targets implicitly read** (also documented in the README and `make help`):
+
+| Var | Read by | What it does |
+|---|---|---|
+| `EXTRA`              | `make stack-*` (called from `perf-run.sh` per backend) | Compose profiles to layer on top — `obs`, `opening`, `analytics`. `perf-run.sh` sets this when `OBS=true`. |
+| `TRACING_ENABLED`    | every service Main | When truthy, `chess.obs.TracingLayer` uses the live OTLP exporter to Jaeger; otherwise noop. |
+| `PICHESS_PROFILE`    | every service Main | `sampling` enables zio-profiling; dumps land under `perf-reports/profiles/`. Requires a profile-tagged build (`PICHESS_PROFILE_BUILD=true sbt dockerBuildAll`) for source-line attribution. |
+
+### k6 surface internals
+
+All three k6 surfaces ship with scripts under `k6/scripts/<surface>/`
+and run end-to-end via `make k6` / `make k6-{browser,grpc,kafka}`. The
+infrastructure each surface relies on:
+
+| Surface | Wiring |
+|---|---|
+| `make k6-browser` | Stock `grafana/k6:0.55.0-with-browser` ships Chromium; `K6_BROWSER_EXECUTABLE_PATH=/usr/lib/chromium/chromium` skips the failing default detection. The script walks the SPA's hash-routed screens (`/`, `/#new`, `/#join`) and captures Web Vitals via `k6/browser`. |
+| `make k6-kafka` | Custom k6 binary built via `xk6 build --with xk6-kafka` (see `k6/Dockerfile`). Kafka advertises a `PLAINTEXT_HOST` listener at `localhost:29092` for the `network_mode: host` k6 container — the in-network `kafka:9092` doesn't resolve from the host network namespace. The script produces `GameDomainEvent`-shaped JSON onto `chess.game-events` and gates on `kafka_writer_write_seconds` + `kafka_writer_error_count`. |
+| `make k6-grpc`  | k6 has native gRPC support (no extension). `./proto/src/main/protobuf` is bind-mounted at `/proto` so `client.load(['/proto/pichess'], 'game_service.proto')` resolves. game-service already maps `9000:9000` on the host. The script runs `NewGame → MakeMove × 8 → GetState`. The `state moveLog matches acked moves` check is intentionally non-gating — under concurrent gameIds, game-service ACKs MakeMove calls that don't always land in the per-game move stream; the script surfaces this rate as a diagnostic so it doesn't fail CI while the race is open. |
+
+To run just one surface against an already-running stack:
+
+```bash
+# kafka surface needs Kafka up — opening profile is the smallest one that activates it
+make stack-postgres EXTRA=opening
+make k6-kafka
+
+# grpc + browser only need the gateway + game-service
+make stack-postgres
+make k6-grpc
+make k6-browser
+```
 
 ---
 

@@ -33,10 +33,14 @@ Every script reads its target URLs from env (`lib/config.js`):
 |---|---|---|
 | `K6_GATEWAY_URL`    | `http://localhost:8090` | browser, grpc (web target) |
 | `K6_LOBBY_URL`      | `http://localhost:8092` | browser (lobby flow) |
-| `K6_KAFKA_BROKERS`  | `localhost:9092`        | kafka |
-| `K6_GRPC_TARGET`    | `localhost:8091`        | grpc |
+| `K6_KAFKA_BROKERS`  | `localhost:29092`       | kafka — the host-side `PLAINTEXT_HOST` listener |
+| `K6_GRPC_TARGET`    | `localhost:9000`        | grpc — game-service's host-mapped port |
 | `K6_VUS`            | `5`                     | all (concurrent virtual users) |
 | `K6_DURATION`       | `30s`                   | all |
 
 Thresholds (SLA assertions) live in `lib/thresholds.js` so every surface
 shares the same pass/fail criteria.
+
+Inside the container the lib dir lives at `/k6lib/` (not `/lib/` — that
+would shadow the musl dynamic linker and break Chromium). Scripts
+import via `import { cfg } from '/k6lib/config.js'`.

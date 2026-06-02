@@ -48,7 +48,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
-TS="$(date -u +%Y%m%dT%H%M%SZ)"
+# Honor a parent-provided timestamp (set by scripts/perf-all.sh) so the
+# full suite lands under one perf-reports/<ts>/ tree. Standalone invocations
+# fall back to a fresh stamp.
+TS="${PERF_TS:-$(date -u +%Y%m%dT%H%M%SZ)}"
 RUN_DIR="perf-reports/$TS"
 mkdir -p "$RUN_DIR"
 
@@ -79,10 +82,26 @@ warmup() {
   log "warming up ($WARMUP_ITERS iterations)"
   local i=0
   while ((i < WARMUP_ITERS)); do
-    curl -sf -X POST "$GATEWAY_URL/api/new" >/dev/null 2>&1 || true
+    local session="warmup-$i-$RANDOM"
+    # Create a fresh game and capture its id. The id is in the JSON
+    # response from POST /api/games — extract with python so we don't
+    # depend on jq being installed on the dev rig.
+    local resp
+    resp="$(curl -sf -X POST \
+      -H "X-Session-Id: $session" \
+      -H 'content-type: application/json' \
+      -d '{}' "$GATEWAY_URL/api/games" 2>/dev/null || true)"
+    if [[ -z "$resp" ]]; then ((i++)); continue; fi
+    local gid
+    gid="$(printf '%s' "$resp" | python3 -c \
+      'import sys,json;print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)"
+    if [[ -z "$gid" ]]; then ((i++)); continue; fi
     for mv in "e2 e4" "e7 e5" "g1 f3" "b8 c6" "f1 b5" "a7 a6" "b5 a4" "g8 f6"; do
-      curl -sf -X POST -H 'content-type: application/json' \
-        -d "{\"move\":\"$mv\"}" "$GATEWAY_URL/api/move" >/dev/null 2>&1 || true
+      curl -sf -X POST \
+        -H "X-Session-Id: $session" \
+        -H 'content-type: application/json' \
+        -d "{\"move\":\"$mv\"}" \
+        "$GATEWAY_URL/api/games/$gid/move" >/dev/null 2>&1 || true
     done
     ((i++))
   done
@@ -136,19 +155,30 @@ extract_summary() {
     > "$summary"
 
   if [[ -f "$idx" ]]; then
-    # Gatling 3.x writes statistics into a stats.json sibling of index.html.
-    local stats="$out_dir/gatling/js/stats.json"
+    # Gatling 3.x writes statistics into js/stats.js. The file is JS
+    # source — `var stats = { ... };` followed by a fillStats(...) helper
+    # function — not parseable as JSON. The global "All Requests" wrapper
+    # is the first object in the file, with each metric as
+    # `"<name>": { "total": "<num>", ... }`. Targeted regex per metric
+    # picks the first (global) match, which is what we want.
+    local stats="$out_dir/gatling/js/stats.js"
     if [[ -f "$stats" ]]; then
-      # `stats.json` is a JS file: `var stats = {...};`. Strip the prefix
-      # so plain JSON tools can read it.
-      sed -E 's/^var stats = //; s/;$//' "$stats" > "$out_dir/stats.json"
-      python3 - "$out_dir/stats.json" "$summary" <<'PY' || true
-import json, sys
+      python3 - "$stats" "$summary" <<'PY' || true
+import re, sys
 stats_path, summary_path = sys.argv[1], sys.argv[2]
-data = json.load(open(stats_path))
-g = data["stats"]
-def pick(field, sub):
-    return g.get(field, {}).get(sub, "?")
+text = open(stats_path).read()
+
+def pick(field, sub="total"):
+    # Match the first occurrence — Gatling's outermost group ("All
+    # Requests") is written before any per-request breakdowns.
+    pat = re.compile(
+        r'"' + re.escape(field) + r'"\s*:\s*\{[^}]*?"' +
+        re.escape(sub) + r'"\s*:\s*"?([^",}\s]+)"?',
+        re.S,
+    )
+    m = pat.search(text)
+    return m.group(1) if m else "?"
+
 with open(summary_path, "a") as f:
     f.write(f"requests_total={pick('numberOfRequests', 'total')}\n")
     f.write(f"requests_ok={pick('numberOfRequests', 'ok')}\n")

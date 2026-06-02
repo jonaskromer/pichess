@@ -8,19 +8,23 @@
 # extension of perf-run.sh (set K6=true on that script to fold in).
 #
 # Usage:
-#   scripts/k6-run.sh                                  # SURFACES=browser
+#   scripts/k6-run.sh                                       # SURFACES=browser
 #   SURFACES=browser,kafka scripts/k6-run.sh
-#   K6_VUS=10 K6_DURATION=60s scripts/k6-run.sh
+#   PICHESS_K6_VUS=10 PICHESS_K6_DURATION=60s scripts/k6-run.sh
 #
 # Env vars (all optional):
-#   SURFACES        Comma-separated subset of {browser,kafka,grpc}.
-#                   Default: browser
-#   K6_VUS          Virtual users per surface. Default: 5.
-#   K6_DURATION     Per-surface max duration. Default: 30s.
-#   K6_GATEWAY_URL  Default: http://localhost:8090
-#   K6_LOBBY_URL    Default: http://localhost:8092
-#   K6_KAFKA_BROKERS Default: localhost:9092
-#   K6_GRPC_TARGET  Default: localhost:8091
+#   SURFACES             Comma-separated subset of {browser,kafka,grpc}.
+#                        Default: browser
+#   PICHESS_K6_VUS       Virtual users per surface. Default: 5.
+#   PICHESS_K6_DURATION  Per-surface max duration. Default: 30s.
+#   K6_GATEWAY_URL       Default: http://localhost:8090
+#   K6_LOBBY_URL         Default: http://localhost:8092
+#   K6_KAFKA_BROKERS     Default: localhost:29092  (PLAINTEXT_HOST listener)
+#   K6_GRPC_TARGET       Default: localhost:9000   (game-service gRPC)
+#
+# Note: PICHESS_K6_VUS / PICHESS_K6_DURATION are NOT k6's reserved
+# K6_VUS / K6_DURATION — those override the script's scenarios block
+# and would silently disable the browser type wiring.
 #
 # Output:
 #   perf-reports/<UTC-ts>/k6/<surface>/
@@ -34,14 +38,17 @@
 set -euo pipefail
 
 SURFACES="${SURFACES:-browser}"
-K6_VUS="${K6_VUS:-5}"
-K6_DURATION="${K6_DURATION:-30s}"
+PICHESS_K6_VUS="${PICHESS_K6_VUS:-5}"
+PICHESS_K6_DURATION="${PICHESS_K6_DURATION:-30s}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
-TS="$(date -u +%Y%m%dT%H%M%SZ)"
+# Honor a parent-provided timestamp (set by scripts/perf-all.sh) so the
+# full suite lands under one perf-reports/<ts>/ tree. Standalone
+# invocations fall back to a fresh stamp.
+TS="${PERF_TS:-$(date -u +%Y%m%dT%H%M%SZ)}"
 RUN_DIR="perf-reports/$TS/k6"
 mkdir -p "$RUN_DIR"
 
@@ -81,8 +88,8 @@ run_surface() {
   # The k6 script's handleSummary writes /out/<surface>/summary.json.
   # We point /out at perf-reports/<ts>/k6/ so each surface lands in its
   # own subdir without extra orchestration.
-  K6_VUS="$K6_VUS" \
-  K6_DURATION="$K6_DURATION" \
+  PICHESS_K6_VUS="$PICHESS_K6_VUS" \
+  PICHESS_K6_DURATION="$PICHESS_K6_DURATION" \
   docker compose --profile k6 run --rm \
     -v "$ROOT_DIR/perf-reports/$TS/k6:/out" \
     k6 run "$script" \

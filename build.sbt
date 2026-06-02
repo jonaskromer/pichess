@@ -620,6 +620,14 @@ lazy val gatling = project
       "io.gatling"            % "gatling-test-framework"    % gatlingVersion % Test,
     ),
     coverageEnabled := false,
+    // Gatling 3.x uses MethodHandles.privateLookupIn against java.lang
+    // internals (StringInternals) which JDK 17+ closes off by default.
+    // Open just what Gatling actually touches at runtime.
+    Test / fork := true,
+    Test / javaOptions ++= Seq(
+      "--add-opens=java.base/java.lang=ALL-UNNAMED",
+      "--add-opens=java.base/java.util=ALL-UNNAMED",
+    ),
   )
 
 // Cross-cutting observability layer shared by every service: Prometheus

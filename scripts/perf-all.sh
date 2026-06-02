@@ -31,6 +31,13 @@ cd "$ROOT_DIR"
 
 GATEWAY_URL="http://localhost:8090"
 
+# Shared timestamp so JMH bench JSON, Gatling cross-backend run, and
+# k6 surface output all land under one perf-reports/<TS>/ tree. Both
+# sub-scripts honor PERF_TS when set.
+export PERF_TS="$(date -u +%Y%m%dT%H%M%SZ)"
+RUN_DIR="perf-reports/$PERF_TS"
+mkdir -p "$RUN_DIR"
+
 log() { printf '\n[\033[1;35mperf-all\033[0m %s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 cleanup() {
@@ -53,30 +60,42 @@ wait_for_url() {
 log "─── piChess perf suite — full run ───────────────────────"
 
 # ── Layer 2 — JMH microbenchmarks ──────────────────────────────────────
-log "Layer 2 / 3 — JMH microbenchmarks (no stack required)"
+log "Layer 2 — JMH microbenchmarks (no stack required)"
+# Bench writes to perf-reports/bench-<own-ts>.json. After it runs we
+# move the newest bench file under the shared run dir so the suite
+# output stays self-contained.
 make bench
+latest_bench="$(ls -t perf-reports/bench-*.json 2>/dev/null | head -1 || true)"
+if [[ -n "$latest_bench" ]]; then
+  mv "$latest_bench" "$RUN_DIR/bench.json"
+  log "bench JSON → $RUN_DIR/bench.json"
+fi
 
 # ── Layer 1 — Gatling cross-backend ────────────────────────────────────
 log "Layer 1 — Gatling cross-backend (BACKENDS=${BACKENDS:-default} MODE=${MODE:-Game} OBS=$OBS)"
 OBS="$OBS" make perf
 
-# ── Layer 1b — k6 browser surface ──────────────────────────────────────
-# perf-run.sh tears the stack down on completion, so bring postgres back
-# up for k6. Browser perf is backend-agnostic; postgres is the most
-# representative single choice.
-log "Layer 1b — k6 browser surface (postgres stack)"
+# ── Layer 1b — k6 surfaces ────────────────────────────────────────────
+# perf-run.sh tears the stack down on completion, so bring postgres +
+# opening (for Kafka) back up. Each k6 surface is backend-agnostic for
+# the gateway-mediated bits but the kafka surface needs Kafka up;
+# bundling `opening` is the smallest profile that activates it.
+log "Layer 1b — k6 surfaces (postgres + opening — kafka up for the kafka surface)"
+EXTRA_PROFILES="opening"
 if [[ "$OBS" == "true" ]]; then
-  make stack-postgres EXTRA=obs
-else
-  make stack-postgres
+  EXTRA_PROFILES="opening,obs"
 fi
+make stack-postgres EXTRA="$EXTRA_PROFILES"
 wait_for_url "$GATEWAY_URL/api/stack-info" 120
-make k6-browser
+# All three surfaces in one driver call so they land under the same
+# perf-reports/<TS>/k6/{browser,grpc,kafka}/ tree.
+SURFACES=browser,grpc,kafka make k6
 
 # ── Summary ────────────────────────────────────────────────────────────
-latest_run="$(ls -dt perf-reports/*/ 2>/dev/null | grep -v 'bench-' | head -1 || true)"
-latest_bench="$(ls -t perf-reports/bench-*.json 2>/dev/null | head -1 || true)"
 log "─── suite complete ──────────────────────────────────────"
-echo "  JMH results       : ${latest_bench:-<not found>}"
-echo "  Gatling + k6 run  : ${latest_run:-<not found>}"
-echo "  Dev page bake-in  : make perf-bake"
+echo "  Run dir          : $RUN_DIR"
+echo "  JMH bench JSON   : $RUN_DIR/bench.json"
+echo "  Gatling reports  : $RUN_DIR/<backend>/gatling/index.html"
+echo "  Gatling summary  : $RUN_DIR/comparison.md"
+echo "  k6 surfaces      : $RUN_DIR/k6/<surface>/summary.json"
+echo "  Dev page bake-in : make perf-bake"

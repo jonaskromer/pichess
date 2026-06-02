@@ -189,6 +189,90 @@ stack-status: ## Show the active stack profile + running containers
 	@echo "Running containers:"
 	@docker compose ps
 
+# --- Profile addons -------------------------------------------------------
+#
+# Additive compose profiles. Each `<name>-up` brings the profile's
+# services up alongside whatever stack is already running; `<name>-down`
+# stops only that profile's containers without touching the rest.
+#
+# Equivalent to `make stack-<backend> EXTRA=<name>` but doesn't tear the
+# current stack down — useful for layering observability or a
+# projection onto an already-running dev session.
+#
+# Caveats:
+#   * `make opening` / `make analytics` bring up Kafka + the consumer
+#     service(s), but game-service only publishes if its KAFKA_BOOTSTRAP_SERVERS
+#     env was set at start time. Use `make stack-<bk> EXTRA=opening` (or
+#     `analytics`) for full integration; the standalone targets here are
+#     for "bring up the consumers against an idle producer" cases.
+#   * `make obs` is fully self-contained — Prometheus / Grafana / Jaeger
+#     have no service dependencies and can come up at any time.
+
+.PHONY: obs
+obs: ## Bring up Prometheus + Grafana + Jaeger alongside the running stack
+	docker compose --profile obs up -d prometheus grafana jaeger
+
+.PHONY: obs-down
+obs-down: ## Stop the obs containers (Prometheus / Grafana / Jaeger) only
+	docker compose stop prometheus grafana jaeger 2>/dev/null || true
+	docker compose rm -f prometheus grafana jaeger 2>/dev/null || true
+
+.PHONY: obs-status
+obs-status: ## Show which obs services are up + their URLs
+	@printf '%-12s %-30s %s\n' "Service" "URL" "State"
+	@for row in "prometheus|http://localhost:9090" \
+	            "grafana|http://localhost:3000" \
+	            "jaeger|http://localhost:16686"; do \
+	  svc=$${row%%|*}; url=$${row##*|}; \
+	  if [ -n "$$(docker compose ps -q $$svc 2>/dev/null)" ]; then \
+	    state=up; \
+	  else \
+	    state=down; \
+	  fi; \
+	  printf '%-12s %-30s %s\n' "$$svc" "$$url" "$$state"; \
+	done
+
+.PHONY: grafana
+grafana: ## Open Grafana in the default browser (needs `make obs` first)
+	@open http://localhost:3000 2>/dev/null || \
+	  xdg-open http://localhost:3000 2>/dev/null || \
+	  echo "Open http://localhost:3000 in your browser"
+
+.PHONY: prometheus
+prometheus: ## Open Prometheus in the default browser (needs `make obs` first)
+	@open http://localhost:9090 2>/dev/null || \
+	  xdg-open http://localhost:9090 2>/dev/null || \
+	  echo "Open http://localhost:9090 in your browser"
+
+.PHONY: jaeger
+jaeger: ## Open Jaeger UI in the default browser (needs `make obs` first)
+	@open http://localhost:16686 2>/dev/null || \
+	  xdg-open http://localhost:16686 2>/dev/null || \
+	  echo "Open http://localhost:16686 in your browser"
+
+.PHONY: opening
+opening: ## Bring up Kafka + opening-service + Neo4j alongside the running stack
+	PICHESS_KAFKA=kafka:9092 docker compose --profile opening up -d kafka opening-service neo4j
+
+.PHONY: opening-down
+opening-down: ## Stop the opening projection (opening-service + Neo4j; keeps Kafka if analytics also uses it)
+	docker compose stop opening-service neo4j 2>/dev/null || true
+	docker compose rm -f opening-service neo4j 2>/dev/null || true
+
+.PHONY: analytics
+analytics: ## Bring up Kafka + analytics-service + ClickHouse alongside the running stack
+	PICHESS_KAFKA=kafka:9092 docker compose --profile analytics up -d kafka analytics-service clickhouse
+
+.PHONY: analytics-down
+analytics-down: ## Stop the analytics projection (analytics-service + ClickHouse)
+	docker compose stop analytics-service clickhouse 2>/dev/null || true
+	docker compose rm -f analytics-service clickhouse 2>/dev/null || true
+
+.PHONY: kafka-down
+kafka-down: ## Stop Kafka (only safe when neither opening nor analytics is up)
+	docker compose stop kafka 2>/dev/null || true
+	docker compose rm -f kafka 2>/dev/null || true
+
 # --- Dev report bake-in ---------------------------------------------------
 #
 # The /dev/test/coverage and /dev/test/performance pages iframe static
@@ -255,7 +339,7 @@ PERF_REPORTS_DIR := perf-reports
 bench: ## Run the JMH microbenchmark suite + write JSON to perf-reports
 	@mkdir -p $(PERF_REPORTS_DIR)
 	@ts=$$(date -u +%Y%m%dT%H%M%SZ); \
-	out=$(PERF_REPORTS_DIR)/bench-$$ts.json; \
+	out="$$PWD/$(PERF_REPORTS_DIR)/bench-$$ts.json"; \
 	sbt "bench/Jmh/run -i 3 -wi 3 -f1 -rf json -rff $$out"; \
 	echo "JMH results → $$out"
 
@@ -309,7 +393,7 @@ k6-build: ## Build the custom k6 image (pinned grafana/k6 with browser)
 	docker compose --profile k6 build k6
 
 .PHONY: k6
-k6: ## Run all k6 surfaces. Vars: SURFACES (default browser), K6_VUS, K6_DURATION
+k6: ## Run k6 surfaces. SURFACES=browser (default) / browser,grpc,kafka / etc. Vars: PICHESS_K6_VUS, PICHESS_K6_DURATION
 	SURFACES=$${SURFACES:-browser} scripts/k6-run.sh
 
 .PHONY: k6-browser
