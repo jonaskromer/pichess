@@ -9,8 +9,24 @@ final class CachedLobbyRepository(
     primary: LobbyRepository
 ) extends LobbyRepository:
 
+  // Writes fan out to primary + cache in parallel via zipPar so the
+  // caller's latency is max(primary, cache) rather than the sum.
+  // Primary failures fail the operation; cache failures are logged
+  // and swallowed (a missing cache entry self-heals on the next read).
+  // See CachedGameRepository for the full rationale + phantom-write
+  // discussion.
+
   def create(lobby: Lobby): IO[LobbyError, Unit] =
-    primary.create(lobby) *> cache.create(lobby)
+    primary
+      .create(lobby)
+      .zipPar(
+        cache
+          .create(lobby)
+          .catchAllCause(c =>
+            ZIO.logWarningCause(s"cache.create(${lobby.id}) failed — primary still authoritative", c)
+          )
+      )
+      .unit
 
   def findById(id: LobbyId): IO[LobbyError, Option[Lobby]] =
     cache.findById(id).flatMap {
@@ -33,10 +49,28 @@ final class CachedLobbyRepository(
     }
 
   def update(lobby: Lobby): IO[LobbyError, Unit] =
-    primary.update(lobby) *> cache.update(lobby)
+    primary
+      .update(lobby)
+      .zipPar(
+        cache
+          .update(lobby)
+          .catchAllCause(c =>
+            ZIO.logWarningCause(s"cache.update(${lobby.id}) failed — primary still authoritative", c)
+          )
+      )
+      .unit
 
   def delete(id: LobbyId): IO[LobbyError, Unit] =
-    primary.delete(id) *> cache.delete(id)
+    primary
+      .delete(id)
+      .zipPar(
+        cache
+          .delete(id)
+          .catchAllCause(c =>
+            ZIO.logWarningCause(s"cache.delete($id) failed — primary still authoritative", c)
+          )
+      )
+      .unit
 
   /** The public-lobby list isn't worth caching: it's a low-frequency,
     * always-changing aggregation. Always read straight from primary.
