@@ -2,6 +2,7 @@ package chess.controller
 
 import chess.events.InMemoryGameEventProducer
 import chess.gameservice.{GameSessions, GrpcServer}
+import chess.obs.TracingLayer
 import chess.persistence.InMemoryGameRepository
 import chess.service.GameServiceLive
 import io.grpc.inprocess.{InProcessChannelBuilder, InProcessServerBuilder}
@@ -10,6 +11,8 @@ import scalapb.zio_grpc.{ServerLayer, ZManagedChannel}
 import zio.*
 import zio.http.*
 import zio.json.*
+import zio.telemetry.opentelemetry.context.ContextStorage
+import zio.telemetry.opentelemetry.tracing.Tracing
 import zio.test.*
 
 /** Smoke tests for the gateway's REST surface. The gateway is wired against
@@ -23,13 +26,17 @@ import zio.test.*
 object WebControllerRoutesSpec extends ZIOSpecDefault:
 
   private def grpcLayer(name: String) =
-    ZLayer.make[ZioGameService.GameServiceClient & scalapb.zio_grpc.Server](
+    ZLayer.make[
+      ZioGameService.GameServiceClient & scalapb.zio_grpc.Server
+        & Tracing & ContextStorage
+    ](
       InMemoryGameRepository.layer,
       GameSessions.layer,
       GameServiceLive.layer,
       InMemoryGameEventProducer.layer,
+      TracingLayer.noop,
       GrpcServer.asServiceLayer,
-      ServerLayer.fromEnvironment[ZioGameService.GameService](
+      ServerLayer.fromEnvironment[ZioGameService.RCGameService](
         InProcessServerBuilder.forName(name).directExecutor()
       ),
       ZioGameService.GameServiceClient.live(
@@ -45,7 +52,11 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
   private def runWith[A](
       stackInfo: chess.controller.StackInfo = chess.controller.StackInfo.Default
   )(
-      body: Routes[Client, Response] => ZIO[Scope & Client, Throwable, A]
+      body: Routes[Client & Tracing & ContextStorage, Response] => ZIO[
+        Scope & Client & Tracing & ContextStorage,
+        Throwable,
+        A
+      ]
   ): ZIO[Any, Throwable, A] =
     for
       // Unique in-process gRPC channel name per test. `System.nanoTime`
@@ -71,10 +82,11 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
                                stackInfo
                              )
                  result   <- body(routes)
-               // The routes now require a Client because the lobby proxy
-               // forwards via zio-http's outbound client. Tests don't hit
-               // the proxy paths but the routes type carries the Client
-               // requirement, so provide a default one for the layer.
+               // The routes now require Client (lobby-proxy outbound) plus
+               // Tracing & ContextStorage (per-request SERVER span on the
+               // tracing middleware). The grpcLayer provides a noop
+               // Tracing for tests — spans are silently dropped without
+               // an OTLP exporter.
                yield result).provideSomeLayer[Scope](
                  grpcLayer(name) ++ Client.default
                )
@@ -86,7 +98,9 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
     req.addHeader(Header.Custom("X-Session-Id", session))
 
   /** Helper: create a fresh game via POST /api/games and return its id. */
-  private def createGame(routes: Routes[Client, Response]): ZIO[Scope & Client, Throwable, String] =
+  private def createGame(
+      routes: Routes[Client & Tracing & ContextStorage, Response]
+  ): ZIO[Scope & Client & Tracing & ContextStorage, Throwable, String] =
     for
       response <- routes.runZIO(
                     withSession(

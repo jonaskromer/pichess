@@ -5,14 +5,15 @@ import chess.events.{
   InMemoryGameEventProducer,
   KafkaGameEventProducer
 }
-import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer}
+import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer, TracingLayer}
 import chess.persistence.{BackendConfig, GameRepository}
 import chess.persistence.runtime.PersistenceLayers
 import chess.service.{GameService, GameServiceLive}
-import io.grpc.ServerBuilder
+import io.grpc.{ServerBuilder, StatusException}
 import pichess.game_service.ZioGameService
-import scalapb.zio_grpc.ServerLayer
+import scalapb.zio_grpc.{RequestContext, ServerLayer}
 import zio.*
+import zio.telemetry.opentelemetry.tracing.Tracing
 
 /** Standalone entry point for the gameService microservice.
   *
@@ -30,6 +31,9 @@ object GameServiceMain extends ZIOAppDefault:
 
   private val defaultPort = 9000
   private val defaultMetricsPort = 9102
+
+  override val bootstrap: ZLayer[Any, Nothing, Unit] =
+    Runtime.enableRuntimeMetrics
 
   override def run: ZIO[ZIOAppArgs, Throwable, Unit] =
     ProfilerLayer.wrap(
@@ -52,17 +56,20 @@ object GameServiceMain extends ZIOAppDefault:
 
   private[gameservice] def selectProducerLayer(
       envBootstrap: Option[String]
-  ): ZLayer[Any, Throwable, GameEventProducer] =
+  ): ZLayer[Tracing, Throwable, GameEventProducer] =
     envBootstrap.filter(_.trim.nonEmpty) match
       case Some(servers) => KafkaGameEventProducer.layer(servers)
       case None          => InMemoryGameEventProducer.layer
 
   /** Pick the `GameRepository` layer for the configured backend. Selection
     * lives in `PersistenceLayers` — see [[chess.persistence.runtime.PersistenceLayers]].
+    * The layer now requires `Tracing` (added by the
+    * `TracedGameRepository` decorator wrapped in `PersistenceLayers`);
+    * the service Main provides it via `TracingLayer.fromEnv`.
     */
   private[gameservice] def gameRepoLayer(
       cfg: BackendConfig
-  ): TaskLayer[GameRepository] =
+  ): ZLayer[Tracing, Throwable, GameRepository] =
     PersistenceLayers.gameRepository(cfg)
 
   private def serve(port: Int, cfg: BackendConfig): Task[Unit] =
@@ -81,7 +88,7 @@ object GameServiceMain extends ZIOAppDefault:
         _           <- ZIO.service[scalapb.zio_grpc.Server].flatMap(_.awaitTermination)
       yield ()
 
-    val producerLayer: ZLayer[Any, Throwable, GameEventProducer] =
+    val producerLayer: ZLayer[Tracing, Throwable, GameEventProducer] =
       selectProducerLayer(sys.env.get("KAFKA_BOOTSTRAP_SERVERS"))
 
     ZIO.scoped {
@@ -91,7 +98,8 @@ object GameServiceMain extends ZIOAppDefault:
         GameServiceLive.layer,
         GrpcServer.asServiceLayer,
         producerLayer,
-        ServerLayer.fromEnvironment[ZioGameService.GameService](
+        TracingLayer.fromEnv("game-service"),
+        ServerLayer.fromEnvironment[ZioGameService.RCGameService](
           ServerBuilder.forPort(port)
         )
       )

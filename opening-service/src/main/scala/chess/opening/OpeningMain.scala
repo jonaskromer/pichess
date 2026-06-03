@@ -1,6 +1,6 @@
 package chess.opening
 
-import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer}
+import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer, TracingLayer}
 import zio.*
 
 /** Standalone entry point for the opening-service microservice.
@@ -18,11 +18,20 @@ object OpeningMain extends ZIOAppDefault:
   private val defaultConsumerGroup = "pichess-opening"
   private val defaultMetricsPort = 9105
 
+  override val bootstrap: ZLayer[Any, Nothing, Unit] =
+    Runtime.enableRuntimeMetrics
+
   override def run: ZIO[ZIOAppArgs, Throwable, Unit] =
     ProfilerLayer.wrap("opening-service", runProfiled)
 
   private def runProfiled: ZIO[ZIOAppArgs, Throwable, Unit] =
-    val program: ZIO[OpeningProjection & Scope, Throwable, Unit] =
+    import zio.telemetry.opentelemetry.context.ContextStorage
+    import zio.telemetry.opentelemetry.tracing.Tracing
+    val program: ZIO[
+      OpeningProjection & Tracing & ContextStorage & Scope,
+      Throwable,
+      Unit
+    ] =
       for
         _           <- MetricsLayer.jvmMetricsBootstrap
         bootstrap   <- zio.System.env("KAFKA_BOOTSTRAP_SERVERS")
@@ -56,6 +65,7 @@ object OpeningMain extends ZIOAppDefault:
       program.provideSome[Scope](
         Neo4jLayer.layer,
         Neo4jOpeningTree.layer,
-        OpeningProjection.layer
+        OpeningProjection.layer,
+        TracingLayer.fromEnv("opening-service")
       )
     }

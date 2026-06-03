@@ -14,7 +14,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "targets": [
         {
-          "expr": "zio_fiber_count",
+          "expr": "zio_fiber_started - zio_fiber_successes - zio_fiber_failures",
           "legendFormat": "{{instance}}",
           "refId": "A"
         }
@@ -42,7 +42,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "targets": [
         {
-          "expr": "rate(jvm_gc_pause_seconds_sum[1m])",
+          "expr": "rate(jvm_gc_collection_seconds_sum[1m])",
           "legendFormat": "{{instance}} {{action}}",
           "refId": "A"
         }

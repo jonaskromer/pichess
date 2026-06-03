@@ -1,7 +1,13 @@
 package chess.controller
 
+import io.opentelemetry.api.trace.SpanKind
 import zio.*
 import zio.http.*
+import zio.telemetry.opentelemetry.context.{ContextStorage, OutgoingContextCarrier}
+import zio.telemetry.opentelemetry.tracing.Tracing
+import zio.telemetry.opentelemetry.tracing.propagation.TraceContextPropagator
+
+import scala.collection.mutable
 
 /** Reverse proxy for the lobby-service.
   *
@@ -51,15 +57,18 @@ object LobbyProxy:
         (if queryParams.isEmpty then "" else "?" + queryParams.encode)
     URL.decode(targetStr).left.map(_ => targetStr)
 
-  def routes(baseUrl: String): Routes[Client, Response] =
+  def routes(baseUrl: String): Routes[Client & Tracing & ContextStorage, Response] =
     val base = baseUrl.stripSuffix("/")
 
     /** Forward a request: same method, body, query string and headers,
       * URL rewritten onto the lobby-service host. `Host` and
       * `Content-Length` are dropped because the underlying HTTP client
-      * recomputes them.
+      * recomputes them. Outgoing requests are wrapped in a CLIENT span
+      * and the current trace context is injected as W3C `traceparent`
+      * headers so the lobby-service's server-side middleware can pick
+      * up the same trace.
       */
-    def forward(prefix: String)(rest: Path, req: Request): ZIO[Client, Nothing, Response] =
+    def forward(prefix: String)(rest: Path, req: Request): ZIO[Client & Tracing & ContextStorage, Nothing, Response] =
       buildTarget(base, prefix, rest, req.url.queryParams) match
         case Left(badStr) =>
           ZIO.succeed(
@@ -68,36 +77,48 @@ object LobbyProxy:
               .status(Status.BadGateway)
           )
         case Right(target) =>
-          val outboundHeaders =
+          val baseHeaders =
             Headers.fromIterable(
               req.headers.filter { h =>
                 val n = h.headerName.toLowerCase
                 n != "host" && n != "content-length"
               }
             )
-          val outbound =
-            Request(
-              method = req.method,
-              url = target,
-              headers = outboundHeaders,
-              body = req.body,
-              version = req.version,
-              remoteAddress = None
-            )
-          // `Client.batched` (vs `Client.request`) buffers the response
-          // body so the caller doesn't need a Scope — fine for the
-          // small JSON payloads the lobby-service returns. If lobbies
-          // ever stream large bodies this should switch to `request`
-          // and lift the route into a scoped handler.
-          Client
-            .batched(outbound)
-            .orElseSucceed(
-              Response
-                .text("lobby proxy: upstream unreachable")
-                .status(Status.BadGateway)
-            )
+          val spanName = s"HTTP ${req.method.name} /$prefix${joinPath(rest)}"
+          ZIO.serviceWithZIO[Tracing] { tracing =>
+            tracing.span(spanName, SpanKind.CLIENT) {
+              val carrier =
+                OutgoingContextCarrier.default(mutable.Map.empty[String, String])
+              for
+                _              <- tracing.injectSpan(TraceContextPropagator.default, carrier)
+                injectedHeaders = carrier.kernel.foldLeft(baseHeaders) {
+                                    case (acc, (k, v)) => acc.addHeader(k, v)
+                                  }
+                outbound        = Request(
+                                    method = req.method,
+                                    url = target,
+                                    headers = injectedHeaders,
+                                    body = req.body,
+                                    version = req.version,
+                                    remoteAddress = None
+                                  )
+                // `Client.batched` (vs `Client.request`) buffers the response
+                // body so the caller doesn't need a Scope — fine for the
+                // small JSON payloads the lobby-service returns. If lobbies
+                // ever stream large bodies this should switch to `request`
+                // and lift the route into a scoped handler.
+                response       <- Client
+                                    .batched(outbound)
+                                    .orElseSucceed(
+                                      Response
+                                        .text("lobby proxy: upstream unreachable")
+                                        .status(Status.BadGateway)
+                                    )
+              yield response
+            }
+          }
 
-    val lobbiesForward: (Path, Request) => ZIO[Client, Nothing, Response] =
+    val lobbiesForward: (Path, Request) => ZIO[Client & Tracing & ContextStorage, Nothing, Response] =
       forward("lobbies")
 
     Routes(

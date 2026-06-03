@@ -7,10 +7,10 @@ object BackendConfigSpec extends ZIOSpecDefault:
 
   def spec = suite("BackendConfig")(
     suite("parseBackend")(
-      test("absent / empty default to Postgres (the recommended primary)") {
+      test("absent / empty default to Mongo (the recommended durable primary)") {
         assertTrue(
-          BackendConfig.parseBackend(None) == Right(Backend.Postgres),
-          BackendConfig.parseBackend(Some("")) == Right(Backend.Postgres)
+          BackendConfig.parseBackend(None) == Right(Backend.Mongo),
+          BackendConfig.parseBackend(Some("")) == Right(Backend.Mongo)
         )
       },
       test("'inmemory' explicitly maps to InMemory") {
@@ -79,10 +79,10 @@ object BackendConfigSpec extends ZIOSpecDefault:
           cfg == BackendConfig(Backend.Postgres, CacheBackend.Redis)
         )
       },
-      test("missing env defaults both axes to postgres + redis") {
+      test("missing env defaults both axes to mongo + redis") {
         for cfg <- BackendConfig.fromEnv
         yield assertTrue(
-          cfg == BackendConfig(Backend.Postgres, CacheBackend.Redis)
+          cfg == BackendConfig(Backend.Mongo, CacheBackend.Redis)
         )
       },
       test("a malformed PICHESS_BACKEND fails the effect") {

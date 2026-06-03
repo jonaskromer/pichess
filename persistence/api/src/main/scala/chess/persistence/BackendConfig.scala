@@ -11,15 +11,15 @@ import zio.*
   * Read once at service startup via [[BackendConfig.fromEnv]] and threaded
   * into the ZLayer that provides `GameRepository` / `LobbyRepository`.
   *
-  * **Defaults (absent env vars)**: `Backend.Postgres` + `CacheBackend.Redis`.
-  * That's the Stress-workload winner from
+  * **Defaults (absent env vars)**: `Backend.Mongo` + `CacheBackend.Redis`.
+  * Stress winner at 970-RPS sustained load per
   * [`docs/db-selection-report.md`](../../../../../../../../docs/db-selection-report.md)
-  * — it gives a durable primary store with a read-through cache that
-  * earns its keep under sustained load. Callers running a workload that
-  * looks more like the Game (closed-loop, single-game-per-user) profile
-  * should explicitly set `PICHESS_CACHE=none`; test code should set
-  * `PICHESS_BACKEND=inmemory` explicitly so the JVM doesn't try to dial
-  * out to a postgres container that isn't there.
+  * (r3, `perf-reports/20260603T082112Z`) — only durable combination
+  * to hit 100 % success with p99 < 1.5 s; `postgres+redis` (the
+  * previous default) collapsed to a 24.6 % KO rate at the same load
+  * because cache contention serialised the writeback path. Test code
+  * should set `PICHESS_BACKEND=inmemory` explicitly so the JVM doesn't
+  * try to dial out to a mongo container that isn't there.
   */
 enum Backend:
   case InMemory
@@ -54,7 +54,7 @@ object BackendConfig:
       raw: Option[String]
   ): Either[Throwable, Backend] =
     raw.map(_.trim.toLowerCase) match
-      case None | Some("")   => Right(Backend.Postgres)
+      case None | Some("")   => Right(Backend.Mongo)
       case Some("inmemory")  => Right(Backend.InMemory)
       case Some("postgres")  => Right(Backend.Postgres)
       case Some("mongo")     => Right(Backend.Mongo)

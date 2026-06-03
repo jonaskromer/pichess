@@ -228,6 +228,12 @@ lazy val persistenceRuntime = project
   .settings(commonSettings)
   .settings(
     name := "pichess-persistence-runtime",
+    libraryDependencies ++= Seq(
+      // Tracing decorators (TracedGameRepository / TracedLobbyRepository)
+      // wrap the selected backend with `tracing.span("db.<op>")` so DB-call
+      // latency is visible per repo method in Jaeger.
+      "dev.zio" %% "zio-opentelemetry" % zioOpenTelemetryVersion,
+    ),
     // Layer-selection logic is exercised end-to-end in service-Main tests
     // and the contract module; not unit-coverable in isolation since each
     // branch needs the matching DB to be reachable.

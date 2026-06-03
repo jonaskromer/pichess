@@ -40,7 +40,7 @@ object RepositoryMainSpec extends ZIOSpecDefault:
       for
         fiber <- RepositoryMain
           .serve(0)
-          .provide(InMemoryGameRepository.layer)
+          .provide(InMemoryGameRepository.layer, chess.obs.TracingLayer.noop)
           .fork
         _ <- Live.live(ZIO.sleep(300.millis))
         _ <- fiber.interrupt
@@ -58,10 +58,15 @@ object RepositoryMainSpec extends ZIOSpecDefault:
     },
     suite("gameRepoLayer")(
       test("InMemory selection produces a working repository layer") {
+        // gameRepoLayer is now traced — wraps the backend with
+        // TracedGameRepository, so it needs a Tracing layer. Tests use
+        // noop tracing since they don't assert on span output.
         val layer = RepositoryMain.gameRepoLayer(
           BackendConfig(Backend.InMemory, CacheBackend.NoCache)
         )
-        for repo <- ZIO.service[chess.persistence.GameRepository].provide(layer)
+        for repo <- ZIO
+                      .service[chess.persistence.GameRepository]
+                      .provide(layer, chess.obs.TracingLayer.noop)
         yield assertTrue(repo != null)
       },
       test("backend with missing connection env fails layer construction") {
@@ -73,7 +78,10 @@ object RepositoryMainSpec extends ZIOSpecDefault:
           BackendConfig(Backend.Mongo, CacheBackend.NoCache)
         )
         for
-          exit <- ZIO.service[chess.persistence.GameRepository].provide(layer).exit
+          exit <- ZIO
+                    .service[chess.persistence.GameRepository]
+                    .provide(layer, chess.obs.TracingLayer.noop)
+                    .exit
         yield assertTrue(exit.isFailure)
       }
     )

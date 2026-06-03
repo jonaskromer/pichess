@@ -9,34 +9,48 @@
 > - r1 (`perf-reports/20260603T005652Z/`): 10 game replays per
 >   backend, before the response-path bottleneck fixes shipped. Picked
 >   Redis on raw latency. Did not account for durability.
-> - **r2 (current, `perf-reports/20260603T062603Z/`): 200 game
->   replays per backend, after the Position / FEN / SAN bottleneck
->   fixes. Adds an explicit durability filter and revises the
->   recommendation. This is the report the application currently
->   ships against.**
+> - r2 (`perf-reports/20260603T062603Z/`): 200 game replays per
+>   backend, after the Position / FEN / SAN bottleneck fixes. Added
+>   an explicit durability filter; picked `postgres + redis cache`
+>   on the Stress workload.
+> - **r3 (current, `perf-reports/20260603T082112Z/`): Stress-only
+>   re-run at the new full load (~185 000 requests / backend,
+>   ~970 RPS sustained, vs r2's ~12 500 / ~96 RPS). At this load
+>   the previous `postgres+redis` pick collapses to a 24.6 % KO rate;
+>   `mongo+redis` is the only durable combination to keep 100 % success
+>   with sub-1.5 s p99. This report supersedes r2's TL;DR and the
+>   shipping defaults updated to match.**
 
-## TL;DR
+## TL;DR (r3)
 
 Among **durable** backends (Redis-as-primary excluded — see
-[Durability filter](#durability-filter) below):
+[Durability filter](#durability-filter) below), under the r3 high-load
+Stress workload (~970 RPS sustained, 185 000 requests/backend):
 
-|              | Workload | Winner            | p95 latency | Margin over runner-up |
-|---|---|---|---:|---|
-| **Game**     | typical play | **postgres** (no cache)  | 12 ms | 14 % faster than #2 (mongo+redis at 14 ms) |
-| **Stress**   | saturation   | **postgres + redis cache** | 5 ms  | 17 % faster than #2 (mongo at 6 ms)        |
+| Rank | Backend     | Cache  | OK %   | Mean RPS | p50 ms | p95 ms | p99 ms |
+|---:|---|---|---:|---:|---:|---:|---:|
+| **1** | **mongo**    | **redis** | **100 %** | **963.5** | **60** | **788**  | **1304** |
+| 2 | postgres   | none   | 99.7 % | 967.2 | 31  | 1157 | 1169 |
+| 3 | cassandra  | redis  | 100 %  | 898.1 | 495 | 2819 | 6742 |
+| 4 | cassandra  | none   | 100 %  | 893.7 | 135 | 3330 | 8330 |
+| 5 | postgres   | redis  | 80.4 % | 898.5 | 652 | 4070 | 8542 |
+| 6 | mongo      | none   | 100 %  | 547.3 | 3986| 26691| 27842|
 
-Both winners pin to **postgres as the primary store**. The cache
-decorator decision is workload-shaped:
+`mongo+redis` wins on every dimension that matters at this load: zero
+failures, top-tier throughput, and the tightest tail of any durable
+option (p99 is ~6× better than r2's winner `postgres+redis`, which now
+fails 1-in-4 requests under saturation).
 
-- under typical-play, a single network hop to redis costs more than
-  postgres saves on the lookup — `postgres+none` wins.
-- under sustained load, the cache hit rate becomes high enough to
-  amortise the hop — `postgres+redis` wins.
+**Recommendation (r3)**: default `PICHESS_BACKEND=mongo`,
+`PICHESS_CACHE=redis`. The cache is no longer a "Stress-only" lever
+— mongo without the cache collapses to ~547 RPS (mean response 9 s).
+At the r3 load, the cache is rescuing the primary store, not amortising
+read cost on an already-fast store like it did for r2's postgres.
 
-**Recommendation**: default `PICHESS_BACKEND=postgres`,
-`PICHESS_CACHE=none` for development and the typical-play SLA.
-**Switch `PICHESS_CACHE=redis` for sustained-load deployments** where
-the Stress profile better matches production traffic.
+The r2 TL;DR is kept below for reference but no longer reflects the
+shipping configuration.
+
+## TL;DR (r2 — superseded)
 
 Runtime: 16 configs × 2 workloads in `make db-matrix` lite mode with
 `USERS=200`, ~45-55 min wall-clock. Source data:

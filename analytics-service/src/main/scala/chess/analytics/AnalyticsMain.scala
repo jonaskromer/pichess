@@ -20,6 +20,9 @@ object AnalyticsMain extends ZIOAppDefault:
   private val defaultConsumerGroup = "pichess-analytics"
   private val defaultMetricsPort = 9106
 
+  override val bootstrap: ZLayer[Any, Nothing, Unit] =
+    Runtime.enableRuntimeMetrics
+
   override def run: ZIO[ZIOAppArgs, Throwable, Unit] =
     ProfilerLayer.wrap("analytics-service", runProfiled)
 
@@ -54,7 +57,8 @@ object AnalyticsMain extends ZIOAppDefault:
                                .run(proj)
                                .provideSomeLayer[zio.jdbc.ZConnectionPool](
                                  KafkaAnalyticsConsumer
-                                   .consumerLayer(servers, group)
+                                   .consumerLayer(servers, group) ++
+                                   TracingLayer.fromEnv("analytics-service")
                                )
                                .forkDaemon *>
                              Server

@@ -32,6 +32,8 @@ import sttp.tapir.swagger.bundle.SwaggerInterpreter
 import sttp.tapir.ztapir.*
 import zio.*
 import zio.http.*
+import zio.telemetry.opentelemetry.context.ContextStorage
+import zio.telemetry.opentelemetry.tracing.Tracing
 
 /** Tapir-backed REST surface plus raw zio-http routes (HTML, web-ui assets,
   * SSE). Every command endpoint is a thin shim over the gameService gRPC
@@ -51,7 +53,7 @@ object WebController:
       cache: AnnotationCache,
       lobbyBaseUrl: String,
       stackInfo: StackInfo
-  ): Routes[Client, Response] =
+  ): Routes[Client & Tracing & ContextStorage, Response] =
     tapirRoutes(client, registry, cache, stackInfo) ++
       rawRoutes(client, stackInfo) ++
       LobbyProxy.routes(lobbyBaseUrl)

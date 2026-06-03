@@ -1,7 +1,10 @@
 package chess.controller
 
+import chess.obs.TracingLayer
 import zio.*
 import zio.http.*
+import zio.telemetry.opentelemetry.context.ContextStorage
+import zio.telemetry.opentelemetry.tracing.Tracing
 import zio.test.*
 
 /** Tests for the lobby reverse-proxy. The upstream is a tiny real
@@ -35,9 +38,13 @@ object LobbyProxySpec extends ZIOSpecDefault:
   )
 
   /** Bring up the upstream zio-http server on an ephemeral port,
-    * yield the actual bound URL, then tear it down at scope exit. */
+    * yield the actual bound URL, then tear it down at scope exit. The
+    * proxy now wraps outbound calls in a CLIENT span, so the test
+    * runtime needs `Tracing` & `ContextStorage` — provided here as a
+    * noop so the upstream + proxy are exercised without an OTLP exporter.
+    */
   private def withUpstream[A](
-      body: String => ZIO[Scope & Client, Throwable, A]
+      body: String => ZIO[Scope & Client & Tracing & ContextStorage, Throwable, A]
   ): ZIO[Any, Throwable, A] =
     ZIO.scoped {
       val serverLayer = ZLayer.succeed(Server.Config.default.port(0)) >>>
@@ -48,8 +55,8 @@ object LobbyProxySpec extends ZIOSpecDefault:
           port <- srv.port
           out  <- body(s"http://localhost:$port")
         yield out
-      }.provideSomeLayer[Scope & Client](serverLayer)
-    }.provide(Scope.default, Client.default)
+      }.provideSomeLayer[Scope & Client & Tracing & ContextStorage](serverLayer)
+    }.provide(Scope.default, Client.default, TracingLayer.noop)
 
   def spec = suite("LobbyProxy")(
     test("GET /lobbies forwards the method + empty path to the upstream") {
@@ -162,7 +169,7 @@ object LobbyProxySpec extends ZIOSpecDefault:
           response.status == Status.BadGateway,
           body.contains("upstream unreachable")
         )
-      program.provide(Client.default, Scope.default)
+      program.provide(Client.default, Scope.default, TracingLayer.noop)
     },
     test("invalid base URL surfaces as 502 (case Left in forward)") {
       // Whitespace in the configured base URL means `buildTarget` returns
@@ -177,7 +184,7 @@ object LobbyProxySpec extends ZIOSpecDefault:
           response.status == Status.BadGateway,
           body.contains("invalid URL")
         )
-      program.provide(Client.default, Scope.default)
+      program.provide(Client.default, Scope.default, TracingLayer.noop)
     },
     test("baseUrlFromEnv reads PICHESS_LOBBY_URL when set") {
       for

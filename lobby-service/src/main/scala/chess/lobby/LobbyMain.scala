@@ -13,6 +13,9 @@ object LobbyMain extends ZIOAppDefault:
   private[lobby] val defaultPort = 8092
   private val defaultMetricsPort = 9104
 
+  override val bootstrap: ZLayer[Any, Nothing, Unit] =
+    Runtime.enableRuntimeMetrics
+
   override def run: ZIO[ZIOAppArgs, Throwable, Unit] =
     ProfilerLayer.wrap(
       "lobby-service",
@@ -25,7 +28,8 @@ object LobbyMain extends ZIOAppDefault:
         _    <- serve(port).provide(
                   lobbyRepoLayer(cfg),
                   GatewayCoordinator.live,
-                  LobbyService.layer
+                  LobbyService.layer,
+                  TracingLayer.fromEnv("lobby-service")
                 )
       yield ()
     )
@@ -38,12 +42,12 @@ object LobbyMain extends ZIOAppDefault:
 
   private[lobby] def lobbyRepoLayer(
       cfg: BackendConfig
-  ): TaskLayer[LobbyRepository] =
+  ): ZLayer[Tracing, Throwable, LobbyRepository] =
     PersistenceLayers.lobbyRepository(cfg)
 
   private[lobby] def serve(
       port: Int
-  ): ZIO[LobbyService, Throwable, Unit] =
+  ): ZIO[LobbyService & Tracing & ContextStorage, Throwable, Unit] =
     val program: ZIO[
       LobbyService & Server & Tracing & ContextStorage & Scope,
       Throwable,
@@ -68,7 +72,9 @@ object LobbyMain extends ZIOAppDefault:
       yield ()
 
     ZIO.scoped {
-      program.provideSomeLayer[LobbyService & Scope](
-        Server.defaultWithPort(port) ++ TracingLayer.fromEnv("lobby-service")
+      program.provideSomeLayer[
+        LobbyService & Tracing & ContextStorage & Scope
+      ](
+        Server.defaultWithPort(port)
       )
     }

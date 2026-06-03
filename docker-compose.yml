@@ -246,13 +246,14 @@ services:
       # so game-service / repository fall back to in-memory / skip the
       # consumer — Kafka is the event log, not a hard requirement.
       KAFKA_BOOTSTRAP_SERVERS: "${PICHESS_KAFKA:-}"
-      # Persistence selection. Defaults `postgres` + `redis` (see
-      # docs/db-selection-report.md for rationale — postgres+redis won the
-      # Stress workload; postgres alone won Game). Set PICHESS_BACKEND to
-      # one of: inmemory, postgres, mongo, redis, cassandra. Set
-      # PICHESS_CACHE to `none` to drop the cache decorator (recommended
-      # when the workload looks like Game — closed-loop, single-game-per-user).
-      PICHESS_BACKEND: "${PICHESS_BACKEND:-postgres}"
+      # Persistence selection. Defaults `mongo` + `redis` (see
+      # docs/db-selection-report.md r3 for rationale — mongo+redis was the
+      # only durable combination to sustain 970 RPS at 100 % success; the
+      # previous default `postgres+redis` collapsed to 24.6 % KO at that
+      # load). Set PICHESS_BACKEND to one of: inmemory, postgres, mongo,
+      # redis, cassandra. Set PICHESS_CACHE to `none` to drop the cache
+      # decorator.
+      PICHESS_BACKEND: "${PICHESS_BACKEND:-mongo}"
       PICHESS_CACHE: "${PICHESS_CACHE:-redis}"
       PICHESS_PG_URL: "jdbc:postgresql://postgres:5432/pichess"
       PICHESS_PG_USER: "postgres"

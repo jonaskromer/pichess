@@ -31,6 +31,9 @@ object GatewayMain extends ZIOAppDefault:
   private val defaultGameServiceTarget = "localhost:9000"
   private val defaultMetricsPort = 9101
 
+  override val bootstrap: ZLayer[Any, Nothing, Unit] =
+    Runtime.enableRuntimeMetrics
+
   override def run: ZIO[ZIOAppArgs, Throwable, Unit] =
     ProfilerLayer.wrap(
       "gateway",
@@ -96,15 +99,25 @@ object GatewayMain extends ZIOAppDefault:
         _            <- ZIO.never
       yield ()
 
+    // Raw gRPC client → tracing decorator. The decorator's layer expects
+    // a `GameServiceClient` and a `Tracing` in env; piping the raw client
+    // layer in via `>>>` substitutes the env-resident GameServiceClient
+    // with the traced one for everything downstream (WebController, SSE,
+    // …). `Tracing` flows through unchanged and is satisfied by
+    // `TracingLayer.fromEnv`.
+    val rawClientLayer =
+      ZioGameService.GameServiceClient.live(
+        ZManagedChannel(
+          ManagedChannelBuilder.forTarget(target).usePlaintext()
+        )
+      )
+    val tracedClientLayer = rawClientLayer >>> TracingGameServiceClient.layer
+
     ZIO.scoped {
       program.provideSome[Scope](
         Server.defaultWithPort(httpPort),
         Client.default,
-        ZioGameService.GameServiceClient.live(
-          ZManagedChannel(
-            ManagedChannelBuilder.forTarget(target).usePlaintext()
-          )
-        ),
+        tracedClientLayer,
         TracingLayer.fromEnv("gateway"),
       )
     }

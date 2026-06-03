@@ -37,6 +37,7 @@ import chess.persistence.redis.{
 }
 import chess.opt.Optimisation
 import zio.*
+import zio.telemetry.opentelemetry.tracing.Tracing
 
 /** Maps a [[BackendConfig]] to the right `GameRepository` /
   * `LobbyRepository` layer, including the optional Redis-cache decorator.
@@ -50,10 +51,19 @@ object PersistenceLayers:
 
   // -- Game repository -------------------------------------------------------
 
-  def gameRepository(cfg: BackendConfig): TaskLayer[GameRepository] =
-    cfg.cache match
+  /** Returns a `GameRepository` layer for the configured backend,
+    * wrapped with [[TracedGameRepository]] so each repo call surfaces
+    * as a `db.game-repo.<op>` span in Jaeger. Adds `Tracing` to the
+    * env requirement — service Mains already provide it via
+    * `TracingLayer.fromEnv(...)`.
+    */
+  def gameRepository(
+      cfg: BackendConfig
+  ): ZLayer[Tracing, Throwable, GameRepository] =
+    val inner = cfg.cache match
       case CacheBackend.NoCache => primaryGameRepo(cfg.backend)
       case CacheBackend.Redis   => cachedGameRepo(cfg.backend)
+    TracedGameRepository.wrap(inner)
 
   private def primaryGameRepo(backend: Backend): TaskLayer[GameRepository] =
     backend match
@@ -81,10 +91,16 @@ object PersistenceLayers:
 
   // -- Lobby repository ------------------------------------------------------
 
-  def lobbyRepository(cfg: BackendConfig): TaskLayer[LobbyRepository] =
-    cfg.cache match
+  /** Same shape as [[gameRepository]] — wraps the selected backend with
+    * tracing so lobby DB calls show up as `db.lobby-repo.<op>` spans.
+    */
+  def lobbyRepository(
+      cfg: BackendConfig
+  ): ZLayer[Tracing, Throwable, LobbyRepository] =
+    val inner = cfg.cache match
       case CacheBackend.NoCache => primaryLobbyRepo(cfg.backend)
       case CacheBackend.Redis   => cachedLobbyRepo(cfg.backend)
+    TracedLobbyRepository.wrap(inner)
 
   private def primaryLobbyRepo(backend: Backend): TaskLayer[LobbyRepository] =
     backend match

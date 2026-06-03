@@ -27,6 +27,9 @@ object RepositoryMain extends ZIOAppDefault:
   private[repository] val defaultConsumerGroup = "pichess-repository"
   private val defaultMetricsPort = 9103
 
+  override val bootstrap: ZLayer[Any, Nothing, Unit] =
+    Runtime.enableRuntimeMetrics
+
   override def run: ZIO[ZIOAppArgs, Throwable, Unit] =
     ProfilerLayer.wrap(
       "repository",
@@ -36,7 +39,10 @@ object RepositoryMain extends ZIOAppDefault:
         _    <- Console.printLine(
                   s"pichess-repository backend=${cfg.backend} cache=${cfg.cache}"
                 )
-        _    <- serve(port).provide(gameRepoLayer(cfg))
+        _    <- serve(port).provide(
+                  gameRepoLayer(cfg),
+                  TracingLayer.fromEnv("repository")
+                )
       yield ()
     )
 
@@ -51,16 +57,18 @@ object RepositoryMain extends ZIOAppDefault:
 
   /** Pick the `GameRepository` layer for the configured backend. Layer
     * selection lives in `PersistenceLayers` so all three services (game,
-    * repository, lobby) stay in sync.
+    * repository, lobby) stay in sync. The traced backend variant adds
+    * a `Tracing` env requirement — fulfilled by the
+    * `TracingLayer.fromEnv` provided further up the stack.
     */
   private[repository] def gameRepoLayer(
       cfg: BackendConfig
-  ): TaskLayer[GameRepository] =
+  ): ZLayer[Tracing, Throwable, GameRepository] =
     PersistenceLayers.gameRepository(cfg)
 
   private[repository] def serve(
       port: Int
-  ): ZIO[GameRepository, Throwable, Unit] =
+  ): ZIO[GameRepository & Tracing & ContextStorage, Throwable, Unit] =
     val program: ZIO[
       GameRepository & Server & Tracing & ContextStorage & Scope,
       Throwable,
@@ -102,7 +110,7 @@ object RepositoryMain extends ZIOAppDefault:
       yield ()
 
     ZIO.scoped {
-      program.provideSomeLayer[GameRepository & Scope](
-        Server.defaultWithPort(port) ++ TracingLayer.fromEnv("repository")
+      program.provideSomeLayer[GameRepository & Tracing & ContextStorage & Scope](
+        Server.defaultWithPort(port)
       )
     }
