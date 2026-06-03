@@ -136,39 +136,69 @@ object MoveValidator:
       case _ =>
         ZIO.fail(GameError.InvalidMove(s"Pawn cannot move to ${move.to}"))
 
-  // ─── Check detection ───────────────────────────────────────────────────────
+  // ─── Check detection (bitboard-native) ───────────────────────────────────
+  //
+  // Phase 2 of the bitboard migration. Every predicate is now O(1)-ish
+  // (a handful of bit-AND/OR/shift ops per call) instead of iterating
+  // the whole board:
+  //   - king position comes from `board.kingW`/`kingB`.lowestBitIdx —
+  //     no `collectFirst` scan.
+  //   - opponent attackers are read directly from the per-piece
+  //     bitboards, intersected with the precomputed leaper tables in
+  //     [[BitboardAttacks]] for knight/king/pawn and with
+  //     bitboardAttacks-style ray walks for bishop/rook/queen.
+  //
+  // The bench delta vs Phase 1 is large because `isInCheck` is the
+  // inner loop of `legalMovesFrom` (via `applyMoveCore`'s king-safety
+  // filter), which dominates gateway annotation-rebuild CPU.
 
   def isSquareAttacked(
       board: Board,
       square: Position,
       byOpponentOf: Color
   ): Boolean =
-    board.exists { case (pos, piece) =>
-      piece.color != byOpponentOf && canAttack(board, pos, piece, square)
-    }
+    val sqIdx     = square.squareIdx
+    val attacker  = if byOpponentOf == Color.White then Color.Black else Color.White
+    attackerBitboard(board, sqIdx, attacker) != 0L
 
   def isInCheck(board: Board, color: Color): Boolean =
-    board.collectFirst { case (pos, Piece(`color`, PieceType.King)) =>
-      pos
-    } match
-      case None => false
-      case Some(kingPos) =>
-        isSquareAttacked(board, kingPos, color)
+    val kingBb =
+      if color == Color.White then board.kingW.raw else board.kingB.raw
+    if kingBb == 0L then false
+    else
+      val kingIdx = java.lang.Long.numberOfTrailingZeros(kingBb)
+      val attacker = if color == Color.White then Color.Black else Color.White
+      attackerBitboard(board, kingIdx, attacker) != 0L
 
-  private def canAttack(
+  /** Bitboard of every piece of `byColor` that attacks `target`. The
+    * caller may take `.popCount == 0` for "is attacked", iterate set
+    * bits for "list attackers", or AND with a piece-type bitboard for
+    * type-specific queries.
+    */
+  private def attackerBitboard(
       board: Board,
-      from: Position,
-      piece: Piece,
-      target: Position
-  ): Boolean =
-    piece.pieceType match
-      case PieceType.Pawn =>
-        val direction = if piece.color == Color.White then 1 else -1
-        Math.abs(
-          target.col - from.col
-        ) == 1 && (target.row - from.row) == direction
-      case pt =>
-        Ray.canReach(board, from, pt, target)
+      target: Int,
+      byColor: Color
+  ): Long =
+    val occ = board.occupancy.raw
+    if byColor == Color.White then
+      val pawns   = board.pawnsW.raw   & BitboardAttacks.whitePawnAttackersOf(target)
+      val knights = board.knightsW.raw & BitboardAttacks.knightAttacks(target)
+      val king    = board.kingW.raw    & BitboardAttacks.kingAttacks(target)
+      val diag    = (board.bishopsW.raw | board.queensW.raw) &
+                    BitboardAttacks.bishopAttacks(target, occ)
+      val ortho   = (board.rooksW.raw | board.queensW.raw) &
+                    BitboardAttacks.rookAttacks(target, occ)
+      pawns | knights | king | diag | ortho
+    else
+      val pawns   = board.pawnsB.raw   & BitboardAttacks.blackPawnAttackersOf(target)
+      val knights = board.knightsB.raw & BitboardAttacks.knightAttacks(target)
+      val king    = board.kingB.raw    & BitboardAttacks.kingAttacks(target)
+      val diag    = (board.bishopsB.raw | board.queensB.raw) &
+                    BitboardAttacks.bishopAttacks(target, occ)
+      val ortho   = (board.rooksB.raw | board.queensB.raw) &
+                    BitboardAttacks.rookAttacks(target, occ)
+      pawns | knights | king | diag | ortho
 
   // ─── Legal move detection ─────────────────────────────────────────────────
 
@@ -224,11 +254,22 @@ object MoveValidator:
       square: Position,
       byColor: Color
   ): List[Position] =
-    board.toList.collect {
-      case (pos, piece)
-          if piece.color == byColor && canAttack(board, pos, piece, square) =>
-        pos
-    }
+    // Same bitboard machinery as `isInCheck` / `isSquareAttacked` —
+    // the attacker bitboard is the bits of the squares that attack
+    // `target`. Walking the set bits and reconstructing Position
+    // values is the only iteration cost; for the typical "two or
+    // three attackers" case this is ~10× faster than the previous
+    // `board.toList.collect` full-board scan.
+    val attackers = attackerBitboard(board, square.squareIdx, byColor)
+    if attackers == 0L then Nil
+    else
+      val buf = scala.collection.mutable.ListBuffer.empty[Position]
+      var rem = attackers
+      while rem != 0L do
+        val idx = java.lang.Long.numberOfTrailingZeros(rem)
+        rem &= rem - 1L
+        buf += Position(('a' + (idx % 8)).toChar, (idx / 8) + 1)
+      buf.toList
 
   def hasLegalMove(state: GameState): IO[GameError, Boolean] =
     val color = state.activeColor

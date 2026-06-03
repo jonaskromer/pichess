@@ -116,22 +116,13 @@ final case class BoardState(
       // get(pos) won't return None here — `idx` came from `occupancy`.
       (pos, get(pos).get)
 
-  /** Iterate as a Scala `Iterable` so the standard collection ops
-    * (`exists`, `collectFirst`, `foldLeft`, …) work without forcing a
-    * `.iterator` call. */
-  def asIterable: Iterable[(Position, Piece)] = new Iterable[(Position, Piece)]:
-    def iterator: Iterator[(Position, Piece)] = BoardState.this.iterator
-
-  /** True iff at least one `(pos, piece)` entry satisfies `p`. */
-  def exists(p: ((Position, Piece)) => Boolean): Boolean =
-    asIterable.exists(p)
-
-  /** First entry matching `pf`, or `None`. Used by `MoveValidator` to
-    * find the king's square; with bitboards there's a faster O(1)
-    * shortcut (a per-color king bitboard's `lowestBitIdx`) — Phase 2
-    * will switch to it. */
+  /** First entry matching `pf`, or `None`. Still used by the views
+    * (`WebBoardView`, `tui/BoardView`) to find the king for highlight
+    * rendering; the bitboard `MoveValidator` reads
+    * `kingW`/`kingB.lowestBitIdx` directly so no longer hits this
+    * path. */
   def collectFirst[A](pf: PartialFunction[(Position, Piece), A]): Option[A] =
-    asIterable.collectFirst(pf)
+    iterator.collectFirst(pf)
 
   /** Snapshot every (pos, piece) pair as a List. Order matches
     * [[iterator]] (LERF, low-to-high). */
