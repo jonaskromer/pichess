@@ -433,6 +433,21 @@ perf-summary: ## Rebuild comparison.md for the most recent perf run
 	fi; \
 	scripts/perf-summary.sh "$$latest"
 
+.PHONY: perf-clean
+perf-clean: ## Delete every previous perf-report (runs + loose bench JSON + profiles)
+	@if [ ! -d $(PERF_REPORTS_DIR) ]; then \
+	  echo "$(PERF_REPORTS_DIR)/ does not exist — nothing to clean."; exit 0; \
+	fi; \
+	count=$$(find $(PERF_REPORTS_DIR) -mindepth 1 -maxdepth 1 | wc -l | tr -d ' '); \
+	if [ "$$count" = "0" ]; then \
+	  echo "$(PERF_REPORTS_DIR)/ is already empty."; exit 0; \
+	fi; \
+	size=$$(du -sh $(PERF_REPORTS_DIR) | cut -f1); \
+	echo "removing $$count item(s) ($$size) under $(PERF_REPORTS_DIR)/"; \
+	rm -rf $(PERF_REPORTS_DIR); \
+	mkdir -p $(PERF_REPORTS_DIR); \
+	echo "done."
+
 .PHONY: profile-async-cpu
 profile-async-cpu: ## Attach async-profiler (cpu) to SERVICE for DURATION seconds
 	@if [ -z "$(SERVICE)" ]; then \

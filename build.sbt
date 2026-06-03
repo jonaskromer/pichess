@@ -20,8 +20,8 @@ ThisBuild / libraryDependencySchemes ++= Seq(
   "dev.zio" %% "zio-schema-protobuf"    % VersionScheme.Always,
 )
 
-val zioVersion       = "2.1.24"
-val zioHttpVersion   = "3.10.1"
+val zioVersion       = "2.1.26"
+val zioHttpVersion   = "3.11.2"
 val zioJsonVersion   = "0.9.0"
 val zioKafkaVersion  = "2.10.0"
 val laminarVersion   = "17.2.0"
@@ -38,7 +38,7 @@ val neo4jDriverVersion     = "5.28.5"
 val clickhouseJdbcVersion  = "0.9.0"
 val zioJdbcVersion         = "0.1.2"
 val gatlingVersion         = "3.13.5"
-val zioMetricsConnectorsVersion = "2.5.5"
+val zioMetricsConnectorsVersion = "2.5.6"
 val zioOpenTelemetryVersion     = "3.0.0-RC24"
 val openTelemetryVersion        = "1.43.0"
 val zioProfilingVersion         = "0.3.3"
@@ -79,7 +79,14 @@ lazy val commonSettings = Seq(
       Seq(
         compilerPlugin(
           "dev.zio" %% "zio-profiling-tagging-plugin" % zioProfilingVersion
-        )
+        ),
+        // The plugin rewrites effect-returning defs/vals to call
+        // `CostCenter.withChildCostCenter`, which lives in the
+        // zio-profiling runtime jar. That jar is only declared in
+        // `observabilityModule`, so non-observability modules (rules,
+        // proto, persistence/api, …) fail to link the generated calls.
+        // Bring the runtime to every plugin-tagged module.
+        "dev.zio" %% "zio-profiling" % zioProfilingVersion
       )
     else Seq.empty
   ),

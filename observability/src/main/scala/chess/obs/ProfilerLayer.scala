@@ -77,16 +77,56 @@ object ProfilerLayer:
       case Mode.Off => program
       case Mode.Sampling =>
         val out = outputPath(serviceName)
-        for
-          _      <- ensureDir(out.getParent)
-          _      <- Console
-                      .printLine(s"[profiler] sampling enabled → $out")
-                      .orDie
-          result <- SamplingProfiler(samplingPeriod).profile(program)
-          _      <- result
-                      .stackCollapseToFile(out.toString)
-                      .catchAllCause(c =>
-                        ZIO.logErrorCause("profile dump failed", c)
-                      )
-        yield ()
+        // `program` runs forever (gRPC awaitTermination / ZIO.never),
+        // so the only way `profile` returns is via interrupt. The
+        // interrupt skips the `result <- profile(program)` continuation
+        // unless we catch it: swallow the interrupt at the program
+        // boundary so `profile` sees normal completion with whatever
+        // samples it captured. Real failures propagate via
+        // `refailCause`. Requires the service Main to make its
+        // top-level effect actually interruptible — zio-grpc's
+        // `Server.awaitTermination` uses `ZIO.attempt` (non-interruptible
+        // blocking) so service Mains should use
+        // `ZIO.never.onInterrupt(server.shutdown.ignore)` instead.
+        // Use System.err for diagnostic output during shutdown — Console
+        // routes through the ZIO runtime which may already be in
+        // shutdown mode by the time `catchAllCause` fires.
+        def diag(msg: String): UIO[Unit] =
+          ZIO.succeed {
+            java.lang.System.err.println(s"[profiler] $msg")
+            java.lang.System.err.flush()
+          }
+        // Replicate `SamplingProfiler.profile`'s body so the dump can
+        // read directly from the live `supervisor` (which accumulates
+        // samples into a ConcurrentHashMap from the moment it's
+        // created). The upstream `profile(zio)` ends with
+        // `result <- supervisor.value` — that step is skipped on
+        // interrupt, which is why the .folded file never lands when
+        // the service is shut down. By moving the equivalent of
+        // `supervisor.value → stackCollapseToFile` into a Scope
+        // finalizer, the dump runs on any termination — natural
+        // completion, error, or shutdown-driven interrupt — because
+        // Scope finalizers are uninterruptible.
+        ZIO.scoped {
+          val profiler = SamplingProfiler(samplingPeriod)
+          for
+            _          <- ensureDir(out.getParent)
+            _          <- diag(s"sampling enabled → $out")
+            supervisor <- profiler.makeSupervisor
+            _          <- ZIO.addFinalizer {
+                            supervisor.value.flatMap { result =>
+                              diag(s"finalizer: writing dump → $out") *>
+                                result
+                                  .stackCollapseToFile(out.toString)
+                                  .catchAllCause(c =>
+                                    diag(s"finalizer: dump FAILED: ${c.prettyPrint.take(200)}")
+                                  ) *>
+                                diag(s"finalizer: dump complete → $out")
+                            }
+                          }
+            _          <- program.forkScoped
+                            .supervised(supervisor)
+                            .flatMap(_.join)
+          yield ()
+        }
     }

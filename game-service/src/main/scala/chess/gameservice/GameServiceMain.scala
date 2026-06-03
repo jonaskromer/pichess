@@ -85,7 +85,19 @@ object GameServiceMain extends ZIOAppDefault:
                            s"(metrics on 0.0.0.0:$metricsPort/metrics)"
                        )
         _           <- MetricsHttpServer.serve(metricsPort).forkDaemon
-        _           <- ZIO.service[scalapb.zio_grpc.Server].flatMap(_.awaitTermination)
+        // zio-grpc 0.6.3's `Server.awaitTermination` wraps the blocking
+        // Java call with `ZIO.attempt` (Server.scala:23) — not
+        // `attemptBlockingInterrupt` — so ZIO can't deliver an
+        // interrupt to the fiber. That keeps the main fiber alive
+        // through SIGTERM, blocks ZIO's graceful shutdown hook, and
+        // forces docker to fall back to SIGKILL (which skips
+        // finalizers, including ProfilerLayer's flame-graph dump).
+        // `ZIO.never.onInterrupt(shutdown)` gives us the same "block
+        // forever until told to stop" semantics but stays
+        // interruptible, and the explicit shutdown lets the gRPC
+        // server drain cleanly when the interrupt arrives.
+        server      <- ZIO.service[scalapb.zio_grpc.Server]
+        _           <- ZIO.never.onInterrupt(server.shutdown.ignore)
       yield ()
 
     val producerLayer: ZLayer[Tracing, Throwable, GameEventProducer] =
