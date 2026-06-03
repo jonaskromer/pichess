@@ -24,6 +24,14 @@ import zio.{IO, ZIO}
 case class Position private[chess] (col: Char, row: Int):
   override def toString: String = s"$col$row"
 
+  /** LERF (little-endian rank-file) square index for bitboard operations:
+    * `a1 = 0`, `h1 = 7`, `a8 = 56`, `h8 = 63`. Computed as
+    * `(row - 1) * 8 + (col - 'a')`. Same layout used by the mainstream
+    * chess-engine literature so bitboard tricks (knight attack tables,
+    * sliding-piece ray masks, etc.) port unchanged.
+    */
+  def squareIdx: Int = (row - 1) * 8 + (col - 'a')
+
 object Position:
   /** Pre-allocated flyweight table of all 64 valid positions, indexed by
     * `(col - 'a') * 8 + (row - 1)`.

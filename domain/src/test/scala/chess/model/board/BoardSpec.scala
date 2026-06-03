@@ -80,5 +80,37 @@ object BoardSpec extends ZIOSpecDefault:
           row <- 3 to 6
         yield board.get(Position(col, row))).forall(_ == None)
       )
-    }
+    },
+    // Phase 1 bitboard migration — pin down BoardState's edge behaviour.
+    suite("BoardState helpers")(
+      test("Empty board has isEmpty / size 0 / contains nothing") {
+        val empty = BoardState.Empty
+        assertTrue(
+          empty.isEmpty,
+          !empty.nonEmpty,
+          empty.size == 0,
+          empty.get(Position('e', 4)).isEmpty,
+          !empty.contains(Position('e', 4)),
+        )
+      },
+      test("non-empty initial board is nonEmpty") {
+        assertTrue(board.nonEmpty, !board.isEmpty)
+      },
+      test("apply throws NoSuchElementException on an empty square") {
+        val empty = BoardState.Empty
+        val exit  = scala.util.Try(empty.apply(Position('e', 4)))
+        assertTrue(
+          exit.isFailure,
+          exit.failed.toOption.exists(_.isInstanceOf[NoSuchElementException]),
+        )
+      },
+      test("Bitboard.iterator emits every set bit low-to-high") {
+        // Bit 0 + bit 3 + bit 63 — three pieces in LERF order
+        val bb = Bitboard.fromLong((1L << 0) | (1L << 3) | (1L << 63))
+        assertTrue(bb.iterator.toList == List(0, 3, 63))
+      },
+      test("Bitboard.iterator on empty bitboard emits nothing") {
+        assertTrue(Bitboard.Empty.iterator.isEmpty)
+      },
+    )
   )

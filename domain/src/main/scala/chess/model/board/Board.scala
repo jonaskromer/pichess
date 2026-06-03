@@ -4,7 +4,15 @@ import chess.model.piece.{Color, Piece, PieceType}
 import Color.*
 import PieceType.*
 
-type Board = Map[Position, Piece]
+/** The chess board representation. Phase 1 of the bitboard migration —
+  * `Board` is now a bitboard-backed [[BoardState]], but the existing
+  * `Map[Position, Piece]`-style call surface (get/contains/exists/
+  * collectFirst/+/-/iterator/foldLeft/size) is preserved on the new
+  * type so consumers don't need to be rewritten. The performance win
+  * lands in Phase 2 when MoveValidator's hot paths switch to bitboard
+  * intrinsics directly.
+  */
+type Board = BoardState
 
 object Board:
   val initial: Board =
@@ -18,4 +26,4 @@ object Board:
       cols.zip(backRank).map((col, pt) => Position(col, 8) -> Piece(Black, pt))
     val blackPawns = cols.map(col => Position(col, 7) -> Piece(Black, Pawn))
 
-    (whitePieces ++ whitePawns ++ blackPieces ++ blackPawns).toMap
+    BoardState.from(whitePieces ++ whitePawns ++ blackPieces ++ blackPawns)

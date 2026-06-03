@@ -2,6 +2,7 @@ package chess.codec
 
 import chess.model.board.{
   Board,
+  BoardState,
   CastlingRights,
   DrawReason,
   GameState,
@@ -75,6 +76,17 @@ object JsonCodec:
   given JsonCodec[CastlingRights] = DeriveJsonCodec.gen[CastlingRights]
 
   given JsonCodec[GameStatus] = DeriveJsonCodec.gen[GameStatus]
+
+  // Board → wire format kept identical to what the prior
+  // `Map[Position, Piece]` codec produced: `{"e1": {color, pieceType}, …}`.
+  // The bitboard-backed `BoardState` (Phase 1 of the bitboard migration)
+  // serialises by projecting to a Map for encoding and rebuilds from the
+  // same Map shape on decode, so existing JSON tests pass unchanged.
+  given JsonEncoder[BoardState] =
+    JsonEncoder[Map[Position, Piece]].contramap(_.iterator.toMap)
+
+  given JsonDecoder[BoardState] =
+    JsonDecoder[Map[Position, Piece]].map(BoardState.fromMap)
 
   // ─── GameState (derived via DTO) ───────────────────────────────────────────
   //

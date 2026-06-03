@@ -1,7 +1,7 @@
 package chess.codec
 
 import chess.model.GameError
-import chess.model.board.{Board, CastlingRights, Position}
+import chess.model.board.{Board, BoardState, CastlingRights, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 import zio.*
 
@@ -143,7 +143,7 @@ object FenCodec:
       )
     else
       ZIO.foldLeft((8 to 1 by -1).toList.zip(ranks.toList))(
-        Map.empty: Board
+        BoardState.Empty
       ) { case (board, (row, rank)) =>
         decodeRank(rank, row).map(board ++ _)
       }

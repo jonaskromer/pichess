@@ -313,6 +313,15 @@ coverage-build: ## Run coverage + bake the aggregated HTML report into the gatew
 	  exit 1; \
 	fi
 
+.PHONY: coverage-clean
+coverage-clean: ## Remove the baked coverage report from gateway resources (frees the gateway test that asserts /dev/coverage/report 404s when no report is baked)
+	@if [ -d $(COVERAGE_DST) ]; then \
+	  rm -rf $(COVERAGE_DST)/*; \
+	  echo "removed baked coverage report from $(COVERAGE_DST)/"; \
+	else \
+	  echo "$(COVERAGE_DST)/ does not exist — nothing to clean."; \
+	fi
+
 .PHONY: gatling-build
 gatling-build: ## Run gatling + bake the latest report into the gateway resources
 	sbt 'gatling/Gatling/test'

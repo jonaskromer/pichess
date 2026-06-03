@@ -3,7 +3,7 @@ package chess.service
 import chess.events.InMemoryGameEventProducer
 import chess.persistence.InMemoryGameRepository
 import chess.model.GameEvent
-import chess.model.board.{GameState, Position}
+import chess.model.board.{BoardState, GameState, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 import zio.*
 import zio.test.*
@@ -39,10 +39,10 @@ object GameServiceSpec extends ZIOSpecDefault:
         for (event, history) <- GameService.loadGame(fen)
         yield assertTrue(
           event.gameId.nonEmpty,
-          event.initialState.board == Map(
+          event.initialState.board == BoardState.fromMap(Map(
             Position('e', 1) -> Piece(Color.White, PieceType.King),
             Position('e', 8) -> Piece(Color.Black, PieceType.King)
-          ),
+          )),
           event.initialState.activeColor == Color.White,
           history.isEmpty
         )
@@ -68,20 +68,20 @@ object GameServiceSpec extends ZIOSpecDefault:
         for (event, history) <- GameService.loadGame(json)
         yield assertTrue(
           event.gameId.nonEmpty,
-          event.initialState.board == Map(
+          event.initialState.board == BoardState.fromMap(Map(
             Position('e', 1) -> Piece(Color.White, PieceType.King),
             Position('e', 8) -> Piece(Color.Black, PieceType.King)
-          ),
+          )),
           event.initialState.activeColor == Color.White,
           history.isEmpty
         )
       },
       test("persist the loaded state") {
         val fen = "4k3/8/8/8/8/8/8/4K3 w - - 0 1"
-        val expectedBoard = Map(
+        val expectedBoard = BoardState.fromMap(Map(
           Position('e', 1) -> Piece(Color.White, PieceType.King),
           Position('e', 8) -> Piece(Color.Black, PieceType.King)
-        )
+        ))
         for
           (event, _) <- GameService.loadGame(fen)
           state <- GameService.getState(event.gameId)
