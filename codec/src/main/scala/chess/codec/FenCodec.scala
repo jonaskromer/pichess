@@ -103,22 +103,35 @@ object FenCodec:
 
   // ─── Board placement ───────────────────────────────────────────────────────
 
+  /** FEN placement encoding (`rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR`).
+    *
+    * Hand-rolled with a single StringBuilder + while loops. The previous
+    * implementation used `Range.map`, `foldLeft` over a `(String, Int)`
+    * tuple, and per-cell string concatenation — that produced ~40 KB of
+    * allocation per call (~64 Tuple2 instances + 64 intermediate
+    * Strings) and dominated the response-build alloc profile. This
+    * version allocates one StringBuilder (sized to the max FEN length)
+    * and writes characters directly.
+    */
   def encodeBoard(board: Board): String =
-    (8 to 1 by -1)
-      .map { row =>
-        val (out, empty) = ('a' to 'h')
-          .map(col => board.get(Position(col, row)))
-          .foldLeft(("", 0)) {
-            case ((out, empty), None) => (out, empty + 1)
-            case ((out, empty), Some(piece)) =>
-              (flushEmpty(out, empty) + pieceToChar(piece), 0)
-          }
-        flushEmpty(out, empty)
-      }
-      .mkString("/")
-
-  private def flushEmpty(out: String, empty: Int): String =
-    if empty > 0 then out + empty.toString else out
+    val sb = new java.lang.StringBuilder(72) // 8 ranks × 8 + 7 separators + slack
+    var row = 8
+    while row >= 1 do
+      var col   = 'a'
+      var empty = 0
+      while col <= 'h' do
+        board.get(Position(col, row)) match
+          case None        => empty += 1
+          case Some(piece) =>
+            if empty > 0 then
+              sb.append(empty)
+              empty = 0
+            sb.append(pieceToChar(piece))
+        col = (col + 1).toChar
+      if empty > 0 then sb.append(empty)
+      if row > 1 then sb.append('/')
+      row -= 1
+    sb.toString
 
   def decodeBoard(placement: String): IO[GameError, Board] =
     val ranks = placement.split('/')

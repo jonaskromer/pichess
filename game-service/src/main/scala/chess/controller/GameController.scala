@@ -46,7 +46,7 @@ object GameController:
   ): IO[GameError, Unit] =
     session.modifyZIO { s =>
       gs.makeMove(s.gameId, rawInput).flatMap { (newState, event) =>
-        val provisional = s.game.recordMove(event.move, newState)
+        val provisional = s.game.recordMove(event.move, newState, event.san)
         val triggeredFivefold =
           newState.status.isPlaying && isFivefoldRepetition(provisional)
         val finalGame =

@@ -2,10 +2,10 @@ package chess.gameservice
 
 import chess.codec.FenSerializer
 import chess.model.{GameError, GameId, SessionState}
-import chess.notation.SanSerializer
 import io.grpc.{Status, StatusException}
 import pichess.game_service.{MoveLogEntry, StateReply}
 import zio.UIO
+import zio.ZIO
 
 /** Pure mapping helpers for the gRPC service.
   *
@@ -16,29 +16,28 @@ import zio.UIO
   */
 object GrpcMappers:
 
-  /** Project a SessionState into the wire reply. Derives the SAN log from
-    * the session's initial state + history; `deriveMoveLog`'s
-    * `Either[String, …]` failure is `orDie`-d because reaching this code
-    * implies the history is already legal (the controller only stores
-    * verified moves).
+  /** Project a SessionState into the wire reply. The SAN log is read from
+    * the pre-computed [[chess.model.GameSnapshot.moveLog]] field —
+    * incrementally maintained by `recordMove` / `undoOnce` / `redoOnce`
+    * and seeded by `fromHistory` on load — so this projection avoids
+    * re-walking the history through `SanSerializer.deriveMoveLog` on
+    * every reply.
     */
   def toStateReply(
       gameId: GameId,
       session: SessionState
   ): UIO[StateReply] =
-    SanSerializer
-      .deriveMoveLog(session.initialState, session.history)
-      .orDie
-      .map { log =>
-        StateReply(
-          gameId      = gameId,
-          fen         = FenSerializer.serialize(session.state),
-          status      = session.state.status.toString,
-          activeColor = session.state.activeColor.toString,
-          moveLog     = log.map((color, san) => MoveLogEntry(color.toString, san)),
-          error       = session.error.getOrElse("")
-        )
-      }
+    ZIO.succeed(
+      StateReply(
+        gameId      = gameId,
+        fen         = FenSerializer.serialize(session.state),
+        status      = session.state.status.toString,
+        activeColor = session.state.activeColor.toString,
+        moveLog     = session.game.moveLog
+          .map((color, san) => MoveLogEntry(color.toString, san)),
+        error       = session.error.getOrElse("")
+      )
+    )
 
   /** Lift a domain GameError into the gRPC status it should surface as.
     * The mapping is exhaustive across `GameError`'s variants — a new

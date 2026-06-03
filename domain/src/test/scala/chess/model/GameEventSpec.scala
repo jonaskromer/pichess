@@ -17,12 +17,14 @@ object GameEventSpec extends ZIOSpecDefault:
         event.initialState == state
       )
     },
-    test("MoveMade should hold the game id, move, and resulting state") {
-      val event: GameEvent.MoveMade = GameEvent.MoveMade(id, move, state)
+    test("MoveMade should hold the game id, move, resulting state, and SAN") {
+      val event: GameEvent.MoveMade =
+        GameEvent.MoveMade(id, move, state, "e4")
       assertTrue(
         event.gameId == id,
         event.move == move,
-        event.resultingState == state
+        event.resultingState == state,
+        event.san == "e4"
       )
     },
     test("InvalidMoveAttempted should hold the game id and reason") {

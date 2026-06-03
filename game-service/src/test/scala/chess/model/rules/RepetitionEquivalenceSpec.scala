@@ -132,7 +132,7 @@ object RepetitionEquivalenceSpec extends ZIOSpecDefault:
         for
           move <- MoveParser.parse(san, snap.state)
           next <- Game.applyMove(snap.state, move)
-          advanced = snap.recordMove(move, next)
+          advanced = snap.recordMove(move, next, san)
         yield (advanced, checkCount(advanced, s"after $san").toList ::: acc)
       }
       .map(_._2.reverse)
@@ -150,7 +150,7 @@ object RepetitionEquivalenceSpec extends ZIOSpecDefault:
         for
           move <- MoveParser.parse(san, snap.state)
           next <- Game.applyMove(snap.state, move)
-        yield snap.recordMove(move, next)
+        yield snap.recordMove(move, next, san)
       }
       mismatches <- ZIO.succeed {
         var current = played
@@ -181,7 +181,7 @@ object RepetitionEquivalenceSpec extends ZIOSpecDefault:
         for
           move <- MoveParser.parse(san, snap.state)
           next <- Game.applyMove(snap.state, move)
-        yield snap.recordMove(move, next)
+        yield snap.recordMove(move, next, san)
       }
       mismatches <- ZIO.succeed {
         val out = scala.collection.mutable.ListBuffer.empty[Mismatch]
@@ -240,7 +240,7 @@ object RepetitionEquivalenceSpec extends ZIOSpecDefault:
           for
             move <- MoveParser.parse(san, snap.state)
             next <- Game.applyMove(snap.state, move)
-          yield snap.recordMove(move, next)
+          yield snap.recordMove(move, next, san)
         }
         beforeCounts = advanced.positionCounts
         drawState = advanced.state.copy(

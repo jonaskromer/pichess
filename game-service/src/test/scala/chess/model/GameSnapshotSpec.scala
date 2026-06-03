@@ -41,7 +41,7 @@ object GameSnapshotSpec extends ZIOSpecDefault:
       val mid =
         GameState.initial.copy(activeColor = chess.model.piece.Color.Black)
       val withMove =
-        GameSnapshot.fresh("id", GameState.initial).recordMove(mv, mid)
+        GameSnapshot.fresh("id", GameState.initial).recordMove(mv, mid, "e4")
       val altered = mid.copy(inCheck = true)
       val updated = withMove.withCurrentState(altered)
       assertTrue(
@@ -82,13 +82,15 @@ object GameSnapshotSpec extends ZIOSpecDefault:
       )
       val viaRecord = GameSnapshot
         .fresh("id", GameState.initial)
-        .recordMove(move, after)
-      val viaFromHistory = GameSnapshot.fromHistory(
-        "id",
-        GameState.initial,
-        List((move, after))
+        .recordMove(move, after, "e4")
+      for viaFromHistory <- GameSnapshot.fromHistory(
+                              "id",
+                              GameState.initial,
+                              List((move, after))
+                            )
+      yield assertTrue(
+        viaRecord.positionCounts == viaFromHistory.positionCounts
       )
-      assertTrue(viaRecord.positionCounts == viaFromHistory.positionCounts)
     },
     test("fromHistory increments counts when the same position recurs") {
       // The previous test only exercises the "key absent" arm of
@@ -102,12 +104,12 @@ object GameSnapshotSpec extends ZIOSpecDefault:
       // `initialState`, once as the post-move state of the synthetic
       // ply), so the hash count for the initial position becomes 2.
       val dummyMove = Move(Position('e', 2), Position('e', 4))
-      val snapshot = GameSnapshot.fromHistory(
-        "id",
-        GameState.initial,
-        List((dummyMove, GameState.initial))
-      )
-      assertTrue(
+      for snapshot <- GameSnapshot.fromHistory(
+                       "id",
+                       GameState.initial,
+                       List((dummyMove, GameState.initial))
+                     )
+      yield assertTrue(
         snapshot.positionCounts(Zobrist.hash(GameState.initial)) == 2
       )
     }

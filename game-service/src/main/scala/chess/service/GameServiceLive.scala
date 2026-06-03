@@ -95,7 +95,7 @@ final class GameServiceLive(
                       occurredAt   = ts
                     )
                   )
-    yield (newState, GameEvent.MoveMade(id, move, newState))
+    yield (newState, GameEvent.MoveMade(id, move, newState, san))
 
   def getState(id: GameId): IO[GameError, Option[GameState]] =
     store.load(id)

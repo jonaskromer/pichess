@@ -49,10 +49,10 @@ final class GrpcServer(
     (for
       result <- gs.loadGame(request.raw)
       (event, history) = result
-      snapshot =
+      snapshot <-
         GameSnapshot.fromHistory(event.gameId, event.initialState, history.reverse)
-      ref     <- sessions.register(snapshot)
-      reply   <- replyFor(event.gameId, ref)
+      ref   <- sessions.register(snapshot)
+      reply <- replyFor(event.gameId, ref)
     yield reply).mapError(GrpcMappers.toStatusException)
 
   def makeMove(request: MoveRequest): IO[StatusException, StateReply] =
