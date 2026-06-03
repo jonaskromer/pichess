@@ -348,20 +348,41 @@ What to look for:
 ### The selector model
 
 Every optimisation registers a per-component env var. Default value =
-optimised (so production behaves correctly without setup). The `naive`
-value flips the swap. A single override knob (`PICHESS_OPT_ALL=naive`)
-sets every selector to its naive variant for the headline A/B.
+`default` — the implementation we *believe* is the better one, but
+without claiming it. The `baseline` value flips to whatever was
+there before the alternative was written. A single override knob
+(`PICHESS_OPT_ALL=baseline`) flips every selector at once for the
+headline A/B run.
+
+The names `default` / `baseline` are intentional: the perf experiment
+is what proves which one is "optimised" on a given workload, not our
+priors. `default` just means "what runs without flipping a selector".
+
+**Implemented (Phase C):**
 
 ```
-  PICHESS_OPT_PG_POOL        = hikari    (default) | none         # ← Phase B headline
-  PICHESS_OPT_FEN_PARSER     = fastparse (default) | combinator | regex
-  PICHESS_OPT_LEGAL_MOVES    = memo      (default) | recompute
-  PICHESS_OPT_POSITION_ALLOC = reuse     (default) | fresh        # Ray.walk allocation
-  PICHESS_OPT_DTO_CACHE      = on        (default) | off
-  PICHESS_OPT_SSE_MODE       = delta     (default) | full
-  PICHESS_OPT_GRPC_POOL      = pool      (default) | percall
-  PICHESS_OPT_ALL            = optimised (default) | naive
+  PICHESS_OPT_PG_POOL = default | baseline      # HikariCP vs Database.forURL
+  PICHESS_OPT_ALL     = default | baseline      # flip every selector at once
 ```
+
+The values are case-insensitive. Anything other than `baseline` (or
+unset) resolves to `default`. See `chess.opt.Optimisation` for the
+typeclass and `PostgresDatabaseOptimisations` for the wired instance.
+
+**Planned (Phase D):**
+
+```
+  PICHESS_OPT_FEN_PARSER     = default | baseline
+  PICHESS_OPT_LEGAL_MOVES    = default | baseline
+  PICHESS_OPT_POSITION_ALLOC = default | baseline
+  PICHESS_OPT_DTO_CACHE      = default | baseline
+  PICHESS_OPT_SSE_MODE       = default | baseline
+  PICHESS_OPT_GRPC_POOL      = default | baseline
+```
+
+Each lands as one new `Optimisation[T]` instance + matching layer pair.
+The service Main wiring already routes through `Optimisation.select` —
+no Main change is needed when a new instance is published.
 
 The selector is read once at startup and resolved to a ZIO `ZLayer`.
 See [Extending §
@@ -424,7 +445,7 @@ connection pool"), there is no connection pool here — the
 The fix is `Database.forDataSource(new com.zaxxer.hikari.HikariDataSource(cfg))`
 with HikariCP configured for `maximumPoolSize = settings.maxConnections`.
 The selector wraps both paths so the regression is reproducible at
-will via `PICHESS_OPT_PG_POOL=none make perf BACKENDS=postgres MODE=Stress`.
+will via `PICHESS_OPT_PG_POOL=baseline make perf BACKENDS=postgres MODE=Stress`.
 
 Secondary findings (lower priority, kept for documentation):
 
