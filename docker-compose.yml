@@ -476,7 +476,13 @@ services:
       - "4318:4318"     # OTLP HTTP receiver
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
-    mem_limit: 512m
+      # Limit the in-memory trace store so 65k+-trace perf runs don't
+      # OOM the container. all-in-one defaults to 100k traces; on the
+      # dev rig that bloats RAM past the cap and the container gets
+      # killed during heavy Gatling runs. 20k is enough for any
+      # post-run hot-paths.py aggregation while staying under the cap.
+      MEMORY_MAX_TRACES: "20000"
+    mem_limit: 1g
 
   # Headless control surface. Not in the default compose profile — `up`
   # doesn't start it. Spawn one via `make tui` (or

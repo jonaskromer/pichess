@@ -670,6 +670,52 @@ Rules of thumb:
 
 ---
 
+## Wire-format conventions for gRPC payloads
+
+When a gRPC response carries a rich, structured payload (not just a few
+strings/ids) and the producer + consumer are both Scala microservices in
+this monorepo, the convention is to **ship the wire payload as a single
+`bytes` field carrying a Scala case-class DTO encoded via boopickle**.
+The DTO lives in the shared `api` module — same type at both ends, no
+proto↔Scala translation layer.
+
+Current production user: `StateReply.board_state` carries a
+`BoardStateDto` encoded by `BoardStateDto.encodeBytes` (boopickle) and
+decoded by `BoardStateDto.decodeBytes`. The gateway's
+`WebController.replyToDto` consumes the bytes directly; the gateway no
+longer parses a FEN string out of every reply. Sidecar `fen` field
+remains for the annotation cache, which needs castling + en-passant
+info the `BoardStateDto` doesn't carry.
+
+**Codec choice rule:**
+
+| Codec | Round-trip on `BoardStateDto` (64 squares) | Verdict |
+|---|---|---|
+| **boopickle** (`io.suzaku::boopickle:1.5.0`) | ~12 µs (ties FEN) | **use this** |
+| zio-json (text) | ~18 µs | acceptable fallback |
+| FEN string (hand-tuned) | ~12 µs | retained for `fen` sidecar + persistence |
+| zio-schema-protobuf | **~416 µs (33× slower)** | **do not use on hot paths** |
+
+The zio-schema-protobuf trap was found the hard way: an initial
+migration regressed end-to-end p99 by ~7× under high load.
+Redis persistence still uses zio-schema-protobuf via
+`RedisLayers.ProtobufCodecSupplier` and that's fine because the
+`GameState` payload is smaller and Redis isn't a per-request hot
+path — but don't extend that pattern to gRPC or any per-request
+encode site. The microbench in
+`bench/.../BoardStateDtoBenchmark.scala` pins the numbers down across
+small + medium DTO sizes and is the place to add a new codec
+contender before any migration.
+
+**When the pattern doesn't apply.** If the response is already a few
+flat strings (e.g. `ExportReply { format, body }` where `body` is
+rendered to its final wire format at the source), there's no Scala
+DTO middle layer to eliminate — keep the structured proto fields. The
+pattern is for collapsing a proto↔Scala translation step, not for
+binary-encoding-as-a-virtue.
+
+---
+
 ## Deferred work
 
 The plan in [the design ADR](adr/) called for additional tracing surfaces; they

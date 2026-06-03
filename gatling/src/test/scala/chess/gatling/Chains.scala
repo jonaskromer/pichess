@@ -34,6 +34,13 @@ object Chains:
     * [[SharedConfig.openingMoves]], read the resulting state. Hits the
     * gateway, so it transparently exercises whichever `PICHESS_BACKEND`
     * the gameService + repository are running with.
+    *
+    * Each ply mirrors the web-ui's interaction shape: a `GET
+    * /legal-moves?from=<sq>` (driven by the user picking up the piece)
+    * before the actual `POST /move`. After the opening completes, the
+    * scenario also reads `/threats`, `/attackers`, and exports the
+    * game as FEN — exercising the annotation cache + export endpoints
+    * that the smoke `get state` chain wouldn't touch.
     */
   val playOneGame: ChainBuilder =
     SharedConfig.openingMoves.foldLeft(
@@ -47,17 +54,36 @@ object Chains:
           .check(jsonPath("$.id").saveAs("gameId"))
       )
     ) { (chain, move) =>
-      chain.exec(
-        http(s"move $move")
-          .post("/api/games/#{gameId}/move")
-          .header("X-Session-Id", "#{sessionId}")
-          .header("content-type", "application/json")
-          .body(StringBody(s"""{"move":"$move"}"""))
-          .check(status.is(200))
-      )
+      val fromSq = move.take(2) // moves are "e2 e4" — source square is first 2 chars
+      chain
+        .exec(
+          http(s"legal-moves from $fromSq")
+            .get(s"/api/games/#{gameId}/legal-moves?from=$fromSq")
+            .check(status.is(200))
+        )
+        .exec(
+          http(s"move $move")
+            .post("/api/games/#{gameId}/move")
+            .header("X-Session-Id", "#{sessionId}")
+            .header("content-type", "application/json")
+            .body(StringBody(s"""{"move":"$move"}"""))
+            .check(status.is(200))
+        )
     }.exec(
       http("get state")
         .get("/api/games/#{gameId}/state")
+        .check(status.is(200))
+    ).exec(
+      http("threats")
+        .get("/api/games/#{gameId}/threats")
+        .check(status.is(200))
+    ).exec(
+      http("attackers of e4")
+        .get("/api/games/#{gameId}/attackers?of=e4")
+        .check(status.is(200))
+    ).exec(
+      http("export fen")
+        .get("/api/games/#{gameId}/export/fen")
         .check(status.is(200))
     )
 
