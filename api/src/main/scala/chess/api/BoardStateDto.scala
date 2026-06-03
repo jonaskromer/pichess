@@ -175,6 +175,47 @@ object StackInfoResponse:
   given JsonDecoder[StackInfoResponse] =
     DeriveJsonDecoder.gen[StackInfoResponse]
 
+/** Phase 4 server-side annotation bundle. Carries the full
+  * legal-moves / threats / attackers triple the gateway used to compute
+  * locally on cache miss. Game-service builds this from the in-memory
+  * `GameState` after every state change and ships it on the wire so the
+  * gateway just shuttles it to its annotation cache — no FEN parse, no
+  * per-piece `legalMovesFrom` loop.
+  *
+  * Keys are canonical square labels ("e4", "g1", …) matching
+  * [[LegalMovesResponse.from]] / [[ThreatsResponse.threatened]] /
+  * [[AttackersResponse.of]] so the gateway can hand each bundle field
+  * straight through to its corresponding HTTP endpoint without
+  * remapping.
+  */
+final case class AnnotationsDto(
+    legalMovesFrom: Map[String, List[String]],
+    threats: List[String],
+    attackersOf: Map[String, List[String]]
+)
+
+object AnnotationsDto:
+  given JsonEncoder[AnnotationsDto] = DeriveJsonEncoder.gen[AnnotationsDto]
+  given JsonDecoder[AnnotationsDto] = DeriveJsonDecoder.gen[AnnotationsDto]
+  given Pickler[AnnotationsDto]     = generatePickler
+
+  /** Empty bundle — used as the proto3 default when the server didn't
+    * attach annotations to the reply (graceful fallback path on the
+    * gateway). */
+  val Empty: AnnotationsDto = AnnotationsDto(Map.empty, Nil, Map.empty)
+
+  /** Same boopickle round-trip as `BoardStateDto.encodeBytes` —
+    * boopickle was the winner of the bench shoot-out for our DTO shapes
+    * (zio-schema-protobuf was 33× slower for nested case-class trees). */
+  def encodeBytes(dto: AnnotationsDto): Array[Byte] =
+    val buf = Pickle.intoBytes(dto)
+    val arr = new Array[Byte](buf.remaining)
+    buf.get(arr)
+    arr
+
+  def decodeBytes(bytes: Array[Byte]): AnnotationsDto =
+    Unpickle[AnnotationsDto].fromBytes(ByteBuffer.wrap(bytes))
+
 /** Response for `GET /api/games/{id}/legal-moves?from=<sq>` — the
   * destinations the piece at `from` can legally move to. Pawn promotions
   * collapse to one entry per destination (the promotion choice happens

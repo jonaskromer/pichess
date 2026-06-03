@@ -1,6 +1,6 @@
 package chess.controller
 
-import chess.api.{BoardStateDto, ErrorDto, GameStatusDto}
+import chess.api.{AnnotationsDto, BoardStateDto, ErrorDto, GameStatusDto}
 import com.google.protobuf.ByteString
 import io.grpc.{Status as GrpcStatus, StatusException}
 import pichess.game_service.StateReply
@@ -73,17 +73,29 @@ object WebControllerHelpersSpec extends ZIOSpecDefault:
         }
       }
     ),
-    suite("fenToAnnotations FenParser failure")(
-      test("succeeds on the standard starting position") {
-        for ann <- WebController.fenToAnnotations(
-                     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                   )
-        yield assertTrue(ann.legalMovesFrom.nonEmpty, ann.threats.isEmpty)
+    suite("decodeServerAnnotations bytes round-trip")(
+      test("decodes a populated bundle into the cache shape") {
+        val sample = AnnotationsDto(
+          legalMovesFrom = Map("e2" -> List("e3", "e4")),
+          threats        = List("d5"),
+          attackersOf    = Map("d5" -> List("e6")),
+        )
+        val bytes = AnnotationsDto.encodeBytes(sample)
+        val ann   = WebController.decodeServerAnnotations(bytes)
+        assertTrue(
+          ann.legalMovesFrom == sample.legalMovesFrom,
+          ann.threats        == sample.threats,
+          ann.attackersOf    == sample.attackersOf,
+        )
       },
-      test("fails with an ErrorDto on a malformed FEN (defensive guard)") {
-        WebController.fenToAnnotations("nope").either.map { result =>
-          assertTrue(result.isLeft)
-        }
-      }
+      test("an empty bundle round-trips cleanly") {
+        val bytes = AnnotationsDto.encodeBytes(AnnotationsDto.Empty)
+        val ann   = WebController.decodeServerAnnotations(bytes)
+        assertTrue(
+          ann.legalMovesFrom.isEmpty,
+          ann.threats.isEmpty,
+          ann.attackersOf.isEmpty,
+        )
+      },
     )
   )

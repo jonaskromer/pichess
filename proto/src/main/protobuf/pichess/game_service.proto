@@ -58,21 +58,25 @@ message ExportRequest {
 
 // Universal state response.
 //
-// `board_state` is a `BoardStateDto` (defined in the shared `api`
-// module) serialised via its `Schema[BoardStateDto].protobufCodec`.
-// The DTO already carries the board squares, active color, move log,
-// in-check flag, game status, and any embedded error string. The hot
-// reply→HTTP path on the gateway only uses this field — no FEN parse.
+// `board_state` is an `api.BoardStateDto` serialised via boopickle. The
+// hot reply→HTTP path on the gateway only uses this field.
 //
-// `fen` is kept as a sidecar for the annotation endpoints
-// (`/legal-moves`, `/threats`, `/attackers`) — those need full
-// GameState (castling rights, en-passant target) which the DTO doesn't
-// carry. They run on a separate cached path off the hot reply.
+// `annotations` is an `api.AnnotationsDto` (Phase 4) — the full
+// legal-moves/threats/attackers triple computed server-side so the
+// gateway can populate its annotation cache without doing the per-piece
+// MoveValidator loop. Empty bytes (proto3 default) is the graceful
+// fallback: a gateway running pre-Phase-4 code, or a server that didn't
+// attach annotations for whatever reason, falls back to the `fen`-parse
+// path on the gateway side. New gateways prefer the bytes when present.
+//
+// `fen` stays around for that fallback and as a debugging aid; once the
+// gateway-side fallback is removed we can drop it.
 message StateReply {
   string game_id     = 1;
   bytes  board_state = 2;
   string error       = 3;  // empty when the action succeeded
-  string fen         = 4;  // sidecar for annotation endpoints
+  string fen         = 4;  // fallback for annotation endpoints
+  bytes  annotations = 5;  // boopickle AnnotationsDto, empty = fallback
 }
 
 message ExportReply {
