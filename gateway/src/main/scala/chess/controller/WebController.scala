@@ -211,16 +211,16 @@ object WebController:
       .mapError(err => ErrorDto(err.message))
       .flatMap(computeAnnotations)
 
-  /** Build the full annotation bundle from a `GameState`. Iterates every
-    * active-color piece and asks the rules engine for legal moves;
-    * computes the threat list (own pieces attacked); then for each
-    * threatened square asks who's attacking it.
+  /** Build the full annotation bundle from a `GameState`. One batched
+    * call to `MoveValidator.legalDestinationsIndex` populates the whole
+    * `legalMovesFrom` map; threats and attackers are then derived from
+    * the same active-color squares plus bitboard predicates.
     *
-    * `MoveValidator.legalMovesFrom` returns `IO[GameError, _]` but its
-    * internal `catchAll` squelches every failure to a boolean `false`
-    * — the outer effect can't actually fail with `GameError` on a
-    * well-formed state. We `.orDie` here to make that explicit: any
-    * surface-level failure would be a defect in the rules engine.
+    * The Phase 3 refactor collapsed what used to be ~16 per-piece
+    * `legalMovesFrom` IO calls into a single batch effect — saves the
+    * per-call ZIO scheduling overhead and lets the validator's internal
+    * `validateSync` path do the work without going back through the
+    * effect system at every piece.
     */
   private def computeAnnotations(
       state: GameState
@@ -231,33 +231,30 @@ object WebController:
     val opponent =
       if state.activeColor == Color.White then Color.Black else Color.White
 
-    for
-      perSource <- ZIO.foreach(ownSquares) { src =>
-                     MoveValidator
-                       .legalMovesFrom(state, src)
-                       .orDie
-                       .map(dests => squareKey(src) -> dests.map(squareKey))
-                   }
-      legalMap = perSource.toMap.filter { case (_, dests) => dests.nonEmpty }
+    MoveValidator.legalDestinationsIndex(state).orDie.map { perSource =>
+      val legalMap = perSource.map { case (src, dests) =>
+        squareKey(src) -> dests.map(squareKey)
+      }
       // threats: iterate active-color pieces, keep those squares that
       // happen to be attacked by any opposing piece.
-      threats = ownSquares.filter(sq =>
-                  MoveValidator.isSquareAttacked(state.board, sq, state.activeColor)
-                )
+      val threats = ownSquares.filter(sq =>
+        MoveValidator.isSquareAttacked(state.board, sq, state.activeColor)
+      )
       // attackersOf: only build entries for the squares that are actually
       // threatened — saves work and avoids polluting the cache with empty
       // lists for every non-threatened own piece.
-      attackerEntries = threats.map { sq =>
-                          squareKey(sq) ->
-                            MoveValidator
-                              .attackersOf(state.board, sq, opponent)
-                              .map(squareKey)
-                        }
-    yield AnnotationCache.Annotations(
-      legalMovesFrom = legalMap,
-      threats = threats.map(squareKey),
-      attackersOf = attackerEntries.toMap
-    )
+      val attackerEntries = threats.map { sq =>
+        squareKey(sq) ->
+          MoveValidator
+            .attackersOf(state.board, sq, opponent)
+            .map(squareKey)
+      }
+      AnnotationCache.Annotations(
+        legalMovesFrom = legalMap,
+        threats        = threats.map(squareKey),
+        attackersOf    = attackerEntries.toMap
+      )
+    }
 
   /** Canonical square label used on the wire — e.g. Position('e', 4) → "e4". */
   private def squareKey(p: Position): String = s"${p.col}${p.row}"

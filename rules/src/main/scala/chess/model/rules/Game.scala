@@ -65,46 +65,54 @@ object Game:
 
   /** Applies a move without detecting checkmate/stalemate. Used by
     * [[MoveValidator.hasLegalMove]] to avoid infinite recursion.
+    *
+    * Phase 3 ZIO-bench variant: pure IO for-comp, no internal sync
+    * Either pathway. Each `ZIO.when` step costs ~30ns of scheduling;
+    * the batch sees this ~160× per annotation rebuild.
     */
   private[rules] def applyMoveCore(
       state: GameState,
       move: Move
   ): IO[GameError, GameState] =
     for
-      _ <- ZIO.when(state.status.isOver)(
-        ZIO.fail(GameError.InvalidMove("Game is over"))
-      )
-      _ <- MoveValidator.validate(state, move)
-      piece = state.board(move.from)
-      _ <- validatePromotion(piece, move)
-      movedPiece = promotedPiece(piece, move)
-      newBoard = updatedBoard(state, move, movedPiece)
-      _ <- ZIO.when(MoveValidator.isInCheck(newBoard, state.activeColor))(
-        ZIO.fail(GameError.InvalidMove("King cannot be left in check"))
-      )
-      opponentInCheck = MoveValidator.isInCheck(
-        newBoard,
-        state.activeColor.opposite
-      )
-      isCapture = state.board.contains(move.to) || isEnPassantCapture(
-        state,
-        move,
-        piece
-      )
-      isPawnMove = piece.pieceType == PieceType.Pawn
-      newHalfmove =
-        if isPawnMove || isCapture then 0 else state.halfmoveClock + 1
-      newFullmove =
-        if state.activeColor == Color.Black then state.fullmoveNumber + 1
-        else state.fullmoveNumber
-    yield GameState(
-      board = newBoard,
-      activeColor = state.activeColor.opposite,
+      _          <- ZIO.fail(GameError.InvalidMove("Game is over"))
+                      .when(state.status.isOver)
+      _          <- MoveValidator.validate(state, move)
+      piece       = state.board(move.from)
+      _          <- validatePromotion(piece, move)
+      newBoard    = updatedBoard(state, move, promotedPiece(piece, move))
+      _          <- ZIO.fail(GameError.InvalidMove("King cannot be left in check"))
+                      .when(MoveValidator.isInCheck(newBoard, state.activeColor))
+    yield buildPostMoveState(state, move, piece, newBoard)
+
+  /** Assemble the post-move [[GameState]] after every legality check has
+    * passed. Pure plumbing — extracted from the for-comp so the rule
+    * sequencing stays readable. */
+  private def buildPostMoveState(
+      state: GameState,
+      move: Move,
+      piece: Piece,
+      newBoard: Board
+  ): GameState =
+    val opponentInCheck =
+      MoveValidator.isInCheck(newBoard, state.activeColor.opposite)
+    val isCapture =
+      state.board.contains(move.to) ||
+        isEnPassantCapture(state, move, piece)
+    val isPawnMove   = piece.pieceType == PieceType.Pawn
+    val newHalfmove  = if isPawnMove || isCapture then 0
+                       else state.halfmoveClock + 1
+    val newFullmove  =
+      if state.activeColor == Color.Black then state.fullmoveNumber + 1
+      else state.fullmoveNumber
+    GameState(
+      board           = newBoard,
+      activeColor     = state.activeColor.opposite,
       enPassantTarget = nextEnPassantTarget(move, piece),
-      inCheck = opponentInCheck,
-      castlingRights = updatedCastlingRights(state, move),
-      halfmoveClock = newHalfmove,
-      fullmoveNumber = newFullmove
+      inCheck         = opponentInCheck,
+      castlingRights  = updatedCastlingRights(state, move),
+      halfmoveClock   = newHalfmove,
+      fullmoveNumber  = newFullmove
     )
 
   private def isInsufficientMaterial(board: Board): Boolean =
@@ -130,31 +138,17 @@ object Game:
       ((piece.color == Color.White && row == 8) ||
         (piece.color == Color.Black && row == 1))
 
-  private def validatePromotion(
-      piece: Piece,
-      move: Move
-  ): IO[GameError, Unit] =
+  private def validatePromotion(piece: Piece, move: Move): IO[GameError, Unit] =
     val reachesBackRank = isPromotionRank(piece, move.to.row)
-    move.promotion match
-      case Some(pt) if !reachesBackRank =>
-        ZIO.fail(
-          GameError.InvalidMove(
-            "Pawn cannot promote unless it reaches the back rank"
-          )
-        )
-      case Some(pt) if !promotionPieces.contains(pt) =>
-        ZIO.fail(
-          GameError.InvalidMove(
-            "Pawn must promote to Queen, Rook, Bishop, or Knight"
-          )
-        )
-      case None if reachesBackRank =>
-        ZIO.fail(
-          GameError.InvalidMove(
-            "Pawn must promote when reaching the back rank (e.g. e8=Q)"
-          )
-        )
-      case _ => ZIO.unit
+    (move.promotion, reachesBackRank) match
+      case (Some(_), false) =>
+        ZIO.fail(GameError.InvalidMove("Pawn cannot promote unless it reaches the back rank"))
+      case (Some(pt), true) if !promotionPieces.contains(pt) =>
+        ZIO.fail(GameError.InvalidMove("Pawn must promote to Queen, Rook, Bishop, or Knight"))
+      case (None, true) =>
+        ZIO.fail(GameError.InvalidMove("Pawn must promote when reaching the back rank (e.g. e8=Q)"))
+      case _ =>
+        ZIO.unit
 
   private def promotedPiece(piece: Piece, move: Move): Piece =
     move.promotion match

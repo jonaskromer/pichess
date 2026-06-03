@@ -7,9 +7,6 @@ import zio.*
 
 object MoveValidator:
 
-  private def guard(cond: Boolean)(msg: String): IO[GameError, Unit] =
-    ZIO.when(!cond)(ZIO.fail(GameError.InvalidMove(msg))).unit
-
   // ─── Validation entry point ────────────────────────────────────────────────
 
   /** Validate that a move is legal from `state` per the piece-specific rules.
@@ -33,30 +30,39 @@ object MoveValidator:
     * Fails with [[GameError.InvalidMove]] carrying a caller-facing message.
     */
   def validate(state: GameState, move: Move): IO[GameError, Unit] =
-    ZIO
-      .fromOption(state.board.get(move.from))
-      .orElseFail(GameError.InvalidMove(s"No piece at ${move.from}"))
-      .flatMap { piece =>
-        guard(piece.color == state.activeColor)(
-          s"${piece.color} piece cannot move on ${state.activeColor}'s turn"
-        ) *> guard(!state.board.get(move.to).exists(_.color == piece.color))(
-          s"Cannot capture own piece at ${move.to}"
-        ) *> validatePieceRules(state, move, piece)
-      }
+    validateSync(state, move) match
+      case None      => ZIO.unit
+      case Some(err) => ZIO.fail(err)
 
-  private def validatePieceRules(
+  /** Sync core of [[validate]]. Returns `Some(error)` when the move is
+    * geometrically invalid (no piece at source, wrong color, captures
+    * own piece, fails piece-specific rules), `None` when accepted.
+    * Used by [[Game.tryApplyMoveCore]] and the batch [[legalDestinationsIndex]].
+    */
+  private[rules] def validateSync(state: GameState, move: Move): Option[GameError] =
+    state.board.get(move.from) match
+      case None =>
+        invalidMove(s"No piece at ${move.from}")
+      case Some(piece) if piece.color != state.activeColor =>
+        invalidMove(s"${piece.color} piece cannot move on ${state.activeColor}'s turn")
+      case Some(piece) if state.board.get(move.to).exists(_.color == piece.color) =>
+        invalidMove(s"Cannot capture own piece at ${move.to}")
+      case Some(piece) =>
+        validatePieceRulesSync(state, move, piece)
+
+  private def validatePieceRulesSync(
       state: GameState,
       move: Move,
       piece: Piece
-  ): IO[GameError, Unit] =
+  ): Option[GameError] =
     piece.pieceType match
       case PieceType.Pawn =>
-        validatePawn(state.board, move, piece.color, state.enPassantTarget)
+        validatePawnSync(state.board, move, piece.color, state.enPassantTarget)
       case PieceType.King if isCastlingAttempt(move) =>
-        validateCastling(state, move)
+        validateCastlingSync(state, move)
       case pt =>
-        guard(Ray.canReach(state.board, move.from, pt, move.to))(
-          s"$pt cannot move to ${move.to}"
+        Option.when(!Ray.canReach(state.board, move.from, pt, move.to))(
+          GameError.InvalidMove(s"$pt cannot move to ${move.to}")
         )
 
   // ─── Castling ──────────────────────────────────────────────────────────────
@@ -64,77 +70,82 @@ object MoveValidator:
   private def isCastlingAttempt(move: Move): Boolean =
     Math.abs(move.to.col - move.from.col) == 2
 
-  private def validateCastling(
+  private def validateCastlingSync(
       state: GameState,
       move: Move
-  ): IO[GameError, Unit] =
-    val color = state.activeColor
-    val rank = if color == Color.White then 1 else 8
-    val kingSide = move.to.col > move.from.col
-    val rookCol = if kingSide then 'h' else 'a'
-    val rookPos = Position(rookCol, rank)
+  ): Option[GameError] =
+    val color       = state.activeColor
+    val rank        = if color == Color.White then 1 else 8
+    val kingSide    = move.to.col > move.from.col
+    val rookPos     = Position(if kingSide then 'h' else 'a', rank)
+    val betweenCols = if kingSide then 'f' to 'g'        else 'b' to 'd'
+    val transitCols = if kingSide then List('e','f','g') else List('e','d','c')
+    val hasRight    = castlingRight(state, color, kingSide)
+    val rookOk      = state.board.get(rookPos).contains(Piece(color, PieceType.Rook))
+    // Linear chain of fail-fast rules. Each branch short-circuits the
+    // next so the cheap structural checks (rights, rook position) run
+    // before the expensive attacked-square scan.
+    if !hasRight     then invalidMove("Castling rights have been lost")
+    else if !rookOk  then invalidMove("Rook is not on its starting square")
+    else if pathBlocked(state, betweenCols, rank) then
+                          invalidMove("Pieces are between king and rook")
+    else if state.inCheck then invalidMove("Cannot castle while in check")
+    else if transitsAttacked(state, transitCols, rank, color) then
+      invalidMove("King passes through or lands on an attacked square")
+    else None
 
-    val hasRight =
-      if color == Color.White then
-        if kingSide then state.castlingRights.whiteKingSide
-        else state.castlingRights.whiteQueenSide
-      else if kingSide then state.castlingRights.blackKingSide
-      else state.castlingRights.blackQueenSide
+  private def pathBlocked(state: GameState, cols: Seq[Char], rank: Int): Boolean =
+    cols.exists(c => state.board.contains(Position(c, rank)))
 
-    val betweenCols =
-      if kingSide then ('f' to 'g')
-      else ('b' to 'd')
+  private def transitsAttacked(
+      state: GameState, cols: Seq[Char], rank: Int, color: Color
+  ): Boolean =
+    cols.exists(c => isSquareAttacked(state.board, Position(c, rank), color))
 
-    val pathClear =
-      betweenCols.forall(c => !state.board.contains(Position(c, rank)))
+  private def invalidMove(msg: String): Option[GameError] =
+    Some(GameError.InvalidMove(msg))
 
-    val transitCols =
-      if kingSide then List('e', 'f', 'g')
-      else List('e', 'd', 'c')
-
-    guard(hasRight)("Castling rights have been lost") *>
-      guard(state.board.get(rookPos).contains(Piece(color, PieceType.Rook)))(
-        "Rook is not on its starting square"
-      ) *>
-      guard(pathClear)("Pieces are between king and rook") *>
-      guard(!state.inCheck)("Cannot castle while in check") *>
-      guard(
-        transitCols.forall(c =>
-          !isSquareAttacked(state.board, Position(c, rank), color)
-        )
-      )("King passes through or lands on an attacked square")
+  /** True iff the active-color side still has the named castling right. */
+  private def castlingRight(state: GameState, color: Color, kingSide: Boolean): Boolean =
+    val rights = state.castlingRights
+    (color, kingSide) match
+      case (Color.White, true)  => rights.whiteKingSide
+      case (Color.White, false) => rights.whiteQueenSide
+      case (Color.Black, true)  => rights.blackKingSide
+      case (Color.Black, false) => rights.blackQueenSide
 
   // ─── Pawn ──────────────────────────────────────────────────────────────────
 
-  private def validatePawn(
+  private def validatePawnSync(
       board: Board,
       move: Move,
       color: Color,
       enPassantTarget: Option[Position]
-  ): IO[GameError, Unit] =
+  ): Option[GameError] =
     val direction = if color == Color.White then 1 else -1
     val startRank = if color == Color.White then 2 else 7
-    val colDiff = move.to.col - move.from.col
-    val rowDiff = move.to.row - move.from.row
+    val colDiff   = move.to.col - move.from.col
+    val rowDiff   = move.to.row - move.from.row
 
     (colDiff, rowDiff) match
       case (0, `direction`) =>
-        guard(!board.contains(move.to))(
-          "Pawn cannot move forward, destination is occupied"
+        Option.when(board.contains(move.to))(
+          GameError.InvalidMove("Pawn cannot move forward, destination is occupied")
         )
       case (0, d) if d == 2 * direction && move.from.row == startRank =>
         val intermediate = Position(move.from.col, move.from.row + direction)
-        guard(!board.contains(intermediate))(
-          "Pawn cannot move forward, path is blocked"
-        ) *> guard(!board.contains(move.to))(
-          "Pawn cannot move forward, destination is occupied"
-        )
+        if board.contains(intermediate) then
+          invalidMove("Pawn cannot move forward, path is blocked")
+        else
+          Option.when(board.contains(move.to))(
+            GameError.InvalidMove("Pawn cannot move forward, destination is occupied")
+          )
       case (c, `direction`) if Math.abs(c) == 1 =>
-        guard(board.contains(move.to) || enPassantTarget.contains(move.to))(
-          "Pawn cannot capture, no enemy piece at destination"
+        Option.when(!(board.contains(move.to) || enPassantTarget.contains(move.to)))(
+          GameError.InvalidMove("Pawn cannot capture, no enemy piece at destination")
         )
       case _ =>
-        ZIO.fail(GameError.InvalidMove(s"Pawn cannot move to ${move.to}"))
+        invalidMove(s"Pawn cannot move to ${move.to}")
 
   // ─── Check detection (bitboard-native) ───────────────────────────────────
   //
@@ -218,26 +229,45 @@ object MoveValidator:
       from: Position
   ): IO[GameError, List[Position]] =
     state.board.get(from) match
-      case None =>
-        ZIO.succeed(Nil)
-      case Some(piece) if piece.color != state.activeColor =>
-        ZIO.succeed(Nil)
+      case None => ZIO.succeed(Nil)
+      case Some(piece) if piece.color != state.activeColor => ZIO.succeed(Nil)
       case Some(piece) =>
         val candidates = candidateMoves(state, from, piece)
         ZIO
           .filter(candidates) { move =>
-            // applyMoveCore runs the same legality + king-safety check the
-            // controller would. A failure means the move is illegal for any
-            // reason (geometry, leaves king in check, castling restriction,
-            // etc.) — squelch it to a `false` for the filter.
-            Game
-              .applyMoveCore(state, move)
-              .as(true)
-              .catchAll(_ => ZIO.succeed(false))
+            Game.applyMoveCore(state, move).as(true).catchAll(_ => ZIO.succeed(false))
           }
-          // `candidates` for promotions emits one Move per piece type; the
-          // destinations dedupe naturally via `.distinct` here.
           .map(_.map(_.to).distinct)
+
+  /** Batched legal-destinations index — ZIO bench variant. Returns the
+    * full per-piece map in a single effect so the gateway's annotation
+    * cache can drop its per-piece loop.
+    *
+    * Bitboard-driven iteration of active-color sources (O(popCount) vs.
+    * the old 64-square `board.toList.collect` scan), but each candidate
+    * still rides through the full ZIO `applyMoveCore` pipeline.
+    */
+  def legalDestinationsIndex(
+      state: GameState
+  ): IO[GameError, Map[Position, List[Position]]] =
+    val activeBb =
+      if state.activeColor == Color.White then state.board.whitePieces.raw
+      else state.board.blackPieces.raw
+    val sources  = collectSources(activeBb)
+    ZIO
+      .foreach(sources) { from =>
+        legalMovesFrom(state, from).map(from -> _)
+      }
+      .map(_.collect { case (k, v) if v.nonEmpty => k -> v }.toMap)
+
+  private def collectSources(bb: Long): List[Position] =
+    val buf = scala.collection.mutable.ListBuffer.empty[Position]
+    var rem = bb
+    while rem != 0L do
+      val idx = java.lang.Long.numberOfTrailingZeros(rem)
+      rem &= rem - 1L
+      buf += Position(('a' + (idx % 8)).toChar, (idx / 8) + 1)
+    buf.toList
 
   /** Every square holding a piece of `byColor` that attacks `square`.
     * Used by the gateway's `/attackers` annotation endpoint to render a
@@ -276,16 +306,12 @@ object MoveValidator:
     val pieces = state.board.toList.collect {
       case (pos, piece) if piece.color == color => (pos, piece)
     }
-    ZIO
-      .exists(pieces) { case (from, piece) =>
-        val candidates = candidateMoves(state, from, piece)
-        ZIO.exists(candidates) { move =>
-          Game
-            .applyMoveCore(state, move)
-            .as(true)
-            .catchAll(_ => ZIO.succeed(false))
-        }
+    ZIO.exists(pieces) { case (from, piece) =>
+      val candidates = candidateMoves(state, from, piece)
+      ZIO.exists(candidates) { move =>
+        Game.applyMoveCore(state, move).as(true).catchAll(_ => ZIO.succeed(false))
       }
+    }
 
   private def candidateMoves(
       state: GameState,

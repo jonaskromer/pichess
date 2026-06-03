@@ -116,3 +116,20 @@ class MoveValidatorBenchmark:
   @Benchmark
   def hasLegalMoveKiwiPete: Boolean =
     UnsafeRuntime.run(MoveValidator.hasLegalMove(kiwiState))
+
+  // -- legalDestinationsIndex (Phase 3 batch — replaces the per-piece
+  // legalMovesFrom loop in WebController.computeAnnotations).
+  // Comparing this against the sum of per-piece legalMovesFrom calls
+  // says how much the batch consolidation actually buys.
+
+  @Benchmark
+  def legalDestinationsIndexStart: Map[Position, List[Position]] =
+    UnsafeRuntime.run(MoveValidator.legalDestinationsIndex(startingState))
+
+  @Benchmark
+  def legalDestinationsIndexMidGame: Map[Position, List[Position]] =
+    UnsafeRuntime.run(MoveValidator.legalDestinationsIndex(midGameState))
+
+  @Benchmark
+  def legalDestinationsIndexKiwiPete: Map[Position, List[Position]] =
+    UnsafeRuntime.run(MoveValidator.legalDestinationsIndex(kiwiState))

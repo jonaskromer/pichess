@@ -55,21 +55,21 @@ object DtoRenderer:
         val pos = s"$col$row"
         val isDark = (col - 'a' + row) % 2 == 1
         val bg = if isDark then darkBg else lightBg
-        byPos.get(pos) match
-          case None => s"$bg   $reset"
-          case Some(sq) =>
-            sq.piece match
-              case None => s"$bg   $reset"
-              case Some(piece) =>
-                val isCheckedKing =
-                  dto.inCheck && dto.checkedKingPos.contains(pos)
-                val color = sq.pieceColor.getOrElse("white")
-                val fg =
-                  if isCheckedKing then checkFg
-                  else if color == "white" then whiteFg
-                  else blackFg
-                val glyph = glyphFor(piece, color)
-                s"$bg$fg $glyph $reset"
+        val rendered =
+          for
+            sq    <- byPos.get(pos)
+            piece <- sq.piece
+          yield
+            val isCheckedKing =
+              dto.inCheck && dto.checkedKingPos.contains(pos)
+            val color = sq.pieceColor.getOrElse("white")
+            val fg =
+              if isCheckedKing then checkFg
+              else if color == "white" then whiteFg
+              else blackFg
+            val glyph = glyphFor(piece, color)
+            s"$bg$fg $glyph $reset"
+        rendered.getOrElse(s"$bg   $reset")
       }
       s"$row${squares.mkString} $row"
     }
