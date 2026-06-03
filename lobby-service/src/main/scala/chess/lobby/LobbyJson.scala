@@ -1,8 +1,9 @@
 package chess.lobby
 
-import chess.model.{InviteCode, Lobby, LobbyStatus, LobbyVisibility}
 import sttp.tapir.Schema
 import zio.json.*
+
+import chess.model.{InviteCode, Lobby, LobbyStatus, LobbyVisibility}
 
 /** Wire codecs for the lobby REST API. Lives here (not in `domain`) so the
   * cross-compiled `domain` module stays free of JSON deps; once lobby state

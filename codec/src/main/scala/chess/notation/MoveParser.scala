@@ -1,8 +1,9 @@
 package chess.notation
 
+import zio.*
+
 import chess.model.GameError
 import chess.model.board.{GameState, Move}
-import zio.*
 
 /** Unified entry point for converting a user-supplied move string into a
   * [[Move]] given the current [[GameState]]. Tries each registered

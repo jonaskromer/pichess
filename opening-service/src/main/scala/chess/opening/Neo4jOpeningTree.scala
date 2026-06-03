@@ -1,9 +1,9 @@
 package chess.opening
 
+import scala.jdk.CollectionConverters.*
+
 import org.neo4j.driver.{Driver, Query}
 import zio.*
-
-import scala.jdk.CollectionConverters.*
 
 /** Neo4j-backed [[OpeningTree]] implementation. Each `recordMove` is one
   * idempotent MERGE that creates the position nodes if needed and either

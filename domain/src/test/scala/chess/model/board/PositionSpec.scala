@@ -1,8 +1,8 @@
 package chess.model.board
 
-import chess.model.GameError
-import zio.ZIO
 import zio.test.*
+
+import chess.model.GameError
 
 /** Contract tests for [[Position.make]], the validated factory that is the only
   * way to construct a Position from untrusted coordinates.

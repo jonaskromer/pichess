@@ -1,12 +1,13 @@
 package chess.model.rules
 
+import zio.test.*
+import zio.{IO, ZIO}
+
 import chess.codec.FenParserRegex
-import chess.notation.MoveParser
 import chess.model.GameError
 import chess.model.board.{GameState, GameStatus, Position}
 import chess.model.piece.{Color, Piece, PieceType}
-import zio.{IO, ZIO}
-import zio.test.*
+import chess.notation.MoveParser
 
 /** Multi-move behavioral tests exercising scenarios that exist white-side in
   * the other specs but were missing from the black side.

@@ -1,8 +1,9 @@
 package chess.codec
 
+import zio.json.*
+
 import chess.codec.JsonCodec.given
 import chess.model.board.GameState
-import zio.json.*
 
 object JsonSerializer:
 

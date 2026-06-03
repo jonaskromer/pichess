@@ -1,10 +1,11 @@
 package chess.persistence.contract
 
+import zio.*
+import zio.test.*
+
 import chess.model.board.GameState
 import chess.model.piece.Color
 import chess.persistence.GameRepository
-import zio.*
-import zio.test.*
 
 /** Contract every `GameRepository` impl must satisfy. Concrete subclasses
   * provide a `repoLayer` — typically a Testcontainers-backed real DB —

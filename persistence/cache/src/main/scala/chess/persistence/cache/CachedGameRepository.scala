@@ -1,9 +1,10 @@
 package chess.persistence.cache
 
-import chess.model.{GameError, GameId}
-import chess.model.board.GameState
-import chess.persistence.GameRepository
 import zio.*
+
+import chess.model.board.GameState
+import chess.model.{GameError, GameId}
+import chess.persistence.GameRepository
 
 /** Read-through cache decorator with parallel write-through.
   *

@@ -1,10 +1,11 @@
 package chess.bench
 
-import chess.codec.{FenParserRegex, FenSerializer}
-import chess.model.board.GameState
+import java.util.concurrent.TimeUnit
+
 import org.openjdk.jmh.annotations.*
 
-import java.util.concurrent.TimeUnit
+import chess.codec.{FenParserRegex, FenSerializer}
+import chess.model.board.GameState
 
 /** Roundtrip + standalone serialize benchmarks. Tracks regressions in the
   * board-to-FEN path that Kafka events + repository writes pay on every

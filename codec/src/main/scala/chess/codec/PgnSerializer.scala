@@ -1,10 +1,11 @@
 package chess.codec
 
-import chess.model.board.GameStatus
-import chess.model.piece.Color
+import java.time.format.DateTimeFormatter
+
 import zio.{Clock, UIO}
 
-import java.time.format.DateTimeFormatter
+import chess.model.board.GameStatus
+import chess.model.piece.Color
 
 object PgnSerializer:
 

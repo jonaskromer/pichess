@@ -1,11 +1,12 @@
 package chess.persistence.redis
 
-import chess.codec.{FenParserRegex, FenSerializer}
-import chess.model.{GameError, GameId}
-import chess.model.board.GameState
-import chess.persistence.GameRepository
 import zio.*
 import zio.redis.Redis
+
+import chess.codec.{FenParserRegex, FenSerializer}
+import chess.model.board.GameState
+import chess.model.{GameError, GameId}
+import chess.persistence.GameRepository
 
 /** Redis-backed `GameRepository`. State is stored as the canonical FEN string
   * under `game:{id}` — no schema needed, no TTL by default (set durably).

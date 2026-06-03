@@ -1,9 +1,9 @@
 package chess.api
 
+import java.nio.ByteBuffer
+
 import boopickle.Default.*
 import zio.json.*
-
-import java.nio.ByteBuffer
 
 /** Wire DTOs for the pichess HTTP API.
   *

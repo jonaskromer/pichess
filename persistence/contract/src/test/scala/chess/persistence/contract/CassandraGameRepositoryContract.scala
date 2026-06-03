@@ -1,8 +1,9 @@
 package chess.persistence.contract
 
+import zio.*
+
 import chess.persistence.GameRepository
 import chess.persistence.cassandra.CassandraGameRepository
-import zio.*
 
 object CassandraGameRepositoryContract extends GameRepositoryContract:
   override val label: String = "Cassandra"

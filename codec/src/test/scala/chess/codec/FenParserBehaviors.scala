@@ -1,8 +1,9 @@
 package chess.codec
 
+import zio.test.*
+
 import chess.model.board.{CastlingRights, GameState, Position}
 import chess.model.piece.{Color, Piece, PieceType}
-import zio.test.*
 
 /** Shared test cases for every [[FenParser]] implementation.
   *

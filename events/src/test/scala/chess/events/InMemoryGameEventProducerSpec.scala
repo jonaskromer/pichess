@@ -1,8 +1,9 @@
 package chess.events
 
-import chess.model.GameError
 import zio.*
 import zio.test.*
+
+import chess.model.GameError
 
 object InMemoryGameEventProducerSpec extends ZIOSpecDefault:
 

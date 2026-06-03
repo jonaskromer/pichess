@@ -1,9 +1,9 @@
 package chess.gatling
 
+import scala.concurrent.duration.*
+
 import io.gatling.core.Predef.*
 import io.gatling.http.Predef.*
-
-import scala.concurrent.duration.*
 
 /** Volume test: a large open-loop ramp of distinct game sessions, each
   * running the full [[Chains.playOneGame]] flow. The aim is to stress

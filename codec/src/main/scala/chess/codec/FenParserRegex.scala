@@ -1,8 +1,9 @@
 package chess.codec
 
+import zio.*
+
 import chess.model.GameError
 import chess.model.board.GameState
-import zio.*
 
 /** FEN parser built on `scala.util.matching.Regex` with no external parser
   * library.

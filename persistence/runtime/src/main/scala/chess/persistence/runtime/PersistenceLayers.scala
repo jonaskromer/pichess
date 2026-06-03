@@ -1,14 +1,9 @@
 package chess.persistence.runtime
 
-import chess.persistence.{
-  Backend,
-  BackendConfig,
-  CacheBackend,
-  GameRepository,
-  InMemoryGameRepository,
-  InMemoryLobbyRepository,
-  LobbyRepository
-}
+import zio.*
+import zio.telemetry.opentelemetry.tracing.Tracing
+
+import chess.opt.Optimisation
 import chess.persistence.cache.{CachedGameRepository, CachedLobbyRepository}
 import chess.persistence.cassandra.{
   CassandraGameRepository,
@@ -20,24 +15,26 @@ import chess.persistence.mongo.{
   MongoGameRepository,
   MongoLobbyRepository
 }
+import chess.persistence.postgres.PostgresDatabaseOptimisations.given
 import chess.persistence.postgres.{
   PostgresDatabase,
   PostgresGameRepository,
   PostgresLobbyRepository
 }
-// Implicit `Optimisation[PostgresDatabase]` instance — controls whether
-// the HikariCP pool (`default`) or the original `Database.forURL` path
-// (`baseline`) is used. Selection happens via the PICHESS_OPT_PG_POOL
-// env var. See PostgresDatabaseOptimisations + docs/perf-experiments.md.
-import chess.persistence.postgres.PostgresDatabaseOptimisations.given
 import chess.persistence.redis.{
   RedisGameRepository,
   RedisLayers,
   RedisLobbyRepository
 }
-import chess.opt.Optimisation
-import zio.*
-import zio.telemetry.opentelemetry.tracing.Tracing
+import chess.persistence.{
+  Backend,
+  BackendConfig,
+  CacheBackend,
+  GameRepository,
+  InMemoryGameRepository,
+  InMemoryLobbyRepository,
+  LobbyRepository
+}
 
 /** Maps a [[BackendConfig]] to the right `GameRepository` /
   * `LobbyRepository` layer, including the optional Redis-cache decorator.

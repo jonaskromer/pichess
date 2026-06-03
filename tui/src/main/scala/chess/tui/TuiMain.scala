@@ -1,12 +1,12 @@
 package chess.tui
 
-import chess.api.{BoardStateDto, ErrorDto, GameSnapshot}
+import sttp.client3.httpclient.zio.HttpClientZioBackend
+import zio.*
+
+import chess.api.{BoardStateDto, ErrorDto}
 import chess.controller.TuiController
 import chess.controller.TuiController.{Command, ExportFormat}
 import chess.view.HelpView
-import sttp.client3.UriContext
-import sttp.client3.httpclient.zio.HttpClientZioBackend
-import zio.*
 
 /** Entry point for the TUI runtime container.
   *
@@ -453,45 +453,67 @@ object TuiMain extends ZIOAppDefault:
           .printLine("(no active lobby — use 'host' first)")
           .as(true)
       case Some(lobby) =>
-        // Refresh lobby first so the user gets a clear error if the guest
-        // hasn't joined yet (lobby-service rejects start when status != Full).
-        client.findLobbyByCode(lobby.inviteCode).flatMap {
-          case Right(fresh) if fresh.status != "Full" =>
-            Console
-              .printLine(
-                s"Cannot start: lobby status is ${fresh.status} (need Full). " +
-                  "Wait for a guest to join."
-              )
-              .as(true)
-          case Right(fresh) =>
-            client.createGame().flatMap {
-              case Left(err) =>
-                Console.printLine(s"Error creating game: ${err.error}").as(true)
-              case Right(snapshot) =>
-                client.startLobby(fresh.id, snapshot.id).flatMap {
-                  case Right(updated) =>
-                    lobbyRef.set(Some(updated)) *>
-                      gameIdRef.set(Some(snapshot.id)) *>
-                      flippedRef.get.flatMap(flipped =>
-                        Console.printLine(
-                          DtoRenderer.render(snapshot.state, flipped)
+        // Each `Either`-returning client call is lifted into the workflow's
+        // failure channel (String error messages) so the steps chain via a
+        // single linear for-comp instead of cascading match-pyramids. Any
+        // upstream failure surfaces through `catchAll` as a one-line print
+        // and the REPL keeps running.
+        val workflow: ZIO[Any, String, Unit] =
+          for
+            fresh    <- liftEither(
+                          client.findLobbyByCode(lobby.inviteCode),
+                          e => s"Error refreshing lobby: $e"
                         )
-                      ) *>
-                      restartSubscriber(
-                        baseUri,
-                        backend,
-                        snapshot.id,
-                        flippedRef,
-                        subscriberHandle
-                      ).as(true)
-                  case Left(err) =>
-                    Console.printLine(s"Error starting lobby: $err").as(true)
-                }
-            }
-          case Left(err) =>
-            Console.printLine(s"Error refreshing lobby: $err").as(true)
-        }
+            // Refreshed lobby tells us whether a guest has joined yet —
+            // lobby-service rejects `start` for any status other than Full.
+            _        <- failIf(
+                          fresh.status != "Full",
+                          s"Cannot start: lobby status is ${fresh.status} " +
+                            "(need Full). Wait for a guest to join."
+                        )
+            snapshot <- liftEither(
+                          client.createGame(),
+                          e => s"Error creating game: ${e.error}"
+                        )
+            updated  <- liftEither(
+                          client.startLobby(fresh.id, snapshot.id),
+                          e => s"Error starting lobby: $e"
+                        )
+            _        <- lobbyRef.set(Some(updated))
+            _        <- gameIdRef.set(Some(snapshot.id))
+            flipped  <- flippedRef.get
+            _        <- Console
+                          .printLine(DtoRenderer.render(snapshot.state, flipped))
+                          .mapError(_.getMessage)
+            _        <- restartSubscriber(
+                          baseUri, backend, snapshot.id, flippedRef, subscriberHandle
+                        ).mapError(_.getMessage)
+          yield ()
+        workflow.foldZIO(
+          msg => Console.printLine(msg).as(true),
+          _   => ZIO.succeed(true)
+        )
     }
+
+  /** Lift a `Task[Either[E, A]]` into the lobby-workflow's String error
+    * channel. The `toMsg` callback formats the domain error for the
+    * user; an unexpected Throwable bubbles up as `s"Unexpected: …"`. */
+  private def liftEither[E, A](
+      io: Task[Either[E, A]],
+      toMsg: E => String
+  ): ZIO[Any, String, A] =
+    io.foldZIO(
+      t => ZIO.fail(s"Unexpected: ${t.getMessage}"),
+      {
+        case Right(a) => ZIO.succeed(a)
+        case Left(e)  => ZIO.fail(toMsg(e))
+      }
+    )
+
+  /** Inline guard inside the lobby-workflow for-comp — fails the chain
+    * with `msg` when the condition holds, otherwise succeeds with unit. */
+  private def failIf(cond: Boolean, msg: => String): ZIO[Any, String, Unit] =
+    if cond then ZIO.fail(msg) else ZIO.unit
 
   // --------------------------------------------------------------------------
   // Annotation command handlers (Phase 3). Backed by the gateway's cache,

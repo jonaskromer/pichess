@@ -1,11 +1,12 @@
 package chess.controller
 
-import chess.api.{AnnotationsDto, BoardStateDto, ErrorDto, GameStatusDto}
 import com.google.protobuf.ByteString
 import io.grpc.{Status as GrpcStatus, StatusException}
 import pichess.game_service.StateReply
 import zio.*
 import zio.test.*
+
+import chess.api.{AnnotationsDto, BoardStateDto, ErrorDto, GameStatusDto}
 
 /** Direct unit tests for WebController's private[controller] helpers
   * that guard against contract-violating input from game-service. The

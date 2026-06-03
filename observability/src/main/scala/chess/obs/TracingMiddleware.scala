@@ -1,13 +1,13 @@
 package chess.obs
 
+import scala.collection.mutable
+
 import io.opentelemetry.api.trace.SpanKind
 import zio.*
 import zio.http.*
 import zio.telemetry.opentelemetry.context.{ContextStorage, IncomingContextCarrier}
 import zio.telemetry.opentelemetry.tracing.Tracing
 import zio.telemetry.opentelemetry.tracing.propagation.TraceContextPropagator
-
-import scala.collection.mutable
 
 /** zio-http middleware that emits one OpenTelemetry SERVER span per
   * inbound request and chains it to any upstream trace context found in

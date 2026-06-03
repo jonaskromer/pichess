@@ -1,8 +1,9 @@
 package chess.persistence.contract
 
+import zio.*
+
 import chess.persistence.GameRepository
 import chess.persistence.redis.RedisGameRepository
-import zio.*
 
 object RedisGameRepositoryContract extends GameRepositoryContract:
   override val label: String = "Redis"

@@ -1,7 +1,8 @@
 package chess.model.board
 
-import chess.model.piece.{Color, Piece, PieceType}
 import zio.test.*
+
+import chess.model.piece.{Color, Piece, PieceType}
 
 object BoardSpec extends ZIOSpecDefault:
 

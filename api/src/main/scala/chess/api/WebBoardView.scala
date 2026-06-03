@@ -1,8 +1,9 @@
 package chess.api
 
+import zio.json.*
+
 import chess.model.board.{DrawReason, GameState, GameStatus, Position}
 import chess.model.piece.{Color, Piece, PieceType}
-import zio.json.*
 
 /** Builds the [[BoardStateDto]] consumed by the browser UI (and shipped
   * over the gRPC wire as bytes) from a domain [[GameState]].

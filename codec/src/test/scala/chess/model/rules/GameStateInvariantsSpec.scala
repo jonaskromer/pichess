@@ -1,12 +1,13 @@
 package chess.model.rules
 
+import zio.*
+import zio.test.*
+
 import chess.codec.{FenParserRegex, FenSerializer}
-import chess.notation.MoveParser
 import chess.model.GameError
 import chess.model.board.{GameState, GameStatus, Position}
 import chess.model.piece.{Color, Piece, PieceType}
-import zio.*
-import zio.test.*
+import chess.notation.MoveParser
 
 /** Per-ply invariant sweep over curated multi-move sequences.
   *

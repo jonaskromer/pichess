@@ -1,11 +1,12 @@
 package chess.persistence.cache
 
-import chess.model.{GameError, GameId}
-import chess.model.board.GameState
-import chess.model.piece.Color
-import chess.persistence.{GameRepository, InMemoryGameRepository}
 import zio.*
 import zio.test.*
+
+import chess.model.board.GameState
+import chess.model.piece.Color
+import chess.model.{GameError, GameId}
+import chess.persistence.{GameRepository, InMemoryGameRepository}
 
 object CachedGameRepositorySpec extends ZIOSpecDefault:
 

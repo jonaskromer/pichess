@@ -1,10 +1,11 @@
 package chess.persistence.runtime
 
-import chess.model.{InviteCode, Lobby, LobbyError, LobbyId}
-import chess.persistence.LobbyRepository
 import io.opentelemetry.api.trace.SpanKind
 import zio.*
 import zio.telemetry.opentelemetry.tracing.Tracing
+
+import chess.model.{InviteCode, Lobby, LobbyError, LobbyId}
+import chess.persistence.LobbyRepository
 
 /** Tracing decorator over any `LobbyRepository` backend. Each method is
   * wrapped in an internal span named `db.lobby-repo.<op>` so DB-call

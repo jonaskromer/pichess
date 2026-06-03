@@ -1,8 +1,9 @@
 package chess.opening
 
-import chess.events.GameDomainEvent
 import zio.*
 import zio.test.*
+
+import chess.events.GameDomainEvent
 
 object OpeningProjectionSpec extends ZIOSpecDefault:
 

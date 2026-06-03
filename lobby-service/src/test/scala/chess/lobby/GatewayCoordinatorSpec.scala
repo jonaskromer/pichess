@@ -1,13 +1,14 @@
 package chess.lobby
 
-import chess.api.ErrorDto
-import sttp.client3.testing.SttpBackendStub
+import sttp.client3.UriContext
 import sttp.client3.impl.zio.RIOMonadAsyncError
-import sttp.client3.{Response, UriContext}
+import sttp.client3.testing.SttpBackendStub
 import sttp.model.StatusCode
 import zio.*
 import zio.json.EncoderOps
 import zio.test.*
+
+import chess.api.ErrorDto
 
 object GatewayCoordinatorSpec extends ZIOSpecDefault:
 

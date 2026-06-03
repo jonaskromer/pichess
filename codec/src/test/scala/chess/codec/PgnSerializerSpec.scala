@@ -1,11 +1,12 @@
 package chess.codec
 
-import chess.model.board.{DrawReason, GameStatus}
-import chess.model.piece.Color
+import java.time.Instant
+
 import zio.*
 import zio.test.*
 
-import java.time.Instant
+import chess.model.board.{DrawReason, GameStatus}
+import chess.model.piece.Color
 
 object PgnSerializerSpec extends ZIOSpecDefault:
 

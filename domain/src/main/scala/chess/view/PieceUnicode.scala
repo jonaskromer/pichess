@@ -1,8 +1,8 @@
 package chess.view
 
+import chess.model.piece.Color.*
+import chess.model.piece.PieceType.*
 import chess.model.piece.{Color, Piece, PieceType}
-import Color.*
-import PieceType.*
 
 object PieceUnicode:
 

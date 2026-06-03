@@ -2,7 +2,6 @@ package chess.events
 
 import zio.json.*
 import zio.test.*
-import zio.test.Assertion.*
 
 object GameDomainEventSpec extends ZIOSpecDefault:
 

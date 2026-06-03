@@ -1,10 +1,11 @@
 package chess.model
 
+import zio.IO
+
 import chess.model.board.{GameState, Move}
 import chess.model.piece.Color
 import chess.model.rules.Zobrist
 import chess.notation.SanSerializer
-import zio.{IO, ZIO}
 
 /** One played move in the game's history: the [[Move]] itself, the
   * [[GameState]] it produced, the color of the side that played it

@@ -1,11 +1,12 @@
 package chess.controller
 
-import chess.obs.TracingLayer
 import zio.*
 import zio.http.*
 import zio.telemetry.opentelemetry.context.ContextStorage
 import zio.telemetry.opentelemetry.tracing.Tracing
 import zio.test.*
+
+import chess.obs.TracingLayer
 
 /** Tests for the lobby reverse-proxy. The upstream is a tiny real
   * zio-http server bound to an ephemeral port (`Server.port = 0`); the

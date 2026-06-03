@@ -1,13 +1,14 @@
 package chess.persistence.contract
 
-import chess.persistence.cassandra.{CassandraSchema, CassandraSession}
+import java.net.InetSocketAddress
+
 import com.datastax.oss.driver.api.core.CqlSession
 import com.datastax.oss.driver.api.core.cql.SimpleStatement
 import com.dimafeng.testcontainers.CassandraContainer
 import org.testcontainers.utility.DockerImageName
 import zio.*
 
-import java.net.InetSocketAddress
+import chess.persistence.cassandra.{CassandraSchema, CassandraSession}
 
 object CassandraContainerLayer:
 

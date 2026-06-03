@@ -1,11 +1,12 @@
 package chess.persistence.contract
 
-import chess.persistence.redis.RedisLayers
 import com.dimafeng.testcontainers.GenericContainer
 import org.testcontainers.containers.wait.strategy.Wait
 import org.testcontainers.utility.DockerImageName
 import zio.*
 import zio.redis.{Redis, RedisConfig}
+
+import chess.persistence.redis.RedisLayers
 
 object RedisContainerLayer:
 

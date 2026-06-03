@@ -1,9 +1,10 @@
 package chess.codec
 
+import zio.*
+
 import chess.model.GameError
 import chess.model.board.{GameState, Move}
 import chess.model.rules.Game
-import zio.*
 
 object PgnParser:
 

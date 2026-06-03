@@ -1,5 +1,10 @@
 package chess.repository
 
+import sttp.tapir.server.ziohttp.ZioHttpInterpreter
+import sttp.tapir.ztapir.*
+import zio.*
+import zio.http.*
+
 import chess.codec.{FenParserRegex, FenSerializer}
 import chess.persistence.GameRepository
 import chess.repository.api.{
@@ -7,10 +12,6 @@ import chess.repository.api.{
   LoadFailure,
   RepositoryEndpoints
 }
-import sttp.tapir.server.ziohttp.ZioHttpInterpreter
-import sttp.tapir.ztapir.*
-import zio.*
-import zio.http.*
 
 /** Tapir-backed HTTP server that exposes [[GameRepository]] over REST.
   *

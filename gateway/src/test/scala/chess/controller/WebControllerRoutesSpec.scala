@@ -1,19 +1,19 @@
 package chess.controller
 
-import chess.events.InMemoryGameEventProducer
-import chess.gameservice.{GameSessions, GrpcServer}
-import chess.obs.TracingLayer
-import chess.persistence.InMemoryGameRepository
-import chess.service.GameServiceLive
 import io.grpc.inprocess.{InProcessChannelBuilder, InProcessServerBuilder}
 import pichess.game_service.ZioGameService
 import scalapb.zio_grpc.{ServerLayer, ZManagedChannel}
 import zio.*
 import zio.http.*
-import zio.json.*
 import zio.telemetry.opentelemetry.context.ContextStorage
 import zio.telemetry.opentelemetry.tracing.Tracing
 import zio.test.*
+
+import chess.events.InMemoryGameEventProducer
+import chess.gameservice.{GameSessions, GrpcServer}
+import chess.obs.TracingLayer
+import chess.persistence.InMemoryGameRepository
+import chess.service.GameServiceLive
 
 /** Smoke tests for the gateway's REST surface. The gateway is wired against
   * the gameService gRPC contract; the server side is the real `GrpcServer`

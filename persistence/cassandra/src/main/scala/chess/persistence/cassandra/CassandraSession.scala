@@ -1,11 +1,11 @@
 package chess.persistence.cassandra
 
-import com.datastax.oss.driver.api.core.{CqlSession, CqlSessionBuilder}
-import com.datastax.oss.driver.api.core.config.{DefaultDriverOption, DriverConfigLoader}
-import zio.*
-
 import java.net.InetSocketAddress
 import java.time.Duration as JDuration
+
+import com.datastax.oss.driver.api.core.CqlSession
+import com.datastax.oss.driver.api.core.config.{DefaultDriverOption, DriverConfigLoader}
+import zio.*
 
 /** Connection-pooled CQL session wired from `PICHESS_CASSANDRA_*` env vars.
   * One session per service; the underlying connection pool the driver

@@ -1,5 +1,8 @@
 package chess.persistence.cache
 
+import zio.*
+import zio.test.*
+
 import chess.model.{
   InviteCode,
   Lobby,
@@ -9,8 +12,6 @@ import chess.model.{
   LobbyVisibility
 }
 import chess.persistence.{InMemoryLobbyRepository, LobbyRepository}
-import zio.*
-import zio.test.*
 
 object CachedLobbyRepositorySpec extends ZIOSpecDefault:
 

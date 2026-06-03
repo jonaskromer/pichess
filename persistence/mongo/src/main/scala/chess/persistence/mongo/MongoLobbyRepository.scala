@@ -1,5 +1,12 @@
 package chess.persistence.mongo
 
+import java.time.Instant
+
+import com.mongodb.client.model.{Filters, IndexOptions, Indexes, ReplaceOptions, Sorts}
+import com.mongodb.reactivestreams.client.MongoDatabase
+import org.bson.Document
+import zio.*
+
 import chess.model.{
   InviteCode,
   Lobby,
@@ -9,12 +16,6 @@ import chess.model.{
   LobbyVisibility
 }
 import chess.persistence.LobbyRepository
-import com.mongodb.client.model.{Filters, IndexOptions, Indexes, ReplaceOptions, Sorts}
-import com.mongodb.reactivestreams.client.MongoDatabase
-import org.bson.Document
-import zio.*
-
-import java.time.Instant
 
 /** MongoDB-backed `LobbyRepository`. A unique index on `inviteCode` makes
   * the join-by-code lookup a single-document fetch.

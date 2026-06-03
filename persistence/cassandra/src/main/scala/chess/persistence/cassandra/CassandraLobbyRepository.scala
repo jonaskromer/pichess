@@ -1,5 +1,13 @@
 package chess.persistence.cassandra
 
+import java.time.Instant
+
+import scala.jdk.CollectionConverters.*
+
+import com.datastax.oss.driver.api.core.CqlSession
+import com.datastax.oss.driver.api.core.cql.{BatchStatement, BatchType, Row}
+import zio.*
+
 import chess.model.{
   InviteCode,
   Lobby,
@@ -9,12 +17,6 @@ import chess.model.{
   LobbyVisibility
 }
 import chess.persistence.LobbyRepository
-import com.datastax.oss.driver.api.core.CqlSession
-import com.datastax.oss.driver.api.core.cql.{BatchStatement, BatchType, Row}
-import scala.jdk.CollectionConverters.*
-import zio.*
-
-import java.time.Instant
 
 /** Cassandra-backed `LobbyRepository`. Two tables:
   *

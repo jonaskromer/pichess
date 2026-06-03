@@ -1,8 +1,9 @@
 package chess.persistence.cache
 
+import zio.*
+
 import chess.model.{InviteCode, Lobby, LobbyError, LobbyId}
 import chess.persistence.LobbyRepository
-import zio.*
 
 final class CachedLobbyRepository(
     cache: LobbyRepository,

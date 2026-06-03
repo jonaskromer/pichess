@@ -1,13 +1,14 @@
 package chess.persistence.postgres
 
-import chess.codec.{FenParserRegex, FenSerializer}
-import chess.model.{GameError, GameId}
-import chess.model.board.GameState
-import chess.persistence.GameRepository
+import java.time.Instant
+
 import slick.jdbc.PostgresProfile.api.*
 import zio.*
 
-import java.time.Instant
+import chess.codec.{FenParserRegex, FenSerializer}
+import chess.model.board.GameState
+import chess.model.{GameError, GameId}
+import chess.persistence.GameRepository
 
 /** Slick-backed `GameRepository`. State is serialised as FEN — the canonical
   * format already produced/consumed by the codec module — and stored in a

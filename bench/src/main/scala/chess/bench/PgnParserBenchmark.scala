@@ -1,9 +1,10 @@
 package chess.bench
 
-import chess.codec.PgnParser
+import java.util.concurrent.TimeUnit
+
 import org.openjdk.jmh.annotations.*
 
-import java.util.concurrent.TimeUnit
+import chess.codec.PgnParser
 
 /** End-to-end PGN parse benchmark over the curated corpus. Each parse
   * involves header extraction, SAN tokenisation, move resolution against

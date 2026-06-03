@@ -1,10 +1,11 @@
 package chess.codec
 
-import chess.model.GameError
-import chess.model.board.GameState
+import scala.util.parsing.combinator.RegexParsers
+
 import zio.*
 
-import scala.util.parsing.combinator.RegexParsers
+import chess.model.GameError
+import chess.model.board.GameState
 
 /** FEN parser built on `scala-parser-combinators`.
   *

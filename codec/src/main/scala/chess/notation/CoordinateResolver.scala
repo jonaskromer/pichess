@@ -1,9 +1,10 @@
 package chess.notation
 
+import zio.*
+
 import chess.model.GameError
 import chess.model.board.{GameState, Move, Position}
 import chess.model.piece.PieceType
-import zio.*
 
 object CoordinateResolver extends NotationResolver:
 

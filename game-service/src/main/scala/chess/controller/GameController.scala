@@ -1,14 +1,15 @@
 package chess.controller
 
-import chess.codec.FenSerializer
-import chess.events.{GameDomainEvent, GameEventProducer}
-import chess.model.{GameError, GameSnapshot, SessionState}
-import chess.model.board.{DrawReason, GameStatus, GameState}
-import chess.service.{GameMutation, GameService}
+import java.util.concurrent.TimeUnit
+
 import zio.*
 import zio.stream.SubscriptionRef
 
-import java.util.concurrent.TimeUnit
+import chess.codec.FenSerializer
+import chess.events.{GameDomainEvent, GameEventProducer}
+import chess.model.board.{DrawReason, GameState, GameStatus}
+import chess.model.{GameError, SessionState}
+import chess.service.{GameMutation, GameService}
 
 /** Controller-level actions on a game session.
   *

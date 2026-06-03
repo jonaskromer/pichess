@@ -1,12 +1,13 @@
 package chess.codec
 
-import chess.notation.MoveParser
+import zio.test.*
+import zio.{IO, ZIO}
+
 import chess.model.GameError
 import chess.model.board.{CastlingRights, GameState, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.model.rules.Game
-import zio.{IO, ZIO}
-import zio.test.*
+import chess.notation.MoveParser
 
 /** Shared test suite for any `identity: GameState => K` function.
   *

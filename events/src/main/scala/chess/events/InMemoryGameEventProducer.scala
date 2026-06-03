@@ -1,7 +1,8 @@
 package chess.events
 
-import chess.model.GameError
 import zio.*
+
+import chess.model.GameError
 
 /** Test/dev producer that records published events in a `Ref` instead of
   * writing to Kafka. Used:

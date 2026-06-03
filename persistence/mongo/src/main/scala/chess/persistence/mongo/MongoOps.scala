@@ -3,7 +3,6 @@ package chess.persistence.mongo
 import org.reactivestreams.Publisher
 import zio.*
 import zio.interop.reactivestreams.*
-import zio.stream.ZStream
 
 /** Tiny adapters from the MongoDB Java driver's `Publisher[T]` results into
   * ZIO. The driver returns a `Publisher` for every operation — including

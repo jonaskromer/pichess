@@ -1,5 +1,9 @@
 package chess.persistence.redis
 
+import zio.*
+import zio.json.*
+import zio.redis.Redis
+
 import chess.model.{
   InviteCode,
   Lobby,
@@ -9,9 +13,6 @@ import chess.model.{
   LobbyVisibility
 }
 import chess.persistence.LobbyRepository
-import zio.*
-import zio.json.*
-import zio.redis.Redis
 
 /** Redis-backed `LobbyRepository`. Lobby state is JSON-encoded under
   * `lobby:l:{id}`; a secondary `lobby:invite:{code}` key maps invite codes

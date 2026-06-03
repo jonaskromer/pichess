@@ -1,7 +1,8 @@
 package chess.events
 
-import chess.model.GameError
 import zio.*
+
+import chess.model.GameError
 
 /** Publish-side abstraction for the `chess.game-events` topic.
   *

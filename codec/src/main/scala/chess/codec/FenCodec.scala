@@ -1,9 +1,10 @@
 package chess.codec
 
+import zio.*
+
 import chess.model.GameError
 import chess.model.board.{Board, BoardState, CastlingRights, Position}
 import chess.model.piece.{Color, Piece, PieceType}
-import zio.*
 
 /** Co-located encode/decode pairs for each FEN field.
   *

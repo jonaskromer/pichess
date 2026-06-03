@@ -1,5 +1,11 @@
 package chess.tui
 
+import sttp.client3.{SttpBackend, basicRequest}
+import sttp.model.Uri
+import sttp.tapir.client.sttp.SttpClientInterpreter
+import zio.*
+import zio.json.*
+
 import chess.api.{
   AttackersResponse,
   BoardStateDto,
@@ -13,11 +19,6 @@ import chess.api.{
   StateResponse,
   ThreatsResponse
 }
-import sttp.client3.{SttpBackend, UriContext, basicRequest}
-import sttp.model.Uri
-import sttp.tapir.client.sttp.SttpClientInterpreter
-import zio.*
-import zio.json.*
 
 /** Typed HTTP client over the gateway's REST surface. Routes every call
   * through the same `chess.api.Endpoints` definitions the gateway serves

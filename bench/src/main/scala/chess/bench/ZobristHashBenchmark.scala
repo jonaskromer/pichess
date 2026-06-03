@@ -1,9 +1,10 @@
 package chess.bench
 
-import chess.model.rules.Zobrist
+import java.util.concurrent.TimeUnit
+
 import org.openjdk.jmh.annotations.*
 
-import java.util.concurrent.TimeUnit
+import chess.model.rules.Zobrist
 
 /** Pure-function [[Zobrist.hash]] microbench. The hash is called every
   * time `GameSnapshot.recordMove` increments the position-count map; under

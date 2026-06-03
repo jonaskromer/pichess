@@ -1,5 +1,10 @@
 package chess.gameservice
 
+import io.grpc.Status
+import zio.*
+import zio.stream.SubscriptionRef
+import zio.test.*
+
 import chess.api.BoardStateDto
 import chess.controller.GameController
 import chess.events.{GameEventProducer, InMemoryGameEventProducer}
@@ -7,10 +12,6 @@ import chess.model.board.GameState
 import chess.model.{GameError, GameSnapshot, SessionState}
 import chess.persistence.InMemoryGameRepository
 import chess.service.{GameService, GameServiceLive}
-import io.grpc.Status
-import zio.*
-import zio.stream.SubscriptionRef
-import zio.test.*
 
 object GrpcMappersSpec extends ZIOSpecDefault:
 

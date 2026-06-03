@@ -1,9 +1,9 @@
 package chess.gatling
 
+import scala.concurrent.duration.*
+
 import io.gatling.core.Predef.*
 import io.gatling.http.Predef.*
-
-import scala.concurrent.duration.*
 
 /** Endurance / soak test: constant open-loop arrival rate sustained for
   * `holdSeconds`. Surfaces issues that only appear over time —

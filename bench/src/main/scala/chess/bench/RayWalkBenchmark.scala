@@ -1,11 +1,12 @@
 package chess.bench
 
+import java.util.concurrent.TimeUnit
+
+import org.openjdk.jmh.annotations.*
+
 import chess.model.board.Position
 import chess.model.piece.PieceType
 import chess.model.rules.Ray
-import org.openjdk.jmh.annotations.*
-
-import java.util.concurrent.TimeUnit
 
 /** Microbench for [[Ray.walk]] — the per-direction ray-casting primitive
   * used by every sliding-piece move generator. Iterates over the queen's

@@ -1,5 +1,9 @@
 package chess.lobby
 
+import java.util.concurrent.TimeUnit
+
+import zio.*
+
 import chess.model.{
   GameId,
   InviteCode,
@@ -10,9 +14,6 @@ import chess.model.{
   LobbyVisibility
 }
 import chess.persistence.LobbyRepository
-import zio.*
-
-import java.util.concurrent.TimeUnit
 
 /** Business logic for the lobby microservice. Talks to a swappable
   * [[LobbyRepository]] for storage; nothing Postgres / Mongo / etc.-specific

@@ -1,7 +1,8 @@
 package chess.tui
 
-import chess.api.BoardStateDto
 import zio.json.*
+
+import chess.api.BoardStateDto
 
 /** Pure SSE event-frame parser. Extracted out of [[TuiEventStream]] so the
   * state-machine transitions are unit-testable without standing up an HTTP

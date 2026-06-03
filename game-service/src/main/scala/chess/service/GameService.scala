@@ -1,10 +1,11 @@
 package chess.service
 
-import chess.events.{GameDomainEvent, GameEventProducer}
-import chess.persistence.{GameRepository, Mutation}
-import chess.model.{GameError, GameEvent, GameId}
-import chess.model.board.{GameState, Move}
 import zio.*
+
+import chess.events.{GameDomainEvent, GameEventProducer}
+import chess.model.board.{GameState, Move}
+import chess.model.{GameError, GameEvent, GameId}
+import chess.persistence.{GameRepository, Mutation}
 
 /** Convenience alias — the [[Mutation]] shape used throughout the
   * game-service: key is the [[GameId]], aggregate is [[GameState]],

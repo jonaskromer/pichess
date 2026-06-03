@@ -1,9 +1,10 @@
 package chess.persistence.contract
 
-import chess.model.{InviteCode, Lobby, LobbyStatus, LobbyVisibility}
-import chess.persistence.LobbyRepository
 import zio.*
 import zio.test.*
+
+import chess.model.{InviteCode, Lobby, LobbyStatus, LobbyVisibility}
+import chess.persistence.LobbyRepository
 
 abstract class LobbyRepositoryContract extends ZIOSpecDefault:
 

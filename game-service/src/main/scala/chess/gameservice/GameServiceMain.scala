@@ -1,19 +1,20 @@
 package chess.gameservice
 
+import io.grpc.ServerBuilder
+import pichess.game_service.ZioGameService
+import scalapb.zio_grpc.{RequestContext, ServerLayer}
+import zio.*
+import zio.telemetry.opentelemetry.tracing.Tracing
+
 import chess.events.{
   GameEventProducer,
   InMemoryGameEventProducer,
   KafkaGameEventProducer
 }
 import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer, TracingLayer}
-import chess.persistence.{BackendConfig, GameRepository}
 import chess.persistence.runtime.PersistenceLayers
+import chess.persistence.{BackendConfig, GameRepository}
 import chess.service.{GameService, GameServiceLive}
-import io.grpc.{ServerBuilder, StatusException}
-import pichess.game_service.ZioGameService
-import scalapb.zio_grpc.{RequestContext, ServerLayer}
-import zio.*
-import zio.telemetry.opentelemetry.tracing.Tracing
 
 /** Standalone entry point for the gameService microservice.
   *

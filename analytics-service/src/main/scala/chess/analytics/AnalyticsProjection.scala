@@ -1,10 +1,11 @@
 package chess.analytics
 
-import chess.events.GameDomainEvent
+import java.sql.Timestamp
+
 import zio.*
 import zio.jdbc.*
 
-import java.sql.Timestamp
+import chess.events.GameDomainEvent
 
 /** Pure projection logic: translates one domain event into one ClickHouse
   * `move_events` row. Kafka glue lives in [[KafkaAnalyticsConsumer]] so

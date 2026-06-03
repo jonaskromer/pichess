@@ -1,8 +1,9 @@
 package chess.tui
 
-import chess.tui.TuiClientCodecs.*
 import zio.json.*
 import zio.test.*
+
+import chess.tui.TuiClientCodecs.*
 
 object TuiClientCodecsSpec extends ZIOSpecDefault:
 

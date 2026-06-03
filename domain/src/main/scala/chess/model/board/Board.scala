@@ -1,8 +1,8 @@
 package chess.model.board
 
-import chess.model.piece.{Color, Piece, PieceType}
-import Color.*
-import PieceType.*
+import chess.model.piece.Color.*
+import chess.model.piece.Piece
+import chess.model.piece.PieceType.*
 
 /** The chess board representation. Phase 1 of the bitboard migration —
   * `Board` is now a bitboard-backed [[BoardState]], but the existing

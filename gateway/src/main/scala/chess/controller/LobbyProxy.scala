@@ -1,13 +1,13 @@
 package chess.controller
 
+import scala.collection.mutable
+
 import io.opentelemetry.api.trace.SpanKind
 import zio.*
 import zio.http.*
 import zio.telemetry.opentelemetry.context.{ContextStorage, OutgoingContextCarrier}
 import zio.telemetry.opentelemetry.tracing.Tracing
 import zio.telemetry.opentelemetry.tracing.propagation.TraceContextPropagator
-
-import scala.collection.mutable
 
 /** Reverse proxy for the lobby-service.
   *

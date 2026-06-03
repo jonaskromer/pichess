@@ -1,7 +1,7 @@
 package chess.view
 
-import chess.model.piece.{Color, Piece, PieceType}
 import chess.model.board.{GameState, Position}
+import chess.model.piece.{Color, Piece, PieceType}
 
 object BoardView:
   // Pastel cream for light squares, pastel sage for dark squares

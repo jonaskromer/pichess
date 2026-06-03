@@ -1,9 +1,10 @@
 package chess.codec
 
+import zio.*
+
 import chess.model.GameError
 import chess.model.board.GameState
 import chess.model.rules.MoveValidator
-import zio.*
 
 /** Converts tokenized FEN fields into a [[GameState]].
   *

@@ -1,7 +1,8 @@
 package chess.analytics
 
-import chess.events.GameDomainEvent
 import zio.test.*
+
+import chess.events.GameDomainEvent
 
 object AnalyticsEventMappingSpec extends ZIOSpecDefault:
 

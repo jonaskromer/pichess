@@ -1,7 +1,8 @@
 package chess.model.board
 
-import chess.model.piece.Color
 import zio.test.*
+
+import chess.model.piece.Color
 
 object GameStateSpec extends ZIOSpecDefault:
 

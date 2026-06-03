@@ -1,9 +1,9 @@
 package chess.analytics
 
+import java.sql.{Connection, DriverManager}
+
 import zio.*
 import zio.jdbc.*
-
-import java.sql.{Connection, DriverManager}
 
 /** Connection-pool wiring for ClickHouse via zio-jdbc. Settings come from
   * `PICHESS_CLICKHOUSE_*` env vars; the pool itself is scoped, so closing

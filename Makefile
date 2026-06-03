@@ -322,6 +322,14 @@ coverage-clean: ## Remove the baked coverage report from gateway resources (free
 	  echo "$(COVERAGE_DST)/ does not exist — nothing to clean."; \
 	fi
 
+.PHONY: scalafix-check
+scalafix-check: ## Run scalafix in check mode — fail on any rule violation, no edits
+	sbt 'scalafixAll --check'
+
+.PHONY: scalafix-fix
+scalafix-fix: ## Apply scalafix's auto-fixes (RemoveUnused / OrganizeImports). DisableSyntax violations still surface as errors — review and fix by hand.
+	sbt scalafixAll
+
 .PHONY: gatling-build
 gatling-build: ## Run gatling + bake the latest report into the gateway resources
 	sbt 'gatling/Gatling/test'

@@ -1,9 +1,9 @@
 package chess.gatling
 
+import scala.concurrent.duration.*
+
 import io.gatling.core.Predef.*
 import io.gatling.http.Predef.*
-
-import scala.concurrent.duration.*
 
 /** Stress test: ramp to `peakUsers` over `rampSeconds`, then sustain
   * `ratePerSec` open-loop arrivals for `holdSeconds`. The goal is to

@@ -1,14 +1,15 @@
 package chess.bench
 
+import java.nio.ByteBuffer
+import java.util.concurrent.TimeUnit
+
 import boopickle.Default.*
-import chess.api.{BoardStateDto, SquareDto, WebBoardView}
-import chess.codec.{FenParserRegex, FenSerializer}
-import chess.model.board.GameState
 import org.openjdk.jmh.annotations.*
 import zio.json.*
 
-import java.nio.ByteBuffer
-import java.util.concurrent.TimeUnit
+import chess.api.{BoardStateDto, SquareDto, WebBoardView}
+import chess.codec.{FenParserRegex, FenSerializer}
+import chess.model.board.GameState
 
 /** Codec round-trip cost across two payload sizes — small (a single
   * `SquareDto`) and medium (the full `BoardStateDto` carrying 64

@@ -1,9 +1,10 @@
 package chess.bench
 
-import chess.codec.{FenParserCombinator, FenParserFastParse, FenParserRegex}
+import java.util.concurrent.TimeUnit
+
 import org.openjdk.jmh.annotations.*
 
-import java.util.concurrent.TimeUnit
+import chess.codec.{FenParserCombinator, FenParserFastParse, FenParserRegex}
 
 /** A/B/C comparison of the three FEN parser implementations on an
   * identical corpus. The bench answers a real question for the codec

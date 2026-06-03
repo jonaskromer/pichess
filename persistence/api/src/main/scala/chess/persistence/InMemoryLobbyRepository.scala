@@ -1,7 +1,8 @@
 package chess.persistence
 
-import chess.model.{InviteCode, Lobby, LobbyError, LobbyId, LobbyStatus, LobbyVisibility}
 import zio.*
+
+import chess.model.{InviteCode, Lobby, LobbyError, LobbyId, LobbyStatus, LobbyVisibility}
 
 final class InMemoryLobbyRepository(store: Ref[Map[LobbyId, Lobby]])
     extends LobbyRepository:

@@ -1,12 +1,13 @@
 package chess.repository
 
-import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer, TracingLayer, TracingMiddleware}
-import chess.persistence.{BackendConfig, GameRepository}
-import chess.persistence.runtime.PersistenceLayers
 import zio.*
 import zio.http.*
 import zio.telemetry.opentelemetry.context.ContextStorage
 import zio.telemetry.opentelemetry.tracing.Tracing
+
+import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer, TracingLayer, TracingMiddleware}
+import chess.persistence.runtime.PersistenceLayers
+import chess.persistence.{BackendConfig, GameRepository}
 
 /** Standalone entry point for the repository microservice.
   *

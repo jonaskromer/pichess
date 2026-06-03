@@ -1,11 +1,12 @@
 package chess.model.rules
 
-import chess.codec.{FenSerializer, PositionIdentityBehaviors}
-import chess.notation.MoveParser
-import chess.model.GameError
-import chess.model.board.GameState
 import zio.*
 import zio.test.*
+
+import chess.codec.{FenSerializer, PositionIdentityBehaviors}
+import chess.model.GameError
+import chess.model.board.GameState
+import chess.notation.MoveParser
 
 /** Contract tests for [[Zobrist.hash]] as a position-identity function.
   *

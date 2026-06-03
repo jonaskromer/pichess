@@ -1,10 +1,10 @@
 package chess.controller
 
-import chess.model.{GameSnapshot, SessionState}
-import chess.model.board.{GameState, Move, Position}
-import chess.model.piece.{Color, Piece, PieceType}
 import zio.*
 import zio.test.*
+
+import chess.model.board.{GameState, Move, Position}
+import chess.model.{GameSnapshot, SessionState}
 
 object WebControllerSpec extends ZIOSpecDefault:
 

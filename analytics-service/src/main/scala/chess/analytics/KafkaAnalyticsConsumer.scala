@@ -1,6 +1,7 @@
 package chess.analytics
 
-import chess.events.{GameDomainEvent, Topics}
+import scala.jdk.CollectionConverters.*
+
 import io.opentelemetry.api.trace.SpanKind
 import org.apache.kafka.common.header.Headers
 import zio.*
@@ -12,7 +13,7 @@ import zio.telemetry.opentelemetry.context.IncomingContextCarrier
 import zio.telemetry.opentelemetry.tracing.Tracing
 import zio.telemetry.opentelemetry.tracing.propagation.TraceContextPropagator
 
-import scala.jdk.CollectionConverters.*
+import chess.events.{GameDomainEvent, Topics}
 
 /** Kafka glue for analytics. Subscribes to `chess.game-events` and forwards
   * each record to [[AnalyticsProjection.applyEvent]].

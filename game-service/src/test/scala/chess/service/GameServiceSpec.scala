@@ -1,12 +1,13 @@
 package chess.service
 
+import zio.*
+import zio.test.*
+
 import chess.events.InMemoryGameEventProducer
-import chess.persistence.InMemoryGameRepository
 import chess.model.GameEvent
 import chess.model.board.{BoardState, GameState, Position}
 import chess.model.piece.{Color, Piece, PieceType}
-import zio.*
-import zio.test.*
+import chess.persistence.InMemoryGameRepository
 
 object GameServiceSpec extends ZIOSpecDefault:
 

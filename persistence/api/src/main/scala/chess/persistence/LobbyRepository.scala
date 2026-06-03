@@ -1,7 +1,8 @@
 package chess.persistence
 
-import chess.model.{InviteCode, Lobby, LobbyError, LobbyId}
 import zio.*
+
+import chess.model.{InviteCode, Lobby, LobbyError, LobbyId}
 
 /** Backend-agnostic CRUD on Lobby aggregates.
   *

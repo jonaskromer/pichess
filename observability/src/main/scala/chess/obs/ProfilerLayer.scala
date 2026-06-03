@@ -1,11 +1,11 @@
 package chess.obs
 
-import zio.*
-import zio.profiling.sampling.SamplingProfiler
-
 import java.nio.file.{Files, Path, Paths}
 import java.time.format.DateTimeFormatter
 import java.time.{Instant, ZoneOffset}
+
+import zio.*
+import zio.profiling.sampling.SamplingProfiler
 
 /** Opt-in ZIO fiber-aware sampling profiler. When the runtime env
   * `PICHESS_PROFILE=sampling` is set, [[wrap]] runs the service's main

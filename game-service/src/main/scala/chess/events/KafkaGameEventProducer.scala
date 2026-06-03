@@ -1,6 +1,7 @@
 package chess.events
 
-import chess.model.GameError
+import scala.collection.mutable
+
 import io.opentelemetry.api.trace.SpanKind
 import org.apache.kafka.clients.producer.ProducerRecord
 import org.apache.kafka.common.header.internals.{RecordHeader, RecordHeaders}
@@ -12,7 +13,7 @@ import zio.telemetry.opentelemetry.context.OutgoingContextCarrier
 import zio.telemetry.opentelemetry.tracing.Tracing
 import zio.telemetry.opentelemetry.tracing.propagation.TraceContextPropagator
 
-import scala.collection.mutable
+import chess.model.GameError
 
 /** zio-kafka backed producer. Records are keyed by `gameId` so per-game
   * ordering is preserved across event types (consumers see

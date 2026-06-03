@@ -1,29 +1,17 @@
 package chess.webui
 
-import chess.api.{
-  BoardStateDto,
-  CreateGameRequest,
-  Endpoints,
-  ErrorDto,
-  ExportResponse,
-  GameSnapshot,
-  GameStatusDto,
-  LoadRequest,
-  MoveEntryDto,
-  MoveRequest,
-  SquareDto,
-  StackInfoResponse,
-  StateResponse
-}
-import chess.webui.components.{Components, ModalRegistry}
-import com.raquo.laminar.api.L.*
-import org.scalajs.dom
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.scalajs.js
+
+import com.raquo.laminar.api.L.*
+import org.scalajs.dom
 import sttp.client3.FetchBackend
 import sttp.tapir.client.sttp.SttpClientInterpreter
 import zio.json.*
+
+import chess.api.{BoardStateDto, CreateGameRequest, Endpoints, ErrorDto, ExportResponse, GameStatusDto, MoveEntryDto, MoveRequest, SquareDto, StackInfoResponse, StateResponse}
+import chess.webui.components.{Components, ModalRegistry}
 
 object Main:
 
@@ -124,7 +112,7 @@ object Main:
         dom.window.localStorage.setItem("pichess.hash", fresh)
         fresh
       }
-  private def displayName(): String = s"${nicknameVar.now()}#$playerHash"
+  
   /** Current game id. With multi-game routing the gateway no longer tracks
     * a single "active" game — the client owns this. The id flows from
     * the URL hash (`#game/<id>`) and is cached here for HTTP / SSE
@@ -1167,21 +1155,7 @@ object Main:
     * stretching past the icon looked like a divider). Used exclusively on
     * Quit so the "shut down" option visually breaks out of its row.
     */
-  private def underlinedActionButton(
-      iconName: String,
-      label: String,
-      modifier: String,
-      action: () => Unit
-  ): HtmlElement =
-    val cls =
-      if modifier.isEmpty then "post-it-action underlined"
-      else s"post-it-action underlined $modifier"
-    button(
-      className := cls,
-      onClick --> { _ => action() },
-      icon(iconName),
-      span(className := "label", label)
-    )
+  
 
   private val confirmNewGame: ConfirmRequest = ConfirmRequest(
     title = "Start a new game?",

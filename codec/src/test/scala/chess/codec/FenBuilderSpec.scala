@@ -1,7 +1,8 @@
 package chess.codec
 
-import chess.model.GameError
 import zio.test.*
+
+import chess.model.GameError
 
 /** Direct unit tests for [[FenBuilder]].
   *

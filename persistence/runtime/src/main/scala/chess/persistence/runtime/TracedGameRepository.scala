@@ -1,11 +1,12 @@
 package chess.persistence.runtime
 
-import chess.model.{GameError, GameId}
-import chess.model.board.GameState
-import chess.persistence.GameRepository
 import io.opentelemetry.api.trace.SpanKind
 import zio.*
 import zio.telemetry.opentelemetry.tracing.Tracing
+
+import chess.model.board.GameState
+import chess.model.{GameError, GameId}
+import chess.persistence.GameRepository
 
 /** Tracing decorator over any `GameRepository` backend. Each method is
   * wrapped in an internal span named `db.game-repo.<op>` so DB-call

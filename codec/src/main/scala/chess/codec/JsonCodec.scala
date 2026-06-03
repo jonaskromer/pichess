@@ -1,5 +1,7 @@
 package chess.codec
 
+import zio.json.*
+
 import chess.model.board.{
   Board,
   BoardState,
@@ -11,8 +13,6 @@ import chess.model.board.{
 }
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.model.rules.MoveValidator
-import zio.json.*
-import zio.json.ast.Json
 
 object JsonCodec:
 

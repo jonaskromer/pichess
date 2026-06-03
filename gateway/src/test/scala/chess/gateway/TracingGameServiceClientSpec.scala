@@ -1,10 +1,5 @@
 package chess.gateway
 
-import chess.events.InMemoryGameEventProducer
-import chess.gameservice.{GameSessions, GrpcServer}
-import chess.obs.TracingLayer
-import chess.persistence.InMemoryGameRepository
-import chess.service.GameServiceLive
 import io.grpc.inprocess.{InProcessChannelBuilder, InProcessServerBuilder}
 import pichess.game_service.{
   ExportRequest,
@@ -14,11 +9,17 @@ import pichess.game_service.{
   NewGameRequest,
   ZioGameService
 }
-import scalapb.zio_grpc.{ScopedServer, ServerLayer, ZManagedChannel}
+import scalapb.zio_grpc.{ServerLayer, ZManagedChannel}
 import zio.*
 import zio.telemetry.opentelemetry.context.ContextStorage
 import zio.telemetry.opentelemetry.tracing.Tracing
 import zio.test.*
+
+import chess.events.InMemoryGameEventProducer
+import chess.gameservice.{GameSessions, GrpcServer}
+import chess.obs.TracingLayer
+import chess.persistence.InMemoryGameRepository
+import chess.service.GameServiceLive
 
 /** Coverage spec for the tracing-decorator over `GameServiceClient`.
   *

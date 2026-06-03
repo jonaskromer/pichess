@@ -1,7 +1,8 @@
 package chess.tui
 
-import chess.api.{BoardStateDto, GameStatusDto, MoveEntryDto, SquareDto}
 import zio.test.*
+
+import chess.api.{BoardStateDto, GameStatusDto, MoveEntryDto, SquareDto}
 
 object DtoRendererSpec extends ZIOSpecDefault:
 

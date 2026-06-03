@@ -1,5 +1,7 @@
 package chess.codec
 
+import zio.test.*
+
 import chess.model.board.{
   CastlingRights,
   DrawReason,
@@ -8,7 +10,6 @@ import chess.model.board.{
   Position
 }
 import chess.model.piece.{Color, Piece, PieceType}
-import zio.test.*
 
 object JsonCodecSpec extends ZIOSpecDefault:
 

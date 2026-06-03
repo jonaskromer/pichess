@@ -1,15 +1,16 @@
 package chess.persistence.mongo
 
-import chess.codec.{FenParserRegex, FenSerializer}
-import chess.model.{GameError, GameId}
-import chess.model.board.GameState
-import chess.persistence.GameRepository
+import java.time.Instant
+
 import com.mongodb.client.model.{Filters, ReplaceOptions}
 import com.mongodb.reactivestreams.client.MongoDatabase
 import org.bson.Document
 import zio.*
 
-import java.time.Instant
+import chess.codec.{FenParserRegex, FenSerializer}
+import chess.model.board.GameState
+import chess.model.{GameError, GameId}
+import chess.persistence.GameRepository
 
 /** MongoDB-backed `GameRepository`. Each game is one document in the
   * `games` collection: `{ _id: gameId, fen, updatedAt }`. Schema-less,

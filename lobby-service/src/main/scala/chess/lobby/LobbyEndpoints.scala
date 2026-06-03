@@ -1,5 +1,9 @@
 package chess.lobby
 
+import sttp.tapir.*
+import sttp.tapir.generic.auto.*
+import sttp.tapir.json.zio.*
+
 import chess.lobby.LobbyJson.{
   CreateLobbyRequest,
   JoinLobbyRequest,
@@ -8,9 +12,6 @@ import chess.lobby.LobbyJson.{
   given
 }
 import chess.model.{Lobby, LobbyId}
-import sttp.tapir.*
-import sttp.tapir.generic.auto.*
-import sttp.tapir.json.zio.*
 
 /** Tapir endpoint definitions, kept in their own file so the import of
   * `sttp.tapir.*` doesn't collide with `zio.http.*` in the routes module.

@@ -1,15 +1,13 @@
 package chess.obs
 
+import io.opentelemetry.api.OpenTelemetry as JOpenTelemetry
 import io.opentelemetry.api.common.{AttributeKey, Attributes as OtelAttributes}
 import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator
-import io.opentelemetry.api.OpenTelemetry as JOpenTelemetry
 import io.opentelemetry.context.propagation.ContextPropagators
 import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter
 import io.opentelemetry.sdk.OpenTelemetrySdk
 import io.opentelemetry.sdk.resources.Resource
 import io.opentelemetry.sdk.trace.SdkTracerProvider
-// `export` is a Scala 3 reserved keyword, hence the backticks on the
-// matching java package segment.
 import io.opentelemetry.sdk.trace.`export`.BatchSpanProcessor
 import zio.*
 import zio.telemetry.opentelemetry.OpenTelemetry as ZOpenTelemetry

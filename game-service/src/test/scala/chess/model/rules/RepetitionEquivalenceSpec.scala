@@ -1,11 +1,12 @@
 package chess.model.rules
 
-import chess.codec.FenSerializer
-import chess.notation.MoveParser
-import chess.model.{GameError, GameSnapshot}
-import chess.model.board.{GameState, Move}
-import zio.{IO, ZIO}
 import zio.test.*
+import zio.{IO, ZIO}
+
+import chess.codec.FenSerializer
+import chess.model.board.GameState
+import chess.model.{GameError, GameSnapshot}
+import chess.notation.MoveParser
 
 /** Equivalence test between Zobrist-based and FEN-based repetition counting.
   *

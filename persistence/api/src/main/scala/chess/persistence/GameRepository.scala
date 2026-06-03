@@ -1,8 +1,9 @@
 package chess.persistence
 
-import chess.model.{GameError, GameId}
-import chess.model.board.GameState
 import zio.*
+
+import chess.model.board.GameState
+import chess.model.{GameError, GameId}
 
 /** Backend-agnostic CRUD on game state, keyed by `GameId`.
   *

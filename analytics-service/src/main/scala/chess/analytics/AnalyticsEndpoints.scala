@@ -1,14 +1,10 @@
 package chess.analytics
 
-import chess.analytics.AnalyticsJson.{
-  AverageGameLengthResponse,
-  GameCountResponse,
-  TopMovesResponse,
-  given
-}
 import sttp.tapir.*
 import sttp.tapir.generic.auto.*
 import sttp.tapir.json.zio.*
+
+import chess.analytics.AnalyticsJson.{AverageGameLengthResponse, GameCountResponse, TopMovesResponse}
 
 /** Tapir endpoint shapes for the analytics REST surface. Kept in their own
   * file so the import of `sttp.tapir.*` doesn't collide with `zio.http.*`

@@ -1,9 +1,9 @@
 package chess.gatling
 
+import scala.concurrent.duration.*
+
 import io.gatling.core.Predef.*
 import io.gatling.http.Predef.*
-
-import scala.concurrent.duration.*
 
 /** Mixed-traffic test: 70% gameplay, 30% lobby flow, both running side
   * by side against the polyglot stack. Game flow goes through the

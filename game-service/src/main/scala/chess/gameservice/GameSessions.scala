@@ -1,8 +1,9 @@
 package chess.gameservice
 
-import chess.model.{GameError, GameId, GameSnapshot, SessionState}
 import zio.*
 import zio.stream.SubscriptionRef
+
+import chess.model.{GameError, GameId, GameSnapshot, SessionState}
 
 /** Holds one `SubscriptionRef[SessionState]` per active game.
   *

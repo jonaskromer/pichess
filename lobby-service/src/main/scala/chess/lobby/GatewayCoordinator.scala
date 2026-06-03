@@ -1,11 +1,12 @@
 package chess.lobby
 
-import chess.api.{Endpoints, ErrorDto, RegisterPlayersRequest}
-import sttp.client3.{SttpBackend, UriContext}
+import sttp.client3.SttpBackend
 import sttp.client3.httpclient.zio.HttpClientZioBackend
 import sttp.model.Uri
 import sttp.tapir.client.sttp.SttpClientInterpreter
 import zio.*
+
+import chess.api.{Endpoints, ErrorDto, RegisterPlayersRequest}
 
 /** Internal coordination client between the lobby-service and the gateway.
   *

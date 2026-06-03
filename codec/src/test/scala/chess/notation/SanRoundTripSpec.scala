@@ -1,9 +1,10 @@
 package chess.notation
 
-import chess.model.board.{GameState, Move}
-import chess.model.rules.Game
 import zio.*
 import zio.test.*
+
+import chess.model.board.{GameState, Move}
+import chess.model.rules.Game
 
 /** Full round-trip: for a real multi-move game, every move serialized by
   * [[SanSerializer]] must re-parse to the same `Move` via [[MoveParser]] when

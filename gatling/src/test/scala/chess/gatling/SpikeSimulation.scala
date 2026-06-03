@@ -1,9 +1,9 @@
 package chess.gatling
 
+import scala.concurrent.duration.*
+
 import io.gatling.core.Predef.*
 import io.gatling.http.Predef.*
-
-import scala.concurrent.duration.*
 
 /** Spike test: baseline trickle, then three sudden bursts of `peakUsers`
   * spaced 30 seconds apart, with the trickle resuming between bursts.

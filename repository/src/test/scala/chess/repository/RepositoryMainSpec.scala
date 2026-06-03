@@ -1,8 +1,9 @@
 package chess.repository
 
-import chess.persistence.{Backend, BackendConfig, CacheBackend, InMemoryGameRepository}
 import zio.*
 import zio.test.*
+
+import chess.persistence.{Backend, BackendConfig, CacheBackend, InMemoryGameRepository}
 
 object RepositoryMainSpec extends ZIOSpecDefault:
 

@@ -1,7 +1,8 @@
 package chess.view
 
-import chess.model.piece.Color
 import zio.test.*
+
+import chess.model.piece.Color
 
 object MoveLogViewSpec extends ZIOSpecDefault:
 

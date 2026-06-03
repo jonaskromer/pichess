@@ -1,21 +1,5 @@
 package chess.controller
 
-import chess.api.{
-  AnnotationsDto,
-  AttackersResponse,
-  BoardStateDto,
-  Endpoints,
-  ErrorDto,
-  ExportResponse,
-  GameSnapshot,
-  LegalMovesResponse,
-  StackInfoResponse,
-  StateResponse,
-  ThreatsResponse
-}
-import chess.model.piece.Color
-import chess.api.WebBoardView
-import chess.view.HtmlPage
 import io.grpc.StatusException
 import pichess.game_service.{
   ExportRequest,
@@ -33,6 +17,21 @@ import zio.*
 import zio.http.*
 import zio.telemetry.opentelemetry.context.ContextStorage
 import zio.telemetry.opentelemetry.tracing.Tracing
+
+import chess.api.{
+  AnnotationsDto,
+  AttackersResponse,
+  BoardStateDto,
+  Endpoints,
+  ErrorDto,
+  ExportResponse,
+  GameSnapshot,
+  LegalMovesResponse,
+  StackInfoResponse,
+  StateResponse,
+  ThreatsResponse
+}
+import chess.view.HtmlPage
 
 /** Tapir-backed REST surface plus raw zio-http routes (HTML, web-ui assets,
   * SSE). Every command endpoint is a thin shim over the gameService gRPC

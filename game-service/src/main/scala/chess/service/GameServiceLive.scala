@@ -1,15 +1,16 @@
 package chess.service
 
-import chess.codec.{FenParserRegex, FenSerializer, JsonParser, PgnParser}
-import chess.events.{GameDomainEvent, GameEventProducer}
-import chess.persistence.{GameRepository, Mutation}
-import chess.notation.{MoveParser, SanSerializer}
-import chess.model.{GameError, GameEvent, GameId}
-import chess.model.board.{GameState, Move}
-import chess.model.rules.Game
+import java.util.concurrent.TimeUnit
+
 import zio.*
 
-import java.util.concurrent.TimeUnit
+import chess.codec.{FenParserRegex, FenSerializer, JsonParser, PgnParser}
+import chess.events.{GameDomainEvent, GameEventProducer}
+import chess.model.board.{GameState, Move}
+import chess.model.rules.Game
+import chess.model.{GameError, GameEvent, GameId}
+import chess.notation.{MoveParser, SanSerializer}
+import chess.persistence.{GameRepository, Mutation}
 
 final class GameServiceLive(
     store: GameRepository,

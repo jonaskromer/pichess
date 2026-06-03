@@ -1,9 +1,10 @@
 package chess.model.rules
 
-import chess.model.piece.{Color, Piece, PieceType}
-import chess.model.board.{Board, GameState, Move, Position}
-import chess.model.GameError
 import zio.*
+
+import chess.model.GameError
+import chess.model.board.{Board, GameState, Move, Position}
+import chess.model.piece.{Color, Piece, PieceType}
 
 object MoveValidator:
 

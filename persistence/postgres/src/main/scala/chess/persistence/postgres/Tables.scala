@@ -1,9 +1,10 @@
 package chess.persistence.postgres
 
-import chess.model.{GameId, InviteCode, LobbyId}
+import java.time.Instant
+
 import slick.jdbc.PostgresProfile.api.*
 
-import java.time.Instant
+import chess.model.{GameId, LobbyId}
 
 /** Slick table definitions for the games and lobbies relations.
   *

@@ -1,9 +1,7 @@
 package chess.repository
 
-import chess.codec.FenParserRegex
-import chess.events.{GameDomainEvent, Topics}
-import chess.model.GameError
-import chess.persistence.GameRepository
+import scala.jdk.CollectionConverters.*
+
 import io.opentelemetry.api.trace.SpanKind
 import org.apache.kafka.common.header.Headers
 import zio.*
@@ -14,7 +12,10 @@ import zio.telemetry.opentelemetry.context.IncomingContextCarrier
 import zio.telemetry.opentelemetry.tracing.Tracing
 import zio.telemetry.opentelemetry.tracing.propagation.TraceContextPropagator
 
-import scala.jdk.CollectionConverters.*
+import chess.codec.FenParserRegex
+import chess.events.{GameDomainEvent, Topics}
+import chess.model.GameError
+import chess.persistence.GameRepository
 
 /** Subscribes to `chess.game-events` and applies each event to the local
   * repository (`repo.save(gameId, fen)`).

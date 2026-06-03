@@ -1,8 +1,9 @@
 package chess.codec
 
+import zio.*
+
 import chess.model.GameError
 import chess.model.board.GameState
-import zio.*
 
 /** Parses a FEN (Forsyth–Edwards Notation) string into a [[GameState]].
   *

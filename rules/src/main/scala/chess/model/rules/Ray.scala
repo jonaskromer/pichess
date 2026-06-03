@@ -1,7 +1,7 @@
 package chess.model.rules
 
-import chess.model.piece.PieceType
 import chess.model.board.{Board, Position}
+import chess.model.piece.PieceType
 
 /** Behavior of a piece along a ray.
   *

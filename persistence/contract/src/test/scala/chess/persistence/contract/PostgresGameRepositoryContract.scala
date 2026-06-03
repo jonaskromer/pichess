@@ -1,8 +1,9 @@
 package chess.persistence.contract
 
+import zio.*
+
 import chess.persistence.GameRepository
 import chess.persistence.postgres.PostgresGameRepository
-import zio.*
 
 object PostgresGameRepositoryContract extends GameRepositoryContract:
   override val label: String = "Postgres"

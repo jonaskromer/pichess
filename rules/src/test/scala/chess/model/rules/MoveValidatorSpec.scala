@@ -1,10 +1,11 @@
 package chess.model.rules
 
-import chess.model.GameError
-import chess.model.piece.{Color, Piece, PieceType}
-import chess.model.board.{CastlingRights, GameState, Move, Position}
 import zio.*
 import zio.test.*
+
+import chess.model.GameError
+import chess.model.board.{CastlingRights, GameState, Move, Position}
+import chess.model.piece.{Color, Piece, PieceType}
 
 object MoveValidatorSpec extends ZIOSpecDefault:
 

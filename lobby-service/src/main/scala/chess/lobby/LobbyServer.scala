@@ -1,11 +1,12 @@
 package chess.lobby
 
-import chess.lobby.LobbyJson.PublicLobbiesResponse
-import chess.model.{InviteCode, LobbyError}
 import sttp.tapir.server.ziohttp.ZioHttpInterpreter
 import sttp.tapir.ztapir.*
 import zio.*
 import zio.http.*
+
+import chess.lobby.LobbyJson.PublicLobbiesResponse
+import chess.model.{InviteCode, LobbyError}
 
 /** Tapir-backed REST surface for the lobby microservice. Endpoint shapes
   * live in [[LobbyEndpoints]]; this module wires them to the

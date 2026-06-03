@@ -1,7 +1,8 @@
 package chess.opening
 
-import chess.events.GameDomainEvent
 import zio.*
+
+import chess.events.GameDomainEvent
 
 /** Pure projection logic — translates a single domain event into the
   * appropriate `OpeningTree` mutation, threading per-game "last seen FEN"

@@ -2,6 +2,7 @@ package chess.webui
 
 import com.raquo.laminar.api.L.*
 import com.raquo.laminar.modifiers.Modifier
+
 import chess.webui.components.Components
 
 // Mirror of tui/src/main/scala/chess/view/HelpView.scala — keep in sync.

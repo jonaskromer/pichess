@@ -1,6 +1,6 @@
 package chess.codec
 
-import chess.model.board.{DrawReason, GameStatus}
+import chess.model.board.GameStatus
 import chess.model.piece.Color
 
 /** Co-located encode/decode for PGN-specific field types.

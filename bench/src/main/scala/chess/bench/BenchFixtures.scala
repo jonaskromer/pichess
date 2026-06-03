@@ -1,8 +1,5 @@
 package chess.bench
-
-import chess.codec.FenParserRegex
-import chess.model.board.{GameState, Move, Position}
-import chess.model.piece.PieceType
+import chess.model.board.{GameState, Move}
 import chess.model.rules.Game
 import chess.notation.MoveParser
 

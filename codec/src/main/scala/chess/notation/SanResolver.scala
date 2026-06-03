@@ -1,10 +1,11 @@
 package chess.notation
 
+import zio.*
+
 import chess.model.GameError
 import chess.model.board.{GameState, Move, Position}
 import chess.model.piece.PieceType
 import chess.model.rules.MoveValidator
-import zio.*
 
 object SanResolver extends NotationResolver:
 

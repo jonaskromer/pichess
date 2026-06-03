@@ -1,5 +1,10 @@
 package chess.persistence.postgres
 
+import java.time.Instant
+
+import slick.jdbc.PostgresProfile.api.*
+import zio.*
+
 import chess.model.{
   InviteCode,
   Lobby,
@@ -9,10 +14,6 @@ import chess.model.{
   LobbyVisibility
 }
 import chess.persistence.LobbyRepository
-import slick.jdbc.PostgresProfile.api.*
-import zio.*
-
-import java.time.Instant
 
 final class PostgresLobbyRepository(db: PostgresDatabase) extends LobbyRepository:
 

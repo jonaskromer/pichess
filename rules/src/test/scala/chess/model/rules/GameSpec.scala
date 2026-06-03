@@ -1,7 +1,9 @@
 package chess.model.rules
 
+import zio.*
+import zio.test.*
+
 import chess.model.GameError
-import chess.model.piece.{Color, Piece, PieceType}
 import chess.model.board.{
   CastlingRights,
   DrawReason,
@@ -10,8 +12,7 @@ import chess.model.board.{
   Move,
   Position
 }
-import zio.*
-import zio.test.*
+import chess.model.piece.{Color, Piece, PieceType}
 
 object GameSpec extends ZIOSpecDefault:
 

@@ -1,9 +1,10 @@
 package chess.bench
 
-import chess.model.rules.Game
+import java.util.concurrent.TimeUnit
+
 import org.openjdk.jmh.annotations.*
 
-import java.util.concurrent.TimeUnit
+import chess.model.rules.Game
 
 /** Full [[Game.applyMove]] cycle: validation, board mutation, status
   * detection (including the implicit `hasLegalMove` scan used for

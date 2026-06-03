@@ -1,11 +1,11 @@
 package chess.codec
 
-import chess.model.GameError
-import chess.model.board.GameState
-import zio.*
-
 import fastparse.*
 import fastparse.NoWhitespace.*
+import zio.*
+
+import chess.model.GameError
+import chess.model.board.GameState
 
 /** FEN parser built on the `fastparse` library.
   *

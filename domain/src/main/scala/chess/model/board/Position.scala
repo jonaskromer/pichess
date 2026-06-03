@@ -1,7 +1,8 @@
 package chess.model.board
 
-import chess.model.GameError
 import zio.{IO, ZIO}
+
+import chess.model.GameError
 
 /** A square on the chess board, identified by a file (column) `a`–`h` and a
   * rank (row) `1`–`8`.

@@ -1,9 +1,10 @@
 package chess.persistence
 
-import chess.model.board.GameState
-import chess.model.piece.Color
 import zio.*
 import zio.test.*
+
+import chess.model.board.GameState
+import chess.model.piece.Color
 
 object InMemoryGameRepositorySpec extends ZIOSpecDefault:
 

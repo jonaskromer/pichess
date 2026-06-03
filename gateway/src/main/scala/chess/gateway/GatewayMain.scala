@@ -1,5 +1,13 @@
 package chess.gateway
 
+import io.grpc.ManagedChannelBuilder
+import pichess.game_service.ZioGameService
+import scalapb.zio_grpc.ZManagedChannel
+import zio.*
+import zio.http.*
+import zio.telemetry.opentelemetry.context.ContextStorage
+import zio.telemetry.opentelemetry.tracing.Tracing
+
 import chess.controller.{
   AnnotationCache,
   LobbyProxy,
@@ -8,13 +16,6 @@ import chess.controller.{
   WebController
 }
 import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer, TracingLayer, TracingMiddleware}
-import io.grpc.ManagedChannelBuilder
-import pichess.game_service.ZioGameService
-import scalapb.zio_grpc.ZManagedChannel
-import zio.*
-import zio.http.*
-import zio.telemetry.opentelemetry.context.ContextStorage
-import zio.telemetry.opentelemetry.tracing.Tracing
 
 /** Standalone entry point for the gateway microservice.
   *

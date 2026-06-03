@@ -1,8 +1,9 @@
 package chess.persistence
 
-import chess.model.{GameError, GameId}
-import chess.model.board.GameState
 import zio.*
+
+import chess.model.board.GameState
+import chess.model.{GameError, GameId}
 
 final class InMemoryGameRepository(store: Ref[Map[GameId, GameState]])
     extends GameRepository:

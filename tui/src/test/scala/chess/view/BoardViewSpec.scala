@@ -1,8 +1,9 @@
 package chess.view
 
+import zio.test.*
+
 import chess.model.board.{GameState, Position}
 import chess.model.piece.{Color, Piece, PieceType}
-import zio.test.*
 
 object BoardViewSpec extends ZIOSpecDefault:
 

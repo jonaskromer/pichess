@@ -1,10 +1,11 @@
 package chess.persistence.contract
 
-import chess.persistence.mongo.MongoClientLayer
 import com.dimafeng.testcontainers.MongoDBContainer
 import com.mongodb.reactivestreams.client.MongoDatabase
 import org.testcontainers.utility.DockerImageName
 import zio.*
+
+import chess.persistence.mongo.MongoClientLayer
 
 object MongoContainerLayer:
 

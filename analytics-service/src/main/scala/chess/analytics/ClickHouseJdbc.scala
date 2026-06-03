@@ -1,9 +1,9 @@
 package chess.analytics
 
+import java.sql.{Connection, PreparedStatement, ResultSet, Timestamp}
+
 import zio.*
 import zio.jdbc.*
-
-import java.sql.{Connection, PreparedStatement, ResultSet, Timestamp}
 
 /** ClickHouse-compatible JDBC helpers.
   *

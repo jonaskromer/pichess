@@ -1,9 +1,10 @@
 package chess.tui
 
-import chess.api.{BoardStateDto, GameStatusDto}
-import chess.tui.SseEventBuilder.{Builder, Event}
 import zio.json.*
 import zio.test.*
+
+import chess.api.{BoardStateDto, GameStatusDto}
+import chess.tui.SseEventBuilder.{Builder, Event}
 
 object SseEventBuilderSpec extends ZIOSpecDefault:
 

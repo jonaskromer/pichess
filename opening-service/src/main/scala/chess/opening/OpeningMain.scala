@@ -1,7 +1,8 @@
 package chess.opening
 
-import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer, TracingLayer}
 import zio.*
+
+import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer, TracingLayer}
 
 /** Standalone entry point for the opening-service microservice.
   *

@@ -1,11 +1,7 @@
 package chess.gameservice
 
-import chess.codec.{FenSerializer, JsonSerializer, PgnSerializer}
-import chess.controller.GameController
-import chess.events.GameEventProducer
-import chess.model.{GameError, GameId, GameSnapshot, SessionState}
-import chess.notation.SanSerializer
-import chess.service.GameService
+import scala.jdk.CollectionConverters.*
+
 import io.grpc.{Metadata, StatusException}
 import io.opentelemetry.api.trace.SpanKind
 import pichess.game_service.{
@@ -25,7 +21,12 @@ import zio.telemetry.opentelemetry.context.IncomingContextCarrier
 import zio.telemetry.opentelemetry.tracing.Tracing
 import zio.telemetry.opentelemetry.tracing.propagation.TraceContextPropagator
 
-import scala.jdk.CollectionConverters.*
+import chess.codec.{FenSerializer, JsonSerializer, PgnSerializer}
+import chess.controller.GameController
+import chess.events.GameEventProducer
+import chess.model.{GameError, GameId, GameSnapshot, SessionState}
+import chess.notation.SanSerializer
+import chess.service.GameService
 
 /** zio-grpc service implementation. Each rpc routes the request through the
   * existing in-process `GameService` / `GameController`, then projects the

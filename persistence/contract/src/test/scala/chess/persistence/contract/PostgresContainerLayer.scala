@@ -1,9 +1,10 @@
 package chess.persistence.contract
 
-import chess.persistence.postgres.{PostgresDatabase, PostgresSchema}
 import com.dimafeng.testcontainers.PostgreSQLContainer
 import org.testcontainers.utility.DockerImageName
 import zio.*
+
+import chess.persistence.postgres.{PostgresDatabase, PostgresSchema}
 
 /** Builds a fully-prepared `PostgresDatabase` layer backed by a Testcontainers
   * PostgreSQL instance. The container is started on layer construction and

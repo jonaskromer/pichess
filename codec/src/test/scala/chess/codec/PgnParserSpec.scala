@@ -1,9 +1,10 @@
 package chess.codec
 
-import chess.model.board.{GameState, Move, Position}
+import zio.test.*
+
+import chess.model.board.{GameState, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.notation.SanSerializer
-import zio.test.*
 
 object PgnParserSpec extends ZIOSpecDefault:
 

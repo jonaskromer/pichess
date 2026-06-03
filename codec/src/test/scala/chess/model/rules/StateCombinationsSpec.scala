@@ -1,12 +1,13 @@
 package chess.model.rules
 
-import chess.codec.{FenParserRegex, FenSerializer}
-import chess.notation.MoveParser
-import chess.model.GameError
-import chess.model.board.{GameState, Move, Position}
-import chess.model.piece.{Color, Piece, PieceType}
 import zio.*
 import zio.test.*
+
+import chess.codec.{FenParserRegex, FenSerializer}
+import chess.model.GameError
+import chess.model.board.{GameState, Position}
+import chess.model.piece.{Color, Piece, PieceType}
+import chess.notation.MoveParser
 
 /** Explicit combinatorial sequences that exercise position-identity fields
   * '''in combination''', not just in isolation.

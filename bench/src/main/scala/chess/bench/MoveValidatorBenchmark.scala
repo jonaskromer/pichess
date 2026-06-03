@@ -1,12 +1,13 @@
 package chess.bench
 
+import java.util.concurrent.TimeUnit
+
+import org.openjdk.jmh.annotations.*
+
 import chess.codec.FenParserRegex
 import chess.model.board.{GameState, Position}
 import chess.model.piece.Color
 import chess.model.rules.MoveValidator
-import org.openjdk.jmh.annotations.*
-
-import java.util.concurrent.TimeUnit
 
 /** Microbenchmarks for the move-legality predicates.
   *

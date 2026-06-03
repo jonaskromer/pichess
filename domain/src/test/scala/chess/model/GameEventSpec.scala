@@ -1,7 +1,8 @@
 package chess.model
 
-import chess.model.board.{GameState, Move, Position}
 import zio.test.*
+
+import chess.model.board.{GameState, Move, Position}
 
 object GameEventSpec extends ZIOSpecDefault:
 

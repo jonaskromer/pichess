@@ -1,8 +1,9 @@
 package chess.model
 
+import zio.test.*
+
 import chess.model.board.{GameState, Move, Position}
 import chess.model.rules.Zobrist
-import zio.test.*
 
 /** Unit tests for the edge cases of [[GameSnapshot]]'s helpers that the
   * integration tests don't naturally exercise.

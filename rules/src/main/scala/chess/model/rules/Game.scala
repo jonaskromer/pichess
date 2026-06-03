@@ -1,6 +1,8 @@
 package chess.model.rules
 
-import chess.model.piece.{Color, Piece, PieceType}
+import zio.*
+
+import chess.model.GameError
 import chess.model.board.{
   Board,
   CastlingRights,
@@ -10,8 +12,7 @@ import chess.model.board.{
   Move,
   Position
 }
-import chess.model.GameError
-import zio.*
+import chess.model.piece.{Color, Piece, PieceType}
 
 object Game:
   private val promotionPieces: Set[PieceType] =

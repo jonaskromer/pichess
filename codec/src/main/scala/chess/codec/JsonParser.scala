@@ -1,10 +1,11 @@
 package chess.codec
 
+import zio.*
+import zio.json.*
+
 import chess.codec.JsonCodec.given
 import chess.model.GameError
 import chess.model.board.GameState
-import zio.*
-import zio.json.*
 
 object JsonParser:
 

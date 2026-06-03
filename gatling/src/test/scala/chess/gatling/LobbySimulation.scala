@@ -1,9 +1,9 @@
 package chess.gatling
 
+import scala.concurrent.duration.*
+
 import io.gatling.core.Predef.*
 import io.gatling.http.Predef.*
-
-import scala.concurrent.duration.*
 
 /** Smoke scenario for the lobby path. Each user runs the canonical
   * [[Chains.createAndJoinLobby]] flow once. Targets `pichessLobbyUrl`

@@ -1,15 +1,16 @@
 package chess.analytics
 
+import sttp.tapir.server.ziohttp.ZioHttpInterpreter
+import sttp.tapir.ztapir.*
+import zio.*
+import zio.http.*
+
 import chess.analytics.AnalyticsJson.{
   AverageGameLengthResponse,
   GameCountResponse,
   TopMove,
   TopMovesResponse
 }
-import sttp.tapir.server.ziohttp.ZioHttpInterpreter
-import sttp.tapir.ztapir.*
-import zio.*
-import zio.http.*
 
 /** REST surface for the analytics microservice. Wires Tapir endpoints to
   * [[AnalyticsService]] queries and returns JSON-encoded aggregates.

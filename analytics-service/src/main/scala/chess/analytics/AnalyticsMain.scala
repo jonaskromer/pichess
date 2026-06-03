@@ -1,8 +1,9 @@
 package chess.analytics
 
-import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer, TracingLayer, TracingMiddleware}
 import zio.*
 import zio.http.*
+
+import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer, TracingLayer, TracingMiddleware}
 
 /** Standalone entry point for the analytics-service microservice.
   *

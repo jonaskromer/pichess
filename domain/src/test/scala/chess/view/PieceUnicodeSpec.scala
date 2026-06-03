@@ -1,7 +1,8 @@
 package chess.view
 
-import chess.model.piece.{Color, Piece, PieceType}
 import zio.test.*
+
+import chess.model.piece.{Color, Piece, PieceType}
 
 object PieceUnicodeSpec extends ZIOSpecDefault:
 

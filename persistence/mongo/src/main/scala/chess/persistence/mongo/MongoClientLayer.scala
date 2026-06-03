@@ -1,11 +1,7 @@
 package chess.persistence.mongo
 
 import com.mongodb.ConnectionString
-import com.mongodb.reactivestreams.client.{
-  MongoClient,
-  MongoClients,
-  MongoDatabase
-}
+import com.mongodb.reactivestreams.client.{MongoClients, MongoDatabase}
 import zio.*
 
 /** Connection-pooled MongoDB client wired from `PICHESS_MONGO_URL` /

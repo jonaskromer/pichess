@@ -1,9 +1,10 @@
 package chess.notation
 
-import chess.model.board.{GameState, Move, Position}
-import chess.model.piece.{Color, Piece, PieceType}
 import zio.*
 import zio.test.*
+
+import chess.model.board.{GameState, Move, Position}
+import chess.model.piece.{Color, Piece, PieceType}
 
 object CastlingResolverSpec extends ZIOSpecDefault:
 

@@ -1,14 +1,14 @@
 package chess.persistence.cassandra
 
-import chess.codec.{FenParserRegex, FenSerializer}
-import chess.model.{GameError, GameId}
-import chess.model.board.GameState
-import chess.persistence.GameRepository
+import java.time.Instant
+
 import com.datastax.oss.driver.api.core.CqlSession
-import com.datastax.oss.driver.api.core.cql.SimpleStatement
 import zio.*
 
-import java.time.Instant
+import chess.codec.{FenParserRegex, FenSerializer}
+import chess.model.board.GameState
+import chess.model.{GameError, GameId}
+import chess.persistence.GameRepository
 
 /** Cassandra-backed `GameRepository`. Single table partitioned by gameId —
   * the textbook KV use of a wide-column store. State stored as FEN, written

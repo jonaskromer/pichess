@@ -1,12 +1,13 @@
 package chess.lobby
 
-import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer, TracingLayer, TracingMiddleware}
-import chess.persistence.{BackendConfig, LobbyRepository}
-import chess.persistence.runtime.PersistenceLayers
 import zio.*
 import zio.http.*
 import zio.telemetry.opentelemetry.context.ContextStorage
 import zio.telemetry.opentelemetry.tracing.Tracing
+
+import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer, TracingLayer, TracingMiddleware}
+import chess.persistence.runtime.PersistenceLayers
+import chess.persistence.{BackendConfig, LobbyRepository}
 
 object LobbyMain extends ZIOAppDefault:
 

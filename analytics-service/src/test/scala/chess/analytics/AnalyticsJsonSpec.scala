@@ -1,8 +1,9 @@
 package chess.analytics
 
-import chess.analytics.AnalyticsJson.*
 import zio.json.*
 import zio.test.*
+
+import chess.analytics.AnalyticsJson.*
 
 object AnalyticsJsonSpec extends ZIOSpecDefault:
 

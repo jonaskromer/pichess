@@ -1,15 +1,15 @@
 package chess.gameservice
 
+import com.google.protobuf.ByteString
+import io.grpc.{Status, StatusException}
+import pichess.game_service.StateReply
+import zio.UIO
+
 import chess.api.{AnnotationsDto, BoardStateDto, WebBoardView}
 import chess.model.board.{GameState, Position}
 import chess.model.piece.Color
 import chess.model.rules.MoveValidator
 import chess.model.{GameError, GameId, SessionState}
-import com.google.protobuf.ByteString
-import io.grpc.{Status, StatusException}
-import pichess.game_service.StateReply
-import zio.UIO
-import zio.ZIO
 
 /** Pure mapping helpers for the gRPC service.
   *

@@ -1,9 +1,10 @@
 package chess.gameservice
 
-import chess.model.board.GameState
-import chess.model.{GameError, GameSnapshot}
 import zio.*
 import zio.test.*
+
+import chess.model.board.GameState
+import chess.model.{GameError, GameSnapshot}
 
 object GameSessionsSpec extends ZIOSpecDefault:
 

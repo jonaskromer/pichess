@@ -1,10 +1,11 @@
 package chess.notation
 
+import zio.*
+
 import chess.model.GameError
 import chess.model.board.{GameState, Move, Position}
-import chess.model.piece.{Color, PieceType, Piece}
+import chess.model.piece.{Color, Piece, PieceType}
 import chess.model.rules.{Game, MoveValidator}
-import zio.*
 
 object SanSerializer:
 

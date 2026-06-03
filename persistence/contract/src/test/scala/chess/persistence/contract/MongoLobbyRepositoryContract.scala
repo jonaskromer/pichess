@@ -1,8 +1,9 @@
 package chess.persistence.contract
 
+import zio.*
+
 import chess.persistence.LobbyRepository
 import chess.persistence.mongo.MongoLobbyRepository
-import zio.*
 
 object MongoLobbyRepositoryContract extends LobbyRepositoryContract:
   override val label: String = "Mongo"

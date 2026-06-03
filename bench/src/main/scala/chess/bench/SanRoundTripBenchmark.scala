@@ -1,10 +1,11 @@
 package chess.bench
 
-import chess.model.rules.Game
-import chess.notation.{MoveParser, SanSerializer}
+import java.util.concurrent.TimeUnit
+
 import org.openjdk.jmh.annotations.*
 
-import java.util.concurrent.TimeUnit
+import chess.model.rules.Game
+import chess.notation.{MoveParser, SanSerializer}
 
 /** Roundtrip benchmark: parse a SAN string against a state, apply the
   * resulting move, serialize it back to SAN. Exercises both notation

@@ -1,9 +1,9 @@
 package chess.model.rules
 
-import chess.model.board.{GameState, Position}
-import chess.model.piece.{Color, Piece, PieceType}
-
 import scala.util.Random
+
+import chess.model.board.{GameState, Position}
+import chess.model.piece.{Color, Piece}
 
 /** Zobrist hashing for chess positions.
   *

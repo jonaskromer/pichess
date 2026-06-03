@@ -1,10 +1,11 @@
 package chess.lobby
 
-import chess.lobby.LobbyJson.{*, given}
-import chess.model.{InviteCode, Lobby, LobbyStatus, LobbyVisibility}
 import sttp.tapir.Schema
 import zio.json.*
 import zio.test.*
+
+import chess.lobby.LobbyJson.{*, given}
+import chess.model.{InviteCode, Lobby, LobbyStatus, LobbyVisibility}
 
 object LobbyJsonSpec extends ZIOSpecDefault:
 

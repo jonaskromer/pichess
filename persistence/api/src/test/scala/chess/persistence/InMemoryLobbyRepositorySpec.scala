@@ -1,8 +1,9 @@
 package chess.persistence
 
-import chess.model.{InviteCode, Lobby, LobbyStatus, LobbyVisibility}
 import zio.*
 import zio.test.*
+
+import chess.model.{InviteCode, Lobby, LobbyStatus, LobbyVisibility}
 
 object InMemoryLobbyRepositorySpec extends ZIOSpecDefault:
 

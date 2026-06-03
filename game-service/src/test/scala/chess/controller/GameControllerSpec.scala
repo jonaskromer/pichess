@@ -1,15 +1,16 @@
 package chess.controller
 
-import chess.events.{GameEventProducer, InMemoryGameEventProducer}
-import chess.persistence.InMemoryGameRepository
-import chess.model.{GameSnapshot, HistoryEntry, SessionState}
-import chess.model.board.{DrawReason, GameState, GameStatus, Move, Position}
-import chess.model.piece.{Color, Piece, PieceType}
-import chess.notation.SanSerializer
-import chess.service.{GameService, GameServiceLive}
 import zio.*
 import zio.stream.SubscriptionRef
 import zio.test.*
+
+import chess.events.{GameEventProducer, InMemoryGameEventProducer}
+import chess.model.board.{DrawReason, GameState, GameStatus, Move, Position}
+import chess.model.piece.{Color, Piece, PieceType}
+import chess.model.{GameSnapshot, HistoryEntry, SessionState}
+import chess.notation.SanSerializer
+import chess.persistence.InMemoryGameRepository
+import chess.service.{GameService, GameServiceLive}
 
 object GameControllerSpec extends ZIOSpecDefault:
 

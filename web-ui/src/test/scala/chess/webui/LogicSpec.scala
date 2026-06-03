@@ -1,7 +1,8 @@
 package chess.webui
 
-import chess.api.{BoardStateDto, GameStatusDto, MoveEntryDto, SquareDto}
 import zio.test.*
+
+import chess.api.{BoardStateDto, GameStatusDto, MoveEntryDto, SquareDto}
 
 object LogicSpec extends ZIOSpecDefault:
 

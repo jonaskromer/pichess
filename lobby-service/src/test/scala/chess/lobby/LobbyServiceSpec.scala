@@ -1,5 +1,8 @@
 package chess.lobby
 
+import zio.*
+import zio.test.*
+
 import chess.model.{
   InviteCode,
   Lobby,
@@ -8,8 +11,6 @@ import chess.model.{
   LobbyVisibility
 }
 import chess.persistence.{InMemoryLobbyRepository, LobbyRepository}
-import zio.*
-import zio.test.*
 
 object LobbyServiceSpec extends ZIOSpecDefault:
 

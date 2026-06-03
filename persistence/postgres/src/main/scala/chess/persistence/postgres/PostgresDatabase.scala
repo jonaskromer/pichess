@@ -4,8 +4,6 @@ import com.zaxxer.hikari.{HikariConfig, HikariDataSource}
 import slick.jdbc.PostgresProfile.api.*
 import zio.*
 
-import scala.concurrent.Future
-
 /** Wraps a Slick `Database` so the rest of the module can call `run` without
   * passing it explicitly, and bridges Slick's `Future`-typed `DBIO` results
   * into ZIO without pulling in the (Scala 2.13-only) zio-slick-interop.
