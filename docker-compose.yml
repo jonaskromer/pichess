@@ -45,9 +45,16 @@ services:
   # up. The Makefile `stack-*` targets pick a profile and ALSO set
   # PICHESS_BACKEND so the application picks the matching impl.
   #
-  # Default behaviour (no profile): no DB starts; services fall back to
-  # PICHESS_BACKEND=inmemory. Useful for testing the smallest possible
-  # footprint.
+  # Default behaviour (no profile): no DB container starts. The
+  # application's BackendConfig defaults to `postgres+redis` (see
+  # docs/db-selection-report.md), so an `up` without a profile will
+  # have services trying to dial out to containers that aren't there.
+  # That's a deliberate footgun — for ad-hoc compose use, either set
+  # the profiles explicitly (`docker compose --profile postgres
+  # --profile redis up`) or use the Makefile targets
+  # (`make stack-postgres`), which the BackendConfig defaults are
+  # tuned to. To run with no DB at all, set
+  # `PICHESS_BACKEND=inmemory PICHESS_CACHE=none` explicitly.
   # ---------------------------------------------------------------------------
   postgres:
     image: postgres:16-alpine
@@ -239,12 +246,14 @@ services:
       # so game-service / repository fall back to in-memory / skip the
       # consumer — Kafka is the event log, not a hard requirement.
       KAFKA_BOOTSTRAP_SERVERS: "${PICHESS_KAFKA:-}"
-      # Persistence selection. Default `inmemory` keeps state in-process.
-      # Set PICHESS_BACKEND to one of: inmemory, postgres, mongo, redis,
-      # cassandra. Set PICHESS_CACHE=redis to wrap the primary in a Redis
-      # cache decorator (orthogonal to backend choice).
-      PICHESS_BACKEND: "${PICHESS_BACKEND:-inmemory}"
-      PICHESS_CACHE: "${PICHESS_CACHE:-none}"
+      # Persistence selection. Defaults `postgres` + `redis` (see
+      # docs/db-selection-report.md for rationale — postgres+redis won the
+      # Stress workload; postgres alone won Game). Set PICHESS_BACKEND to
+      # one of: inmemory, postgres, mongo, redis, cassandra. Set
+      # PICHESS_CACHE to `none` to drop the cache decorator (recommended
+      # when the workload looks like Game — closed-loop, single-game-per-user).
+      PICHESS_BACKEND: "${PICHESS_BACKEND:-postgres}"
+      PICHESS_CACHE: "${PICHESS_CACHE:-redis}"
       PICHESS_PG_URL: "jdbc:postgresql://postgres:5432/pichess"
       PICHESS_PG_USER: "postgres"
       PICHESS_PG_PASSWORD: "postgres"
@@ -398,7 +407,7 @@ services:
       # The active stack profile + any extras the Makefile selected.
       # Surfaced read-only via GET /api/stack-info so the UI can render
       # an "Active stack: postgres" chip on the /dev page.
-      PICHESS_STACK: "${PICHESS_BACKEND:-inmemory}"
+      PICHESS_STACK: "${PICHESS_BACKEND:-postgres}"
       PICHESS_STACK_EXTRAS: "${PICHESS_EXTRAS:-}"
       # When set to "true" the /dev/* routes light up and the UI
       # surfaces the Dev link on the start screen post-it.

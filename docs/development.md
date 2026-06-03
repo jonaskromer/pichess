@@ -87,8 +87,8 @@
 |-------------------|---------------------------|--------------------|
 | game-service      | `GRPC_PORT`               | `9000`             |
 | game-service      | `KAFKA_BOOTSTRAP_SERVERS` | (unset → in-memory recorder, no Kafka required) |
-| game-service      | `PICHESS_BACKEND`         | `inmemory` (also `postgres` / `mongo` / `redis` / `cassandra`) |
-| game-service      | `PICHESS_CACHE`           | `none` (set `redis` to wrap the primary in `CachedGameRepository`) |
+| game-service      | `PICHESS_BACKEND`         | `postgres` (default; also `inmemory` / `mongo` / `redis` / `cassandra`) |
+| game-service      | `PICHESS_CACHE`           | `redis` (default; set `none` to drop the `CachedGameRepository` decorator) |
 | game-service      | `METRICS_PORT`            | `9102` |
 | repository        | `REPOSITORY_PORT`         | `8091`             |
 | repository        | `KAFKA_BOOTSTRAP_SERVERS` | (unset → HTTP-only, no consumer) |

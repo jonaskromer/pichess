@@ -106,8 +106,8 @@ backend](#adding-a-new-backend).
 
 | Backend | When it fits | When to avoid | Profile |
 |---|---|---|---|
-| `inmemory` | The baseline. Pure JVM map, no I/O. Use as the upper-bound benchmark and to isolate non-DB overhead in profiling. | Anywhere you need durability across restarts. | none (default) |
-| `postgres` | Strong consistency + relational queries. Default choice when the access pattern includes lookups beyond "by id". | Latency-bound key-only reads (Redis wins) or write-heavy time series (Cassandra wins). | `postgres` |
+| `inmemory` | The baseline. Pure JVM map, no I/O. Use as the upper-bound benchmark and to isolate non-DB overhead in profiling. | Anywhere you need durability across restarts. | none |
+| `postgres` | **Default backend** (see `docs/db-selection-report.md`). Strong consistency + relational queries; wins the Game workload outright among durable backends. | Latency-bound key-only reads where Redis durability is acceptable, or write-heavy time series (Cassandra wins). | `postgres` |
 | `mongo` | Schema agility — game/lobby snapshots are document-shaped and don't need joins. Reasonable middle ground. | High-cardinality secondary indexes or strict transactional invariants. | `mongo` |
 | `redis` | Latency-bound key-value workloads. Single-digit-ms p99 under load. Good for hot-path caches; sometimes good enough as a primary. | Durability guarantees, complex queries, large objects. | `redis` |
 | `cassandra` | Write-heavy, eventually-consistent, time-series-shaped event logs. Linear write scaling under partition. | Read-mostly small datasets — the LSM overhead doesn't pay back. | `cassandra` |
@@ -117,11 +117,13 @@ backend](#adding-a-new-backend).
 `PICHESS_CACHE=redis` wraps any primary repository in
 `CachedGameRepository` (look-aside cache: read-through, write-through
 invalidation). It's a decorator pattern, orthogonal to backend choice —
-e.g. `PICHESS_BACKEND=postgres PICHESS_CACHE=redis` gives you postgres
-durability with redis read latency for hot keys.
+e.g. `PICHESS_BACKEND=postgres PICHESS_CACHE=redis` (**the default**)
+gives you postgres durability with redis read latency for hot keys.
 
-When `PICHESS_BACKEND=redis`, caching with redis is a no-op and is
-skipped automatically (see `persistence/runtime/PersistenceLayers.scala`).
+When `PICHESS_BACKEND=redis`, layering a Redis cache decorator on top
+of a Redis primary is double-Redis with no benefit. `make stack-redis`
+sets `PICHESS_CACHE=none` for that reason; the runtime won't *prevent*
+the combination, it just isn't useful, so don't construct it by hand.
 
 ### How selection works at runtime
 

@@ -7,11 +7,16 @@ object BackendConfigSpec extends ZIOSpecDefault:
 
   def spec = suite("BackendConfig")(
     suite("parseBackend")(
-      test("absent / empty / 'inmemory' all map to InMemory") {
+      test("absent / empty default to Postgres (the recommended primary)") {
         assertTrue(
-          BackendConfig.parseBackend(None) == Right(Backend.InMemory),
-          BackendConfig.parseBackend(Some("")) == Right(Backend.InMemory),
-          BackendConfig.parseBackend(Some("inmemory")) == Right(Backend.InMemory)
+          BackendConfig.parseBackend(None) == Right(Backend.Postgres),
+          BackendConfig.parseBackend(Some("")) == Right(Backend.Postgres)
+        )
+      },
+      test("'inmemory' explicitly maps to InMemory") {
+        assertTrue(
+          BackendConfig.parseBackend(Some("inmemory")) ==
+            Right(Backend.InMemory)
         )
       },
       test("recognises every documented backend, case-insensitive, trimmed") {
@@ -35,10 +40,14 @@ object BackendConfigSpec extends ZIOSpecDefault:
       }
     ),
     suite("parseCache")(
-      test("absent / empty / 'none' / 'nocache' all map to NoCache") {
+      test("absent / empty default to Redis (the Stress-workload winner)") {
         assertTrue(
-          BackendConfig.parseCache(None) == Right(CacheBackend.NoCache),
-          BackendConfig.parseCache(Some("")) == Right(CacheBackend.NoCache),
+          BackendConfig.parseCache(None) == Right(CacheBackend.Redis),
+          BackendConfig.parseCache(Some("")) == Right(CacheBackend.Redis)
+        )
+      },
+      test("'none' / 'nocache' explicitly map to NoCache") {
+        assertTrue(
           BackendConfig.parseCache(Some("none")) == Right(CacheBackend.NoCache),
           BackendConfig.parseCache(Some("nocache")) ==
             Right(CacheBackend.NoCache)
@@ -70,10 +79,10 @@ object BackendConfigSpec extends ZIOSpecDefault:
           cfg == BackendConfig(Backend.Postgres, CacheBackend.Redis)
         )
       },
-      test("missing env defaults both axes to in-memory + no cache") {
+      test("missing env defaults both axes to postgres + redis") {
         for cfg <- BackendConfig.fromEnv
         yield assertTrue(
-          cfg == BackendConfig(Backend.InMemory, CacheBackend.NoCache)
+          cfg == BackendConfig(Backend.Postgres, CacheBackend.Redis)
         )
       },
       test("a malformed PICHESS_BACKEND fails the effect") {

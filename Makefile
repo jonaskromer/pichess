@@ -139,37 +139,49 @@ EXTRA_PROFILES = $(foreach p,$(subst $(comma),$(space),$(EXTRA)),--profile $(p))
 # producer (kafka:9092 wouldn't resolve and the service would crash).
 KAFKA_FOR_EXTRA = $(if $(findstring opening,$(EXTRA))$(findstring analytics,$(EXTRA)),kafka:9092,)
 
+# Default cache mode. Matches the BackendConfig default
+# (`PICHESS_CACHE` absent → CacheBackend.Redis). Override on the
+# make-line to opt out: `PICHESS_CACHE=none make stack-postgres`.
+PICHESS_CACHE ?= redis
+
+# When PICHESS_CACHE=redis, bring up the redis container too so the
+# cache decorator has something to talk to. Redundant when the primary
+# is already redis (`stack-redis`), but `docker compose` accepts the
+# repeated `--profile redis` without complaint.
+CACHE_PROFILE = $(if $(filter redis,$(PICHESS_CACHE)),--profile redis,)
+
 define _stack_up
 	@mkdir -p $(dir $(STACK_STATE_FILE)) || true
-	@echo "PICHESS_BACKEND=$(1) PICHESS_EXTRAS=$(EXTRA)" > $(STACK_STATE_FILE)
+	@echo "PICHESS_BACKEND=$(1) PICHESS_CACHE=$(PICHESS_CACHE) PICHESS_EXTRAS=$(EXTRA)" > $(STACK_STATE_FILE)
 	docker compose $(ALL_PROFILES) down 2>/dev/null || true
-	PICHESS_BACKEND=$(1) PICHESS_EXTRAS=$(EXTRA) \
+	PICHESS_BACKEND=$(1) PICHESS_CACHE=$(PICHESS_CACHE) PICHESS_EXTRAS=$(EXTRA) \
 	  PICHESS_KAFKA="$(KAFKA_FOR_EXTRA)" \
-	  docker compose --profile $(1) $(EXTRA_PROFILES) up -d
+	  docker compose --profile $(1) $(CACHE_PROFILE) $(EXTRA_PROFILES) up -d
 endef
 
 .PHONY: stack-postgres
-stack-postgres: ## Start the stack with PICHESS_BACKEND=postgres
+stack-postgres: ## Start the stack with PICHESS_BACKEND=postgres (default cache: redis; opt out with PICHESS_CACHE=none)
 	$(call _stack_up,postgres)
 
 .PHONY: stack-mongo
-stack-mongo: ## Start the stack with PICHESS_BACKEND=mongo
+stack-mongo: ## Start the stack with PICHESS_BACKEND=mongo (default cache: redis; opt out with PICHESS_CACHE=none)
 	$(call _stack_up,mongo)
 
 .PHONY: stack-cassandra
-stack-cassandra: ## Start the stack with PICHESS_BACKEND=cassandra
+stack-cassandra: ## Start the stack with PICHESS_BACKEND=cassandra (default cache: redis; opt out with PICHESS_CACHE=none)
 	$(call _stack_up,cassandra)
 
 .PHONY: stack-redis
-stack-redis: ## Start the stack with PICHESS_BACKEND=redis
+stack-redis: PICHESS_CACHE := none
+stack-redis: ## Start the stack with PICHESS_BACKEND=redis (no separate cache — primary already redis)
 	$(call _stack_up,redis)
 
 .PHONY: stack-inmemory
-stack-inmemory: ## Start the stack with no DB (PICHESS_BACKEND=inmemory)
+stack-inmemory: ## Start the stack with no DB (PICHESS_BACKEND=inmemory, no cache)
 	@mkdir -p $(dir $(STACK_STATE_FILE)) || true
-	@echo "PICHESS_BACKEND=inmemory PICHESS_EXTRAS=$(EXTRA)" > $(STACK_STATE_FILE)
+	@echo "PICHESS_BACKEND=inmemory PICHESS_CACHE=none PICHESS_EXTRAS=$(EXTRA)" > $(STACK_STATE_FILE)
 	docker compose $(ALL_PROFILES) down 2>/dev/null || true
-	PICHESS_BACKEND=inmemory PICHESS_EXTRAS=$(EXTRA) \
+	PICHESS_BACKEND=inmemory PICHESS_CACHE=none PICHESS_EXTRAS=$(EXTRA) \
 	  PICHESS_KAFKA="$(KAFKA_FOR_EXTRA)" \
 	  docker compose $(EXTRA_PROFILES) up -d
 
