@@ -96,24 +96,46 @@ object GameServiceSpec extends ZIOSpecDefault:
       }
     ),
     suite("makeMove")(
-      test("return a MoveMade event and updated state on a valid move") {
+      test("return a MoveMade event and a pending mutation on a valid move") {
         for
           started <- GameService.newGame()
-          (state, event) <- GameService.makeMove(started.gameId, "e2 e4")
+          (event, mutation) <- GameService.makeMove(started.gameId, "e2 e4")
         yield assertTrue(
           event.gameId == started.gameId,
           event.move == chess.model.board
             .Move(Position('e', 2), Position('e', 4)),
-          state.board.get(Position('e', 4)) == Some(
+          mutation.state.board.get(Position('e', 4)) == Some(
             Piece(Color.White, PieceType.Pawn)
           ),
-          state.board.get(Position('e', 2)).isEmpty
+          mutation.state.board.get(Position('e', 2)).isEmpty,
+          // A real move always changes state, so the mutation should
+          // commit (vs. a no-op which would be a value-equal pre/state).
+          mutation.changed,
+          // Pre-state is what was loaded; state is the post-move
+          // value. The two MUST differ structurally for `changed` to
+          // be true.
+          mutation.pre.board != mutation.state.board,
         )
       },
-      test("persist the updated state after a valid move") {
+      test("does NOT persist the new state until commit") {
         for
           started <- GameService.newGame()
-          _ <- GameService.makeMove(started.gameId, "e2 e4")
+          _       <- GameService.makeMove(started.gameId, "e2 e4")
+          stored  <- GameService.getState(started.gameId)
+        yield assertTrue(
+          // Initial board still in store — makeMove built a Mutation but
+          // didn't save.
+          stored.get.board.get(Position('e', 2)).contains(
+            Piece(Color.White, PieceType.Pawn)
+          ),
+          stored.get.board.get(Position('e', 4)).isEmpty,
+        )
+      },
+      test("commit persists the new state from the mutation") {
+        for
+          started <- GameService.newGame()
+          (_, mutation) <- GameService.makeMove(started.gameId, "e2 e4")
+          _      <- GameService.commit(mutation)
           stored <- GameService.getState(started.gameId)
         yield assertTrue(
           stored.get.board.get(Position('e', 4)) == Some(
@@ -136,9 +158,9 @@ object GameServiceSpec extends ZIOSpecDefault:
       test("accept SAN pawn push notation") {
         for
           started <- GameService.newGame()
-          (state, _) <- GameService.makeMove(started.gameId, "e4")
+          (_, mutation) <- GameService.makeMove(started.gameId, "e4")
         yield assertTrue(
-          state.board.get(Position('e', 4)) == Some(
+          mutation.state.board.get(Position('e', 4)) == Some(
             Piece(Color.White, PieceType.Pawn)
           )
         )
@@ -146,9 +168,9 @@ object GameServiceSpec extends ZIOSpecDefault:
       test("accept SAN knight move notation") {
         for
           started <- GameService.newGame()
-          (state, _) <- GameService.makeMove(started.gameId, "Nf3")
+          (_, mutation) <- GameService.makeMove(started.gameId, "Nf3")
         yield assertTrue(
-          state.board.get(Position('f', 3)) == Some(
+          mutation.state.board.get(Position('f', 3)) == Some(
             Piece(Color.White, PieceType.Knight)
           )
         )
@@ -156,9 +178,9 @@ object GameServiceSpec extends ZIOSpecDefault:
       test("accept coordinate notation without separator") {
         for
           started <- GameService.newGame()
-          (state, _) <- GameService.makeMove(started.gameId, "e2e4")
+          (_, mutation) <- GameService.makeMove(started.gameId, "e2e4")
         yield assertTrue(
-          state.board.get(Position('e', 4)) == Some(
+          mutation.state.board.get(Position('e', 4)) == Some(
             Piece(Color.White, PieceType.Pawn)
           )
         )

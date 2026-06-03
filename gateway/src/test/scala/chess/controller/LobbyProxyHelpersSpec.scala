@@ -69,5 +69,36 @@ object LobbyProxyHelpersSpec extends ZIOSpecDefault:
           result.left.toOption.exists(_.contains("lobby with space"))
         )
       }
-    )
+    ),
+    suite("addCarrierHeaders")(
+      test("empty carrier returns the base headers unchanged") {
+        val base   = Headers("x-existing" -> "1")
+        val result = LobbyProxy.addCarrierHeaders(base, Map.empty)
+        assertTrue(
+          result.exists(_.headerName == "x-existing"),
+          result.get("traceparent").isEmpty,
+        )
+      },
+      test("non-empty carrier appends each entry as a header") {
+        val base = Headers.empty
+        val carrier = Map(
+          "traceparent" -> "00-trace-span-01",
+          "tracestate"  -> "vendor=value",
+        )
+        val result = LobbyProxy.addCarrierHeaders(base, carrier)
+        assertTrue(
+          result.get("traceparent").contains("00-trace-span-01"),
+          result.get("tracestate").contains("vendor=value"),
+        )
+      },
+      test("carrier entries don't replace existing base headers") {
+        val base    = Headers("x-existing" -> "keep-me")
+        val carrier = Map("traceparent" -> "00-trace-span-01")
+        val result  = LobbyProxy.addCarrierHeaders(base, carrier)
+        assertTrue(
+          result.get("x-existing").contains("keep-me"),
+          result.get("traceparent").contains("00-trace-span-01"),
+        )
+      },
+    ),
   )

@@ -6,6 +6,25 @@ import chess.model.rules.Zobrist
 import chess.notation.SanSerializer
 import zio.{IO, ZIO}
 
+/** One played move in the game's history: the [[Move]] itself, the
+  * [[GameState]] it produced, the color of the side that played it
+  * (the pre-move active color), and its SAN string.
+  *
+  * Storing all four together replaces the previous parallel
+  * `history: List[(Move, GameState)]` + `moveLog: List[(Color, String)]`
+  * representation. Keeping them in one list makes the desynced-Nil
+  * cases (where `history` and `moveLog` had different lengths)
+  * structurally impossible — neither [[GameSnapshot.undoOnce]] nor
+  * [[GameSnapshot.redoOnce]] needs a defensive branch for that
+  * anymore.
+  */
+final case class HistoryEntry(
+    move: Move,
+    state: GameState,
+    preColor: Color,
+    san: String
+)
+
 /** Immutable snapshot of a game in progress: the gameId, the initial position,
   * the move history, and the redo stack.
   *
@@ -16,85 +35,79 @@ import zio.{IO, ZIO}
   * via [[GameSnapshot.fresh]] or [[GameSnapshot.fromHistory]] — the case-class
   * default of `Map.empty` is only suitable for internal `.copy()` chaining
   * inside the helpers themselves.
+  *
+  * [[history]] is stored newest-first (head = most recent move), matching
+  * the previous representation. [[redoStack]] is also newest-first (head =
+  * the move most recently undone, ready to redo). The [[moveLog]] and
+  * [[redoMoveLog]] accessors project the chronological `(Color, San)`
+  * view that [[chess.gameservice.GrpcMappers.toStateReply]] consumes.
   */
 case class GameSnapshot(
     gameId: GameId,
     initialState: GameState,
-    history: List[(Move, GameState)],
-    redoStack: List[(Move, GameState)],
+    history: List[HistoryEntry],
+    redoStack: List[HistoryEntry],
     positionCounts: Map[Long, Int],
-    /** Pre-computed SAN log mirroring `history` in chronological order
-      * (oldest first). Maintained incrementally by [[recordMove]] /
-      * [[undoOnce]] / [[redoOnce]] so [[chess.gameservice.GrpcMappers.toStateReply]]
-      * doesn't have to re-walk the entire history and re-run
-      * [[chess.notation.SanSerializer.deriveMoveLog]] on every reply.
-      *
-      * The accompanying `redoMoveLog` parallels `redoStack`, also in
-      * chronological order (the move that was most-recently undone is
-      * at the head — the same shape as `redoStack`).
-      */
-    moveLog: List[(Color, String)] = Nil,
-    redoMoveLog: List[(Color, String)] = Nil
 ):
-  def state: GameState = history.headOption.map(_._2).getOrElse(initialState)
-  def moves: List[Move] = history.reverse.map(_._1)
+  def state: GameState = history.headOption.map(_.state).getOrElse(initialState)
+  def moves: List[Move] = history.reverse.map(_.move)
+
+  /** Chronological SAN log (oldest first). Derived from [[history]] — no
+    * separate field, so it can't drift out of sync.
+    */
+  def moveLog: List[(Color, String)] =
+    history.reverse.map(e => (e.preColor, e.san))
+
+  /** Bare `(Move, GameState)` projection of [[history]] for consumers
+    * that don't need the per-entry SAN/Color (e.g.
+    * [[chess.notation.SanSerializer.deriveMoveLog]]).
+    */
+  def historyMoves: List[(Move, GameState)] =
+    history.map(e => (e.move, e.state))
 
   /** Advance history by one move, updating positionCounts and clearing redo.
-    * `san` is appended to [[moveLog]] paired with the *pre-move* active color
-    * (the side whose turn it just was), matching the encoding
-    * [[chess.notation.SanSerializer.deriveMoveLog]] produced.
+    * The new entry pairs the move + resulting state with the
+    * *pre-move* active color and its SAN string.
     */
   def recordMove(move: Move, newState: GameState, san: String): GameSnapshot =
-    val key       = Zobrist.hash(newState)
-    val preColor  = state.activeColor
+    val key      = Zobrist.hash(newState)
+    val preColor = state.activeColor
     copy(
-      history = (move, newState) :: history,
+      history = HistoryEntry(move, newState, preColor, san) :: history,
       redoStack = Nil,
       positionCounts =
         positionCounts.updatedWith(key)(_.map(_ + 1).orElse(Some(1))),
-      moveLog = moveLog :+ ((preColor, san)),
-      redoMoveLog = Nil
     )
 
   /** Pop the top of history onto redoStack. `None` when there is nothing to
-    * undo, so the caller decides how to surface that to the user.
+    * undo.
     */
   def undoOnce: Option[GameSnapshot] = history match
     case Nil => None
-    case (move, state) :: rest =>
-      val key = Zobrist.hash(state)
-      val (newMoveLog, redoEntry) = moveLog match
-        case init :+ last => (init, last :: redoMoveLog)
-        case Nil          => (Nil, redoMoveLog)
+    case top :: rest =>
+      val key = Zobrist.hash(top.state)
       Some(
         copy(
           history = rest,
-          redoStack = (move, state) :: redoStack,
+          redoStack = top :: redoStack,
           positionCounts = positionCounts.updatedWith(key) {
             case Some(n) if n > 1 => Some(n - 1)
             case _                => None
           },
-          moveLog = newMoveLog,
-          redoMoveLog = redoEntry
         )
       )
 
   /** Push the top of redoStack back onto history. `None` when empty. */
   def redoOnce: Option[GameSnapshot] = redoStack match
     case Nil => None
-    case (move, state) :: rest =>
-      val key = Zobrist.hash(state)
-      val (newMoveLog, newRedoLog) = redoMoveLog match
-        case head :: tail => (moveLog :+ head, tail)
-        case Nil          => (moveLog, Nil)
+    case top :: rest =>
+      val key = Zobrist.hash(top.state)
       Some(
         copy(
-          history = (move, state) :: history,
+          history = top :: history,
           redoStack = rest,
           positionCounts =
             positionCounts.updatedWith(key)(_.map(_ + 1).orElse(Some(1))),
-          moveLog = newMoveLog,
-          redoMoveLog = newRedoLog
         )
       )
 
@@ -106,8 +119,8 @@ case class GameSnapshot(
     */
   def replaceHead(newState: GameState): GameSnapshot =
     history match
-      case Nil            => this
-      case (m, _) :: rest => copy(history = (m, newState) :: rest)
+      case Nil          => this
+      case top :: rest  => copy(history = top.copy(state = newState) :: rest)
 
   /** Update the snapshot's *current* state, regardless of whether history is
     * empty. When history is non-empty this is equivalent to [[replaceHead]];
@@ -139,9 +152,11 @@ object GameSnapshot:
 
   /** Construct a snapshot from a loaded history (e.g. PGN replay). The
     * positionCounts map is derived by folding Zobrist.hash across the initial
-    * state and every historical state. The SAN move-log is derived in one
-    * pass via [[chess.notation.SanSerializer.deriveMoveLog]] and cached on
-    * the returned snapshot so subsequent state-replies don't pay the cost.
+    * state and every historical state. SAN strings + pre-move colors are
+    * derived in a single pass via
+    * [[chess.notation.SanSerializer.deriveMoveLog]] so the resulting
+    * snapshot has the complete [[HistoryEntry]] per move without any
+    * later derivation cost.
     */
   def fromHistory(
       gameId: GameId,
@@ -156,14 +171,21 @@ object GameSnapshot:
     SanSerializer
       .deriveMoveLog(initialState, history)
       .map { log =>
+        // `log` is chronological (oldest first); `history` is also
+        // chronological as it comes in. Zip them then reverse so the
+        // resulting list is newest-first, matching the storage convention.
+        val entries = history
+          .zip(log)
+          .map { case ((move, state), (preColor, san)) =>
+            HistoryEntry(move, state, preColor, san)
+          }
+          .reverse
         GameSnapshot(
           gameId,
           initialState,
-          history,
+          entries,
           Nil,
           counts,
-          moveLog = log,
-          redoMoveLog = Nil
         )
       }
 
@@ -172,4 +194,12 @@ case class SessionState(
     error: Option[String] = None,
     output: Option[String] = None
 ):
-  export game.{gameId, initialState, history, redoStack, state, moves}
+  export game.{
+    gameId,
+    initialState,
+    history,
+    historyMoves,
+    redoStack,
+    state,
+    moves,
+  }

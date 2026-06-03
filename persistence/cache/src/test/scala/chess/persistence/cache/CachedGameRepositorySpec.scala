@@ -130,5 +130,39 @@ object CachedGameRepositorySpec extends ZIOSpecDefault:
       yield result
       for result <- program.provide(decoratedLayer)
       yield assertTrue(result.contains(state))
-    }
+    },
+    // Exercise the cache-failure-tolerance branches added by the
+    // parallel-write change. When cache.save / cache.delete fails, the
+    // primary write must still succeed and the decorator must NOT
+    // propagate the cache failure — a missing cache entry self-heals
+    // on the next read.
+    test("save tolerates cache failures — primary write still succeeds") {
+      val boom = GameError.InfrastructureError("cache down")
+      for
+        primaryRef <- Ref.make(Map.empty[GameId, GameState])
+        primary     = InMemoryGameRepository(primaryRef)
+        decorated   = CachedGameRepository(FailingGameRepository(boom), primary)
+        _          <- decorated.save("g1", state)
+        stored     <- primaryRef.get
+      yield assertTrue(stored.get("g1").contains(state))
+    },
+    test("delete tolerates cache failures — primary delete still succeeds") {
+      val boom = GameError.InfrastructureError("cache down")
+      for
+        primaryRef <- Ref.make(Map("g1" -> state))
+        primary     = InMemoryGameRepository(primaryRef)
+        decorated   = CachedGameRepository(FailingGameRepository(boom), primary)
+        _          <- decorated.delete("g1")
+        stored     <- primaryRef.get
+      yield assertTrue(stored.get("g1").isEmpty)
+    },
   )
+
+  /** Test fake that fails every call with a fixed error. Used to drive
+    * the cache-failure-tolerance branches (`catchAllCause` in `save` /
+    * `delete`).
+    */
+  private final class FailingGameRepository(err: GameError) extends GameRepository:
+    def save(id: GameId, state: GameState): IO[GameError, Unit] = ZIO.fail(err)
+    def load(id: GameId): IO[GameError, Option[GameState]]      = ZIO.fail(err)
+    def delete(id: GameId): IO[GameError, Unit]                 = ZIO.fail(err)

@@ -191,5 +191,50 @@ object CachedLobbyRepositorySpec extends ZIOSpecDefault:
       yield result
       for result <- program.provide(decoratedLayer)
       yield assertTrue(result.contains(baseLobby))
-    }
+    },
+    // Exercise the cache-failure-tolerance branches added by the
+    // parallel-write change.
+    test("create tolerates cache failures — primary still persists") {
+      val boom = LobbyError.InfrastructureError("cache down")
+      for
+        primaryRef <- Ref.make(Map.empty[LobbyId, Lobby])
+        primary     = InMemoryLobbyRepository(primaryRef)
+        decorated   = CachedLobbyRepository(FailingLobbyRepository(boom), primary)
+        _          <- decorated.create(baseLobby)
+        stored     <- primaryRef.get
+      yield assertTrue(stored.get(baseLobby.id).contains(baseLobby))
+    },
+    test("update tolerates cache failures — primary still persists") {
+      val boom = LobbyError.InfrastructureError("cache down")
+      val updated = baseLobby.copy(guestNickname = Some("bob"))
+      for
+        primaryRef <- Ref.make(Map(baseLobby.id -> baseLobby))
+        primary     = InMemoryLobbyRepository(primaryRef)
+        decorated   = CachedLobbyRepository(FailingLobbyRepository(boom), primary)
+        _          <- decorated.update(updated)
+        stored     <- primaryRef.get
+      yield assertTrue(stored.get(baseLobby.id).contains(updated))
+    },
+    test("delete tolerates cache failures — primary still deletes") {
+      val boom = LobbyError.InfrastructureError("cache down")
+      for
+        primaryRef <- Ref.make(Map(baseLobby.id -> baseLobby))
+        primary     = InMemoryLobbyRepository(primaryRef)
+        decorated   = CachedLobbyRepository(FailingLobbyRepository(boom), primary)
+        _          <- decorated.delete(baseLobby.id)
+        stored     <- primaryRef.get
+      yield assertTrue(stored.get(baseLobby.id).isEmpty)
+    },
   )
+
+  /** Test fake that fails every call with a fixed error. Used to drive
+    * the cache-failure-tolerance branches (`catchAllCause` in `create` /
+    * `update` / `delete`).
+    */
+  private final class FailingLobbyRepository(err: LobbyError) extends LobbyRepository:
+    def create(lobby: Lobby): IO[LobbyError, Unit]                     = ZIO.fail(err)
+    def findById(id: LobbyId): IO[LobbyError, Option[Lobby]]           = ZIO.fail(err)
+    def findByInviteCode(code: InviteCode): IO[LobbyError, Option[Lobby]] = ZIO.fail(err)
+    def update(lobby: Lobby): IO[LobbyError, Unit]                     = ZIO.fail(err)
+    def delete(id: LobbyId): IO[LobbyError, Unit]                      = ZIO.fail(err)
+    def listPublicWaiting(): IO[LobbyError, List[Lobby]]               = ZIO.fail(err)

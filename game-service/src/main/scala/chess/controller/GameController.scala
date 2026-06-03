@@ -4,7 +4,7 @@ import chess.codec.FenSerializer
 import chess.events.{GameDomainEvent, GameEventProducer}
 import chess.model.{GameError, GameSnapshot, SessionState}
 import chess.model.board.{DrawReason, GameStatus, GameState}
-import chess.service.GameService
+import chess.service.{GameMutation, GameService}
 import zio.*
 import zio.stream.SubscriptionRef
 
@@ -45,27 +45,38 @@ object GameController:
       rawInput: String
   ): IO[GameError, Unit] =
     session.modifyZIO { s =>
-      gs.makeMove(s.gameId, rawInput).flatMap { (newState, event) =>
-        val provisional = s.game.recordMove(event.move, newState, event.san)
+      gs.makeMove(s.gameId, rawInput).flatMap { (event, mutation) =>
+        val provisional = s.game.recordMove(event.move, mutation.state, event.san)
         val triggeredFivefold =
-          newState.status.isPlaying && isFivefoldRepetition(provisional)
-        val finalGame =
+          mutation.state.status.isPlaying && isFivefoldRepetition(provisional)
+        // When fivefold triggers, amend the mutation: state becomes the
+        // drawn state AND an extra `DrawClaimed` event is appended.
+        // When it doesn't, keep `provisional` (no `.copy`) and the
+        // original mutation. `commit` then does a single save + a
+        // single publish per move, regardless of branch.
+        val finalize: IO[GameError, (chess.model.GameSnapshot, GameMutation)] =
           if triggeredFivefold then
-            provisional.replaceHead(
-              newState.endWith(GameStatus.Draw(DrawReason.FivefoldRepetition))
-            )
-          else provisional
-        for
-          _ <- gs.saveState(s.gameId, finalGame.state)
-          _ <- ZIO.when(triggeredFivefold) {
-                 publishDraw(
-                   producer,
-                   s.gameId,
-                   finalGame.state,
-                   DrawReason.FivefoldRepetition
-                 )
-               }
-        yield ((), s.copy(game = finalGame, error = None, output = None))
+            val drawState =
+              mutation.state.endWith(
+                GameStatus.Draw(DrawReason.FivefoldRepetition)
+              )
+            for ts <- now
+            yield
+              val drawEvent = GameDomainEvent.DrawClaimed(
+                gameId       = s.gameId,
+                resultingFen = FenSerializer.serialize(drawState),
+                reason       = DrawReason.FivefoldRepetition.toString,
+                occurredAt   = ts
+              )
+              (
+                provisional.replaceHead(drawState),
+                mutation.amend(_ => Some((drawState, drawEvent))),
+              )
+          else ZIO.succeed((provisional, mutation))
+        finalize.flatMap { (finalGame, finalMutation) =>
+          gs.commit(finalMutation)
+            .as(((), s.copy(game = finalGame, error = None, output = None)))
+        }
       }
     }
 

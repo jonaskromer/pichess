@@ -2,7 +2,7 @@ package chess.controller
 
 import chess.events.{GameEventProducer, InMemoryGameEventProducer}
 import chess.persistence.InMemoryGameRepository
-import chess.model.{GameSnapshot, SessionState}
+import chess.model.{GameSnapshot, HistoryEntry, SessionState}
 import chess.model.board.{DrawReason, GameState, GameStatus, Move, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.notation.SanSerializer
@@ -59,7 +59,7 @@ object GameControllerSpec extends ZIOSpecDefault:
           (gs, producer, session) <- withSession
           _ <- GameController.makeMove(gs, producer, session, "e2 e4")
           s <- session.get
-          sanLog <- SanSerializer.deriveMoveLog(s.initialState, s.history)
+          sanLog <- SanSerializer.deriveMoveLog(s.initialState, s.historyMoves)
         yield assertTrue(
           sanLog == List((Color.White, "e4"))
         )
@@ -98,7 +98,7 @@ object GameControllerSpec extends ZIOSpecDefault:
           (gs, producer, session) <- withSession
           _ <- GameController.makeMove(gs, producer, session, "Nf3")
           s <- session.get
-          sanLog <- SanSerializer.deriveMoveLog(s.initialState, s.history)
+          sanLog <- SanSerializer.deriveMoveLog(s.initialState, s.historyMoves)
         yield assertTrue(
           s.state.board.get(Position('f', 3)) == Some(
             Piece(Color.White, PieceType.Knight)
@@ -112,7 +112,7 @@ object GameControllerSpec extends ZIOSpecDefault:
           _ <- GameController.makeMove(gs, producer, session, "e4")
           _ <- GameController.makeMove(gs, producer, session, "e5")
           s <- session.get
-          sanLog <- SanSerializer.deriveMoveLog(s.initialState, s.history)
+          sanLog <- SanSerializer.deriveMoveLog(s.initialState, s.historyMoves)
         yield assertTrue(
           sanLog == List((Color.White, "e4"), (Color.Black, "e5")),
           s.state.activeColor == Color.White
@@ -138,7 +138,7 @@ object GameControllerSpec extends ZIOSpecDefault:
           _ <- GameController.undo(gs, producer, session)
           s <- session.get
         yield assertTrue(
-          s.redoStack.map(_._1) == List(
+          s.redoStack.map(_.move) == List(
             Move(Position('e', 2), Position('e', 4))
           )
         )
@@ -234,7 +234,7 @@ object GameControllerSpec extends ZIOSpecDefault:
           _ <- session.update(st =>
             st.copy(game =
               st.game.copy(
-                history = List((dummyMove, drawableState))
+                history = List(HistoryEntry(dummyMove, drawableState, Color.White, "1"))
               )
             )
           )
@@ -260,7 +260,7 @@ object GameControllerSpec extends ZIOSpecDefault:
           _ <- session.update(st =>
             st.copy(game =
               st.game.copy(
-                history = List((dummyMove, state))
+                history = List(HistoryEntry(dummyMove, state, Color.White, "1"))
               )
             )
           )

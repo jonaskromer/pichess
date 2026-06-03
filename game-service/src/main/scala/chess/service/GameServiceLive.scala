@@ -2,7 +2,7 @@ package chess.service
 
 import chess.codec.{FenParserRegex, FenSerializer, JsonParser, PgnParser}
 import chess.events.{GameDomainEvent, GameEventProducer}
-import chess.persistence.GameRepository
+import chess.persistence.{GameRepository, Mutation}
 import chess.notation.{MoveParser, SanSerializer}
 import chess.model.{GameError, GameEvent, GameId}
 import chess.model.board.{GameState, Move}
@@ -65,10 +65,17 @@ final class GameServiceLive(
       yield (GameEvent.GameStarted(id, initialState), history)
     }
 
+  // Computes the next state + the MoveMade events (both flavours) but
+  // does NOT persist. The persistence + Kafka publish happens later in
+  // `commit(mutation)`, possibly after the caller has amended the
+  // mutation with cross-cutting state transitions (e.g. a
+  // fivefold-repetition draw that only the controller can see). The
+  // single-commit shape is what lets us collapse what used to be two
+  // sequential repository writes per move into one.
   def makeMove(
       id: GameId,
       rawInput: String
-  ): IO[GameError, (GameState, GameEvent.MoveMade)] =
+  ): IO[GameError, (GameEvent.MoveMade, GameMutation)] =
     for
       stateOpt <- store.load(id)
       state    <- ZIO
@@ -76,7 +83,6 @@ final class GameServiceLive(
                     .orElseFail(GameError.GameNotFound(id))
       move     <- MoveParser.parse(rawInput, state)
       newState <- Game.applyMove(state, move)
-      _        <- store.save(id, newState)
       // SAN derivation needs the pre-move state; if it fails for any reason
       // (shouldn't, given Game.applyMove just succeeded) we fall back to the
       // coordinate string so the event always has a non-empty `san` field.
@@ -86,22 +92,28 @@ final class GameServiceLive(
       coordStr  = coordOf(move)
       san      <- SanSerializer.toSan(move, state).orElseSucceed(coordStr)
       ts       <- now
-      _        <- producer.publish(
-                    GameDomainEvent.MoveMade(
+      domainEvent = GameDomainEvent.MoveMade(
                       gameId       = id,
                       resultingFen = FenSerializer.serialize(newState),
                       moveCoord    = coordStr,
                       san          = san,
                       occurredAt   = ts
                     )
-                  )
-    yield (newState, GameEvent.MoveMade(id, move, newState, san))
+      gameplayEvent: GameEvent.MoveMade = GameEvent.MoveMade(id, move, newState, san)
+    yield (gameplayEvent, Mutation.from(id, state, newState, domainEvent))
 
   def getState(id: GameId): IO[GameError, Option[GameState]] =
     store.load(id)
 
   def saveState(id: GameId, state: GameState): IO[GameError, Unit] =
     store.save(id, state)
+
+  def commit(mutation: GameMutation): IO[GameError, Unit] =
+    Mutation.commit[Any, GameError, GameId, GameState, GameDomainEvent](
+      mutation,
+      save    = (id, s) => store.save(id, s),
+      publish = ev => producer.publish(ev),
+    )
 
   private def coordOf(move: Move): String =
     s"${move.from.col}${move.from.row}-${move.to.col}${move.to.row}"

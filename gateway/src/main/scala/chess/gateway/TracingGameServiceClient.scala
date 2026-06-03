@@ -112,7 +112,12 @@ final class TracingGameServiceClient(
   ): IO[StatusException, A] =
     tracing.span(name, SpanKind.CLIENT)(io)
 
-  private def metadataCarrier(
+  // `private[gateway]` rather than `private` so the unit test in
+  // `TracingGameServiceClientSpec` can exercise the `set` body directly.
+  // The branch only fires when OpenTelemetry actually has a span
+  // context to propagate; with `TracingLayer.noop` in tests we never
+  // get that for free, so the dedicated unit test pins it down.
+  private[gateway] def metadataCarrier(
       md: Metadata
   ): OutgoingContextCarrier[Metadata] =
     new OutgoingContextCarrier[Metadata]:

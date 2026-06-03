@@ -119,7 +119,7 @@ final class GrpcServer(
                   case "json" => ZIO.succeed(JsonSerializer.serialize(s.state))
                   case "pgn"  =>
                     SanSerializer
-                      .deriveMoveLog(s.initialState, s.history)
+                      .deriveMoveLog(s.initialState, s.historyMoves)
                       .orDie
                       .flatMap(log => PgnSerializer.serialize(log, s.state.status))
                   case other =>

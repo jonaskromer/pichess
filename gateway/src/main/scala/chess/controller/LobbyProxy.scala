@@ -41,6 +41,19 @@ object LobbyProxy:
     val s = rest.toString
     if s.startsWith("/") then s else s"/$s"
 
+  /** Merge tracing carrier entries into `base`. Extracted from `forward`
+    * so the per-entry branch is unit-testable without standing up a
+    * real OpenTelemetry context (which `TracingLayer.noop` deliberately
+    * omits — `tracing.injectSpan` writes no entries under noop).
+    */
+  private[controller] def addCarrierHeaders(
+      base: Headers,
+      carrier: Map[String, String]
+  ): Headers =
+    carrier.foldLeft(base) { case (acc, (k, v)) =>
+      acc.addHeader(k, v)
+    }
+
   /** Compose the upstream URL string + parse it. Pulled out of
     * `forward` so the `URL.decode` failure arm — which can be hit by
     * passing a base URL with control characters — is unit-testable
@@ -91,9 +104,7 @@ object LobbyProxy:
                 OutgoingContextCarrier.default(mutable.Map.empty[String, String])
               for
                 _              <- tracing.injectSpan(TraceContextPropagator.default, carrier)
-                injectedHeaders = carrier.kernel.foldLeft(baseHeaders) {
-                                    case (acc, (k, v)) => acc.addHeader(k, v)
-                                  }
+                injectedHeaders = addCarrierHeaders(baseHeaders, carrier.kernel.toMap)
                 outbound        = Request(
                                     method = req.method,
                                     url = target,
