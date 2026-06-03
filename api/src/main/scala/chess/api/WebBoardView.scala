@@ -1,17 +1,20 @@
-package chess.view
+package chess.api
 
-import chess.api.{BoardStateDto, GameStatusDto, MoveEntryDto, SquareDto}
 import chess.model.board.{DrawReason, GameState, GameStatus, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 import zio.json.*
 
-// The wire field `SquareDto.piece` holds a lowercase piece-type name
-// ("pawn", "knight", …) rather than a Unicode glyph. The Laminar UI
-// uses it as the symbol id when fetching from `/web/pieces/<name>.svg`.
-
-/** Builds the [[BoardStateDto]] consumed by the browser UI from a domain
-  * [[GameState]]. DTO shape + codecs live in the shared `api` module so the
-  * Laminar web-ui decodes the same type the gateway encodes.
+/** Builds the [[BoardStateDto]] consumed by the browser UI (and shipped
+  * over the gRPC wire as bytes) from a domain [[GameState]].
+  *
+  * Lives in `api` (cross-platform) so both producers — the gateway and
+  * the game-service — can construct the DTO without each side having
+  * its own private converter. The web-ui (Scala.js) just consumes the
+  * decoded `BoardStateDto`; it doesn't need this object.
+  *
+  * The wire field `SquareDto.piece` holds a lowercase piece-type name
+  * ("pawn", "knight", …) rather than a Unicode glyph; the Laminar UI
+  * uses it as the symbol id when fetching from `/web/pieces/<name>.svg`.
   */
 object WebBoardView:
 

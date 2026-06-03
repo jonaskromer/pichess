@@ -1,5 +1,6 @@
 package chess.gameservice
 
+import chess.api.BoardStateDto
 import chess.controller.GameController
 import chess.events.{GameEventProducer, InMemoryGameEventProducer}
 import chess.model.board.GameState
@@ -75,30 +76,46 @@ object GrpcMappersSpec extends ZIOSpecDefault:
       }
     ),
     suite("toStateReply")(
-      test("projects gameId, FEN, status, active color from the session") {
-        for reply <- GrpcMappers.toStateReply(gameId, session)
+      test("projects gameId + FEN sidecar + a decodable BoardStateDto payload") {
+        for
+          reply <- GrpcMappers.toStateReply(gameId, session)
+          dto   <- ZIO.attempt(
+                     BoardStateDto.decodeBytes(reply.boardState.toByteArray)
+                   )
         yield assertTrue(
           reply.gameId == gameId,
           reply.fen.nonEmpty,
-          reply.status == GameState.initial.status.toString,
-          reply.activeColor == GameState.initial.activeColor.toString,
-          reply.moveLog.isEmpty,
-          reply.error.isEmpty
+          reply.error.isEmpty,
+          // Decoded DTO mirrors the session state
+          dto.activeColor == "white",
+          dto.status.kind == "playing",
+          dto.moveLog.isEmpty,
+          dto.squares.size == 64,
         )
       },
-      test("propagates session.error onto the reply") {
+      test("propagates session.error onto the reply envelope AND the DTO") {
         val withErr = session.copy(error = Some("boom"))
-        for reply <- GrpcMappers.toStateReply(gameId, withErr)
-        yield assertTrue(reply.error == "boom")
+        for
+          reply <- GrpcMappers.toStateReply(gameId, withErr)
+          dto   <- ZIO.attempt(
+                     BoardStateDto.decodeBytes(reply.boardState.toByteArray)
+                   )
+        yield assertTrue(
+          reply.error == "boom",
+          dto.error.contains("boom"),
+        )
       },
       test("derives a SAN move log entry per ply in the session history") {
         for
           s     <- sessionWithOneMove
           reply <- GrpcMappers.toStateReply(gameId, s)
+          dto   <- ZIO.attempt(
+                     BoardStateDto.decodeBytes(reply.boardState.toByteArray)
+                   )
         yield assertTrue(
-          reply.moveLog.size == 1,
-          reply.moveLog.head.san == "e4",
-          reply.moveLog.head.color == "White"
+          dto.moveLog.size == 1,
+          dto.moveLog.head.san == "e4",
+          dto.moveLog.head.color == "white",
         )
       }.provideLayer(deps)
     )

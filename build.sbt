@@ -138,14 +138,26 @@ lazy val domain = crossProject(JVMPlatform, JSPlatform)
 lazy val api = crossProject(JVMPlatform, JSPlatform)
   .crossType(CrossType.Pure)
   .in(file("api"))
+  // `domain` carries `GameState` etc. — needed by `WebBoardView.toDto`,
+  // which moved into `api` so both the gateway (encoder side) and
+  // game-service (now also producing the wire DTO directly) can use it.
+  .dependsOn(domain)
   .settings(
     name := "pichess-api",
     libraryDependencies ++= Seq(
-      "dev.zio"                     %%% "zio-json"       % zioJsonVersion,
-      "com.softwaremill.sttp.tapir" %%% "tapir-core"     % tapirVersion,
-      "com.softwaremill.sttp.tapir" %%% "tapir-json-zio" % tapirVersion,
-      "dev.zio"                     %%% "zio-test"       % zioVersion % Test,
-      "dev.zio"                     %%% "zio-test-sbt"   % zioVersion % Test,
+      "dev.zio"                     %%% "zio-json"            % zioJsonVersion,
+      "com.softwaremill.sttp.tapir" %%% "tapir-core"          % tapirVersion,
+      "com.softwaremill.sttp.tapir" %%% "tapir-json-zio"      % tapirVersion,
+      // Binary `Pickler[BoardStateDto]` used to ship the DTO as the
+      // `bytes` payload of `StateReply` over gRPC. boopickle was picked
+      // after a JMH shoot-out (`BoardStateDtoBenchmark`) where
+      // zio-schema-protobuf was 33× slower than the hand-tuned FEN
+      // round-trip on our 64-square DTO. boopickle ties FEN (+5%) on a
+      // binary wire format with single-Scala-source-of-truth, so we
+      // keep the architectural pattern without the perf regression.
+      "io.suzaku"                   %%% "boopickle"           % "1.5.0",
+      "dev.zio"                     %%% "zio-test"            % zioVersion % Test,
+      "dev.zio"                     %%% "zio-test-sbt"        % zioVersion % Test,
     ),
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
   )
@@ -450,6 +462,7 @@ lazy val gameService = project
     codec,
     events,
     proto,
+    api.jvm,
     persistenceApi,
     persistenceRuntime,
     observability
@@ -699,13 +712,17 @@ lazy val observability = project
 // Run with:  sbt 'bench/Jmh/run -i 5 -wi 5 -f1 chess.bench.FenParserBenchmark'
 lazy val bench = project
   .in(file("bench"))
-  .dependsOn(domain.jvm, rules, codec)
+  .dependsOn(domain.jvm, rules, codec, api.jvm)
   .enablePlugins(JmhPlugin)
   .settings(
     name         := "pichess-bench",
     scalaVersion := "3.8.2",
     libraryDependencies ++= Seq(
-      "dev.zio" %% "zio" % zioVersion,
+      "dev.zio"   %% "zio"       % zioVersion,
+      // Bench-only — compared against zio-schema-protobuf and zio-json
+      // to understand whether the BoardStateDto wire-format cost is a
+      // codec choice or fundamental to the round-trip.
+      "io.suzaku" %% "boopickle" % "1.5.0",
     ),
     coverageEnabled := false,
   )

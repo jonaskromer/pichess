@@ -1,4 +1,4 @@
-package chess.view
+package chess.api
 
 import chess.model.board.{DrawReason, GameState, GameStatus, Position}
 import chess.model.piece.{Color, Piece, PieceType}

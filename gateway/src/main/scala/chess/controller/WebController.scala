@@ -16,7 +16,8 @@ import chess.codec.FenParserRegex
 import chess.model.board.{GameState, Position}
 import chess.model.piece.Color
 import chess.model.rules.MoveValidator
-import chess.view.{HtmlPage, WebBoardView}
+import chess.api.WebBoardView
+import chess.view.HtmlPage
 import io.grpc.StatusException
 import pichess.game_service.{
   ExportRequest,
@@ -315,22 +316,18 @@ object WebController:
       dto   <- replyToDto(reply)
     yield dto
 
+  /** Decode the gRPC StateReply's `board_state` bytes back into the
+    * shared [[BoardStateDto]]. The bytes were produced by
+    * [[chess.gameservice.GrpcMappers.encodeBoardState]] using
+    * [[BoardStateDto.encodeBytes]] (boopickle) — same codec used
+    * here, so the round-trip is exact.
+    */
   private[controller] def replyToDto(reply: StateReply): ZIO[Any, ErrorDto, BoardStateDto] =
-    FenParserRegex
-      .parse(reply.fen)
-      .mapError(err => ErrorDto(err.message))
-      .map { state =>
-        WebBoardView.toDto(
-          state,
-          reply.moveLog.toList.map(e => (parseColor(e.color), e.san)),
-          Option.when(reply.error.nonEmpty)(reply.error)
-        )
-      }
-
-  private[controller] def parseColor(s: String): Color = s match
-    case "White" => Color.White
-    case "Black" => Color.Black
-    case _       => Color.White // gameService never emits anything else
+    ZIO
+      .attempt(BoardStateDto.decodeBytes(reply.boardState.toByteArray))
+      .mapError(t =>
+        ErrorDto(s"Failed to decode StateReply.boardState: ${t.getMessage}")
+      )
 
   // --------------------------------------------------------------------------
   // Raw zio-http routes (HTML / JS / SSE)

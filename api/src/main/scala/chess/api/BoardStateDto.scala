@@ -1,6 +1,9 @@
 package chess.api
 
+import boopickle.Default.*
 import zio.json.*
+
+import java.nio.ByteBuffer
 
 /** Wire DTOs for the pichess HTTP API.
   *
@@ -19,12 +22,14 @@ final case class SquareDto(
 object SquareDto:
   given JsonEncoder[SquareDto] = DeriveJsonEncoder.gen[SquareDto]
   given JsonDecoder[SquareDto] = DeriveJsonDecoder.gen[SquareDto]
+  given Pickler[SquareDto]     = generatePickler
 
 final case class MoveEntryDto(color: String, san: String)
 
 object MoveEntryDto:
   given JsonEncoder[MoveEntryDto] = DeriveJsonEncoder.gen[MoveEntryDto]
   given JsonDecoder[MoveEntryDto] = DeriveJsonDecoder.gen[MoveEntryDto]
+  given Pickler[MoveEntryDto]     = generatePickler
 
 /** Wire-format game outcome.
   *
@@ -54,6 +59,7 @@ object GameStatusDto:
 
   given JsonEncoder[GameStatusDto] = DeriveJsonEncoder.gen[GameStatusDto]
   given JsonDecoder[GameStatusDto] = DeriveJsonDecoder.gen[GameStatusDto]
+  given Pickler[GameStatusDto]     = generatePickler
 
 final case class BoardStateDto(
     squares: List[SquareDto],
@@ -68,6 +74,25 @@ final case class BoardStateDto(
 object BoardStateDto:
   given JsonEncoder[BoardStateDto] = DeriveJsonEncoder.gen[BoardStateDto]
   given JsonDecoder[BoardStateDto] = DeriveJsonDecoder.gen[BoardStateDto]
+  given Pickler[BoardStateDto]     = generatePickler
+
+  /** Encode a [[BoardStateDto]] to the bytes carried as the `board_state`
+    * payload of gRPC `StateReply`. Picked from a JMH shoot-out
+    * (`BoardStateDtoBenchmark`): boopickle matches the hand-tuned FEN
+    * round-trip (~12 µs both ways) on a binary wire format, vs
+    * zio-schema-protobuf which was 33× slower for this DTO shape.
+    */
+  def encodeBytes(dto: BoardStateDto): Array[Byte] =
+    val buf = Pickle.intoBytes(dto)
+    val arr = new Array[Byte](buf.remaining)
+    buf.get(arr)
+    arr
+
+  /** Decode the bytes back into a [[BoardStateDto]]. Throws if the
+    * bytes are corrupted — gateway's `replyToDto` catches via
+    * `ZIO.attempt`. */
+  def decodeBytes(bytes: Array[Byte]): BoardStateDto =
+    Unpickle[BoardStateDto].fromBytes(ByteBuffer.wrap(bytes))
 
 final case class MoveRequest(move: String)
 

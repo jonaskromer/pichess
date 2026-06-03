@@ -4,10 +4,12 @@ package pichess;
 
 // gRPC contract for the gameService microservice.
 //
-// Wire format: GameState is carried as FEN (Forsyth–Edwards Notation) — a
-// compact, canonical string both sides convert with FenSerializer. Keeping
-// FEN on the wire avoids modelling Board/Piece in protobuf and matches the
-// existing convention used by repositoryApi.
+// Wire format: `StateReply.board_state` carries a `BoardStateDto`
+// serialised via `Schema[BoardStateDto].protobufCodec` (zio-schema-
+// protobuf). Game-service constructs the DTO directly from the in-memory
+// `GameState`; the gateway decodes the bytes and forwards the DTO to the
+// HTTP client as JSON. This sidesteps the FEN-parse round-trip the
+// gateway used to do on every reply.
 //
 // `gameId` is the partition key used by the Kafka producer; clients must
 // reuse the id returned by NewGame/LoadGame for subsequent rpcs on the same
@@ -54,21 +56,23 @@ message ExportRequest {
   string format  = 2;  // fen | pgn | json
 }
 
-// Universal state response. Carries the canonical FEN, the active color, the
-// move log (SAN with side to move), the game status, and any session-level
-// error surfaced by a controller action.
+// Universal state response.
+//
+// `board_state` is a `BoardStateDto` (defined in the shared `api`
+// module) serialised via its `Schema[BoardStateDto].protobufCodec`.
+// The DTO already carries the board squares, active color, move log,
+// in-check flag, game status, and any embedded error string. The hot
+// reply→HTTP path on the gateway only uses this field — no FEN parse.
+//
+// `fen` is kept as a sidecar for the annotation endpoints
+// (`/legal-moves`, `/threats`, `/attackers`) — those need full
+// GameState (castling rights, en-passant target) which the DTO doesn't
+// carry. They run on a separate cached path off the hot reply.
 message StateReply {
-  string game_id      = 1;
-  string fen          = 2;
-  string status       = 3;  // Playing | Checkmate(...) | Draw(...) | Resignation(...)
-  string active_color = 4;  // White | Black
-  repeated MoveLogEntry move_log = 5;
-  string error        = 6;  // empty when the action succeeded
-}
-
-message MoveLogEntry {
-  string color = 1;  // "White" | "Black" — the side that played this move
-  string san   = 2;
+  string game_id     = 1;
+  bytes  board_state = 2;
+  string error       = 3;  // empty when the action succeeded
+  string fen         = 4;  // sidecar for annotation endpoints
 }
 
 message ExportReply {
