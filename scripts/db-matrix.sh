@@ -40,6 +40,12 @@
 #                  Default: all five.
 #   WORKLOADS      Comma-separated Gatling simulation suffixes. Default: Game,Stress.
 #   WARMUP_ITERS   Per-config warmup game-replay count. Default: 20.
+#   USERS          Closed-loop user count for the Game workload —
+#                  each user plays one full canonical opening end-to-end
+#                  through the gateway, so this controls how many full
+#                  game replays each (backend, cache) tuple sees in the
+#                  Game pass. Default: 10. Stress is open-loop and is
+#                  controlled by PEAK_USERS / RATE_PER_SEC / HOLD_SECONDS.
 #   PEAK_USERS, RAMP_SECONDS, HOLD_SECONDS, RATE_PER_SEC — Gatling knobs.
 #   OBS            true|false — bring up Prometheus/Grafana/Jaeger and
 #                  capture before/after snapshots. Default: true.
@@ -53,6 +59,7 @@ set -euo pipefail
 BACKENDS="${BACKENDS:-inmemory,postgres,mongo,redis,cassandra}"
 WORKLOADS="${WORKLOADS:-Game,Stress}"
 WARMUP_ITERS="${WARMUP_ITERS:-20}"
+USERS="${USERS:-10}"
 PEAK_USERS="${PEAK_USERS:-50}"
 RAMP_SECONDS="${RAMP_SECONDS:-10}"
 HOLD_SECONDS="${HOLD_SECONDS:-60}"
@@ -226,6 +233,7 @@ run_gatling() {
   sbt -batch \
     "-DpichessGatewayUrl=$GATEWAY_URL" \
     "-DpichessLobbyUrl=$LOBBY_URL" \
+    "-DpichessUsers=$USERS" \
     "-DpichessPeakUsers=$PEAK_USERS" \
     "-DpichessRampSeconds=$RAMP_SECONDS" \
     "-DpichessHoldSeconds=$HOLD_SECONDS" \

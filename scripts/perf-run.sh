@@ -37,6 +37,7 @@ BACKENDS="${BACKENDS:-inmemory,postgres,mongo,redis,cassandra}"
 MODE="${MODE:-Game}"
 OBS="${OBS:-false}"
 WARMUP_ITERS="${WARMUP_ITERS:-50}"
+USERS="${USERS:-10}"
 PEAK_USERS="${PEAK_USERS:-50}"
 RAMP_SECONDS="${RAMP_SECONDS:-10}"
 HOLD_SECONDS="${HOLD_SECONDS:-60}"
@@ -129,6 +130,7 @@ run_gatling() {
   sbt -batch \
     "-DpichessGatewayUrl=$GATEWAY_URL" \
     "-DpichessLobbyUrl=$LOBBY_URL" \
+    "-DpichessUsers=$USERS" \
     "-DpichessPeakUsers=$PEAK_USERS" \
     "-DpichessRampSeconds=$RAMP_SECONDS" \
     "-DpichessHoldSeconds=$HOLD_SECONDS" \

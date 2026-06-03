@@ -279,8 +279,15 @@ BACKENDS=postgres,mongo make db-matrix
 # Only Game (skip Stress) for a fast smoke:
 WORKLOADS=Game make db-matrix
 
+# More full-game replays per backend in the Game workload
+# (closed-loop ramp; each user = 1 full canonical opening):
+USERS=100 make db-matrix
+
 # Heavier stress run (longer holds, more peak users):
 PEAK_USERS=200 HOLD_SECONDS=120 RATE_PER_SEC=10 make db-matrix
+
+# Both at once — more Game replays AND a longer Stress plateau:
+USERS=200 HOLD_SECONDS=120 RATE_PER_SEC=10 make db-matrix
 
 # Drop the obs profile entirely — saves another ~1 GB but loses the
 # resource profile section of the report.
@@ -292,9 +299,11 @@ MATRIX_HEAVY=true make db-matrix
 ```
 
 All Gatling system-property knobs propagate. Full list:
-`BACKENDS`, `WORKLOADS`, `WARMUP_ITERS`, `PEAK_USERS`,
+`BACKENDS`, `WORKLOADS`, `WARMUP_ITERS`, `USERS`, `PEAK_USERS`,
 `RAMP_SECONDS`, `HOLD_SECONDS`, `RATE_PER_SEC`, `OBS`,
-`MATRIX_HEAVY`.
+`MATRIX_HEAVY`. `USERS` only affects the Game (closed-loop) workload;
+`PEAK_USERS`, `RATE_PER_SEC`, `HOLD_SECONDS` only affect Stress (and
+the other open-loop simulations).
 
 ### Reading the matrix output
 

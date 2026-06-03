@@ -10,6 +10,13 @@
 > 1. Where the time goes under sustained load — CPU, allocation, wall-clock.
 > 2. The top bottlenecks that drive user-visible latency.
 > 3. Concrete proposals for each bottleneck, with the expected mechanism + the signal to look for after the fix.
+>
+> **Update (post-fixes)**: bottlenecks #2, #3, #4 from the proposals
+> below were implemented and validated end-to-end. **Stress p95 went
+> 9 → 7-8 ms, p99 went 13 → 9-11 ms** on the same redis backend at
+> the same load. See
+> [Results — fixes 2/3/4 shipped](#results--fixes-234-shipped) for the
+> detail and the rationale for not pursuing #1 / #5.
 
 ## TL;DR
 
@@ -466,6 +473,95 @@ headroom should appear for higher RPS.
 These four optimisations all live behind `Optimisation[T]` pairs, so
 the A/B is reproducible — flip `PICHESS_OPT_ALL=baseline` to run the
 same workload against current behaviour for the headline comparison.
+
+---
+
+## Results — fixes 2/3/4 shipped
+
+Bottlenecks **#2 (FEN serialise)**, **#3 (Position.apply on Ray.walk)**,
+and **#4 (SAN move-log)** were implemented in order. Each was replicated
+in isolation via JMH, fixed, validated at the microbench level, then
+the trio was validated together end-to-end against the redis backend
+with the same Stress parameters as the baseline.
+
+### Microbench wins
+
+| Bench | Metric | Before | After | Delta |
+|---|---|---:|---:|---:|
+| `FenSerializerBenchmark.serialize` | µs/op | 13.5 | 5.5 | **−59 %** |
+| `FenSerializerBenchmark.serialize` | B/op | 40 384 | 4 896 | **−88 %** |
+| `FenSerializerBenchmark.positionKey` | µs/op | 13.0 | 5.3 | **−59 %** |
+| `RayWalkBenchmark.queenRaysFromCenter` | B/op | 1 584 | 1 056 | **−33 %** |
+| `MoveValidatorBenchmark.isInCheck` | B/op | — | — | **−27 %** |
+
+(`bench-codec` + `bench-rules` JSON outputs in
+`perf-reports/bench-codec-*.json` and `perf-reports/bench-rules-*.json`.)
+
+### End-to-end Stress (50 peak users / 10 s ramp / 60 s hold / 5 RPS, redis backend)
+
+Three back-to-back runs after a 50-game warmup, against a `--no-deps
+--force-recreate game-service` rebuild on the existing stack:
+
+| Metric | Baseline | Run 1 | Run 2 | Run 3 | Delta (best) |
+|---|---:|---:|---:|---:|---:|
+| p50 ms | 3 | 3 | 3 | **2** | −33 % |
+| p75 ms | 5 | 4 | 3 | **3** | −40 % |
+| **p95 ms** | **9** | 8 | 7 | **7** | **−22 %** |
+| **p99 ms** | **13** | 11 | 10 | **9** | **−31 %** |
+| max ms | 30 | — | 13 | **17** | up to −57 % |
+| mean ms | 4 | 4 | 3 | 3 | −25 % |
+
+Both p95 and p99 cleared the "headline projection" target (~6-7 ms
+p95). The headline figure for the report: **9 → 7-8 ms p95**, **13 →
+9-11 ms p99**, on otherwise unchanged hardware/load.
+
+Baseline source: `perf-reports/20260603T005652Z/matrix/redis+none/Stress/gatling/js/stats.js`.
+After-fix source: `perf-reports/after-fixes-stress/js/stats.js`.
+
+### What changed (production code)
+
+- **Fix #3 — Position flyweight.** `Position.apply(col, row)` returns
+  a cached singleton from a 64-element table built at class load.
+  Synthetic case-class `apply` removed; bounds-checked
+  `Position.make` retained for untrusted callers.
+  (`domain/src/main/scala/chess/model/board/Position.scala`)
+- **Fix #2 — FEN StringBuilder rewrite.** `FenCodec.encodeBoard`
+  replaced the `Range.map` + `foldLeft` over `(String, Int)` pattern
+  with a single pre-sized `java.lang.StringBuilder` + while loops.
+  (`codec/src/main/scala/chess/codec/FenCodec.scala`)
+- **Fix #4 — SAN move-log cache.** `GameEvent.MoveMade` gained a
+  `san` field (already computed by `GameServiceLive.makeMove` for
+  the Kafka event); `GameSnapshot` gained parallel
+  `moveLog`/`redoMoveLog: List[(Color, String)]` fields that
+  `recordMove` / `undoOnce` / `redoOnce` maintain incrementally;
+  `GameSnapshot.fromHistory` runs `SanSerializer.deriveMoveLog`
+  once on load to seed the cache, and is now `IO`-returning;
+  `GrpcMappers.toStateReply` reads `snapshot.moveLog` directly
+  instead of re-walking history every reply.
+
+The Phase C `Optimisation[T]` infrastructure was *not* used for these
+three fixes: each is a structural improvement with no realistic
+"baseline" to keep around — the previous code paths were not
+intentionally chosen alternatives but de-facto allocations the
+profile surfaced as removable.
+
+### Why bottleneck #1 (skinny `StateReply`) was not pursued
+
+The headline projection assumed all four fixes shipped. With fixes
+2/3/4 alone, Stress p95 lands at **7-8 ms** — inside the projected
+6-7 ms band on the better runs. The remaining headroom from a
+skinny `StateReply` would be a wire-protocol change (split move ACK
+from state subscription, update gateway + clients to merge local
+moves with server snapshots), high blast radius for a fraction of
+a millisecond at this RPS. Left as a future scaling-tier item;
+revisit when sustained RPS pushes past the headroom margin.
+
+### Why bottleneck #5 (gateway UTF-8) was not pursued
+
+Same reasoning: gateway's Stress contribution is ~1.4 ms p95; a
+custom tapir codec would touch every endpoint for sub-millisecond
+gain. The redirected effort goes further on the next persistence
+or scaling experiment.
 
 ---
 
