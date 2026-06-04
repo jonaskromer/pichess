@@ -40,7 +40,11 @@ private[engine] final class AlphaBetaSearch(
       val ordered = orderMoves(moves, Zobrist.hash(state))
       var alpha = -Infinity
       val beta  = Infinity
-      var best: Option[Move] = None
+      // Seed `best` with the first move so we always return a move when
+      // there's at least one legal option — even if every option scores
+      // identically (pathological "all lose by mate" case, or all-tied
+      // material positions where the eval flatlines).
+      var best: Option[Move] = Some(ordered.head)
       var bestScore = -Infinity
       val it = ordered.iterator
       while it.hasNext do

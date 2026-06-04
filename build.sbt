@@ -220,6 +220,23 @@ lazy val botEngine = project
   .settings(commonSettings)
   .settings(name := "pichess-bot-engine")
 
+// Lichess Bot-API client + Bridge orchestrator. Parses the Lichess
+// event stream, spawns a search fiber per accepted game, and POSTs
+// chosen moves back. Reuses bot-engine for move selection and codec
+// for FEN handling. sttp-zio + zio-streams for HTTP/SSE; zio-json for
+// the Lichess JSON envelopes.
+lazy val botLichess = project
+  .in(file("bot-lichess"))
+  .dependsOn(domain.jvm, rules, codec, botEngine)
+  .settings(commonSettings)
+  .settings(
+    name := "pichess-bot-lichess",
+    libraryDependencies ++= Seq(
+      "com.softwaremill.sttp.client3" %% "zio"      % "3.11.0",
+      "dev.zio"                       %% "zio-json" % zioJsonVersion,
+    ),
+  )
+
 // Contract for the repository microservice — endpoint descriptions shared by
 // its server (in `repository`) and its caller (`HttpGameRepository`).
 lazy val repositoryApi = project

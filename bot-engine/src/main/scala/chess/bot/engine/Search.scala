@@ -56,3 +56,14 @@ object Search:
       maxTtEntries: Int = 1_000_000,
   ): Search =
     new AlphaBetaSearch(eval, TranspositionTable.inMemory(maxTtEntries))
+
+  /** Test-only factory that lets a caller inject the [[TranspositionTable]]
+    * instance, so a test can pre-seed entries to exercise the move-
+    * ordering and α/β-cutoff branches that don't fire on shallow
+    * searches starting from an empty cache. Not exposed publicly — the
+    * production [[alphaBeta]] factory owns its TT.
+    */
+  private[engine] def alphaBetaWith(
+      eval: Evaluator,
+      tt: TranspositionTable,
+  ): Search = new AlphaBetaSearch(eval, tt)
