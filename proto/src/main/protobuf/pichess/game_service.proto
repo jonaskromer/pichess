@@ -36,7 +36,28 @@ service GameService {
   rpc SubscribeGame(GameIdRequest)       returns (stream StateReply);
 }
 
-message NewGameRequest {}
+// `NewGameRequest` is the contract for `GameService.NewGame`.
+//
+// When all bot fields are at their proto3-default values the game is a
+// regular PvP game (the existing behaviour). When `vs_bot` is true the
+// game is created in vs-bot mode and the server auto-plays the bot's
+// reply after every player move:
+//
+//   - `bot_side` is the colour the bot plays, "white" or "black".
+//   - `bot_difficulty` is one of "Beginner" | "Easy" | "Medium" | "Hard"
+//     | "Expert" — mapped to search depth by `chess.bot.engine.Difficulty`.
+//   - `allow_undo` is whether the player's undo/redo controls are exposed
+//     in the gameplay UI. The server doesn't enforce it (the bot can
+//     happily undo); it's a hint the client uses to grey out the
+//     undo/redo buttons in a "no take-backs" game.
+//
+// All bot fields are ignored when `vs_bot` is false.
+message NewGameRequest {
+  bool   vs_bot         = 1;
+  string bot_side       = 2;
+  string bot_difficulty = 3;
+  bool   allow_undo     = 4;
+}
 
 message LoadGameRequest {
   string raw = 1;  // FEN, PGN, or JSON — auto-detected server-side

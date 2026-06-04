@@ -2,10 +2,11 @@ package chess.gameservice
 
 import com.google.protobuf.ByteString
 import io.grpc.{Status, StatusException}
-import pichess.game_service.StateReply
+import pichess.game_service.{NewGameRequest, StateReply}
 import zio.UIO
 
 import chess.api.{AnnotationsDto, BoardStateDto, WebBoardView}
+import chess.bot.engine.{BotConfig, Difficulty}
 import chess.model.board.{GameState, Position}
 import chess.model.piece.Color
 import chess.model.rules.MoveValidator
@@ -115,6 +116,37 @@ object GrpcMappers:
       rem &= rem - 1L
       buf += Position(('a' + (idx % 8)).toChar, (idx / 8) + 1)
     buf.toList
+
+  /** Parse the optional bot-config fields of a [[NewGameRequest]]
+    * into a [[BotConfig]]. Returns `Right(None)` when `vs_bot` is
+    * false (non-bot game — backward-compatible with old clients
+    * that send no fields), `Right(Some(cfg))` for a well-formed
+    * bot config, `Left(reason)` for malformed values (unknown
+    * difficulty / side).
+    */
+  def parseBotConfig(request: NewGameRequest): Either[String, Option[BotConfig]] =
+    if !request.vsBot then Right(None)
+    else
+      for
+        side <- parseColor(request.botSide)
+        diff <- parseDifficulty(request.botDifficulty)
+      yield Some(
+        BotConfig(botSide = side, difficulty = diff, allowUndo = request.allowUndo)
+      )
+
+  private def parseColor(s: String): Either[String, Color] =
+    s.toLowerCase match
+      case "white" => Right(Color.White)
+      case "black" => Right(Color.Black)
+      case other   => Left(s"Unknown bot side: '$other' (expected 'white' or 'black')")
+
+  private def parseDifficulty(s: String): Either[String, Difficulty] =
+    Difficulty.values
+      .find(_.toString.equalsIgnoreCase(s))
+      .toRight(
+        s"Unknown bot difficulty: '$s' (expected one of: " +
+          Difficulty.values.map(_.toString).mkString(", ") + ")"
+      )
 
   /** Lift a domain GameError into the gRPC status it should surface as.
     * The mapping is exhaustive across `GameError`'s variants — a new

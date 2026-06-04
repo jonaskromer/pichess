@@ -44,6 +44,10 @@ object TracingGameServiceClientSpec extends ZIOSpecDefault:
       InMemoryGameEventProducer.layer,
       TracingLayer.noop,
       GrpcServer.asServiceLayer,
+      // Vs-bot deps — required by GrpcServer's layer; harmless for
+      // these tracing-only tests because vs_bot defaults to false.
+      chess.service.BotConfigRepository.inMemoryLayer,
+      chess.bot.engine.EngineLayer.live,
       ServerLayer.fromEnvironment[ZioGameService.RCGameService](
         InProcessServerBuilder.forName(name).directExecutor()
       ),

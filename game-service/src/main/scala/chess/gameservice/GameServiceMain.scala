@@ -114,6 +114,12 @@ object GameServiceMain extends ZIOAppDefault:
         TracingLayer.fromEnv("game-service"),
         ServerLayer.fromEnvironment[ZioGameService.RCGameService](
           ServerBuilder.forPort(port)
-        )
+        ),
+        // Vs-bot runtime deps. The repo is an in-memory Ref (per-server
+        // session, not persisted); the engine is the same EngineBundle
+        // the standalone Lichess bot uses, assembled from the committed
+        // weights JSON + opening-book PGN resources.
+        chess.service.BotConfigRepository.inMemoryLayer,
+        chess.bot.engine.EngineLayer.live,
       )
     }

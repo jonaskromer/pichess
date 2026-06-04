@@ -72,7 +72,7 @@ object WebController:
       swagger ++ List(
         Endpoints.postCreateGame.zServerLogic[Any] { case (sessionId, req) =>
           val create = req.load match
-            case None       => client.newGame(NewGameRequest())
+            case None       => client.newGame(newGameRequestFor(req.vsBot))
             case Some(load) => client.loadGame(LoadGameRequest(load))
           for
             reply <- create.mapError(toErrorDto)
@@ -183,6 +183,28 @@ object WebController:
     * (`postMove` / undo / redo / draw / forfeit) — they all call
     * `cache.invalidate(id)` after a successful mutation.
     */
+  /** Build the gRPC `NewGameRequest` from the optional client-side
+    * vs-bot settings. When `vsBot` is `None` the request defaults to a
+    * regular PvP game (proto3 zero values). When supplied, the fields
+    * are passed through to game-service which validates them and
+    * routes the game through the vs-bot orchestrator.
+    *
+    * Validation (unknown side / difficulty) happens server-side rather
+    * than here so the rejection comes from a single source of truth.
+    * That keeps the gateway thin — it just shuttles the strings. */
+  private[controller] def newGameRequestFor(
+      vsBot: Option[chess.api.VsBotSettings]
+  ): NewGameRequest =
+    vsBot match
+      case None => NewGameRequest()
+      case Some(s) =>
+        NewGameRequest(
+          vsBot         = true,
+          botSide       = s.botSide,
+          botDifficulty = s.difficulty,
+          allowUndo     = s.allowUndo,
+        )
+
   private def annotationsFor(
       client: ZioGameService.GameServiceClient,
       cache: AnnotationCache,

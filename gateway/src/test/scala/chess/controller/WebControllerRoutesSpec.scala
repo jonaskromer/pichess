@@ -36,6 +36,11 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
       InMemoryGameEventProducer.layer,
       TracingLayer.noop,
       GrpcServer.asServiceLayer,
+      // Vs-bot deps required since the GrpcServer now needs them
+      // even for non-vs-bot games (it just doesn't use them on the
+      // common path).
+      chess.service.BotConfigRepository.inMemoryLayer,
+      chess.bot.engine.EngineLayer.live,
       ServerLayer.fromEnvironment[ZioGameService.RCGameService](
         InProcessServerBuilder.forName(name).directExecutor()
       ),

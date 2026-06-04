@@ -123,12 +123,41 @@ object ExportResponse:
   * it imports a serialised game (FEN, PGN, or JSON, auto-detected). The
   * old `POST /api/new` and `POST /api/load` collapsed into this one
   * endpoint when routing went game-scoped.
+  *
+  * The optional `vsBot` field opts into vs-bot mode. When present, the
+  * server creates the game with the supplied bot config: which side
+  * the bot plays, its difficulty level, and whether the player has
+  * undo/redo enabled in the UI. When absent the game is a regular PvP
+  * game (existing behaviour).
   */
-final case class CreateGameRequest(load: Option[String] = None)
+final case class CreateGameRequest(
+    load: Option[String] = None,
+    vsBot: Option[VsBotSettings] = None,
+)
 
 object CreateGameRequest:
   given JsonEncoder[CreateGameRequest] = DeriveJsonEncoder.gen[CreateGameRequest]
   given JsonDecoder[CreateGameRequest] = DeriveJsonDecoder.gen[CreateGameRequest]
+
+/** Settings the client supplies when starting a vs-bot game.
+  *
+  *   - `botSide`:    "white" or "black"
+  *   - `difficulty`: one of "Beginner" | "Easy" | "Medium" | "Hard" | "Expert"
+  *   - `allowUndo`:  whether the client should expose undo/redo controls
+  *
+  * Mirrors `chess.bot.engine.BotConfig` exactly (same field names),
+  * but lives here as a JSON-DTO so the api module (web-ui shared)
+  * doesn't have to pull in the engine package.
+  */
+final case class VsBotSettings(
+    botSide: String,
+    difficulty: String,
+    allowUndo: Boolean,
+)
+
+object VsBotSettings:
+  given JsonEncoder[VsBotSettings] = DeriveJsonEncoder.gen[VsBotSettings]
+  given JsonDecoder[VsBotSettings] = DeriveJsonDecoder.gen[VsBotSettings]
 
 /** Response for `POST /api/games`. Carries the new game's id alongside its
   * initial state so the client can address subsequent calls without an
