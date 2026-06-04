@@ -1,0 +1,196 @@
+package chess.bot.train
+
+import zio.*
+
+import chess.bot.data.TrainingRow
+import chess.bot.engine.Search
+import chess.codec.PgnParser
+import chess.model.board.{GameState, GameStatus, Move}
+import chess.model.piece.Color
+import chess.model.rules.Game
+
+/** Self-play loop.
+  *
+  * Two searches face off over N games (colors alternate to remove the
+  * first-move bias); each completed game's move history is turned
+  * into a vector of [[chess.bot.data.TrainingRow]] keyed by the
+  * eventual outcome. The caller takes those rows, persists them via
+  * [[chess.bot.data.TrainingRepo.appendBatch]], and re-runs
+  * [[TexelTuner]] on the union of "old training corpus + self-play
+  * deltas" to land a new weights snapshot.
+  *
+  * What this module deliberately doesn't do:
+  *   - persist anything itself (the orchestrator decides when /
+  *     where to write — keeps tests pure)
+  *   - run the tuner (separate concern, separate testable unit)
+  *   - manage weight versioning (lives in
+  *     [[chess.bot.data.WeightsRepo]])
+  */
+object SelfPlay:
+
+  enum Outcome:
+    case WhiteWins, BlackWins, Draw, MaxMovesReached
+
+  /** One played-out game. `history` is the same shape as
+    * [[chess.codec.PgnParser.PgnGame.history]] so the row-building
+    * logic in [[PgnIngest.buildRows]] can be reused directly. */
+  final case class GameResult(
+      history: List[(Move, GameState)],
+      outcome: Outcome,
+  )
+
+  /** Aggregate of an N-game round. The win counts are from the
+    * challenger's perspective so we can directly answer
+    * "does the new weights snapshot beat the old?" without keeping
+    * a separate accounting layer. */
+  final case class RoundResult(
+      games: Int,
+      challengerWins: Int,
+      championWins: Int,
+      draws: Int,
+      trainingRows: Vector[TrainingRow],
+  )
+
+  /** Play one game between `white` and `black`. Terminates on
+    * checkmate / draw / no-legal-moves / `maxPlies` exhausted. */
+  def playGame(
+      white: Search,
+      black: Search,
+      depth: Int,
+      maxPlies: Int = 200,
+  ): UIO[GameResult] =
+    loop(
+      state    = GameState.initial,
+      history  = Vector.empty,
+      ply      = 0,
+      white    = white,
+      black    = black,
+      depth    = depth,
+      maxPlies = maxPlies,
+    )
+
+  /** Run an N-game round: `champion` and `challenger` alternate
+    * colors so neither benefits from the white-side advantage. */
+  def round(
+      champion: Search,
+      challenger: Search,
+      games: Int,
+      depth: Int,
+      maxPlies: Int = 200,
+  ): UIO[RoundResult] =
+    ZIO.foldLeft(0 until games)(emptyRound) { (acc, i) =>
+      val (whitePlayer, blackPlayer, challengerIsWhite) =
+        if i % 2 == 0 then (challenger, champion, true)
+        else (champion, challenger, false)
+      playGame(whitePlayer, blackPlayer, depth, maxPlies).map { result =>
+        val rows = gameToTrainingRows(result)
+        addToRound(acc, result, challengerIsWhite, rows)
+      }
+    }
+
+  private val emptyRound: RoundResult =
+    RoundResult(0, 0, 0, 0, Vector.empty)
+
+  /** Recursive game-loop core. */
+  private def loop(
+      state: GameState,
+      history: Vector[(Move, GameState)],
+      ply: Int,
+      white: Search,
+      black: Search,
+      depth: Int,
+      maxPlies: Int,
+  ): UIO[GameResult] =
+    if ply >= maxPlies then
+      ZIO.succeed(GameResult(history.toList, Outcome.MaxMovesReached))
+    else
+      val activeSearch = if state.activeColor == Color.White then white else black
+      activeSearch.bestMove(state, depth).flatMap {
+        case None =>
+          // No legal moves: terminal. In-check → opponent wins;
+          // otherwise stalemate (draw).
+          val outcome =
+            if state.inCheck then
+              if state.activeColor == Color.White then Outcome.BlackWins
+              else Outcome.WhiteWins
+            else Outcome.Draw
+          ZIO.succeed(GameResult(history.toList, outcome))
+        case Some(move) =>
+          applyMoveSafe(state, move).flatMap { newState =>
+            newState.status match
+              case GameStatus.Checkmate(winner) =>
+                val outcome =
+                  if winner == Color.White then Outcome.WhiteWins
+                  else Outcome.BlackWins
+                ZIO.succeed(
+                  GameResult((history :+ (move, newState)).toList, outcome)
+                )
+              case _: GameStatus.Draw =>
+                ZIO.succeed(
+                  GameResult((history :+ (move, newState)).toList, Outcome.Draw)
+                )
+              case GameStatus.Playing =>
+                loop(newState, history :+ (move, newState), ply + 1,
+                     white, black, depth, maxPlies)
+              case _: GameStatus.Resignation =>
+                // Resignations only happen on the Lichess bridge —
+                // we'd never receive one in self-play. If we somehow
+                // do, treat it like the player whose colour resigned
+                // losing the game.
+                val outcome =
+                  if state.activeColor == Color.White then Outcome.BlackWins
+                  else Outcome.WhiteWins
+                ZIO.succeed(
+                  GameResult((history :+ (move, newState)).toList, outcome)
+                )
+          }
+      }
+
+  /** Apply a search-recommended move. Failure here is a defect (the
+    * search shouldn't propose illegal moves) — die rather than swallow. */
+  private def applyMoveSafe(state: GameState, move: Move): UIO[GameState] =
+    Game.applyMove(state, move).orDieWith(err =>
+      new IllegalStateException(s"Self-play search proposed illegal move: ${err.message}")
+    )
+
+  /** Reuse [[PgnIngest.buildRows]] for the training-row construction:
+    * synthesise a [[PgnParser.PgnGame]] from this game's history and
+    * outcome, ignore the BookRows the helper also emits (they're not
+    * useful in the self-play loop), and keep the TrainingRows. */
+  private[train] def gameToTrainingRows(result: GameResult): Vector[TrainingRow] =
+    val resultHeader = result.outcome match
+      case Outcome.WhiteWins        => "1-0"
+      case Outcome.BlackWins        => "0-1"
+      case Outcome.Draw             => "1/2-1/2"
+      case Outcome.MaxMovesReached  => "*"
+    val synthetic = PgnParser.PgnGame(
+      headers      = Map("Result" -> resultHeader),
+      initialState = GameState.initial,
+      history      = result.history,
+    )
+    val (_, trainingRows) = PgnIngest.buildRows(synthetic)
+    trainingRows
+
+  /** Fold the result of one game into a [[RoundResult]] accumulator. */
+  private def addToRound(
+      acc: RoundResult,
+      result: GameResult,
+      challengerIsWhite: Boolean,
+      rows: Vector[TrainingRow],
+  ): RoundResult =
+    val (chWin, chmpWin, draw) = result.outcome match
+      case Outcome.WhiteWins        =>
+        if challengerIsWhite then (1, 0, 0) else (0, 1, 0)
+      case Outcome.BlackWins        =>
+        if challengerIsWhite then (0, 1, 0) else (1, 0, 0)
+      case Outcome.Draw             => (0, 0, 1)
+      // MaxMovesReached: no decisive result, count as a draw for
+      // accounting (the challenge didn't beat the champion).
+      case Outcome.MaxMovesReached  => (0, 0, 1)
+    RoundResult(
+      games          = acc.games + 1,
+      challengerWins = acc.challengerWins + chWin,
+      championWins   = acc.championWins   + chmpWin,
+      draws          = acc.draws          + draw,
+      trainingRows   = acc.trainingRows ++ rows,
+    )
