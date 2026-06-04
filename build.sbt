@@ -210,6 +210,16 @@ lazy val codec = project
     ),
   )
 
+// Chess-bot engine. Pure CPU search + evaluator on top of the bitboard
+// rules layer — no DB / no network / no DTOs. Phase 1 is material-only
+// eval + α-β with TT; Texel-tuned weights and opening-book hooks come
+// in via later phases without touching this module's public surface.
+lazy val botEngine = project
+  .in(file("bot-engine"))
+  .dependsOn(domain.jvm, rules, codec % Test)
+  .settings(commonSettings)
+  .settings(name := "pichess-bot-engine")
+
 // Contract for the repository microservice — endpoint descriptions shared by
 // its server (in `repository`) and its caller (`HttpGameRepository`).
 lazy val repositoryApi = project

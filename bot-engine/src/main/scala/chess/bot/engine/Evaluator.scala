@@ -1,0 +1,34 @@
+package chess.bot.engine
+
+import chess.model.board.GameState
+
+/** Static position evaluator.
+  *
+  * Returns a score in centipawns from the white-side perspective: positive
+  * means white is winning, negative means black is winning. The search
+  * layer flips signs as needed via negamax — evaluators don't know about
+  * whose turn it is, just about who has more on the board.
+  *
+  * Phase 1 has a single material-only implementation
+  * ([[Evaluator.materialOnly]]). The trait deliberately stays minimal so
+  * later phases can swap in a Texel-tuned linear combination of features
+  * (piece-square tables, mobility, pawn structure, king safety, …)
+  * without touching the search code.
+  */
+trait Evaluator:
+  def evaluate(state: GameState): Int
+
+object Evaluator:
+
+  /** Material-only evaluator. Standard centipawn values:
+    *   pawn 100, knight 320, bishop 330, rook 500, queen 900.
+    *
+    * The king is worth 0 — checkmate detection happens in the search via
+    * `MoveValidator.isInCheck` + empty-legal-moves combination, not via
+    * a finite king value that would distort eval. Material values are
+    * the classic Larry Kaufman set used by most starter engines.
+    *
+    * Implementation reads the per-piece bitboards' `popCount` directly,
+    * so each call is ~6 bitcount instructions per side — sub-µs.
+    */
+  val materialOnly: Evaluator = MaterialEvaluator
