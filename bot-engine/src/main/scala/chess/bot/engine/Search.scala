@@ -53,9 +53,10 @@ object Search:
     */
   def alphaBeta(
       eval: Evaluator,
+      book: OpeningBook = OpeningBook.Empty,
       maxTtEntries: Int = 1_000_000,
   ): Search =
-    new AlphaBetaSearch(eval, TranspositionTable.inMemory(maxTtEntries))
+    new AlphaBetaSearch(eval, TranspositionTable.inMemory(maxTtEntries), book)
 
   /** Test-only factory that lets a caller inject the [[TranspositionTable]]
     * instance, so a test can pre-seed entries to exercise the move-
@@ -66,4 +67,5 @@ object Search:
   private[engine] def alphaBetaWith(
       eval: Evaluator,
       tt: TranspositionTable,
-  ): Search = new AlphaBetaSearch(eval, tt)
+      book: OpeningBook = OpeningBook.Empty,
+  ): Search = new AlphaBetaSearch(eval, tt, book)

@@ -242,9 +242,14 @@ lazy val botLichess = project
 // only (zio-jdbc 0.1.2 in the build pins zio-schema 0.4.x — too old
 // to be worth adopting here). Schema is created on open via
 // CREATE TABLE IF NOT EXISTS so file lifecycles stay one-line simple.
+//
+// Depends on bot-engine so the BookRepo → OpeningBook adapter can
+// expose itself as the engine's `OpeningBook` trait — upward
+// dependency, but bot-data is conceptually a "data layer for the
+// bot's engine" so this fits.
 lazy val botData = project
   .in(file("bot-data"))
-  .dependsOn(domain.jvm, codec)
+  .dependsOn(domain.jvm, codec, botEngine)
   .settings(commonSettings)
   .settings(
     name := "pichess-bot-data",

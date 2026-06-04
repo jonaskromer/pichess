@@ -22,13 +22,20 @@ import chess.model.rules.Zobrist
 private[engine] final class AlphaBetaSearch(
     eval: Evaluator,
     tt: TranspositionTable,
+    book: OpeningBook,
 ) extends Search:
 
   import Search.{Infinity, MateScore}
   import TranspositionTable.{Entry, Kind}
 
   def bestMove(state: GameState, depth: Int): UIO[Option[Move]] =
-    ZIO.succeed(syncBestMove(state, depth))
+    // Book lookup short-circuits search when the position is known —
+    // returning Some(bookMove) skips the α-β work entirely. On miss
+    // (or book exhausted) we fall through to native search.
+    book.lookup(state).flatMap {
+      case Some(move) => ZIO.some(move)
+      case None       => ZIO.succeed(syncBestMove(state, depth))
+    }
 
   /** Pick the move at the root that maximises the negamax score for
     * the side to move. Mirrors the negamax recursion below but tracks
