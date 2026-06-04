@@ -10,7 +10,7 @@ import sttp.client3.FetchBackend
 import sttp.tapir.client.sttp.SttpClientInterpreter
 import zio.json.*
 
-import chess.api.{BoardStateDto, CreateGameRequest, Endpoints, ErrorDto, ExportResponse, GameStatusDto, MoveEntryDto, MoveRequest, SquareDto, StackInfoResponse, StateResponse}
+import chess.api.{BoardStateDto, CreateGameRequest, Endpoints, ErrorDto, ExportResponse, GameStatusDto, MoveEntryDto, MoveRequest, SquareDto, StackInfoResponse, StateResponse, VsBotSettings}
 import chess.webui.components.{Components, ModalRegistry}
 
 object Main:
@@ -228,6 +228,17 @@ object Main:
   private val loadOpenVar: Var[Boolean] = Var(false)
   private val loadInputVar: Var[String] = Var("")
   private val exportVar: Var[Option[ExportResponse]] = Var(None)
+
+  // Vs-bot game-creation modal state. `playerSide` is the colour the
+  // user chooses to play; the bot takes the opposite (so botSide on
+  // the wire is the negation of this). Difficulty is a free-form
+  // string matching `chess.bot.engine.Difficulty` enum values — the
+  // server validates. `allowUndo` is a hint to the client to grey out
+  // the undo/redo controls; the server doesn't enforce it.
+  private val vsBotOpenVar: Var[Boolean]      = Var(false)
+  private val vsBotPlayerSideVar: Var[String] = Var("white")
+  private val vsBotDifficultyVar: Var[String] = Var("Medium")
+  private val vsBotAllowUndoVar: Var[Boolean] = Var(true)
   // Help is rendered as an in-SPA view — not a separate route — so that the
   // browser back button returns to the game without a full page reload.
   // We sync this var with `location.hash` so deep-links (#help) and the back
@@ -398,6 +409,7 @@ object Main:
           ModalRegistry.register("load",    loadOpenVar.signal)
           ModalRegistry.register("confirm", confirmVar.signal.map(_.isDefined))
           ModalRegistry.register("export",  exportVar.signal.map(_.isDefined))
+          ModalRegistry.register("vsbot",   vsBotOpenVar.signal)
         }
         // Fetch the active stack identity once at boot. Used by the
         // Dev page's stack chip. Silent on failure — the chip just
@@ -459,6 +471,7 @@ object Main:
       gameBody(),
       promotionOverlay(),
       loadModal(),
+      vsBotModal(),
       exportModal(),
       confirmModal(),
       // Floating clone of the dragged piece. Mounted ONCE — the inner
@@ -746,6 +759,7 @@ object Main:
       div(
         className := "post-it-card cyan",
         actionButton("new",     "New Game", "action-new",     () => askConfirm(confirmNewGame)),
+        actionButton("vsbot",   "Vs Bot",   "action-vsbot",   () => vsBotOpenVar.set(true)),
         actionButton("load",    "Load",     "action-load",    () => loadOpenVar.set(true)),
         actionButton("draw",    "Draw",     "action-draw",    () => askConfirm(confirmDraw)),
         actionButton("forfeit", "Forfeit",  "action-forfeit", () => askConfirm(confirmForfeit))
@@ -1272,6 +1286,115 @@ object Main:
       )
     )
 
+  /** New-game-vs-bot dialog. Asks the user which side they want, the
+    * bot's difficulty level, and whether undo/redo should be enabled.
+    * On submit, POSTs to /api/games with the `vsBot` body field
+    * populated; the server validates the strings and routes the game
+    * through the vs-bot orchestrator. */
+  private def vsBotModal(): HtmlElement =
+    div(
+      className <-- vsBotOpenVar.signal.map(o =>
+        if o then "modal visible" else "modal"
+      ),
+      onClick --> { _ => vsBotOpenVar.set(false) },
+      div(
+        className := "modal-dialog vsbot-dialog",
+        onClick.stopPropagation --> { _ => () },
+        paperLayer(),
+        h2("New Game vs Bot"),
+        p("Pick your colour, the bot's difficulty, and whether you want take-backs."),
+
+        // Player-side radio buttons. White moves first, so picking
+        // "Black" means the bot opens.
+        div(
+          className := "vsbot-field",
+          span(className := "vsbot-label", "I'll play as:"),
+          label(
+            className := "vsbot-radio",
+            input(
+              typ := "radio",
+              nameAttr := "player-side",
+              value := "white",
+              controlled(
+                checked <-- vsBotPlayerSideVar.signal.map(_ == "white"),
+                onChange.mapToChecked.filter(identity).mapTo("white") --> vsBotPlayerSideVar,
+              ),
+            ),
+            "White",
+          ),
+          label(
+            className := "vsbot-radio",
+            input(
+              typ := "radio",
+              nameAttr := "player-side",
+              value := "black",
+              controlled(
+                checked <-- vsBotPlayerSideVar.signal.map(_ == "black"),
+                onChange.mapToChecked.filter(identity).mapTo("black") --> vsBotPlayerSideVar,
+              ),
+            ),
+            "Black",
+          ),
+        ),
+
+        // Difficulty dropdown. Values match `chess.bot.engine.Difficulty`
+        // enum names — server-side parsing is case-insensitive but we
+        // submit the canonical-case strings here to keep logs clean.
+        div(
+          className := "vsbot-field",
+          label(
+            className := "vsbot-label",
+            "Difficulty:",
+            select(
+              className := "vsbot-select",
+              controlled(
+                value <-- vsBotDifficultyVar.signal,
+                onChange.mapToValue --> vsBotDifficultyVar,
+              ),
+              option(value := "Beginner", "Beginner (depth 1)"),
+              option(value := "Easy",     "Easy (depth 2)"),
+              option(value := "Medium",   "Medium (depth 3)"),
+              option(value := "Hard",     "Hard (depth 4)"),
+              option(value := "Expert",   "Expert (depth 5)"),
+            ),
+          ),
+        ),
+
+        // Allow-undo toggle.
+        div(
+          className := "vsbot-field",
+          label(
+            className := "vsbot-checkbox",
+            input(
+              typ := "checkbox",
+              controlled(
+                checked <-- vsBotAllowUndoVar.signal,
+                onChange.mapToChecked --> vsBotAllowUndoVar,
+              ),
+            ),
+            "Allow undo / redo",
+          ),
+        ),
+
+        div(
+          className := "modal-actions flex flex-row gap-3 justify-end",
+          Components.ctaButton("Start") { _ =>
+            // Player picks their side; the bot takes the opposite.
+            val playerWhite = vsBotPlayerSideVar.now() == "white"
+            val botSide     = if playerWhite then "black" else "white"
+            val settings = VsBotSettings(
+              botSide    = botSide,
+              difficulty = vsBotDifficultyVar.now(),
+              allowUndo  = vsBotAllowUndoVar.now(),
+            )
+            bootstrapGame(load = None, vsBot = Some(settings))
+            vsBotOpenVar.set(false)
+          },
+          Components.secondaryButton("Cancel") { _ => vsBotOpenVar.set(false) },
+        ),
+      ),
+    )
+
   private def confirmModal(): HtmlElement =
     div(
       className <-- confirmVar.signal.map(c =>
@@ -1435,8 +1558,11 @@ object Main:
     * to that game's stream. Used both at first paint and whenever the
     * user clicks "new game" or loads a serialized payload.
     */
-  private def bootstrapGame(load: Option[String] = None): Unit =
-    postCreateGameClient((sessionId, CreateGameRequest(load))).foreach {
+  private def bootstrapGame(
+      load: Option[String] = None,
+      vsBot: Option[VsBotSettings] = None,
+  ): Unit =
+    postCreateGameClient((sessionId, CreateGameRequest(load, vsBot))).foreach {
       case Right(snapshot) =>
         gameIdVar.set(Some(snapshot.id))
         stateVar.set(Some(snapshot.state))
