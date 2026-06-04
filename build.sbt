@@ -218,9 +218,14 @@ lazy val codec = project
 // zio-json is pulled in solely for the WeightsCodec — loading the
 // committed weights JSON resource at startup, the only piece of
 // runtime serialisation the engine itself needs.
+//
+// codec is a main dependency (not Test-only) because the bot's
+// portable opening book is committed as PGN and the engine has to
+// parse it at startup via PgnParser. This makes bot-engine fully
+// self-contained — clone + build + run, no DB.
 lazy val botEngine = project
   .in(file("bot-engine"))
-  .dependsOn(domain.jvm, rules, codec % Test)
+  .dependsOn(domain.jvm, rules, codec)
   .settings(commonSettings)
   .settings(
     name := "pichess-bot-engine",
