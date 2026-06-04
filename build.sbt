@@ -258,7 +258,7 @@ lazy val botData = project
 // network. Reads big PGN dumps and writes to the chess-bot.duckdb file.
 lazy val botTrain = project
   .in(file("bot-train"))
-  .dependsOn(domain.jvm, rules, codec, botData)
+  .dependsOn(domain.jvm, rules, codec, botData, botEngine)
   .settings(commonSettings)
   .settings(name := "pichess-bot-train")
 
