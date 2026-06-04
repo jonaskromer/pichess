@@ -214,11 +214,20 @@ lazy val codec = project
 // rules layer — no DB / no network / no DTOs. Phase 1 is material-only
 // eval + α-β with TT; Texel-tuned weights and opening-book hooks come
 // in via later phases without touching this module's public surface.
+//
+// zio-json is pulled in solely for the WeightsCodec — loading the
+// committed weights JSON resource at startup, the only piece of
+// runtime serialisation the engine itself needs.
 lazy val botEngine = project
   .in(file("bot-engine"))
   .dependsOn(domain.jvm, rules, codec % Test)
   .settings(commonSettings)
-  .settings(name := "pichess-bot-engine")
+  .settings(
+    name := "pichess-bot-engine",
+    libraryDependencies ++= Seq(
+      "dev.zio" %% "zio-json" % zioJsonVersion,
+    ),
+  )
 
 // Lichess Bot-API client + Bridge orchestrator. Parses the Lichess
 // event stream, spawns a search fiber per accepted game, and POSTs

@@ -4,6 +4,8 @@ import java.sql.Connection
 
 import zio.*
 
+import chess.bot.engine.WeightSnapshot
+
 /** Versioned snapshots of Texel-tuned evaluation weights.
   *
   * Each `version` is an integer monotonically increased per training
@@ -32,9 +34,10 @@ trait WeightsRepo:
   def save(snapshot: WeightSnapshot): UIO[Unit]
 
 
-/** One versioned snapshot — a flat Map keyed by feature name. */
-final case class WeightSnapshot(version: Int, weights: Map[String, Int])
-
+// WeightSnapshot lives in bot-engine so the engine can load it from
+// committed JSON resources without depending on bot-data — re-exported
+// here as the natural read/write type for the DB-backed repo. See
+// chess.bot.engine.WeightSnapshot.
 
 object WeightsRepo:
 
