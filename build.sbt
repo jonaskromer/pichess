@@ -275,11 +275,18 @@ lazy val botData = project
 // Offline training pipeline: PGN ingest, Texel tuner, self-play loop.
 // Depends on codec (PgnParser) + bot-data (BookRepo/TrainingRepo); no
 // network. Reads big PGN dumps and writes to the chess-bot.duckdb file.
+//
+// TrainMain is the runnable entry point; excluded from coverage
+// because it's pure orchestration over already-tested pieces and
+// requires a real corpus + filesystem to exercise meaningfully.
 lazy val botTrain = project
   .in(file("bot-train"))
   .dependsOn(domain.jvm, rules, codec, botData, botEngine)
   .settings(commonSettings)
-  .settings(name := "pichess-bot-train")
+  .settings(
+    name := "pichess-bot-train",
+    coverageExcludedFiles := ".*TrainMain.*",
+  )
 
 // Contract for the repository microservice — endpoint descriptions shared by
 // its server (in `repository`) and its caller (`HttpGameRepository`).
@@ -548,7 +555,11 @@ lazy val gameService = project
     api.jvm,
     persistenceApi,
     persistenceRuntime,
-    observability
+    observability,
+    // vs-bot integration: game-service composes engine-search with the
+    // chess-game lifecycle. bot-engine is pure CPU code so this adds
+    // no transitive infra burden.
+    botEngine,
   )
   .enablePlugins(JavaAppPackaging, DockerPlugin)
   .settings(commonSettings)
