@@ -61,7 +61,14 @@ object Schema:
       knight_diff   SMALLINT     NOT NULL DEFAULT 0,
       bishop_diff   SMALLINT     NOT NULL DEFAULT 0,
       rook_diff     SMALLINT     NOT NULL DEFAULT 0,
-      queen_diff    SMALLINT     NOT NULL DEFAULT 0
+      queen_diff    SMALLINT     NOT NULL DEFAULT 0,
+      -- FEN of the pre-move state. The tuner re-extracts features
+      -- (material + PST + bishop pair via FeatureExtractor.full) at
+      -- training time, so adding new features doesn't require
+      -- re-ingesting the corpus — only re-tuning. Older rows
+      -- without a FEN (pre-richer-features schema) are skipped at
+      -- tune time.
+      fen           VARCHAR
     )
   """
 

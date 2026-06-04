@@ -35,22 +35,63 @@ object CorpusTrainerSpec extends ZIOSpecDefault:
 
   def spec = suite("CorpusTrainer")(
     suite("toSample")(
-      test("preserves material-feature counts from a TrainingRow") {
+      test("material extractor reads diff columns directly (legacy path)") {
         val row = TrainingRow(
           zobrist = 1L, outcome = 1.0f, quiet = true, weight = 0.7f,
           pawnDiff = 1, knightDiff = -1, bishopDiff = 0,
           rookDiff = 0, queenDiff = 1,
+          fen = None,
         )
-        val sample = CorpusTrainer.toSample(row)
+        val sample = CorpusTrainer
+          .toSample(row, chess.bot.engine.FeatureExtractor.material)
+          .get
         assertTrue(
           sample.features("pawn")   == 1,
           sample.features("knight") == -1,
           sample.features("queen")  == 1,
           sample.outcome == 1.0,
-          // Float→Double widening loses precision (0.7f → 0.6999…);
-          // use a tight epsilon comparison instead of strict ==.
           math.abs(sample.weight - 0.7) < 1e-5,
         )
+      },
+      test("full extractor parses the FEN and emits PST features") {
+        val row = TrainingRow(
+          zobrist = 1L, outcome = 0.5f, quiet = true, weight = 1.0f,
+          fen = Some("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"),
+        )
+        val sample = CorpusTrainer.toSample(row).get   // default = full
+        assertTrue(
+          // Starting position → material features net zero.
+          sample.features("pawn") == 0,
+          // PST keys present (only touched squares, but at minimum
+          // the 16 white-piece squares appear; the starting position
+          // touches 16 distinct white squares which black mirrors
+          // onto identically, so the keys exist with value 0).
+          sample.features.keySet.exists(_.startsWith("pawn_")),
+          sample.features.keySet.exists(_.startsWith("knight_")),
+          sample.features.keySet.contains("bishop_pair"),
+        )
+      },
+      test("full extractor returns None when the row has no FEN (legacy schema)") {
+        val row = TrainingRow(
+          zobrist = 1L, outcome = 0.0f, quiet = true, weight = 1.0f,
+          fen = None,
+        )
+        assertTrue(CorpusTrainer.toSample(row).isEmpty)
+      },
+    ),
+    suite("subsampleRows")(
+      test("returns input unchanged when cap exceeds row count") {
+        val rows = Chunk.from((0 until 5).map(i =>
+          TrainingRow(zobrist = i.toLong, outcome = 0.5f, quiet = true)
+        ))
+        assertTrue(CorpusTrainer.subsampleRows(rows, cap = 100) == rows)
+      },
+      test("respects the cap when smaller than row count") {
+        val rows = Chunk.from((0 until 1000).map(i =>
+          TrainingRow(zobrist = i.toLong, outcome = 0.5f, quiet = true)
+        ))
+        val out = CorpusTrainer.subsampleRows(rows, cap = 100)
+        assertTrue(out.size <= 100, out.size > 0)
       },
     ),
     suite("ingestAll")(

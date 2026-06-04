@@ -11,6 +11,7 @@ import java.sql.Connection
 
 import chess.bot.data.{BookRepo, Db, IngestedFilesRepo, TrainingRepo, TrainingRow, WeightsRepo}
 import chess.bot.engine.{FeatureExtractor, WeightSnapshot, WeightsLoader}
+import chess.codec.FenParserRegex
 
 /** End-to-end training orchestration: ingest one or more PGN
   * corpora into DuckDB tagging each with its source quality, sample
@@ -140,12 +141,17 @@ object CorpusTrainer:
       maxIterations: Int = 100,
       initialStep: Int = 16,
       ingestStats: PgnIngest.Stats = PgnIngest.Stats.Zero,
+      extractor: FeatureExtractor = FeatureExtractor.full,
+      subsample: Long = Long.MaxValue,
   ): IO[Throwable, TrainResult] =
     for
-      samples <- repos.training.streamQuiet.runCollect.map(_.map(toSample))
+      rows <- repos.training.streamQuiet.runCollect
+      effectiveRows = subsampleRows(rows, subsample)
+      samples = effectiveRows.flatMap(r => toSample(r, extractor))
       _       <- ZIO.when(samples.isEmpty)(
                    ZIO.fail(new RuntimeException(
-                     "No quiet training positions found — ingest a corpus first.",
+                     "No usable training positions — ingest a corpus first " +
+                       "(richer-features path also needs the new FEN column).",
                    ))
                  )
       lossBefore = TexelTuner.totalLoss(samples, initial, K)
@@ -162,22 +168,64 @@ object CorpusTrainer:
       snapshot    = snapshot,
     )
 
-  /** Convert one persisted [[TrainingRow]] into a tuner [[TexelTuner.Sample]].
-    * The feature keys must match what [[FeatureExtractor.material]]
-    * emits — that contract is enforced by both producer and consumer
-    * referring to [[FeatureExtractor.materialNames]] in tests. */
-  private[train] def toSample(row: TrainingRow): TexelTuner.Sample =
-    TexelTuner.Sample(
-      features = Map(
-        "pawn"   -> row.pawnDiff,
-        "knight" -> row.knightDiff,
-        "bishop" -> row.bishopDiff,
-        "rook"   -> row.rookDiff,
-        "queen"  -> row.queenDiff,
-      ),
-      outcome = row.outcome.toDouble,
-      weight  = row.weight.toDouble,
-    )
+  /** Deterministic stride-based subsample. `cap >= rows.size` returns
+    * `rows` unchanged; otherwise every `ceil(rows.size / cap)`-th row
+    * is kept. The `Chunk` zipping isn't shuffled — we accept the
+    * bias for the simplicity / reproducibility win (same rows
+    * sampled across re-runs on the same corpus). */
+  private[train] def subsampleRows(
+      rows: Chunk[TrainingRow],
+      cap: Long,
+  ): Chunk[TrainingRow] =
+    if cap >= rows.size then rows
+    else
+      val stride = ((rows.size + cap - 1) / cap).toInt
+      Chunk.fromIterable(rows.zipWithIndex.collect {
+        case (r, i) if i % stride == 0 => r
+      })
+
+  /** Convert one persisted [[TrainingRow]] into a tuner
+    * [[TexelTuner.Sample]] using `extractor`.
+    *
+    * For [[FeatureExtractor.material]]: builds features straight
+    * from the per-row material-diff columns — no FEN reparse.
+    *
+    * For [[FeatureExtractor.full]] (default): parses the row's FEN
+    * back to a [[chess.model.board.GameState]] and re-extracts the
+    * full feature vector (material + PST + bishop pair). Rows
+    * without a FEN (older schema) return `None` and the tuner sees
+    * one fewer sample. */
+  private[train] def toSample(
+      row: TrainingRow,
+      extractor: FeatureExtractor = FeatureExtractor.full,
+  ): Option[TexelTuner.Sample] =
+    val featuresOpt: Option[Map[String, Int]] =
+      if extractor eq FeatureExtractor.material then
+        Some(Map(
+          "pawn"   -> row.pawnDiff,
+          "knight" -> row.knightDiff,
+          "bishop" -> row.bishopDiff,
+          "rook"   -> row.rookDiff,
+          "queen"  -> row.queenDiff,
+        ))
+      else
+        row.fen.flatMap { fen =>
+          // Unsafe-run is fine here — FenParserRegex.parse is sync
+          // CPU work, the IO wrapping is purely for error typing.
+          zio.Unsafe.unsafe { implicit u =>
+            zio.Runtime.default.unsafe.run(FenParserRegex.parse(fen).either)
+              .getOrThrow()
+              .toOption
+              .map(extractor.features)
+          }
+        }
+    featuresOpt.map { f =>
+      TexelTuner.Sample(
+        features = f,
+        outcome  = row.outcome.toDouble,
+        weight   = row.weight.toDouble,
+      )
+    }
 
   /** Read a PGN file as UTF-8. Used as the read step in [[ingestAll]];
     * pulled out for testability + a clean failure surface. */

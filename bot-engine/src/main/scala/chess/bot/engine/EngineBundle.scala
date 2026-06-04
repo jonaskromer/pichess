@@ -42,7 +42,12 @@ object EngineBundle:
     for
       weights <- WeightsLoader.load(weightsVersion)
       book    <- OpeningBookLoader.loadDefault(maxBookPly)
-      eval     = TunedEvaluator(weights.weights, FeatureExtractor.material)
+      // Use the full feature extractor at runtime — older weights
+      // snapshots that only contain material keys still work,
+      // because missing keys are treated as 0 by [[TunedEvaluator]].
+      // Newer snapshots include PST + bishop-pair weights and the
+      // engine starts playing positional moves immediately.
+      eval     = TunedEvaluator(weights.weights, FeatureExtractor.full)
       search   = Search.alphaBeta(eval, book, maxTtEntries)
     yield EngineBundle(weights, book, search)
 
@@ -62,8 +67,11 @@ object EngineBundle:
             EngineBundle(
               weights     = fallbackSnapshot,
               openingBook = OpeningBook.Empty,
+              // Same extractor as the success path so a fallback
+              // bundle accepts the full feature vector when later
+              // snapshots are added live (e.g. via WeightsRepo).
               search      = Search.alphaBeta(
-                Evaluator.materialOnly,
+                TunedEvaluator(fallbackSnapshot.weights, FeatureExtractor.full),
                 OpeningBook.Empty,
                 maxTtEntries,
               ),

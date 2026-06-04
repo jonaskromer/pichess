@@ -54,14 +54,21 @@ final case class TrainingRow(
     quiet: Boolean,
     weight: Float = 1.0f,
     // Material-difference features (white count − black count) for
-    // each piece type. Pre-computed at ingest so the tuner doesn't
-    // need to look up FENs and re-extract features per row. Schema
-    // grows to add more features (PST, mobility) when those land.
+    // each piece type. Pre-computed at ingest so the material-only
+    // tuner doesn't need to look up FENs. Kept around for backward
+    // compatibility with the original material-only path; the
+    // richer-features tuner uses `fen` + `FeatureExtractor.full`
+    // instead.
     pawnDiff:   Int = 0,
     knightDiff: Int = 0,
     bishopDiff: Int = 0,
     rookDiff:   Int = 0,
     queenDiff:  Int = 0,
+    // FEN of the pre-move state, populated by new PgnIngest runs.
+    // Optional because rows ingested before the richer-features
+    // schema upgrade don't carry it; the tuner skips those at
+    // training time.
+    fen: Option[String] = None,
 )
 
 
@@ -81,7 +88,8 @@ object TrainingRepo:
         Db.query(
           conn,
           "SELECT zobrist, outcome, weight, " +
-            "pawn_diff, knight_diff, bishop_diff, rook_diff, queen_diff " +
+            "pawn_diff, knight_diff, bishop_diff, rook_diff, queen_diff, " +
+            "fen " +
             "FROM training_positions WHERE quiet = TRUE",
         ) { rs =>
           TrainingRow(
@@ -94,6 +102,7 @@ object TrainingRepo:
             bishopDiff = rs.getInt("bishop_diff"),
             rookDiff   = rs.getInt("rook_diff"),
             queenDiff  = rs.getInt("queen_diff"),
+            fen        = Option(rs.getString("fen")),
           )
         }
       )
@@ -103,12 +112,14 @@ object TrainingRepo:
         conn,
         "INSERT INTO training_positions " +
           "(zobrist, outcome, quiet, weight, " +
-          " pawn_diff, knight_diff, bishop_diff, rook_diff, queen_diff) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          " pawn_diff, knight_diff, bishop_diff, rook_diff, queen_diff, " +
+          " fen) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         rows.toList.map(r =>
           Seq(
             r.zobrist, r.outcome, r.quiet, r.weight,
             r.pawnDiff, r.knightDiff, r.bishopDiff, r.rookDiff, r.queenDiff,
+            r.fen.orNull,
           )
         ),
       ).orDie

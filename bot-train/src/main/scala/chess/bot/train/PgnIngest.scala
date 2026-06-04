@@ -4,7 +4,7 @@ import zio.*
 
 import chess.bot.data.{BookRepo, BookRow, TrainingRepo, TrainingRow}
 import chess.bot.engine.FeatureExtractor
-import chess.codec.PgnParser
+import chess.codec.{FenSerializer, PgnParser}
 import chess.codec.PgnParser.PgnGame
 import chess.model.board.{GameState, Move}
 import chess.model.piece.{Color, PieceType}
@@ -142,8 +142,11 @@ object PgnIngest:
         preState.board.contains(move.to) ||
           isEnPassantCapture(preState, move)
       val quiet = !preState.inCheck && !postState.inCheck && !isCapture
-      // Pre-compute material features so the tuner can build its
-      // Sample objects with one DB pass — no second FEN-parse round.
+      // Pre-compute material features (cheap, useful for the legacy
+      // material-only tuner). The richer-features tuner uses the
+      // serialised FEN instead — re-extracting full features on
+      // demand so we can ship new features (PST, mobility, ...)
+      // without re-ingesting the corpus.
       val features = FeatureExtractor.material.features(preState)
       trainingBuf += TrainingRow(
         zobrist    = zobrist,
@@ -155,6 +158,7 @@ object PgnIngest:
         bishopDiff = features("bishop"),
         rookDiff   = features("rook"),
         queenDiff  = features("queen"),
+        fen        = Some(FenSerializer.serialize(preState)),
       )
 
       preState = postState
