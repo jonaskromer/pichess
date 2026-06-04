@@ -10,8 +10,14 @@ package chess.model.rules
   * variant).
   *
   * All indices are LERF (see [[chess.model.board.Position.squareIdx]]).
+  *
+  * Public surface (no `private[rules]`): the bot's eval mobility
+  * features need the same attack masks the move generator uses, so
+  * this object is part of the rules layer's reusable API — anyone
+  * computing "squares this piece attacks given an occupancy" can lean
+  * on it without re-deriving the bit math.
   */
-private[rules] object BitboardAttacks:
+object BitboardAttacks:
 
   // ── Leaper tables (computed once at class load) ──────────────────────
 
