@@ -253,6 +253,15 @@ lazy val botData = project
     ),
   )
 
+// Offline training pipeline: PGN ingest, Texel tuner, self-play loop.
+// Depends on codec (PgnParser) + bot-data (BookRepo/TrainingRepo); no
+// network. Reads big PGN dumps and writes to the chess-bot.duckdb file.
+lazy val botTrain = project
+  .in(file("bot-train"))
+  .dependsOn(domain.jvm, rules, codec, botData)
+  .settings(commonSettings)
+  .settings(name := "pichess-bot-train")
+
 // Contract for the repository microservice — endpoint descriptions shared by
 // its server (in `repository`) and its caller (`HttpGameRepository`).
 lazy val repositoryApi = project
