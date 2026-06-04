@@ -1,0 +1,10 @@
+{
+  "version" : 2,
+  "weights" : {
+    "rook" : 520,
+    "queen" : 940,
+    "pawn" : 100,
+    "bishop" : 320,
+    "knight" : 320
+  }
+}
