@@ -237,6 +237,22 @@ lazy val botLichess = project
     ),
   )
 
+// Training-data layer. DuckDB-backed: a single .duckdb file is the
+// opening book at runtime AND the training corpus accumulator. JDBC
+// only (zio-jdbc 0.1.2 in the build pins zio-schema 0.4.x — too old
+// to be worth adopting here). Schema is created on open via
+// CREATE TABLE IF NOT EXISTS so file lifecycles stay one-line simple.
+lazy val botData = project
+  .in(file("bot-data"))
+  .dependsOn(domain.jvm, codec)
+  .settings(commonSettings)
+  .settings(
+    name := "pichess-bot-data",
+    libraryDependencies ++= Seq(
+      "org.duckdb" % "duckdb_jdbc" % "1.1.3",
+    ),
+  )
+
 // Contract for the repository microservice — endpoint descriptions shared by
 // its server (in `repository`) and its caller (`HttpGameRepository`).
 lazy val repositoryApi = project
