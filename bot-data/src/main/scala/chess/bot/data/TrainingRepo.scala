@@ -41,8 +41,28 @@ trait TrainingRepo:
   * `quiet` is set during ingest by a cheap heuristic (no captures or
   * checks in the next ply). The tuner can filter further at query
   * time if it wants stricter quietness.
+  *
+  * `weight` is the source-quality multiplier (0.0–1.0). Curated
+  * corpora (PGN Mentor master archives) get weight 1.0; tournament
+  * dumps (TWIC) get ~0.7; mixed-Elo public dumps (Lichess) get ~0.3.
+  * The tuner multiplies its per-row loss contribution by this weight
+  * so high-quality data dominates the gradient direction.
   */
-final case class TrainingRow(zobrist: Long, outcome: Float, quiet: Boolean)
+final case class TrainingRow(
+    zobrist: Long,
+    outcome: Float,
+    quiet: Boolean,
+    weight: Float = 1.0f,
+    // Material-difference features (white count − black count) for
+    // each piece type. Pre-computed at ingest so the tuner doesn't
+    // need to look up FENs and re-extract features per row. Schema
+    // grows to add more features (PST, mobility) when those land.
+    pawnDiff:   Int = 0,
+    knightDiff: Int = 0,
+    bishopDiff: Int = 0,
+    rookDiff:   Int = 0,
+    queenDiff:  Int = 0,
+)
 
 
 object TrainingRepo:
@@ -60,12 +80,20 @@ object TrainingRepo:
       ZStream.fromIterableZIO(
         Db.query(
           conn,
-          "SELECT zobrist, outcome FROM training_positions WHERE quiet = TRUE",
+          "SELECT zobrist, outcome, weight, " +
+            "pawn_diff, knight_diff, bishop_diff, rook_diff, queen_diff " +
+            "FROM training_positions WHERE quiet = TRUE",
         ) { rs =>
           TrainingRow(
-            zobrist = rs.getLong("zobrist"),
-            outcome = rs.getFloat("outcome"),
-            quiet   = true,
+            zobrist    = rs.getLong("zobrist"),
+            outcome    = rs.getFloat("outcome"),
+            quiet      = true,
+            weight     = rs.getFloat("weight"),
+            pawnDiff   = rs.getInt("pawn_diff"),
+            knightDiff = rs.getInt("knight_diff"),
+            bishopDiff = rs.getInt("bishop_diff"),
+            rookDiff   = rs.getInt("rook_diff"),
+            queenDiff  = rs.getInt("queen_diff"),
           )
         }
       )
@@ -73,8 +101,16 @@ object TrainingRepo:
     def appendBatch(rows: Chunk[TrainingRow]): UIO[Unit] =
       Db.batchInsert(
         conn,
-        "INSERT INTO training_positions (zobrist, outcome, quiet) VALUES (?, ?, ?)",
-        rows.toList.map(r => Seq(r.zobrist, r.outcome, r.quiet)),
+        "INSERT INTO training_positions " +
+          "(zobrist, outcome, quiet, weight, " +
+          " pawn_diff, knight_diff, bishop_diff, rook_diff, queen_diff) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rows.toList.map(r =>
+          Seq(
+            r.zobrist, r.outcome, r.quiet, r.weight,
+            r.pawnDiff, r.knightDiff, r.bishopDiff, r.rookDiff, r.queenDiff,
+          )
+        ),
       ).orDie
 
     def count: UIO[Long] =

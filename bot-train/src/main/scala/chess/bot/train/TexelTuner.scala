@@ -32,8 +32,20 @@ object TexelTuner:
     *                 The evaluator computes `Σ_f (count_f * weight_f)`.
     * @param outcome the eventual game outcome from the side-to-move
     *                perspective: 1.0 = won, 0.5 = drew, 0.0 = lost.
+    * @param weight  source-quality multiplier — the loss contribution
+    *                is `weight × (predicted - outcome)²`, so a row
+    *                from a high-quality corpus (e.g. PGN Mentor at
+    *                1.0) pulls the optimum ~3× harder than a Lichess
+    *                row at 0.3. Weighted MSE preserves the closed-
+    *                form optimum at predicted = outcome per-row, so
+    *                introducing the weight doesn't bias the result
+    *                — it just emphasises the rows we trust more.
     */
-  final case class Sample(features: Map[String, Int], outcome: Double)
+  final case class Sample(
+      features: Map[String, Int],
+      outcome: Double,
+      weight: Double = 1.0,
+  )
 
   /** Tuner output. `iterations` is the number of full passes
     * completed; `finalLoss` is the mean squared sigmoid-mapped
@@ -106,9 +118,13 @@ object TexelTuner:
     }
     (working, loss)
 
-  /** Mean squared sigmoid-mapped error over the sample set.
-    * Public-ish so the test suite can compare loss before/after a
-    * tuning run without re-implementing it. */
+  /** Sample-weight-aware mean squared sigmoid-mapped error.
+    *
+    * Each row contributes `weight × (predicted - actual)²` to the
+    * numerator and `weight` to the denominator — so the result is a
+    * proper weighted mean. Rows with weight 0 are silently ignored;
+    * an all-zero sample set is treated as "no training data" and
+    * returns 0 (a no-op for the tuner). */
   private[train] def totalLoss(
       samples: Seq[Sample],
       weights: Map[String, Int],
@@ -116,14 +132,16 @@ object TexelTuner:
   ): Double =
     if samples.isEmpty then 0.0
     else
-      var sumSq = 0.0
+      var sumSq       = 0.0
+      var sumWeights  = 0.0
       val it = samples.iterator
       while it.hasNext do
         val s = it.next()
         val predicted = sigmoid(K * evaluate(s.features, weights))
         val diff      = predicted - s.outcome
-        sumSq += diff * diff
-      sumSq / samples.size
+        sumSq      += s.weight * diff * diff
+        sumWeights += s.weight
+      if sumWeights == 0.0 then 0.0 else sumSq / sumWeights
 
   /** Linear evaluator: Σ (count_f × weight_f). Missing weights treat
     * as 0 so additional feature keys in the sample are silently

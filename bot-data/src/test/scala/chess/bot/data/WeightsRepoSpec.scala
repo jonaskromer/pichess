@@ -3,6 +3,8 @@ package chess.bot.data
 import zio.*
 import zio.test.*
 
+import chess.bot.engine.WeightSnapshot
+
 object WeightsRepoSpec extends ZIOSpecDefault:
 
   private val memoryCfg = Db.Config(path = ":memory:")

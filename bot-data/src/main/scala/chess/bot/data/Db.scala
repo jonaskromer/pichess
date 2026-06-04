@@ -24,6 +24,13 @@ import zio.*
   */
 object Db:
 
+  // Explicitly load the DuckDB JDBC driver at class init. Service-loader
+  // auto-registration can race with the test runner's parallel execution
+  // on first use ("No suitable driver" surfaces intermittently in shared
+  // classloaders). Forcing the load here pins the registration to the
+  // first reference to `Db` — well before any connection is opened.
+  Class.forName("org.duckdb.DuckDBDriver")
+
   /** Connection settings. `path` is a filesystem path
     * (`./chess-bot.duckdb`) or the in-memory sentinel `:memory:`
     * which tests use to get a fresh isolated database per call. */

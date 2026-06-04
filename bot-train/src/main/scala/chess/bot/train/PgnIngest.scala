@@ -3,6 +3,7 @@ package chess.bot.train
 import zio.*
 
 import chess.bot.data.{BookRepo, BookRow, TrainingRepo, TrainingRow}
+import chess.bot.engine.FeatureExtractor
 import chess.codec.PgnParser
 import chess.codec.PgnParser.PgnGame
 import chess.model.board.{GameState, Move}
@@ -55,13 +56,14 @@ object PgnIngest:
       pgn: String,
       book: BookRepo,
       training: TrainingRepo,
+      quality: Float = 1.0f,
   ): UIO[Stats] =
     PgnParser
       .parse(pgn)
       .foldZIO(
         err =>
           ZIO.logWarning(s"skipping malformed PGN: ${err.message}").as(Stats.Zero),
-        game => ingestParsedGame(game, book, training),
+        game => ingestParsedGame(game, book, training, quality),
       )
 
   /** Ingest a multi-game PGN string. Games are separated by the
@@ -69,14 +71,19 @@ object PgnIngest:
     * than a strict blank-line split — Lichess dumps mostly follow
     * that convention but occasionally have stray blank lines inside
     * single games.
+    *
+    * `quality` is the source-quality weight (0.0–1.0) attached to
+    * every TrainingRow emitted for this corpus. See
+    * [[CorpusSource]] for canonical values per source.
     */
   def ingestMany(
       pgn: String,
       book: BookRepo,
       training: TrainingRepo,
+      quality: Float = 1.0f,
   ): UIO[Stats] =
     ZIO.foldLeft(splitGames(pgn))(Stats.Zero) { (acc, gamePgn) =>
-      ingestOne(gamePgn, book, training).map(acc + _)
+      ingestOne(gamePgn, book, training, quality).map(acc + _)
     }
 
   /** Build the BookRows + TrainingRows for one parsed game and write
@@ -85,8 +92,9 @@ object PgnIngest:
       game: PgnGame,
       book: BookRepo,
       training: TrainingRepo,
+      quality: Float,
   ): UIO[Stats] =
-    val (bookRows, trainingRows) = buildRows(game)
+    val (bookRows, trainingRows) = buildRows(game, quality)
     for
       _ <- book.upsert(Chunk.fromIterable(bookRows))
       _ <- training.appendBatch(Chunk.fromIterable(trainingRows))
@@ -98,8 +106,14 @@ object PgnIngest:
 
   /** Pure conversion: PgnGame → (BookRows, TrainingRows). Walks the
     * (move, post-state) history while tracking the pre-state so each
-    * row keys off the position the move was *made from*. */
-  private[train] def buildRows(game: PgnGame): (Vector[BookRow], Vector[TrainingRow]) =
+    * row keys off the position the move was *made from*.
+    *
+    * `quality` stamps every TrainingRow with the corpus weight so
+    * higher-quality sources (PGN Mentor) dominate the tuner's loss. */
+  private[train] def buildRows(
+      game: PgnGame,
+      quality: Float = 1.0f,
+  ): (Vector[BookRow], Vector[TrainingRow]) =
     val result   = game.headers.getOrElse("Result", "*")
     val whiteElo = game.headers.get("WhiteElo").flatMap(_.toIntOption).getOrElse(1500)
     val blackElo = game.headers.get("BlackElo").flatMap(_.toIntOption).getOrElse(1500)
@@ -128,10 +142,19 @@ object PgnIngest:
         preState.board.contains(move.to) ||
           isEnPassantCapture(preState, move)
       val quiet = !preState.inCheck && !postState.inCheck && !isCapture
+      // Pre-compute material features so the tuner can build its
+      // Sample objects with one DB pass — no second FEN-parse round.
+      val features = FeatureExtractor.material.features(preState)
       trainingBuf += TrainingRow(
-        zobrist = zobrist,
-        outcome = sideToMoveOutcome(mover, result),
-        quiet   = quiet,
+        zobrist    = zobrist,
+        outcome    = sideToMoveOutcome(mover, result),
+        quiet      = quiet,
+        weight     = quality,
+        pawnDiff   = features("pawn"),
+        knightDiff = features("knight"),
+        bishopDiff = features("bishop"),
+        rookDiff   = features("rook"),
+        queenDiff  = features("queen"),
       )
 
       preState = postState

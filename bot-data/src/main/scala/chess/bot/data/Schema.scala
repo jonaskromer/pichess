@@ -55,7 +55,13 @@ object Schema:
     CREATE TABLE IF NOT EXISTS training_positions (
       zobrist       BIGINT       NOT NULL,
       outcome       FLOAT        NOT NULL,
-      quiet         BOOLEAN      NOT NULL
+      quiet         BOOLEAN      NOT NULL,
+      weight        FLOAT        NOT NULL DEFAULT 1.0,
+      pawn_diff     SMALLINT     NOT NULL DEFAULT 0,
+      knight_diff   SMALLINT     NOT NULL DEFAULT 0,
+      bishop_diff   SMALLINT     NOT NULL DEFAULT 0,
+      rook_diff     SMALLINT     NOT NULL DEFAULT 0,
+      queen_diff    SMALLINT     NOT NULL DEFAULT 0
     )
   """
 
