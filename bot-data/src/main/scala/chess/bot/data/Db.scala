@@ -121,6 +121,35 @@ object Db:
         } finally ps.close()
       }
 
+  /** Run `action` inside a JDBC transaction on `conn`. On success the
+    * connection is committed; on failure (or interruption) it's
+    * rolled back. Auto-commit is restored to true afterwards either
+    * way so subsequent queries on the same connection behave normally.
+    *
+    * Used to make per-file PGN ingest atomic: if the process is
+    * killed (or any step inside the action fails) mid-file, no rows
+    * land in `position_moves` / `training_positions` and the
+    * `ingested_files` marker isn't written either — so the file is
+    * cleanly re-attempted on the next run instead of being half-
+    * counted.
+    */
+  def withTransaction[A](conn: Connection)(
+      action: RIO[Any, A]
+  ): RIO[Any, A] =
+    ZIO.acquireReleaseExitWith(
+      ZIO.attemptBlocking { conn.setAutoCommit(false); () }
+    ) { (_, exit) =>
+      // On any non-success (failure, defect, interruption) roll back.
+      // Then unconditionally restore auto-commit so subsequent
+      // unrelated queries don't have to think about transaction state.
+      val cleanup =
+        if exit.isSuccess then
+          ZIO.attemptBlocking(conn.commit())
+        else
+          ZIO.attemptBlocking(conn.rollback())
+      (cleanup *> ZIO.attemptBlocking(conn.setAutoCommit(true))).ignoreLogged
+    }(_ => action)
+
   /** Bind a parameter sequence into a [[PreparedStatement]] in order.
     * Supports the JDBC-native types we actually use (Long, Int, Float,
     * String, Boolean) — anything else falls through to `setObject`

@@ -7,7 +7,9 @@ import scala.util.Using
 import zio.*
 import zio.json.*
 
-import chess.bot.data.{BookRepo, TrainingRepo, TrainingRow, WeightsRepo}
+import java.sql.Connection
+
+import chess.bot.data.{BookRepo, Db, IngestedFilesRepo, TrainingRepo, TrainingRow, WeightsRepo}
 import chess.bot.engine.{FeatureExtractor, WeightSnapshot, WeightsLoader}
 
 /** End-to-end training orchestration: ingest one or more PGN
@@ -50,12 +52,20 @@ object CorpusTrainer:
   /** One ingest target: a PGN file on disk + its quality source. */
   final case class CorpusInput(source: CorpusSource, path: Path)
 
-  /** Bundle of the three repos the trainer talks to. Kept as a
-    * single value so test code constructs once and threads through. */
+  /** Bundle of the repos the trainer talks to. Kept as a single
+    * value so test code constructs once and threads through.
+    *
+    * `connection` is exposed so the resumable-ingest path can wrap
+    * per-file work in a transaction via `Db.withTransaction`. Tests
+    * that don't care about resumability can pass any connection
+    * (e.g. the same one the BookRepo/TrainingRepo/etc. are built on,
+    * which is the typical setup). */
   final case class Repos(
       book: BookRepo,
       training: TrainingRepo,
       weights: WeightsRepo,
+      ingestedFiles: IngestedFilesRepo,
+      connection: Connection,
   )
 
   /** Summary of one training run. */
@@ -69,19 +79,46 @@ object CorpusTrainer:
   )
 
   /** Ingest every PGN file in `inputs` into DuckDB with the right
-    * quality weight per source. Returns aggregated stats across all
-    * files. Failures on individual files are logged but don't abort
-    * the run (a single bad file shouldn't waste hours of work). */
+    * quality weight per source.
+    *
+    * Each file is processed inside its own transaction with the
+    * `ingested_files` marker written as the last operation — so a
+    * crash mid-file rolls back cleanly and the file gets re-attempted
+    * on the next run. Files already marked as ingested are skipped
+    * up-front, which is what makes the trainer resumable.
+    *
+    * Failures on individual files (parse error in a non-ingest
+    * stage, I/O error reading the file, ...) are logged but don't
+    * abort the run — a single bad file shouldn't waste the hours
+    * already spent on the rest of the corpus.
+    */
   def ingestAll(inputs: List[CorpusInput], repos: Repos): UIO[PgnIngest.Stats] =
     ZIO.foldLeft(inputs)(PgnIngest.Stats.Zero) { (acc, in) =>
-      readFile(in.path).foldZIO(
-        err =>
-          ZIO.logWarning(s"corpus ${in.path}: ${err.getMessage}").as(acc),
-        pgn =>
-          PgnIngest
-            .ingestMany(pgn, repos.book, repos.training, in.source.quality)
-            .map(acc + _),
-      )
+      ingestOneFile(in, repos).map(acc + _)
+    }
+
+  /** Process one corpus file: skip if already ingested, otherwise
+    * read, ingest within a transaction, mark complete. Errors are
+    * caught + logged so the outer loop continues. */
+  private def ingestOneFile(
+      in: CorpusInput,
+      repos: Repos,
+  ): UIO[PgnIngest.Stats] =
+    val pathKey = in.path.toAbsolutePath.toString
+    repos.ingestedFiles.isIngested(pathKey).flatMap {
+      case true =>
+        ZIO.logInfo(s"skip $pathKey — already ingested").as(PgnIngest.Stats.Zero)
+      case false =>
+        Db.withTransaction(repos.connection) {
+          for
+            pgn   <- readFile(in.path)
+            stats <- PgnIngest.ingestMany(pgn, repos.book, repos.training, in.source.quality)
+            _     <- repos.ingestedFiles.markIngested(pathKey, stats.games)
+          yield stats
+        }.foldZIO(
+          err => ZIO.logWarning(s"corpus $pathKey: ${err.getMessage}").as(PgnIngest.Stats.Zero),
+          stats => ZIO.logInfo(s"ingested $pathKey: $stats").as(stats),
+        )
     }
 
   /** Read training rows from DuckDB, turn each into a
@@ -144,7 +181,7 @@ object CorpusTrainer:
 
   /** Read a PGN file as UTF-8. Used as the read step in [[ingestAll]];
     * pulled out for testability + a clean failure surface. */
-  private def readFile(path: Path): IO[Throwable, String] =
+  private[train] def readFile(path: Path): IO[Throwable, String] =
     ZIO.attemptBlocking {
       Using.resource(scala.io.Source.fromFile(path.toFile, "UTF-8"))(_.mkString)
     }

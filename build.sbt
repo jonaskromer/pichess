@@ -279,6 +279,13 @@ lazy val botData = project
 // TrainMain is the runnable entry point; excluded from coverage
 // because it's pure orchestration over already-tested pieces and
 // requires a real corpus + filesystem to exercise meaningfully.
+//
+// `Compile / run / fork := true` and the explicit dep on bot-engine's
+// `copyResources` prevent the v1.json classpath-staleness bug — sbt's
+// in-process runner can otherwise launch with a stale classloader
+// view of resources if the bot-engine `target/.../classes/weights/`
+// hasn't been refreshed yet when runMain fires. Forking gets us a
+// fresh JVM with the freshly-copied resources on its classpath.
 lazy val botTrain = project
   .in(file("bot-train"))
   .dependsOn(domain.jvm, rules, codec, botData, botEngine)
@@ -286,6 +293,10 @@ lazy val botTrain = project
   .settings(
     name := "pichess-bot-train",
     coverageExcludedFiles := ".*TrainMain.*",
+    Compile / run / fork := true,
+    Compile / run := (Compile / run)
+      .dependsOn(botEngine / Compile / copyResources)
+      .evaluated,
   )
 
 // Contract for the repository microservice — endpoint descriptions shared by

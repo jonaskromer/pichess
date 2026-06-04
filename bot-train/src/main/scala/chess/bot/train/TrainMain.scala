@@ -7,7 +7,7 @@ import scala.jdk.CollectionConverters.*
 import zio.*
 import zio.json.*
 
-import chess.bot.data.{BookRepo, Db, TrainingRepo, WeightsRepo}
+import chess.bot.data.{BookRepo, Db, IngestedFilesRepo, TrainingRepo, WeightsRepo}
 import chess.bot.engine.{WeightSnapshot, WeightsLoader}
 
 /** End-to-end "train the bot" entry point.
@@ -62,9 +62,11 @@ object TrainMain extends ZIOAppDefault:
       _       <- ZIO.logInfo(s"Found ${inputs.size} PGN files across all sources.")
       conn    <- Db.open(Db.Config(cfg.dbPath))
       repos    = CorpusTrainer.Repos(
-                   book     = BookRepo.duckdb(conn),
-                   training = TrainingRepo.duckdb(conn),
-                   weights  = WeightsRepo.duckdb(conn),
+                   book          = BookRepo.duckdb(conn),
+                   training      = TrainingRepo.duckdb(conn),
+                   weights       = WeightsRepo.duckdb(conn),
+                   ingestedFiles = IngestedFilesRepo.duckdb(conn),
+                   connection    = conn,
                  )
       stats   <- CorpusTrainer.ingestAll(inputs, repos)
       _       <- ZIO.logInfo(s"Ingest: $stats")

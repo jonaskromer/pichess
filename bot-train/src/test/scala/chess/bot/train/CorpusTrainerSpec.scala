@@ -5,7 +5,7 @@ import java.nio.file.Files
 import zio.*
 import zio.test.*
 
-import chess.bot.data.{BookRepo, Db, TrainingRepo, TrainingRow, WeightsRepo}
+import chess.bot.data.{BookRepo, Db, IngestedFilesRepo, TrainingRepo, TrainingRow, WeightsRepo}
 
 object CorpusTrainerSpec extends ZIOSpecDefault:
 
@@ -20,14 +20,16 @@ object CorpusTrainerSpec extends ZIOSpecDefault:
       |1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 1-0
       |""".stripMargin
 
-  /** Build a freshly-scoped repo trio backed by an in-memory DuckDB. */
+  /** Build a freshly-scoped repo bundle backed by an in-memory DuckDB. */
   private def freshRepos
       : ZIO[Scope, Throwable, CorpusTrainer.Repos] =
     Db.open(memoryCfg).map { conn =>
       CorpusTrainer.Repos(
-        book     = BookRepo.duckdb(conn),
-        training = TrainingRepo.duckdb(conn),
-        weights  = WeightsRepo.duckdb(conn),
+        book          = BookRepo.duckdb(conn),
+        training      = TrainingRepo.duckdb(conn),
+        weights       = WeightsRepo.duckdb(conn),
+        ingestedFiles = IngestedFilesRepo.duckdb(conn),
+        connection    = conn,
       )
     }
 
@@ -93,6 +95,47 @@ object CorpusTrainerSpec extends ZIOSpecDefault:
                        repos,
                      )
           yield assertTrue(stats == PgnIngest.Stats.Zero)
+        }
+      },
+      test("re-running over the same file is a no-op (resumability)") {
+        // First run ingests the file + marks it. Second run sees the
+        // marker and skips → no double-counting.
+        ZIO.scoped {
+          for
+            tmp <- ZIO.attempt(Files.createTempDirectory("pichess-corpus-"))
+            f1   = tmp.resolve("a.pgn")
+            _   <- ZIO.attempt(Files.writeString(f1, samplePgn))
+            repos <- freshRepos
+            input  = CorpusTrainer.CorpusInput(CorpusSource.PgnMentor, f1)
+            firstRun  <- CorpusTrainer.ingestAll(List(input), repos)
+            secondRun <- CorpusTrainer.ingestAll(List(input), repos)
+            rowCount  <- repos.training.count
+            _   <- ZIO.attempt(Files.delete(f1))
+            _   <- ZIO.attempt(Files.delete(tmp))
+          yield assertTrue(
+            firstRun.games  == 1L,
+            secondRun.games == 0L,   // skipped, not re-ingested
+            // The row count after BOTH runs should match what was
+            // written in the first run — no duplicates.
+            rowCount == firstRun.trainingRows,
+          )
+        }
+      },
+      test("isIngested marker survives across CorpusTrainer.ingestAll invocations") {
+        ZIO.scoped {
+          for
+            tmp <- ZIO.attempt(Files.createTempDirectory("pichess-corpus-"))
+            f1   = tmp.resolve("b.pgn")
+            _   <- ZIO.attempt(Files.writeString(f1, samplePgn))
+            repos <- freshRepos
+            _    <- CorpusTrainer.ingestAll(
+                      List(CorpusTrainer.CorpusInput(CorpusSource.Twic, f1)),
+                      repos,
+                    )
+            wasMarked <- repos.ingestedFiles.isIngested(f1.toAbsolutePath.toString)
+            _   <- ZIO.attempt(Files.delete(f1))
+            _   <- ZIO.attempt(Files.delete(tmp))
+          yield assertTrue(wasMarked)
         }
       },
     ),

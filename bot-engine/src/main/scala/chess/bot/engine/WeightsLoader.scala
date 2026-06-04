@@ -27,7 +27,13 @@ object WeightsLoader:
 
   sealed trait LoadError extends RuntimeException
   final case class MissingResource(path: String)
-      extends RuntimeException(s"weights resource not found: $path") with LoadError
+      extends RuntimeException(
+        s"weights resource not found: $path " +
+          s"(searched classpath; ensure `botEngine/Compile/copyResources` " +
+          s"ran before invoking this loader — `sbt clean compile` is a " +
+          s"sure-fire reset if you've just added a new vN.json)"
+      )
+      with LoadError
   final case class MalformedJson(path: String, reason: String)
       extends RuntimeException(s"weights JSON malformed in $path: $reason") with LoadError
 

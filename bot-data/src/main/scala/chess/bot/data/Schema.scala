@@ -77,6 +77,14 @@ object Schema:
     )
   """
 
+  private val ingestedFiles: String = """
+    CREATE TABLE IF NOT EXISTS ingested_files (
+      path          VARCHAR      NOT NULL PRIMARY KEY,
+      ingested_at   TIMESTAMP    NOT NULL,
+      games         BIGINT       NOT NULL
+    )
+  """
+
   /** The full DDL sequence run by [[Db.open]] on every connection.
     * Order matters where one CREATE depends on another (indexes after
     * the tables they index) — but DuckDB allows out-of-order DDL too,
@@ -94,4 +102,5 @@ object Schema:
     trainingPositions,
     trainingPositionsIndex,
     evalWeights,
+    ingestedFiles,
   )
