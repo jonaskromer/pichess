@@ -44,12 +44,19 @@ object TournamentMain extends ZIOAppDefault:
         _   <- ZIO.logInfo(matchupLabel(cfg))
         challenger <- loadSearch(cfg.challenger)
         champion   <- loadOpponent(cfg)
+        // Resolve the opening pool. Empty pool → all games start
+        // from startpos (90%+ draws between similar bots). Non-
+        // empty pool → diversifies games for a decisive signal.
+        openings <- ZIO.foreach(if cfg.useOpenings then OpeningPool.fens else Vector.empty)(
+                      fen => chess.codec.FenParserRegex.parse(fen)
+                    )
         report <- Tournament.play(
                     challenger = challenger,
                     champion   = champion,
                     games      = cfg.games,
                     depth      = cfg.depth,
                     parallelism = cfg.parallelism,
+                    openingStates = openings,
                   )
         _ <- ZIO.logInfo(report.render)
       yield ()
@@ -76,6 +83,7 @@ object TournamentMain extends ZIOAppDefault:
       parallelism: Int,
       vsStockfish: Boolean,
       stockfishSkill: Int,
+      useOpenings: Boolean,
   )
 
   private def readConfig: UIO[Config] =
@@ -93,6 +101,13 @@ object TournamentMain extends ZIOAppDefault:
                          else intEnv("PICHESS_TOURNAMENT_PARALLELISM", 4),
         vsStockfish    = vsSf,
         stockfishSkill = intEnv("PICHESS_TOURNAMENT_STOCKFISH_SKILL", 5),
+        // Default ON — similar bots draw 90%+ of games from
+        // startpos, so the diversified opening pool is needed to
+        // get any decisive signal at all. Opt out with
+        // PICHESS_TOURNAMENT_OPENINGS=false (for testing the
+        // bare from-initial behaviour).
+        useOpenings    = !sys.env.get("PICHESS_TOURNAMENT_OPENINGS")
+                           .exists(_.equalsIgnoreCase("false")),
       )
     }
 

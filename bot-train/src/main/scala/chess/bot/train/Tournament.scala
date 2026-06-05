@@ -3,6 +3,7 @@ package chess.bot.train
 import zio.*
 
 import chess.bot.engine.Search
+import chess.model.board.GameState
 
 /** Match-up two [[Search]] instances over an N-game tournament and
   * report a win rate + Elo delta. Built on top of
@@ -85,9 +86,10 @@ object Tournament:
       depth:      Int,
       maxPlies:   Int = 200,
       parallelism: Int = 1,
+      openingStates: Vector[GameState] = Vector.empty,
   ): UIO[Report] =
     SelfPlay
-      .round(champion, challenger, games, depth, maxPlies, parallelism)
+      .round(champion, challenger, games, depth, maxPlies, parallelism, openingStates)
       .map { round =>
         val score = challengerScoreOf(round)
         Report(

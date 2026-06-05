@@ -52,15 +52,22 @@ object SelfPlay:
   )
 
   /** Play one game between `white` and `black`. Terminates on
-    * checkmate / draw / no-legal-moves / `maxPlies` exhausted. */
+    * checkmate / draw / no-legal-moves / `maxPlies` exhausted.
+    *
+    * `initialState` defaults to [[GameState.initial]] but can be
+    * any legal position — useful for opening-diversified tournaments
+    * (see [[OpeningPool]]) where each pair of games starts from a
+    * different established opening to surface eval differences
+    * that all-from-startpos play hides behind 90% draws. */
   def playGame(
       white: Search,
       black: Search,
       depth: Int,
       maxPlies: Int = 200,
+      initialState: GameState = GameState.initial,
   ): UIO[GameResult] =
     loop(
-      state    = GameState.initial,
+      state    = initialState,
       history  = Vector.empty,
       ply      = 0,
       white    = white,
@@ -93,11 +100,21 @@ object SelfPlay:
       depth: Int,
       maxPlies: Int = 200,
       parallelism: Int = 1,
+      openingStates: Vector[GameState] = Vector.empty,
   ): UIO[RoundResult] =
     if parallelism > 1 then
-      parallelRound(champion, challenger, games, depth, maxPlies, parallelism)
+      parallelRound(champion, challenger, games, depth, maxPlies, parallelism, openingStates)
     else
-      sequentialRound(champion, challenger, games, depth, maxPlies)
+      sequentialRound(champion, challenger, games, depth, maxPlies, openingStates)
+
+  /** Pick the opening for the i-th game. Empty pool → start from
+    * the standard initial position (back-compat default). Otherwise
+    * round-robin: each opening drives a pair of games (one with
+    * each colour pairing) so half-pairs see the same opening from
+    * the opposite side. */
+  private def openingFor(i: Int, pool: Vector[GameState]): GameState =
+    if pool.isEmpty then GameState.initial
+    else pool((i / 2) % pool.size)
 
   /** Sequential round — original behaviour. Kept as the default so
     * existing callers see no semantic change. */
@@ -107,11 +124,15 @@ object SelfPlay:
       games: Int,
       depth: Int,
       maxPlies: Int,
+      openingStates: Vector[GameState],
   ): UIO[RoundResult] =
     ZIO.foldLeft(0 until games)(emptyRound) { (acc, i) =>
       val (whitePlayer, blackPlayer, challengerIsWhite) =
         gamePairing(i, champion, challenger)
-      playGame(whitePlayer, blackPlayer, depth, maxPlies).map { result =>
+      playGame(
+        whitePlayer, blackPlayer, depth, maxPlies,
+        initialState = openingFor(i, openingStates),
+      ).map { result =>
         val rows = gameToTrainingRows(result)
         addToRound(acc, result, challengerIsWhite, rows)
       }
@@ -129,12 +150,16 @@ object SelfPlay:
       depth: Int,
       maxPlies: Int,
       parallelism: Int,
+      openingStates: Vector[GameState],
   ): UIO[RoundResult] =
     ZIO
       .foreachPar(0 until games) { i =>
         val (whitePlayer, blackPlayer, challengerIsWhite) =
           gamePairing(i, champion, challenger)
-        playGame(whitePlayer, blackPlayer, depth, maxPlies).map { result =>
+        playGame(
+          whitePlayer, blackPlayer, depth, maxPlies,
+          initialState = openingFor(i, openingStates),
+        ).map { result =>
           (result, challengerIsWhite, gameToTrainingRows(result))
         }
       }
