@@ -29,7 +29,7 @@ import chess.model.board.{GameState, Move}
 import chess.model.piece.PieceType
 import chess.model.{GameError, GameId, GameSnapshot, SessionState}
 import chess.notation.SanSerializer
-import chess.service.{BotConfigRepository, GameService, VsBotOrchestrator}
+import chess.service.{BotConfigRepository, GameService}
 
 /** zio-grpc service implementation. Each rpc routes the request through the
   * existing in-process `GameService` / `GameController`, then projects the

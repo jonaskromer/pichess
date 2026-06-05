@@ -1,10 +1,10 @@
 package chess.gameservice
 
+import pichess.game_service.NewGameRequest
 import zio.test.*
 
 import chess.bot.engine.{BotConfig, Difficulty}
 import chess.model.piece.Color
-import pichess.game_service.NewGameRequest
 
 /** Direct unit tests for [[GrpcMappers.parseBotConfig]] — the
   * wire-format validation gatekeeping vs-bot game creation. */

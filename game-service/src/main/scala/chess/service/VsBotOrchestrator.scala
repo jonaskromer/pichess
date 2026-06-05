@@ -3,11 +3,9 @@ package chess.service
 import zio.*
 
 import chess.bot.engine.{BotConfig, Search}
-import chess.events.GameDomainEvent
 import chess.model.board.{GameState, Move}
 import chess.model.piece.PieceType
 import chess.model.{GameError, GameEvent, GameId}
-import chess.persistence.Mutation
 
 /** Composes [[GameService]] with the bot-engine so a player's move
   * automatically triggers the bot's reply when it's the bot's turn.
