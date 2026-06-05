@@ -52,6 +52,21 @@ private[engine] final class AlphaBetaSearch(
   // moves only). Same race tolerance as the killer table.
   private val historyTable: Array[Array[Int]] = Array.ofDim[Int](64, 64)
 
+  // Counter-move heuristic — for the move the opponent just
+  // played (`prevFrom` → `prevTo`), remember the quiet move that
+  // most recently caused a β-cutoff in reply. Sub-killer priority
+  // in [[scoreMove]]; cheap to maintain (one 64×64 array, single
+  // write on cutoff), and well-known to add ~20-40 Elo on top of
+  // killers + history because it captures the "if X is played at
+  // me, Y is my refutation" pattern that killers (per-ply only)
+  // can't.
+  //
+  // `NoKiller` (-1) is the "no counter known" sentinel — same
+  // value chosen as the killer table's "no killer" so the
+  // scoring helpers can compare with `==` against `Int`.
+  // Race-tolerant just like the other ordering heuristics.
+  private val counterMoveTable: Array[Array[Int]] = Array.fill(64, 64)(NoKiller)
+
   // LMR thresholds. See doc-comments on `searchMoves` for tuning.
   private inline val LmrMoveThreshold = 3
   private inline val LmrMinDepth      = 3
@@ -106,6 +121,7 @@ private[engine] final class AlphaBetaSearch(
       case None       =>
         clearKillers()
         clearHistory()
+        clearCounterMoves()
         if parallelism > 1 then parallelBestMove(state, depth, history)
         else
           val bufs = new SearchBufs
@@ -153,11 +169,12 @@ private[engine] final class AlphaBetaSearch(
       val rootHistory = history + rootHash
 
       // Order both stages so the elder brother is the
-      // best-by-ordering move (TT > captures > killers > history).
+      // best-by-ordering move (TT > captures > killers > counter > history).
+      // No `prevMove` at the root, so counter ordering is disabled here.
       val scoredCap = bufsScoredFor(rootBufs, 0)
-      orderMovesInto(capBuf, capCount, scoredCap, state, rootHash, ply = 0)
+      orderMovesInto(capBuf, capCount, scoredCap, state, rootHash, ply = 0, prevMove = NoKiller)
       val scoredQuiet = bufsScoredFor(rootBufs, 1)
-      orderMovesInto(quietBuf, quietCount, scoredQuiet, state, rootHash, ply = 0)
+      orderMovesInto(quietBuf, quietCount, scoredQuiet, state, rootHash, ply = 0, prevMove = NoKiller)
 
       // Materialise into a flat array in iteration order (highest
       // score first — captures bucket, then quiets bucket).
@@ -180,7 +197,7 @@ private[engine] final class AlphaBetaSearch(
       val elderScore: Int =
         RulesAdapter.applyMoveInt(state, elderMove) match
           case Some(next) =>
-            -negamax(next, depth - 1, -Infinity, Infinity, ply = 1, rootHistory, rootBufs)
+            -negamax(next, depth - 1, -Infinity, Infinity, ply = 1, rootHistory, rootBufs, prevMove = elderMove)
           case None       => -Infinity
 
       if total == 1 then ZIO.some(MoveInt.decode(elderMove))
@@ -196,7 +213,7 @@ private[engine] final class AlphaBetaSearch(
               val score: Int =
                 RulesAdapter.applyMoveInt(state, move) match
                   case Some(next) =>
-                    -negamax(next, depth - 1, -Infinity, -elderScore, ply = 1, rootHistory, bufs)
+                    -negamax(next, depth - 1, -Infinity, -elderScore, ply = 1, rootHistory, bufs, prevMove = move)
                   case None       => -Infinity
               (move, score)
             }
@@ -240,6 +257,15 @@ private[engine] final class AlphaBetaSearch(
       java.util.Arrays.fill(historyTable(i), 0)
       i += 1
 
+  /** Reset the counter-move table for the same reason as the
+    * killer table — stale entries from a prior search position
+    * would suggest the wrong refutation. */
+  private def clearCounterMoves(): Unit =
+    var i = 0
+    while i < 64 do
+      java.util.Arrays.fill(counterMoveTable(i), NoKiller)
+      i += 1
+
   /** Pick the move at the root that maximises the negamax score for
     * the side to move. Returns the chosen move's [[MoveInt]]
     * encoding; the public [[bestMove]] decodes once at the boundary.
@@ -274,12 +300,12 @@ private[engine] final class AlphaBetaSearch(
       // Stage 1: captures
       if capCount > 0 then
         val scored = bufs.scored(0)
-        orderMovesInto(capBuf, capCount, scored, state, rootHash, ply = 0)
+        orderMovesInto(capBuf, capCount, scored, state, rootHash, ply = 0, prevMove = NoKiller)
         var i = capCount - 1
         while i >= 0 do
           val move = MoveInt.fromPacked(scored(i))
           RulesAdapter.applyMoveInt(state, move).foreach { next =>
-            val score = -negamax(next, depth - 1, -beta, -alpha, ply = 1, rootHistory, bufs)
+            val score = -negamax(next, depth - 1, -beta, -alpha, ply = 1, rootHistory, bufs, prevMove = move)
             if score > bestScore then
               bestScore = score
               best = move
@@ -290,12 +316,12 @@ private[engine] final class AlphaBetaSearch(
       // Stage 2: quiets
       if quietCount > 0 then
         val scored = bufs.scored(0)
-        orderMovesInto(quietBuf, quietCount, scored, state, rootHash, ply = 0)
+        orderMovesInto(quietBuf, quietCount, scored, state, rootHash, ply = 0, prevMove = NoKiller)
         var i = quietCount - 1
         while i >= 0 do
           val move = MoveInt.fromPacked(scored(i))
           RulesAdapter.applyMoveInt(state, move).foreach { next =>
-            val score = -negamax(next, depth - 1, -beta, -alpha, ply = 1, rootHistory, bufs)
+            val score = -negamax(next, depth - 1, -beta, -alpha, ply = 1, rootHistory, bufs, prevMove = move)
             if score > bestScore then
               bestScore = score
               best = move
@@ -334,6 +360,7 @@ private[engine] final class AlphaBetaSearch(
       ply: Int,
       history: Set[Long],
       bufs: SearchBufs,
+      prevMove: Int,
   ): Int =
     if state.halfmoveClock >= 100 then 0
     else
@@ -354,7 +381,7 @@ private[engine] final class AlphaBetaSearch(
               else
                 searchMoves(
                   state, capBuf, capCount, quietBuf, quietCount,
-                  depth, alpha, beta, ply, hash, history + hash, bufs,
+                  depth, alpha, beta, ply, hash, history + hash, bufs, prevMove,
                 )
 
   /** Static evaluation at a leaf node, normalised to side-to-move POV.
@@ -404,6 +431,7 @@ private[engine] final class AlphaBetaSearch(
       hash: Long,
       historyWithThis: Set[Long],
       bufs: SearchBufs,
+      prevMove: Int,
   ): Int =
     val inCheckHere = RulesAdapter.isInCheck(state)
     val k0Here = if ply < MaxPly then killer0(ply) else NoKiller
@@ -417,13 +445,13 @@ private[engine] final class AlphaBetaSearch(
 
     // ── Stage 1: captures ───────────────────────────────────────
     if capCount > 0 then
-      orderMovesInto(capBuf, capCount, scored, state, hash, ply)
+      orderMovesInto(capBuf, capCount, scored, state, hash, ply, prevMove)
       var i = capCount - 1
       while i >= 0 && !cutoff do
         val move = MoveInt.fromPacked(scored(i))
         RulesAdapter.applyMoveInt(state, move).foreach { next =>
           // Captures don't get reduced (always "loud" by definition).
-          val score = -negamax(next, depth - 1, -beta, -alphaCur, ply + 1, historyWithThis, bufs)
+          val score = -negamax(next, depth - 1, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
           if score > bestScore then
             bestScore = score
             bestMove = move
@@ -435,7 +463,7 @@ private[engine] final class AlphaBetaSearch(
 
     // ── Stage 2: quiet moves (only if Stage 1 didn't cut off) ──
     if !cutoff && quietCount > 0 then
-      orderMovesInto(quietBuf, quietCount, scored, state, hash, ply)
+      orderMovesInto(quietBuf, quietCount, scored, state, hash, ply, prevMove)
       var i = quietCount - 1
       while i >= 0 && !cutoff do
         val move = MoveInt.fromPacked(scored(i))
@@ -447,9 +475,9 @@ private[engine] final class AlphaBetaSearch(
               !isKiller &&
               !inCheckHere
           val searchDepth = if reduce then depth - 2 else depth - 1
-          var score = -negamax(next, searchDepth, -beta, -alphaCur, ply + 1, historyWithThis, bufs)
+          var score = -negamax(next, searchDepth, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
           if reduce && score > alphaCur then
-            score = -negamax(next, depth - 1, -beta, -alphaCur, ply + 1, historyWithThis, bufs)
+            score = -negamax(next, depth - 1, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
           if score > bestScore then
             bestScore = score
             bestMove = move
@@ -458,6 +486,12 @@ private[engine] final class AlphaBetaSearch(
             cutoff = true
             recordKiller(ply, move)
             historyTable(MoveInt.fromIdx(move))(MoveInt.toIdx(move)) += depth * depth
+            // Counter-move heuristic: when a quiet move refutes
+            // `prevMove`, remember it as the canonical reply to
+            // that opponent move. Skipped at the root and inside
+            // YBWC fibers where `prevMove == NoKiller`.
+            if prevMove != NoKiller then
+              counterMoveTable(MoveInt.fromIdx(prevMove))(MoveInt.toIdx(prevMove)) = move
         }
         moveIndex += 1
         i -= 1
@@ -491,14 +525,18 @@ private[engine] final class AlphaBetaSearch(
       state: GameState,
       hash: Long,
       ply: Int,
+      prevMove: Int,
   ): Unit =
     val ttBest = tt.get(hash).flatMap(_.bestMove).fold(NoKiller)(MoveInt.encodeMove)
     val k0 = if ply < MaxPly then killer0(ply) else NoKiller
     val k1 = if ply < MaxPly then killer1(ply) else NoKiller
+    val counter =
+      if prevMove == NoKiller then NoKiller
+      else counterMoveTable(MoveInt.fromIdx(prevMove))(MoveInt.toIdx(prevMove))
     var i = 0
     while i < count do
       val m = moveBuf(i)
-      val score = scoreMove(state, m, ttBest, k0, k1)
+      val score = scoreMove(state, m, ttBest, k0, k1, counter)
       scoredOut(i) = MoveInt.pack(score, insertionIdx = i, move = m)
       i += 1
     java.util.Arrays.sort(scoredOut, 0, count)
@@ -508,15 +546,17 @@ private[engine] final class AlphaBetaSearch(
     *   -   100_000           any capture (MVV-LVA tiebreak: victim×10 − attacker)
     *   -    90_000           killer slot 0 (most recent)
     *   -    80_000           killer slot 1
-    *   -        0..79_999    quiet — history-heuristic score (capped at
-    *                         79_999 so a hot history entry can't sneak
-    *                         past a killer) */
+    *   -    70_000           counter-move (refutation of `prevMove`)
+    *   -        0..69_999    quiet — history-heuristic score (capped at
+    *                         69_999 so a hot history entry can't sneak
+    *                         past the counter-move bucket) */
   private def scoreMove(
       state: GameState,
       move: Int,
       ttBest: Int,
       k0: Int,
       k1: Int,
+      counter: Int,
   ): Int =
     if move == ttBest then 1_000_000
     else
@@ -531,8 +571,9 @@ private[engine] final class AlphaBetaSearch(
         case None =>
           if move == k0 then 90_000
           else if move == k1 then 80_000
+          else if move == counter then 70_000
           else
-            math.min(historyTable(MoveInt.fromIdx(move))(MoveInt.toIdx(move)), 79_999)
+            math.min(historyTable(MoveInt.fromIdx(move))(MoveInt.toIdx(move)), 69_999)
 
   /** Decode a LERF square index back to the cached [[Position]]
     * flyweight — no allocation. */
