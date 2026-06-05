@@ -42,7 +42,7 @@ object TournamentMain extends ZIOAppDefault:
       for
         cfg <- readConfig
         _   <- ZIO.logInfo(matchupLabel(cfg))
-        challenger <- loadSearch(cfg.challenger, cfg.challengerCmh)
+        challenger <- loadSearch(cfg.challenger, cfg.challengerCmh, cfg.challengerQ)
         champion   <- loadOpponent(cfg)
         // Resolve the opening pool. Empty pool → all games start
         // from startpos (90%+ draws between similar bots). Non-
@@ -86,6 +86,8 @@ object TournamentMain extends ZIOAppDefault:
       useOpenings: Boolean,
       challengerCmh: Boolean,
       championCmh:   Boolean,
+      challengerQ:   Boolean,
+      championQ:     Boolean,
   )
 
   private def readConfig: UIO[Config] =
@@ -119,6 +121,11 @@ object TournamentMain extends ZIOAppDefault:
                            .exists(_.equalsIgnoreCase("true")),
         championCmh    = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_CMH")
                            .exists(_.equalsIgnoreCase("true")),
+        // Quiescence toggles. Same opt-in shape as CMH.
+        challengerQ    = sys.env.get("PICHESS_TOURNAMENT_CHALLENGER_Q")
+                           .exists(_.equalsIgnoreCase("true")),
+        championQ      = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_Q")
+                           .exists(_.equalsIgnoreCase("true")),
       )
     }
 
@@ -134,18 +141,23 @@ object TournamentMain extends ZIOAppDefault:
         skillLevel = Some(cfg.stockfishSkill),
         label      = s"stockfish-skill${cfg.stockfishSkill}",
       )
-    else loadSearch(cfg.champion, cfg.championCmh)
+    else loadSearch(cfg.champion, cfg.championCmh, cfg.championQ)
 
   /** Build a [[Search]] for the given weights-version JSON
     * resource. Uses the array-backed tapered evaluator (the
     * production search path) — same one [[EngineBundle]] wires
     * up. No opening book in the tournament so the search itself
     * is fully exercised. */
-  private def loadSearch(version: Int, counterMoveEnabled: Boolean): ZIO[Any, Throwable, Search] =
+  private def loadSearch(
+      version: Int,
+      counterMoveEnabled: Boolean,
+      quiescenceEnabled: Boolean,
+  ): ZIO[Any, Throwable, Search] =
     WeightsLoader.load(version).map { snapshot =>
       Search.alphaBeta(
         eval               = ArrayTaperedEvaluator(snapshot.weights),
         book               = OpeningBook.Empty,
         counterMoveEnabled = counterMoveEnabled,
+        quiescenceEnabled  = quiescenceEnabled,
       )
     }

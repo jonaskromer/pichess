@@ -77,10 +77,18 @@ object Search:
       // a future iterative-deepening / deeper search can re-test it
       // cheaply — the table cost is one 64×64 Int array.
       counterMoveEnabled: Boolean = false,
+      // ON by default — a 200-game v8+quiescence vs v8-bare head-to-
+      // head at depth 4 parallelism 8 measured ΔElo = **+179.5**
+      // (108-13-79, score 73.8%). The horizon effect was biting hard;
+      // quiescence escapes it by recursing on captures from the leaf
+      // until a stable position is reached. Cost: ~5.3× slower (443s
+      // vs 83s baseline for the 200-game tournament with quiescence
+      // on only the challenger side). Worth the time per move.
+      quiescenceEnabled: Boolean = true,
   ): Search =
     new AlphaBetaSearch(
       eval, TranspositionTable.inMemory(maxTtEntries), book,
-      parallelism, counterMoveEnabled,
+      parallelism, counterMoveEnabled, quiescenceEnabled,
     )
 
   /** Test-only factory that lets a caller inject the [[TranspositionTable]]

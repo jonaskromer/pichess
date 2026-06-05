@@ -32,6 +32,11 @@ private[engine] final class AlphaBetaSearch(
     // See `Search.alphaBeta` for the empirical Elo finding behind the
     // OFF default.
     counterMoveEnabled: Boolean = false,
+    // Toggle for the leaf-level quiescence search (replaces the bare
+    // static eval at depth ≤ 0 with a stand-pat + capture-only
+    // recursion that escapes the horizon effect). See
+    // [[Search.alphaBeta]] for the empirical Elo finding.
+    quiescenceEnabled: Boolean = true,
 ) extends Search:
 
   import Search.{Infinity, MateScore}
@@ -373,7 +378,7 @@ private[engine] final class AlphaBetaSearch(
         probeTt(hash, depth, alpha, beta) match
           case Some(score) => score
           case None =>
-            if depth <= 0 then leafEval(state)
+            if depth <= 0 then leafScore(state, alpha, beta, ply, bufs)
             else if ply >= MaxPly then leafEval(state)
             else
               val capBuf   = bufs.captures(ply)
@@ -392,6 +397,127 @@ private[engine] final class AlphaBetaSearch(
   private def leafEval(state: GameState): Int =
     val raw = eval.evaluate(state)
     if state.activeColor == Color.White then raw else -raw
+
+  /** Leaf entry point: routes to either bare static eval or the
+    * quiescence search depending on [[quiescenceEnabled]]. Keeping
+    * the routing here means the rest of [[negamax]] doesn't need to
+    * branch on the toggle.
+    *
+    * Quiescence eliminates the horizon effect — a depth-0 node whose
+    * static eval looks +5 might be a queen that's about to be
+    * captured next ply. The qsearch recurses on captures until the
+    * position is "quiet" (no more captures, not in check) before
+    * returning a static eval. */
+  private def leafScore(
+      state: GameState,
+      alpha: Int,
+      beta: Int,
+      ply: Int,
+      bufs: SearchBufs,
+  ): Int =
+    if quiescenceEnabled then qSearch(state, alpha, beta, ply, bufs)
+    else leafEval(state)
+
+  /** Quiescence search — fixes the horizon effect by recursing on
+    * captures (and check evasions) until a stable position is
+    * reached. Bounded naturally by piece-count: each capture removes
+    * a piece, so the longest pure-capture chain is ~32 plies. The
+    * outer `ply >= MaxPly` guard is a final safety.
+    *
+    * Stand-pat: when not in check, "I refuse to capture and accept
+    * the current static eval" is a legitimate option. If that score
+    * already ≥ β, no capture can help (we'd cut off anyway), so we
+    * return immediately. When in check, we have no choice but to
+    * move; stand-pat is skipped and quiet evasions are included
+    * alongside captures.
+    *
+    * No TT lookup or write: qsearch entries are depth-0 and
+    * shouldn't shadow real depth-≥1 entries written by the main
+    * negamax loop. */
+  private def qSearch(
+      state: GameState,
+      alpha: Int,
+      beta: Int,
+      ply: Int,
+      bufs: SearchBufs,
+  ): Int =
+    if ply >= MaxPly then leafEval(state)
+    else
+      val inCheck  = RulesAdapter.isInCheck(state)
+      val capBuf   = bufs.captures(ply)
+      val quietBuf = bufs.quiets(ply)
+      val (capCount, quietCount) =
+        RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf)
+
+      if capCount == 0 && quietCount == 0 then
+        // No legal moves: mate if in check, stalemate (draw) otherwise.
+        if inCheck then -(MateScore - ply) else 0
+      else
+        var alphaCur  = alpha
+        var bestScore = -Infinity
+        var cutoff    = false
+
+        if !inCheck then
+          val standPat = leafEval(state)
+          bestScore = standPat
+          if standPat >= beta then cutoff = true
+          else if standPat > alphaCur then alphaCur = standPat
+
+        // Captures first, ordered by MVV-LVA only (no TT/killer/
+        // counter ordering at the leaf — extra Map lookups cost more
+        // than they save when the move list is short).
+        if !cutoff && capCount > 0 then
+          val scored = bufs.scored(ply)
+          orderCapturesMvvLva(capBuf, capCount, scored, state)
+          var i = capCount - 1
+          while i >= 0 && !cutoff do
+            val move = MoveInt.fromPacked(scored(i))
+            RulesAdapter.applyMoveInt(state, move).foreach { next =>
+              val score = -qSearch(next, -beta, -alphaCur, ply + 1, bufs)
+              if score > bestScore then bestScore = score
+              if score > alphaCur then alphaCur = score
+              if alphaCur >= beta then cutoff = true
+            }
+            i -= 1
+
+        // Under check we also need quiet escapes — blocking the
+        // check, king moves, etc.
+        if !cutoff && inCheck && quietCount > 0 then
+          var i = 0
+          while i < quietCount && !cutoff do
+            val move = quietBuf(i)
+            RulesAdapter.applyMoveInt(state, move).foreach { next =>
+              val score = -qSearch(next, -beta, -alphaCur, ply + 1, bufs)
+              if score > bestScore then bestScore = score
+              if score > alphaCur then alphaCur = score
+              if alphaCur >= beta then cutoff = true
+            }
+            i += 1
+
+        bestScore
+
+  /** MVV-LVA ordering for the qsearch capture list. Same scoring
+    * function as the main [[scoreMove]] capture branch but inlined
+    * here so we skip the TT/killer/counter chain. */
+  private def orderCapturesMvvLva(
+      moveBuf: Array[Int],
+      count: Int,
+      scoredOut: Array[Long],
+      state: GameState,
+  ): Unit =
+    var i = 0
+    while i < count do
+      val m = moveBuf(i)
+      val victimVal = state.board.get(positionAt(MoveInt.toIdx(m)))
+        .map(p => pieceValue(p.pieceType))
+        .getOrElse(0)
+      val attackerVal = state.board.get(positionAt(MoveInt.fromIdx(m)))
+        .map(p => pieceValue(p.pieceType))
+        .getOrElse(0)
+      val score = victimVal * 10 - attackerVal
+      scoredOut(i) = MoveInt.pack(score, insertionIdx = i, move = m)
+      i += 1
+    java.util.Arrays.sort(scoredOut, 0, count)
 
   /** Score for "the side to move has no legal moves". In-check → mate
     * (scaled by `ply` so shorter mates beat longer ones); not in check
