@@ -90,6 +90,12 @@ object TexelTunerSpec extends ZIOSpecDefault:
           result.finalLoss < 0.05,
         )
       },
+      test("returns the initial weights unchanged on an empty sample stream") {
+        // With streaming input there's no upfront emptiness check;
+        // tune builds a 0-sample CompiledCorpus and short-circuits.
+        val result = TexelTuner.tune(Iterator.empty, initial = Map("pawn" -> 100), K = K)
+        assertTrue(result.weights == Map("pawn" -> 100), result.iterations == 0)
+      },
       test("returns the initial weights unchanged when no improvement is possible") {
         // Single sample at outcome=0.5 with pawn=0 features → loss is
         // already at its minimum (sigmoid(0) = 0.5). The tuner can't

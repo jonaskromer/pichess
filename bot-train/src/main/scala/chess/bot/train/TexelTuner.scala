@@ -73,15 +73,21 @@ object TexelTuner:
     *                      falls below 1 (then the search terminates).
     */
   def tune(
-      samples: Seq[Sample],
+      samples: IterableOnce[Sample],
       initial: Map[String, Int],
       K: Double = 0.4,
       maxIterations: Int = 100,
       initialStep: Int = 16,
   ): TuningResult =
-    if samples.isEmpty then TuningResult(initial, 0.0, 0)
+    // Stream samples into the CompiledCorpus single-pass — the
+    // caller can hand us a giant `Iterator[Sample]` (millions of
+    // entries) without materializing the whole sequence in memory.
+    // CompiledCorpus's per-feature growable arrays are the only
+    // intermediate storage; the per-sample `Map[String, Double]`
+    // is discarded after each `add` call.
+    val corpus = CompiledCorpus.build(samples, initial)
+    if corpus.sampleCount == 0 then TuningResult(initial, 0.0, 0)
     else
-      val corpus = CompiledCorpus.build(samples, initial)
       runCachedCoordinateDescent(corpus, K, maxIterations, initialStep)
       corpus.toResult(initial)
 
@@ -175,22 +181,20 @@ object TexelTuner:
     * an all-zero sample set is treated as "no training data" and
     * returns 0 (a no-op for the tuner). */
   private[chess] def totalLoss(
-      samples: Seq[Sample],
+      samples: IterableOnce[Sample],
       weights: Map[String, Int],
       K: Double,
   ): Double =
-    if samples.isEmpty then 0.0
-    else
-      var sumSq       = 0.0
-      var sumWeights  = 0.0
-      val it = samples.iterator
-      while it.hasNext do
-        val s = it.next()
-        val predicted = sigmoid(K * evaluate(s.features, weights))
-        val diff      = predicted - s.outcome
-        sumSq      += s.weight * diff * diff
-        sumWeights += s.weight
-      if sumWeights == 0.0 then 0.0 else sumSq / sumWeights
+    var sumSq       = 0.0
+    var sumWeights  = 0.0
+    val it = samples.iterator
+    while it.hasNext do
+      val s = it.next()
+      val predicted = sigmoid(K * evaluate(s.features, weights))
+      val diff      = predicted - s.outcome
+      sumSq      += s.weight * diff * diff
+      sumWeights += s.weight
+    if sumWeights == 0.0 then 0.0 else sumSq / sumWeights
 
   /** Linear evaluator: Σ (count_f × weight_f). Features carry
     * `Double` values (the tapered extractor scales by game phase so
@@ -237,7 +241,7 @@ object TexelTuner:
     * so the outer tuning loop is a plain mutator + accessor over a
     * single object. Not thread-safe — `tune` is sequential.
     */
-  private final class CompiledCorpus(
+  private[chess] final class CompiledCorpus(
       val featureCount: Int,
       val sampleCount: Int,
       // Canonical feature ordering: index → key name.
@@ -346,62 +350,64 @@ object TexelTuner:
         i += 1
       TuningResult(out, currentLoss, iterations)
 
-  private object CompiledCorpus:
+  private[chess] object CompiledCorpus:
 
-    /** Compile a sample list into the flat representation. Two
-      * passes over the samples: one to size the inverted-index
-      * arrays per feature, one to fill them. Keys absent from
-      * `initial` are silently dropped (matches the reference
-      * [[evaluate]] semantics — only adjustable features are
-      * tracked). */
-    def build(samples: Seq[Sample], initial: Map[String, Int]): CompiledCorpus =
+    /** Compile any `IterableOnce[Sample]` into the flat
+      * representation in a SINGLE pass over the input — the
+      * caller can stream millions of samples through an iterator
+      * (e.g. from a SQL cursor) without materialising the whole
+      * collection in memory.
+      *
+      * Internally uses per-feature `ArrayBuilder` so the inverted
+      * index grows incrementally (amortised O(1) per sample).
+      * Outcomes + per-sample weights also grow via builders.
+      *
+      * Keys absent from `initial` are silently dropped (matches
+      * the reference [[evaluate]] semantics — only adjustable
+      * features are tracked). */
+    def build(samples: IterableOnce[Sample], initial: Map[String, Int]): CompiledCorpus =
       val keys: Array[String] = initial.keys.toArray
       val featureCount = keys.length
       val keyToIdx: Map[String, Int] = keys.iterator.zipWithIndex.toMap
 
-      val sampleArr = samples.toArray
-      val n = sampleArr.length
+      // Per-feature growable inverted-index builders. Indexed by
+      // feature id; entries are pushed as samples flow in.
+      val idxBuilders: Array[scala.collection.mutable.ArrayBuilder[Int]] =
+        Array.fill(featureCount)(Array.newBuilder[Int])
+      val valBuilders: Array[scala.collection.mutable.ArrayBuilder[Double]] =
+        Array.fill(featureCount)(Array.newBuilder[Double])
+      val outcomeBuilder      = Array.newBuilder[Double]
+      val sampleWeightBuilder = Array.newBuilder[Double]
 
-      // First pass: count non-zero entries per feature.
-      val counts = Array.ofDim[Int](featureCount)
-      var s = 0
-      while s < n do
-        sampleArr(s).features.foreach { case (k, v) =>
+      var sampleIdx       = 0
+      var totalSampleWeight = 0.0
+      val it = samples.iterator
+      while it.hasNext do
+        val s = it.next()
+        outcomeBuilder      += s.outcome
+        sampleWeightBuilder += s.weight
+        totalSampleWeight   += s.weight
+        s.features.foreach { case (k, v) =>
           if v != 0.0 then
             keyToIdx.get(k) match
-              case Some(idx) => counts(idx) += 1
-              case None      => // not adjustable; drop
+              case Some(idx) =>
+                idxBuilders(idx) += sampleIdx
+                valBuilders(idx) += v
+              case None => // not adjustable; drop
         }
-        s += 1
+        sampleIdx += 1
 
-      // Allocate.
+      val n = sampleIdx
       val featureToSamples = Array.ofDim[Array[Int]](featureCount)
       val featureToValues  = Array.ofDim[Array[Double]](featureCount)
       var f = 0
       while f < featureCount do
-        featureToSamples(f) = Array.ofDim[Int](counts(f))
-        featureToValues(f)  = Array.ofDim[Double](counts(f))
+        featureToSamples(f) = idxBuilders(f).result()
+        featureToValues(f)  = valBuilders(f).result()
         f += 1
 
-      // Second pass: fill, tracking a per-feature write cursor.
-      val cursor = Array.ofDim[Int](featureCount)
-      var i = 0
-      while i < n do
-        sampleArr(i).features.foreach { case (k, v) =>
-          if v != 0.0 then
-            keyToIdx.get(k) match
-              case Some(idx) =>
-                val c = cursor(idx)
-                featureToSamples(idx)(c) = i
-                featureToValues(idx)(c)  = v
-                cursor(idx) = c + 1
-              case None => ()
-        }
-        i += 1
-
-      val outcomes      = sampleArr.map(_.outcome)
-      val sampleWeights = sampleArr.map(_.weight)
-      val totalSampleWeight = sampleWeights.sum
+      val outcomes      = outcomeBuilder.result()
+      val sampleWeights = sampleWeightBuilder.result()
 
       val corpus = new CompiledCorpus(
         featureCount, n, keys,

@@ -145,21 +145,33 @@ object CorpusTrainer:
     for
       rows <- repos.training.streamQuiet.runCollect
       effectiveRows = subsampleRows(rows, subsample)
-      samples = effectiveRows.flatMap(r => toSample(r, extractor))
-      _       <- ZIO.when(samples.isEmpty)(
-                   ZIO.fail(new RuntimeException(
-                     "No usable training positions — ingest a corpus first " +
-                       "(richer-features path also needs the new FEN column).",
-                   ))
-                 )
-      lossBefore = TexelTuner.totalLoss(samples, initial, K)
-      tuned    = TexelTuner.tune(samples, initial, K, maxIterations, initialStep)
+      _ <- ZIO.when(effectiveRows.isEmpty)(
+             ZIO.fail(new RuntimeException(
+               "No usable training positions — ingest a corpus first " +
+                 "(richer-features path also needs the new FEN column).",
+             ))
+           )
+      // Stream samples lazily — each row's per-sample
+      // `Map[String, Double]` is materialised, consumed by
+      // `CompiledCorpus.build`, then immediately GC'd. The
+      // resident set never holds more than one `Sample` Map at a
+      // time, so we can compile millions of training positions
+      // even though one row's tapered features (~690 entries)
+      // would balloon to many GBs if all kept simultaneously.
+      //
+      // The factory is a `() => Iterator[Sample]` because both
+      // the loss-before measurement AND the tune step iterate the
+      // corpus, so we re-create the iterator for each pass.
+      samplesIter = () => effectiveRows.iterator.flatMap(r => toSample(r, extractor))
+      sampleCount = effectiveRows.length
+      lossBefore = TexelTuner.totalLoss(samplesIter(), initial, K)
+      tuned    = TexelTuner.tune(samplesIter(), initial, K, maxIterations, initialStep)
       snapshot = WeightSnapshot(version = nextVersion, weights = tuned.weights)
       _       <- repos.weights.save(snapshot)
       _       <- writeJsonTo.fold(ZIO.unit)(p => WeightsLoader.writeFile(snapshot, p))
     yield TrainResult(
       ingestStats = ingestStats,
-      samplesUsed = samples.size.toLong,
+      samplesUsed = sampleCount.toLong,
       lossBefore  = lossBefore,
       lossAfter   = tuned.finalLoss,
       iterations  = tuned.iterations,
