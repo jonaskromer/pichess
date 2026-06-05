@@ -988,6 +988,43 @@ object GameSpec extends ZIOSpecDefault:
             .exists(_.board == io.board)
         )
       },
+      test("applyMoveCoreSync rejects a promotion piece type on a non-back-rank move") {
+        // Pawn move with `promotion = Some(Queen)` but target rank
+        // is NOT the back rank — covers the `(Some(_), false)`
+        // branch of isLegalPromotion.
+        val s = GameState(
+          Map(
+            Position('e', 2) -> Piece(Color.White, PieceType.Pawn),
+            Position('h', 1) -> Piece(Color.White, PieceType.King),
+            Position('a', 8) -> Piece(Color.Black, PieceType.King),
+          ),
+          Color.White,
+        )
+        assertTrue(
+          Game.applyMoveCoreSync(
+            s,
+            Move(Position('e', 2), Position('e', 4), Some(PieceType.Queen))
+          ).isEmpty
+        )
+      },
+      test("applyMoveCoreSync rejects a non-promotion piece type (e.g. King)") {
+        // Pawn reaching back rank with `promotion = Some(King)` —
+        // King isn't in the legal promotion set.
+        val s = GameState(
+          Map(
+            Position('e', 7) -> Piece(Color.White, PieceType.Pawn),
+            Position('h', 1) -> Piece(Color.White, PieceType.King),
+            Position('a', 8) -> Piece(Color.Black, PieceType.King),
+          ),
+          Color.White,
+        )
+        assertTrue(
+          Game.applyMoveCoreSync(
+            s,
+            Move(Position('e', 7), Position('e', 8), Some(PieceType.King))
+          ).isEmpty
+        )
+      },
       test("applyMoveCoreSync returns None when the move would leave the king in check") {
         // Black rook pins the white knight on d2 to the king on
         // d1; moving the knight exposes the king.

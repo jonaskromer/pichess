@@ -1102,6 +1102,90 @@ object MoveValidatorSpec extends ZIOSpecDefault:
           !quiets.get(pos('e', 5)).exists(_.contains(pos('d', 6))),
         )
       },
+      test("isLegalMoveSync returns false for an empty source square") {
+        val s = state(pos('e', 1) -> WK, pos('e', 8) -> BK)
+        assertTrue(
+          !MoveValidator.isLegalMoveSync(s, Move(pos('d', 4), pos('d', 5)))
+        )
+      },
+      test("isLegalMoveSync returns false when piece is the inactive color") {
+        val s = state(
+          pos('e', 1) -> WK, pos('e', 8) -> BK,
+          pos('a', 7) -> BR,
+        )
+        assertTrue(
+          !MoveValidator.isLegalMoveSync(s, Move(pos('a', 7), pos('a', 6)))
+        )
+      },
+      test("isLegalMoveSync returns false when capturing own piece") {
+        val s = state(
+          pos('e', 1) -> WK, pos('e', 8) -> BK,
+          pos('a', 1) -> WR, pos('a', 7) -> WP,
+        )
+        assertTrue(
+          !MoveValidator.isLegalMoveSync(s, Move(pos('a', 1), pos('a', 7)))
+        )
+      },
+      test("isLegalMoveSync returns true for a legal pawn push") {
+        val s = state(
+          pos('e', 1) -> WK, pos('e', 8) -> BK,
+          pos('e', 2) -> WP,
+        )
+        assertTrue(
+          MoveValidator.isLegalMoveSync(s, Move(pos('e', 2), pos('e', 4)))
+        )
+      },
+      test("isLegalMoveSync returns false for a pawn pushing into an occupied square") {
+        val s = state(
+          pos('e', 1) -> WK, pos('e', 8) -> BK,
+          pos('e', 2) -> WP, pos('e', 3) -> BP,
+        )
+        assertTrue(
+          !MoveValidator.isLegalMoveSync(s, Move(pos('e', 2), pos('e', 3)))
+        )
+      },
+      test("isLegalMoveSync rejects a pawn diagonal move to an empty (non-EP) square") {
+        val s = state(
+          pos('e', 1) -> WK, pos('e', 8) -> BK,
+          pos('e', 2) -> WP,
+        )
+        assertTrue(
+          !MoveValidator.isLegalMoveSync(s, Move(pos('e', 2), pos('d', 3)))
+        )
+      },
+      test("isLegalMoveSync rejects a pawn 'sideways' move") {
+        val s = state(
+          pos('e', 1) -> WK, pos('e', 8) -> BK,
+          pos('e', 2) -> WP,
+        )
+        assertTrue(
+          !MoveValidator.isLegalMoveSync(s, Move(pos('e', 2), pos('f', 2)))
+        )
+      },
+      test("isLegalMoveSync rejects castling when castling rights are lost") {
+        val s = state(
+          pos('e', 1) -> WK, pos('h', 1) -> WR, pos('e', 8) -> BK,
+        ).copy(castlingRights = CastlingRights(false, false, false, false))
+        assertTrue(
+          !MoveValidator.isLegalMoveSync(s, Move(pos('e', 1), pos('g', 1)))
+        )
+      },
+      test("isLegalMoveSync accepts a legal white castle") {
+        val s = state(
+          pos('e', 1) -> WK, pos('h', 1) -> WR, pos('e', 8) -> BK,
+        )
+        assertTrue(
+          MoveValidator.isLegalMoveSync(s, Move(pos('e', 1), pos('g', 1)))
+        )
+      },
+      test("isLegalMoveSync accepts a legal black castle (exercises the rank=8 branch)") {
+        val s = blackState(
+          pos('e', 1) -> WK, pos('e', 8) -> BK, pos('h', 8) -> BR,
+        )
+        assertTrue(
+          MoveValidator.isLegalMoveSync(s, Move(pos('e', 8), pos('g', 8)))
+        )
+      },
       test("legalDestinationsIndexSync matches the IO variant on a tactical fixture") {
         // KiwiPete-style position: every code path matters (pawn,
         // sliding pieces, king with castling).

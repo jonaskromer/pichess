@@ -94,17 +94,14 @@ object Game:
     * exception is constructed. */
   def applyMoveCoreSync(state: GameState, move: Move): Option[GameState] =
     if state.status.isOver then None
+    else if !MoveValidator.isLegalMoveSync(state, move) then None
     else
-      MoveValidator.validateSync(state, move) match
-        case Some(_) => None
-        case None =>
-          val piece = state.board(move.from)
-          validatePromotionSync(piece, move) match
-            case Some(_) => None
-            case None =>
-              val newBoard = updatedBoard(state, move, promotedPiece(piece, move))
-              if MoveValidator.isInCheck(newBoard, state.activeColor) then None
-              else Some(buildPostMoveState(state, move, piece, newBoard))
+      val piece = state.board(move.from)
+      if !isLegalPromotion(piece, move) then None
+      else
+        val newBoard = updatedBoard(state, move, promotedPiece(piece, move))
+        if MoveValidator.isInCheck(newBoard, state.activeColor) then None
+        else Some(buildPostMoveState(state, move, piece, newBoard))
 
   /** Applies a move without detecting checkmate/stalemate. Used by
     * [[MoveValidator.hasLegalMove]] to avoid infinite recursion.
@@ -187,8 +184,9 @@ object Game:
       case None      => ZIO.unit
 
   /** Pure synchronous form of [[validatePromotion]]. Returns
-    * `Some(err)` on invalid promotion; `None` otherwise. Sync core
-    * for [[applyMoveCoreSync]]. */
+    * `Some(err)` on invalid promotion; `None` otherwise. Sync
+    * variant used by the slow-path user-facing flow that needs
+    * the error message. */
   private[rules] def validatePromotionSync(piece: Piece, move: Move): Option[GameError] =
     val reachesBackRank = isPromotionRank(piece, move.to.row)
     (move.promotion, reachesBackRank) match
@@ -200,6 +198,15 @@ object Game:
         Some(GameError.InvalidMove("Pawn must promote when reaching the back rank (e.g. e8=Q)"))
       case _ =>
         None
+
+  /** Boolean form of [[validatePromotionSync]] — bot hot path. */
+  private def isLegalPromotion(piece: Piece, move: Move): Boolean =
+    val reachesBackRank = isPromotionRank(piece, move.to.row)
+    (move.promotion, reachesBackRank) match
+      case (Some(_), false)                                   => false
+      case (Some(pt), true) if !promotionPieces.contains(pt)  => false
+      case (None, true)                                       => false
+      case _                                                  => true
 
   private def promotedPiece(piece: Piece, move: Move): Piece =
     move.promotion match

@@ -51,6 +51,76 @@ object MoveValidator:
       case Some(piece) =>
         validatePieceRulesSync(state, move, piece)
 
+  /** Boolean-returning variant of [[validateSync]] for the bot's
+    * hot path. Mirrors the same rules but '''never''' constructs a
+    * [[GameError]] — the per-call cost of allocating an exception
+    * with stack trace dominated the search before. Used by
+    * [[Game.applyMoveCoreSync]] for legality testing without
+    * paying the message-construction cost.
+    *
+    * Callers that need a human-readable failure reason (e.g. the
+    * gateway rejecting a user move) keep using [[validateSync]];
+    * the bot, which only cares about valid-or-not, uses this. */
+  def isLegalMoveSync(state: GameState, move: Move): Boolean =
+    state.board.get(move.from) match
+      case None => false
+      case Some(piece) if piece.color != state.activeColor => false
+      case Some(piece) if state.board.get(move.to).exists(_.color == piece.color) => false
+      case Some(piece) => isLegalPieceRules(state, move, piece)
+
+  private def isLegalPieceRules(
+      state: GameState,
+      move: Move,
+      piece: Piece,
+  ): Boolean =
+    piece.pieceType match
+      case PieceType.Pawn =>
+        isLegalPawnMove(state.board, move, piece.color, state.enPassantTarget)
+      case PieceType.King if isCastlingAttempt(move) =>
+        isLegalCastling(state, move)
+      case pt =>
+        Ray.canReach(state.board, move.from, pt, move.to)
+
+  /** Boolean form of [[validateCastlingSync]]. Same predicate
+    * structure (rights / rook / blocked path / not in check /
+    * transit-attack) but each failure returns `false` instead of
+    * a `GameError`. */
+  private def isLegalCastling(state: GameState, move: Move): Boolean =
+    val color       = state.activeColor
+    val rank        = if color == Color.White then 1 else 8
+    val kingSide    = move.to.col > move.from.col
+    val rookPos     = Position(if kingSide then 'h' else 'a', rank)
+    val betweenCols = if kingSide then 'f' to 'g'        else 'b' to 'd'
+    val transitCols = if kingSide then List('e','f','g') else List('e','d','c')
+    castlingRight(state, color, kingSide) &&
+      state.board.get(rookPos).contains(Piece(color, PieceType.Rook)) &&
+      !pathBlocked(state, betweenCols, rank) &&
+      !state.inCheck &&
+      !transitsAttacked(state, transitCols, rank, color)
+
+  /** Boolean form of [[validatePawnSync]]. Same case match but
+    * each failure returns `false`. */
+  private def isLegalPawnMove(
+      board: Board,
+      move: Move,
+      color: Color,
+      enPassantTarget: Option[Position]
+  ): Boolean =
+    val direction = if color == Color.White then 1 else -1
+    val startRank = if color == Color.White then 2 else 7
+    val colDiff   = move.to.col - move.from.col
+    val rowDiff   = move.to.row - move.from.row
+    (colDiff, rowDiff) match
+      case (0, `direction`) =>
+        !board.contains(move.to)
+      case (0, d) if d == 2 * direction && move.from.row == startRank =>
+        val intermediate = Position(move.from.col, move.from.row + direction)
+        !board.contains(intermediate) && !board.contains(move.to)
+      case (c, `direction`) if Math.abs(c) == 1 =>
+        board.contains(move.to) || enPassantTarget.contains(move.to)
+      case _ =>
+        false
+
   private def validatePieceRulesSync(
       state: GameState,
       move: Move,
