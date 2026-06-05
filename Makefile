@@ -383,6 +383,7 @@ endif
 # a single-line change.
 BENCH_CODEC_CLASSES   := chess.bench.FenParserBenchmark chess.bench.FenSerializerBenchmark chess.bench.SanRoundTripBenchmark chess.bench.PgnParserBenchmark chess.bench.ZobristHashBenchmark
 BENCH_RULES_CLASSES   := chess.bench.MoveValidatorBenchmark chess.bench.RayWalkBenchmark chess.bench.GameApplyMoveBenchmark
+BENCH_BOT_CLASSES     := chess.bench.SearchBenchmark chess.bench.TexelTunerBenchmark
 # `bench-persistence` and `bench-wire` slots are stubs at this point —
 # the bench classes land in Phase D alongside the matching optimisations.
 # Running them today errors with "No matching benchmarks" until that work
@@ -413,6 +414,14 @@ bench-rules: ## Rules benches — MoveValidator / Ray / GameApplyMove. Pure code
 	out="$$PWD/$(PERF_REPORTS_DIR)/bench-rules-$$ts.json"; \
 	sbt "bench/Jmh/run $(JMH_FLAGS) -rf json -rff $$out $(BENCH_RULES_CLASSES)"; \
 	echo "rules bench results → $$out"
+
+.PHONY: bench-bot
+bench-bot: ## Bot benches — Search (α-β + TT) + TexelTuner training loop. Pure code, no stack needed.
+	@mkdir -p $(PERF_REPORTS_DIR)
+	@ts=$$(date -u +%Y%m%dT%H%M%SZ); \
+	out="$$PWD/$(PERF_REPORTS_DIR)/bench-bot-$$ts.json"; \
+	sbt "bench/Jmh/run $(JMH_FLAGS) -rf json -rff $$out $(BENCH_BOT_CLASSES)"; \
+	echo "bot bench results → $$out"
 
 .PHONY: bench-persistence
 bench-persistence: ## Per-backend persistence benches (testcontainer-backed). Phase D stub today.

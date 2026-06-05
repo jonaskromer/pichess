@@ -95,7 +95,7 @@ object TexelTuner:
     TuningResult(weights, loss, iters)
 
   /** Single coordinate-descent sweep: try each weight ± step. */
-  private[train] def oneSweep(
+  private[chess] def oneSweep(
       samples: Seq[Sample],
       weights: Map[String, Int],
       K: Double,
@@ -125,7 +125,7 @@ object TexelTuner:
     * proper weighted mean. Rows with weight 0 are silently ignored;
     * an all-zero sample set is treated as "no training data" and
     * returns 0 (a no-op for the tuner). */
-  private[train] def totalLoss(
+  private[chess] def totalLoss(
       samples: Seq[Sample],
       weights: Map[String, Int],
       K: Double,
@@ -149,7 +149,7 @@ object TexelTuner:
     * Missing weights are treated as 0 so additional feature keys in
     * the sample are silently ignored — the tuner only optimises
     * features the caller chose to initialise. */
-  private[train] def evaluate(
+  private[chess] def evaluate(
       features: Map[String, Double],
       weights: Map[String, Int],
   ): Double =
@@ -161,5 +161,5 @@ object TexelTuner:
     sum
 
   /** Standard logistic sigmoid. */
-  private[train] def sigmoid(x: Double): Double =
+  private[chess] def sigmoid(x: Double): Double =
     1.0 / (1.0 + math.exp(-x))

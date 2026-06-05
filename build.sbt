@@ -817,7 +817,7 @@ lazy val observability = project
 // Run with:  sbt 'bench/Jmh/run -i 5 -wi 5 -f1 chess.bench.FenParserBenchmark'
 lazy val bench = project
   .in(file("bench"))
-  .dependsOn(domain.jvm, rules, codec, api.jvm)
+  .dependsOn(domain.jvm, rules, codec, api.jvm, botEngine, botTrain)
   .enablePlugins(JmhPlugin)
   .settings(
     name         := "pichess-bench",

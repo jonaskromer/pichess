@@ -1,16 +1,14 @@
 package chess.bot.train
 
-import java.nio.file.{Files, Path}
+import java.nio.file.Path
+import java.sql.Connection
 
 import scala.util.Using
 
 import zio.*
-import zio.json.*
-
-import java.sql.Connection
 
 import chess.bot.data.{BookRepo, Db, IngestedFilesRepo, TrainingRepo, TrainingRow, WeightsRepo}
-import chess.bot.engine.{FeatureExtractor, TaperedFeatureExtractor, WeightSnapshot, WeightsLoader}
+import chess.bot.engine.{TaperedFeatureExtractor, WeightSnapshot, WeightsLoader}
 import chess.codec.FenParserRegex
 
 /** End-to-end training orchestration: ingest one or more PGN
