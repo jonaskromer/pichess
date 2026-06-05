@@ -55,22 +55,27 @@ final case class BoardState(
       throw new NoSuchElementException(s"No piece at $pos")
     )
 
-  /** The piece at `pos`, or `None` if the square is empty. */
+  /** The piece at `pos`, or `None` if the square is empty.
+    *
+    * Returns one of the 13 cached `Option[Piece]` flyweights
+    * (12 pieces × `Some` + the canonical `None`) — zero allocation
+    * per call, which matters because this method is called by the
+    * million in the bot's move-generation hot loop. */
   def get(pos: Position): Option[Piece] =
     val idx  = pos.squareIdx
     val mask = 1L << idx
-    if (pawnsW.raw & mask)   != 0L then Some(Piece(Color.White, PieceType.Pawn))
-    else if (knightsW.raw & mask) != 0L then Some(Piece(Color.White, PieceType.Knight))
-    else if (bishopsW.raw & mask) != 0L then Some(Piece(Color.White, PieceType.Bishop))
-    else if (rooksW.raw & mask)   != 0L then Some(Piece(Color.White, PieceType.Rook))
-    else if (queensW.raw & mask)  != 0L then Some(Piece(Color.White, PieceType.Queen))
-    else if (kingW.raw & mask)    != 0L then Some(Piece(Color.White, PieceType.King))
-    else if (pawnsB.raw & mask)   != 0L then Some(Piece(Color.Black, PieceType.Pawn))
-    else if (knightsB.raw & mask) != 0L then Some(Piece(Color.Black, PieceType.Knight))
-    else if (bishopsB.raw & mask) != 0L then Some(Piece(Color.Black, PieceType.Bishop))
-    else if (rooksB.raw & mask)   != 0L then Some(Piece(Color.Black, PieceType.Rook))
-    else if (queensB.raw & mask)  != 0L then Some(Piece(Color.Black, PieceType.Queen))
-    else if (kingB.raw & mask)    != 0L then Some(Piece(Color.Black, PieceType.King))
+    if (pawnsW.raw & mask)   != 0L then Piece.someOf(Color.White, PieceType.Pawn)
+    else if (knightsW.raw & mask) != 0L then Piece.someOf(Color.White, PieceType.Knight)
+    else if (bishopsW.raw & mask) != 0L then Piece.someOf(Color.White, PieceType.Bishop)
+    else if (rooksW.raw & mask)   != 0L then Piece.someOf(Color.White, PieceType.Rook)
+    else if (queensW.raw & mask)  != 0L then Piece.someOf(Color.White, PieceType.Queen)
+    else if (kingW.raw & mask)    != 0L then Piece.someOf(Color.White, PieceType.King)
+    else if (pawnsB.raw & mask)   != 0L then Piece.someOf(Color.Black, PieceType.Pawn)
+    else if (knightsB.raw & mask) != 0L then Piece.someOf(Color.Black, PieceType.Knight)
+    else if (bishopsB.raw & mask) != 0L then Piece.someOf(Color.Black, PieceType.Bishop)
+    else if (rooksB.raw & mask)   != 0L then Piece.someOf(Color.Black, PieceType.Rook)
+    else if (queensB.raw & mask)  != 0L then Piece.someOf(Color.Black, PieceType.Queen)
+    else if (kingB.raw & mask)    != 0L then Piece.someOf(Color.Black, PieceType.King)
     else None
 
   /** Is any piece present at `pos`? */
