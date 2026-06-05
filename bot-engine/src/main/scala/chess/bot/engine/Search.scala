@@ -93,10 +93,22 @@ object Search:
       // Likely to pay off at deeper depth where main-search ordering
       // matters more; keep the flag for future re-test.
       seeEnabled: Boolean = false,
+      // OFF — a 200-game v8+Q+ID vs v8+Q head-to-head at depth 4
+      // parallelism 8 (with depth-preferred TT replacement, which
+      // is a separate bugfix) measured ΔElo = -24.4 (35-49-116,
+      // score 46.5%). At fixed depth, ID's TT-warming benefit is
+      // outweighed by (a) the extra shallow-search time and (b)
+      // non-determinism in parallel search picking a slightly
+      // worse move at score-ties when the TT contents differ.
+      // Kept as a flag so a real time-budget variant can layer
+      // on top of it later — without ID you can't gracefully
+      // trade depth for budget.
+      iterativeDeepeningEnabled: Boolean = false,
   ): Search =
     new AlphaBetaSearch(
       eval, TranspositionTable.inMemory(maxTtEntries), book,
       parallelism, counterMoveEnabled, quiescenceEnabled, seeEnabled,
+      iterativeDeepeningEnabled,
     )
 
   /** Test-only factory that lets a caller inject the [[TranspositionTable]]

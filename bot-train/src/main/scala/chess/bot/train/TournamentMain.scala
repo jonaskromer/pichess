@@ -43,7 +43,8 @@ object TournamentMain extends ZIOAppDefault:
         cfg <- readConfig
         _   <- ZIO.logInfo(matchupLabel(cfg))
         challenger <- loadSearch(
-                        cfg.challenger, cfg.challengerCmh, cfg.challengerQ, cfg.challengerSee,
+                        cfg.challenger, cfg.challengerCmh, cfg.challengerQ,
+                        cfg.challengerSee, cfg.challengerId,
                       )
         champion   <- loadOpponent(cfg)
         // Resolve the opening pool. Empty pool → all games start
@@ -92,6 +93,8 @@ object TournamentMain extends ZIOAppDefault:
       championQ:     Boolean,
       challengerSee: Boolean,
       championSee:   Boolean,
+      challengerId:  Boolean,
+      championId:    Boolean,
   )
 
   private def readConfig: UIO[Config] =
@@ -135,6 +138,11 @@ object TournamentMain extends ZIOAppDefault:
                            .exists(_.equalsIgnoreCase("true")),
         championSee    = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_SEE")
                            .exists(_.equalsIgnoreCase("true")),
+        // Iterative-deepening toggles.
+        challengerId   = sys.env.get("PICHESS_TOURNAMENT_CHALLENGER_ID")
+                           .exists(_.equalsIgnoreCase("true")),
+        championId     = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_ID")
+                           .exists(_.equalsIgnoreCase("true")),
       )
     }
 
@@ -150,7 +158,9 @@ object TournamentMain extends ZIOAppDefault:
         skillLevel = Some(cfg.stockfishSkill),
         label      = s"stockfish-skill${cfg.stockfishSkill}",
       )
-    else loadSearch(cfg.champion, cfg.championCmh, cfg.championQ, cfg.championSee)
+    else loadSearch(
+      cfg.champion, cfg.championCmh, cfg.championQ, cfg.championSee, cfg.championId,
+    )
 
   /** Build a [[Search]] for the given weights-version JSON
     * resource. Uses the array-backed tapered evaluator (the
@@ -162,13 +172,15 @@ object TournamentMain extends ZIOAppDefault:
       counterMoveEnabled: Boolean,
       quiescenceEnabled: Boolean,
       seeEnabled: Boolean,
+      iterativeDeepeningEnabled: Boolean,
   ): ZIO[Any, Throwable, Search] =
     WeightsLoader.load(version).map { snapshot =>
       Search.alphaBeta(
-        eval               = ArrayTaperedEvaluator(snapshot.weights),
-        book               = OpeningBook.Empty,
-        counterMoveEnabled = counterMoveEnabled,
-        quiescenceEnabled  = quiescenceEnabled,
-        seeEnabled         = seeEnabled,
+        eval                      = ArrayTaperedEvaluator(snapshot.weights),
+        book                      = OpeningBook.Empty,
+        counterMoveEnabled        = counterMoveEnabled,
+        quiescenceEnabled         = quiescenceEnabled,
+        seeEnabled                = seeEnabled,
+        iterativeDeepeningEnabled = iterativeDeepeningEnabled,
       )
     }

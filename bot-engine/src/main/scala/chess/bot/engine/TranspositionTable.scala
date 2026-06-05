@@ -71,8 +71,18 @@ object TranspositionTable:
       Option(table.get(hash))
 
     def put(hash: Long, entry: Entry): Unit =
-      table.put(hash, entry)
-      if table.size > maxEntries then evict()
+      // Depth-preferred replacement: a shallower-depth entry MUST
+      // NOT overwrite a deeper one. Without this guard, iterative
+      // deepening was destructive — depth-1 entries from each
+      // iteration's first pass would clobber the depth-N entries
+      // left over from prior moves, and the supposedly "warm" TT
+      // ended up colder than running at depth N directly. Allowing
+      // equal-depth replacement keeps the freshest score when the
+      // same position is revisited at the same depth.
+      val existing = table.get(hash)
+      if existing == null || entry.depth >= existing.depth then
+        table.put(hash, entry)
+        if table.size > maxEntries then evict()
 
     def size: Int = table.size
 

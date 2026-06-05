@@ -41,6 +41,11 @@ private[engine] final class AlphaBetaSearch(
     // (SEE < 0) get demoted below quiet moves. Defaults OFF until
     // the A/B head-to-head confirms the textbook +20-40 Elo.
     seeEnabled: Boolean = false,
+    // Iterative deepening: when ON, [[bestMove(state, depth)]]
+    // runs depths 1..depth in order, sharing the TT so each
+    // iteration seeds the next one's move ordering. Same final
+    // depth, better cutoffs from the warmed TT.
+    iterativeDeepeningEnabled: Boolean = false,
 ) extends Search:
 
   import Search.{Infinity, MateScore}
@@ -134,11 +139,54 @@ private[engine] final class AlphaBetaSearch(
         clearKillers()
         clearHistory()
         clearCounterMoves()
-        if parallelism > 1 then parallelBestMove(state, depth, history)
+        if iterativeDeepeningEnabled then iterativeBestMove(state, depth, history)
+        else if parallelism > 1 then parallelBestMove(state, depth, history)
         else
           val bufs = new SearchBufs
           ZIO.succeed(syncBestMove(state, depth, history, bufs).map(MoveInt.decode))
     }
+
+  /** Iterative-deepening wrapper: runs the search at depth 1, 2, …,
+    * target, sharing the TT across iterations. Each iteration's
+    * `bestMove` for every visited node is left in the TT, so the
+    * next iteration's move ordering starts from a strong prior —
+    * the TT bestMove (1_000_000 ordering bucket) is exactly the
+    * move that was best one ply shallower. That single change
+    * usually flips the search from "lots of late cutoffs" to
+    * "cutoff on the first move tried", which dwarfs the extra
+    * shallow-depth work.
+    *
+    * Forced-mate short-circuit: if a shallower depth finds a
+    * mate-in-N score, deeper iterations can't improve it, so we
+    * return early. Avoids wasting time at high depth when the
+    * tactical answer is already nailed down.
+    *
+    * Parallelism: each iteration honours the configured
+    * `parallelism` setting, so YBWC and ID compose naturally —
+    * shallow iterations are serial (tree is small), deep ones
+    * fan out at the root. */
+  private def iterativeBestMove(
+      state: GameState,
+      depth: Int,
+      history: Set[Long],
+  ): UIO[Option[Move]] =
+    def loop(d: Int, last: Option[Move]): UIO[Option[Move]] =
+      if d > depth then ZIO.succeed(last)
+      else
+        val iterEffect =
+          if parallelism > 1 then parallelBestMove(state, d, history)
+          else
+            val bufs = new SearchBufs
+            ZIO.succeed(syncBestMove(state, d, history, bufs).map(MoveInt.decode))
+        iterEffect.flatMap { result =>
+          // Mate-in-N is already found; no point going deeper.
+          val rootHash = Zobrist.hash(state)
+          val rootScore = tt.get(rootHash).map(_.score).getOrElse(0)
+          val mateFound = math.abs(rootScore) >= MateScore - MaxPly
+          if mateFound then ZIO.succeed(result)
+          else loop(d + 1, result)
+        }
+    loop(1, None)
 
   /** YBWC-style ("Young Brothers Wait Concept") parallel root
     * search.
