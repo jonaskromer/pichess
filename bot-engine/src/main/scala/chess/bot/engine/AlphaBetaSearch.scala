@@ -2,7 +2,7 @@ package chess.bot.engine
 
 import zio.{UIO, ZIO}
 
-import chess.bot.engine.internal.RulesAdapter
+import chess.bot.engine.internal.{RulesAdapter, StaticExchange}
 import chess.model.board.{GameState, Move, MoveInt, Position}
 import chess.model.piece.{Color, PieceType}
 import chess.model.rules.Zobrist
@@ -37,6 +37,10 @@ private[engine] final class AlphaBetaSearch(
     // recursion that escapes the horizon effect). See
     // [[Search.alphaBeta]] for the empirical Elo finding.
     quiescenceEnabled: Boolean = true,
+    // Toggle for SEE-based capture ordering — losing captures
+    // (SEE < 0) get demoted below quiet moves. Defaults OFF until
+    // the A/B head-to-head confirms the textbook +20-40 Elo.
+    seeEnabled: Boolean = false,
 ) extends Search:
 
   import Search.{Infinity, MateScore}
@@ -672,13 +676,20 @@ private[engine] final class AlphaBetaSearch(
 
   /** Per-move ordering score. Higher is tried first. Score buckets:
     *   - 1_000_000           TT bestMove
-    *   -   100_000           any capture (MVV-LVA tiebreak: victim×10 − attacker)
+    *   -   100_000           winning/equal capture (MVV-LVA tiebreak)
+    *                         — with SEE on, only SEE ≥ 0 captures
+    *                         land here
     *   -    90_000           killer slot 0 (most recent)
     *   -    80_000           killer slot 1
     *   -    70_000           counter-move (refutation of `prevMove`)
-    *   -        0..69_999    quiet — history-heuristic score (capped at
-    *                         69_999 so a hot history entry can't sneak
-    *                         past the counter-move bucket) */
+    *   -        0..69_999    quiet — history-heuristic score (capped
+    *                         at 69_999 so a hot history entry can't
+    *                         sneak past the counter-move bucket)
+    *   -   -99_999.. -1      losing capture (SEE < 0), bucket
+    *                         `-100_000 + see_value` so e.g. RxB(-170)
+    *                         scores -100_170, sorted just above the
+    *                         worst possible losing trade and below
+    *                         every quiet. Tried last. */
   private def scoreMove(
       state: GameState,
       move: Int,
@@ -696,7 +707,15 @@ private[engine] final class AlphaBetaSearch(
           val attackerVal = state.board.get(positionAt(MoveInt.fromIdx(move)))
             .map(p => pieceValue(p.pieceType))
             .getOrElse(0)
-          100_000 + victimVal * 10 - attackerVal
+          val mvvLva = 100_000 + victimVal * 10 - attackerVal
+          if !seeEnabled then mvvLva
+          else
+            val seeVal = StaticExchange.see(state, move)
+            if seeVal >= 0 then mvvLva
+            // Losing captures sort below every quiet. Use
+            // -100_000 + seeVal so worse SEE → lower position,
+            // preserving relative order within the losing bucket.
+            else -100_000 + seeVal
         case None =>
           if move == k0 then 90_000
           else if move == k1 then 80_000

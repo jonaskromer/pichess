@@ -85,10 +85,18 @@ object Search:
       // vs 83s baseline for the 200-game tournament with quiescence
       // on only the challenger side). Worth the time per move.
       quiescenceEnabled: Boolean = true,
+      // OFF — a 200-game v8+Q+SEE vs v8+Q head-to-head at depth 4
+      // parallelism 8 measured ΔElo = -3.5 (45-47-108, score 49.5%),
+      // i.e. neutral within noise. Quiescence already cleans up
+      // losing-capture mistakes by recursing on the capture chain,
+      // so SEE's marginal ordering improvement collapses to zero.
+      // Likely to pay off at deeper depth where main-search ordering
+      // matters more; keep the flag for future re-test.
+      seeEnabled: Boolean = false,
   ): Search =
     new AlphaBetaSearch(
       eval, TranspositionTable.inMemory(maxTtEntries), book,
-      parallelism, counterMoveEnabled, quiescenceEnabled,
+      parallelism, counterMoveEnabled, quiescenceEnabled, seeEnabled,
     )
 
   /** Test-only factory that lets a caller inject the [[TranspositionTable]]
