@@ -29,18 +29,20 @@ object SearchWithBookSpec extends ZIOSpecDefault:
       yield assertTrue(out.contains(bookMove))
     },
     test("falls through to α-β search at an unknown position") {
+      // Book contains only the post-1.e4 position; the root position
+      // isn't in the book, so search runs and returns *some* legal
+      // move. We can't usefully assert which one — with material-only
+      // eval at depth 2 from start, every opening tie at score 0, so
+      // the chosen move depends on the move generator's enumeration
+      // order and the sort's tiebreak, neither of which is a stable
+      // contract.
       for
         state <- FenParserRegex.parse(startFen)
-        // Book contains only the post-1.e4 position; the root position
-        // isn't in the book, so search runs.
         otherFen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
         otherState <- FenParserRegex.parse(otherFen)
         book = OpeningBook.inMemory(Map(Zobrist.hash(otherState) -> bookMove))
         search = Search.alphaBeta(Evaluator.materialOnly, book)
         out   <- search.bestMove(state, depth = 2)
-      yield assertTrue(
-        out.isDefined,
-        !out.contains(bookMove),
-      )
+      yield assertTrue(out.isDefined)
     },
   )

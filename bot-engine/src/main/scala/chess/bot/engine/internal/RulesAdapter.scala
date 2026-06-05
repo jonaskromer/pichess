@@ -2,7 +2,7 @@ package chess.bot.engine.internal
 
 import zio.{Runtime, Unsafe}
 
-import chess.model.board.{GameState, Move}
+import chess.model.board.{GameState, Move, MoveInt}
 import chess.model.piece.PieceType
 import chess.model.rules.{Game, MoveValidator}
 
@@ -70,3 +70,49 @@ private[engine] object RulesAdapter:
     */
   def isInCheck(state: GameState): Boolean =
     MoveValidator.isInCheck(state.board, state.activeColor)
+
+  /** Hot-path variant of [[legalMoves]]: writes packed-Int moves
+    * into `out` (see [[MoveInt]] for the encoding) and returns the
+    * number of moves written. No `Move` / `Option` / `List`
+    * allocations on the move side — only the underlying
+    * `Map[Position, List[Position]]` from the rules layer is
+    * allocated as today.
+    *
+    * `out` must be sized ≥ 256 (an upper bound on the number of
+    * legal moves from any chess position; in practice ≤ 218).
+    * Caller pre-allocates one buffer per ply so the recursion is
+    * zero-alloc on the move-list path.
+    *
+    * Same promotion convention as [[legalMoves]] — Phase 1 always
+    * promotes to Queen; under-promotions come in a later phase. */
+  def fillLegalMoves(state: GameState, out: Array[Int]): Int =
+    val index = Unsafe.unsafe { implicit u =>
+      runtime.unsafe.run(MoveValidator.legalDestinationsIndex(state))
+        .getOrThrow()
+    }
+    var n = 0
+    val it = index.iterator
+    while it.hasNext do
+      val (from, destinations) = it.next()
+      val piece = state.board.get(from)
+      val isPawn = piece.exists(_.pieceType == PieceType.Pawn)
+      val fromIdx = from.squareIdx
+      val destIt = destinations.iterator
+      while destIt.hasNext do
+        val to = destIt.next()
+        val toIdx = to.squareIdx
+        val promo =
+          if isPawn && (to.row == 1 || to.row == 8) then MoveInt.PromoQueen
+          else MoveInt.NoPromotion
+        out(n) = MoveInt.encode(fromIdx, toIdx, promo)
+        n += 1
+    n
+
+  /** Int-based apply: decode the packed move into a [[Move]] case
+    * class (one allocation per call, unavoidable until the rules
+    * layer accepts primitives directly) and run the existing
+    * `Game.applyMove`. The Move case class will fall out of the
+    * hot path once the rules layer's apply gets a primitive
+    * variant. */
+  def applyMoveInt(state: GameState, moveInt: Int): Option[GameState] =
+    applyMove(state, MoveInt.decode(moveInt))
