@@ -50,7 +50,8 @@ object SelfPlaySpec extends ZIOSpecDefault:
           chess.model.board.Position('h', 7),
         )
         val mateSearch: Search = new Search:
-          def bestMove(state: GameState, depth: Int): UIO[Option[Move]] =
+          def bestMove(state: GameState, depth: Int, history: Set[Long])
+              : UIO[Option[Move]] =
             ZIO.succeed(Some(queenMate))
         val matePosition = "7k/8/6KQ/8/8/8/8/8 w - - 0 1"
         // Override start position: use a custom playGame that starts
@@ -92,9 +93,10 @@ object SelfPlaySpec extends ZIOSpecDefault:
         for
           calls <- Ref.make(Vector.empty[String])
           recording: Search = new Search:
-            def bestMove(state: GameState, depth: Int): UIO[Option[Move]] =
+            def bestMove(state: GameState, depth: Int, history: Set[Long])
+                : UIO[Option[Move]] =
               calls.update(_ :+ s"rec@${state.fullmoveNumber}") *>
-                materialSearch.bestMove(state, depth)
+                materialSearch.bestMove(state, depth, history)
           // Use `materialSearch` as the second player so games can
           // still progress.
           _ <- SelfPlay.round(

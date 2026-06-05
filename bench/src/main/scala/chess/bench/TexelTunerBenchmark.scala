@@ -133,6 +133,9 @@ class TexelTunerBenchmark:
     TexelTuner.totalLoss(tapered10k, taperedWeights, K = 0.4)
 
   // ---- oneSweep (one coord-descent pass = ~2 totalLoss × weightCount)
+  //
+  // Reference (un-cached) `oneSweep` — kept around for the
+  // before/after comparison against the cached `tune` benches below.
 
   @Benchmark
   def oneSweepMaterial1k: (Map[String, Int], Double) =
@@ -143,3 +146,28 @@ class TexelTunerBenchmark:
   def oneSweepTapered1k: (Map[String, Int], Double) =
     val initialLoss = TexelTuner.totalLoss(tapered1k, taperedWeights, K = 0.4)
     TexelTuner.oneSweep(tapered1k, taperedWeights, K = 0.4, step = 16, currentLoss = initialLoss)
+
+  // ---- tune (the cached array-indexed coord descent) -----------------
+  //
+  // The public `tune` entry uses the [[CompiledCorpus]] fast path:
+  // sparse inverted index, primitive arrays, cached per-sample dot
+  // products. `maxIterations = 1` is roughly comparable to one
+  // `oneSweep` from the reference benches above (plus the fixed
+  // compile / cache-build overhead). Run with maxIter = 4 for a more
+  // realistic mid-training snapshot.
+
+  @Benchmark
+  def tuneCachedMaterial1k_iter1: TexelTuner.TuningResult =
+    TexelTuner.tune(mat1k, matWeights, K = 0.4, maxIterations = 1, initialStep = 16)
+
+  @Benchmark
+  def tuneCachedTapered1k_iter1: TexelTuner.TuningResult =
+    TexelTuner.tune(tapered1k, taperedWeights, K = 0.4, maxIterations = 1, initialStep = 16)
+
+  @Benchmark
+  def tuneCachedTapered10k_iter1: TexelTuner.TuningResult =
+    TexelTuner.tune(tapered10k, taperedWeights, K = 0.4, maxIterations = 1, initialStep = 16)
+
+  @Benchmark
+  def tuneCachedTapered1k_iter4: TexelTuner.TuningResult =
+    TexelTuner.tune(tapered1k, taperedWeights, K = 0.4, maxIterations = 4, initialStep = 16)

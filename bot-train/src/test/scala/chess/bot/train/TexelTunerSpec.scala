@@ -160,4 +160,97 @@ object TexelTunerSpec extends ZIOSpecDefault:
         assertTrue(next == initial, nextLoss == initialLoss)
       },
     ),
+    suite("cached `tune` equivalence with the reference oneSweep")(
+      test("multi-feature fixture: cached + reference paths produce identical results") {
+        // Pin the optimized `tune` (array-indexed, cached dot product
+        // + cached diff) against a hand-rolled coordinate-descent
+        // loop driving the reference [[TexelTuner.oneSweep]]. If the
+        // cache introduces any drift or off-by-one in the
+        // incremental update math, this test catches it.
+        //
+        // The fixture mixes feature scales: pawn / knight / queen as
+        // material; tempo as a side-to-move bit; a few "PST-like"
+        // sparse features (only some samples carry them). Five
+        // samples, each with a different combination — enough to
+        // exercise the inverted-index code paths but small enough
+        // that the reference fold runs cheaply.
+        val initial = Map(
+          "pawn"     -> 50,
+          "knight"   -> 150,
+          "queen"    -> 400,
+          "tempo"    -> 5,
+          "pst_a2"   -> 0,
+          "pst_e4"   -> 0,
+        )
+        val samples = Seq(
+          TexelTuner.Sample(
+            Map("pawn" -> 1.0, "knight" -> 0.0, "queen" -> 0.0, "tempo" -> 1.0, "pst_a2" -> 1.0),
+            outcome = 0.7,
+          ),
+          TexelTuner.Sample(
+            Map("pawn" -> 0.0, "knight" -> 1.0, "queen" -> 0.0, "tempo" -> 1.0, "pst_e4" -> 1.0),
+            outcome = 0.6,
+          ),
+          TexelTuner.Sample(
+            Map("pawn" -> 2.0, "knight" -> -1.0, "queen" -> 1.0, "tempo" -> 1.0),
+            outcome = 1.0,
+          ),
+          TexelTuner.Sample(
+            Map("pawn" -> -1.0, "knight" -> 0.0, "queen" -> 0.0, "tempo" -> 1.0, "pst_a2" -> -1.0),
+            outcome = 0.2,
+          ),
+          TexelTuner.Sample(
+            Map("pawn" -> 0.0, "knight" -> 0.0, "queen" -> -1.0, "tempo" -> 1.0, "pst_e4" -> 1.0),
+            outcome = 0.3,
+            weight  = 0.7,  // exercise the source-quality weighting
+          ),
+        )
+
+        val cached = TexelTuner.tune(samples, initial, K = K, maxIterations = 8, initialStep = 16)
+
+        // Reference: drive `oneSweep` directly with the exact same
+        // halving schedule the cached path uses.
+        val reference = referenceTune(
+          samples,
+          initial,
+          K = K,
+          maxIterations = 8,
+          initialStep = 16,
+        )
+
+        assertTrue(
+          cached.weights == reference.weights,
+          cached.iterations == reference.iterations,
+          // FP epsilon: the cached path uses incremental sumSq + a
+          // periodic rebuild, the reference recomputes totalLoss from
+          // scratch each pass. After 8 iterations the difference is
+          // bounded by ~1e-12 in practice.
+          math.abs(cached.finalLoss - reference.finalLoss) < 1e-9,
+        )
+      },
+    ),
   )
+
+  /** Hand-rolled coordinate descent that calls the reference
+    * [[TexelTuner.oneSweep]] each pass. Used to pin the cached
+    * [[TexelTuner.tune]] path. */
+  private def referenceTune(
+      samples: Seq[TexelTuner.Sample],
+      initial: Map[String, Int],
+      K: Double,
+      maxIterations: Int,
+      initialStep: Int,
+  ): TexelTuner.TuningResult =
+    var weights = initial
+    var step    = initialStep
+    var iters   = 0
+    var loss    = TexelTuner.totalLoss(samples, weights, K)
+    while step >= 1 && iters < maxIterations do
+      iters += 1
+      val (next, nextLoss) = TexelTuner.oneSweep(samples, weights, K, step, loss)
+      if nextLoss < loss then
+        weights = next
+        loss = nextLoss
+      else
+        step = step / 2
+    TexelTuner.TuningResult(weights, loss, iters)

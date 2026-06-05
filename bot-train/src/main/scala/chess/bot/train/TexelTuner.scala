@@ -79,20 +79,69 @@ object TexelTuner:
       maxIterations: Int = 100,
       initialStep: Int = 16,
   ): TuningResult =
-    var weights = initial
-    var step    = initialStep
-    var iters   = 0
-    var loss    = totalLoss(samples, weights, K)
+    if samples.isEmpty then TuningResult(initial, 0.0, 0)
+    else
+      val corpus = CompiledCorpus.build(samples, initial)
+      runCachedCoordinateDescent(corpus, K, maxIterations, initialStep)
+      corpus.toResult(initial)
+
+  /** Same coordinate descent as the reference [[oneSweep]] loop, but
+    * driven against a [[CompiledCorpus]] that:
+    *   - stores features as parallel `Array[Int]` + `Array[Double]`
+    *     (no `Map[String, _]` lookup in the inner loop),
+    *   - keeps per-sample `cachedEval` + `cachedDiff` so that
+    *     perturbing one weight only re-evaluates samples that
+    *     actually carry that feature (O(featureToSamples(f).length)
+    *     per trial, not O(n × featureCount)),
+    *   - aggregates the weighted SSE via incremental deltas
+    *     (`newSumSq = cachedSumSq − oldContrib + newContrib`).
+    *
+    * The math is identical to the reference path — see
+    * [[CompiledCorpus]] doc — and equivalence is pinned by
+    * `TexelTunerSpec.cached vs reference` (the new path's
+    * [[TuningResult]] matches a hand-rolled fold over [[oneSweep]]).
+    *
+    * Floating-point drift from the incremental sumSq aggregation is
+    * capped by a full [[CompiledCorpus.rebuildCache]] at the start of
+    * each outer iteration (cheap — one inverted-index pass).
+    */
+  private def runCachedCoordinateDescent(
+      corpus: CompiledCorpus,
+      K: Double,
+      maxIterations: Int,
+      initialStep: Int,
+  ): Unit =
+    var step  = initialStep
+    var iters = 0
+    corpus.rebuildCache(K)
+    var loss = corpus.currentLoss
     while step >= 1 && iters < maxIterations do
       iters += 1
-      val (next, nextLoss) = oneSweep(samples, weights, K, step, loss)
-      if nextLoss < loss then
-        weights = next
-        loss = nextLoss
-      else
-        // Couldn't improve at this step size — narrow the search.
+      // Refresh from authoritative weights → bounds FP drift per
+      // outer iteration. With sparse features this costs roughly the
+      // same as a single oneSweep trial, so the safety-vs-perf
+      // trade-off is negligible.
+      corpus.rebuildCache(K)
+      loss = corpus.currentLoss
+      val startLoss = loss
+      var f = 0
+      while f < corpus.featureCount do
+        val plusLoss  = corpus.trialLoss(f, +step, K)
+        val minusLoss = corpus.trialLoss(f, -step, K)
+        if plusLoss < loss && plusLoss <= minusLoss then
+          corpus.commit(f, +step, K)
+          loss = plusLoss
+        else if minusLoss < loss then
+          corpus.commit(f, -step, K)
+          loss = minusLoss
+        f += 1
+      if loss >= startLoss then
+        // No weight moved this sweep — halve the step and retry.
         step = step / 2
-    TuningResult(weights, loss, iters)
+    corpus.iterations = iters
+    // Final clean recompute so the published finalLoss is free of
+    // any accumulated drift from the incremental sumSq path.
+    corpus.rebuildCache(K)
 
   /** Single coordinate-descent sweep: try each weight ± step. */
   private[chess] def oneSweep(
@@ -163,3 +212,206 @@ object TexelTuner:
   /** Standard logistic sigmoid. */
   private[chess] def sigmoid(x: Double): Double =
     1.0 / (1.0 + math.exp(-x))
+
+  /** Compiled, array-backed view of the training corpus used by the
+    * fast [[tune]] path.
+    *
+    * The reference [[Sample]] / `Map[String, Double]` shape is fine
+    * for callers + tests but pays a HashMap lookup per feature per
+    * sample per trial — for a 690-feature tapered run with 1M
+    * samples that's 1.4 *billion* `String.hashCode` calls per
+    * coordinate-descent sweep, which is the dominant cost.
+    *
+    * `CompiledCorpus` flattens samples into parallel primitive
+    * arrays plus an inverted index `featureToSamples(f) →
+    * Array[Int]` of which samples reference feature `f`. The inner
+    * loop becomes:
+    *   - array indexing only,
+    *   - per-trial cost proportional to the number of samples that
+    *     actually carry feature `f` (sparse), not all samples,
+    *   - zero allocation during tuning (apart from the result
+    *     conversion at the end).
+    *
+    * Mutable state (`weights`, `cachedEval`, `cachedDiff`,
+    * `cachedSumSq`, `iterations`) lives inside the compiled corpus
+    * so the outer tuning loop is a plain mutator + accessor over a
+    * single object. Not thread-safe — `tune` is sequential.
+    */
+  private final class CompiledCorpus(
+      val featureCount: Int,
+      val sampleCount: Int,
+      // Canonical feature ordering: index → key name.
+      val keys: Array[String],
+      // Inverted index. For each feature f, the indices of samples
+      // that carry it (`featureToSamples(f)`) and the corresponding
+      // feature values (`featureToValues(f)`). Same length per pair.
+      val featureToSamples: Array[Array[Int]],
+      val featureToValues:  Array[Array[Double]],
+      val outcomes:         Array[Double],
+      val sampleWeights:    Array[Double],
+      val totalSampleWeight: Double,
+  ):
+
+    val weights:    Array[Int]    = Array.ofDim[Int](featureCount)
+    val cachedEval: Array[Double] = Array.ofDim[Double](sampleCount)
+    val cachedDiff: Array[Double] = Array.ofDim[Double](sampleCount)
+    var cachedSumSq: Double = 0.0
+    var iterations:  Int    = 0
+
+    /** Current weighted MSE under the cached state. */
+    def currentLoss: Double =
+      if totalSampleWeight == 0.0 then 0.0 else cachedSumSq / totalSampleWeight
+
+    /** Recompute `cachedEval`, `cachedDiff`, `cachedSumSq` from the
+      * authoritative `weights`. Idempotent — used to seed the cache
+      * before the first sweep AND to cap floating-point drift between
+      * outer iterations. Costs O(Σ_f |featureToSamples(f)|) +
+      * O(sampleCount). */
+    def rebuildCache(K: Double): Unit =
+      java.util.Arrays.fill(cachedEval, 0.0)
+      var f = 0
+      while f < featureCount do
+        val w = weights(f)
+        if w != 0 then
+          val idxs = featureToSamples(f)
+          val vals = featureToValues(f)
+          val len  = idxs.length
+          var j = 0
+          while j < len do
+            cachedEval(idxs(j)) += vals(j) * w
+            j += 1
+        f += 1
+      var s = 0.0
+      var i = 0
+      while i < sampleCount do
+        val pred = sigmoid(K * cachedEval(i))
+        val d    = pred - outcomes(i)
+        cachedDiff(i) = d
+        s += sampleWeights(i) * d * d
+        i += 1
+      cachedSumSq = s
+
+    /** Loss if `weights(f)` were perturbed by `delta`. Does NOT
+      * mutate the cache. */
+    def trialLoss(f: Int, delta: Int, K: Double): Double =
+      val idxs = featureToSamples(f)
+      val vals = featureToValues(f)
+      val len  = idxs.length
+      var sumSqDelta = 0.0
+      var j = 0
+      while j < len do
+        val i      = idxs(j)
+        val newEval = cachedEval(i) + delta * vals(j)
+        val newPred = sigmoid(K * newEval)
+        val newDiff = newPred - outcomes(i)
+        val oldDiff = cachedDiff(i)
+        sumSqDelta += sampleWeights(i) * (newDiff * newDiff - oldDiff * oldDiff)
+        j += 1
+      val newSumSq = cachedSumSq + sumSqDelta
+      if totalSampleWeight == 0.0 then 0.0 else newSumSq / totalSampleWeight
+
+    /** Apply the perturbation: update `weights(f)`, `cachedEval`,
+      * `cachedDiff`, `cachedSumSq` to reflect the new state.
+      * Caller is responsible for having verified that the trial
+      * improves loss. */
+    def commit(f: Int, delta: Int, K: Double): Unit =
+      val idxs = featureToSamples(f)
+      val vals = featureToValues(f)
+      val len  = idxs.length
+      var sumSqDelta = 0.0
+      var j = 0
+      while j < len do
+        val i      = idxs(j)
+        val newEval = cachedEval(i) + delta * vals(j)
+        val newPred = sigmoid(K * newEval)
+        val newDiff = newPred - outcomes(i)
+        val oldDiff = cachedDiff(i)
+        sumSqDelta   += sampleWeights(i) * (newDiff * newDiff - oldDiff * oldDiff)
+        cachedEval(i) = newEval
+        cachedDiff(i) = newDiff
+        j += 1
+      weights(f) += delta
+      cachedSumSq += sumSqDelta
+
+    /** Project the array-backed state back into the public API: a
+      * `TuningResult` with `Map[String, Int]` weights. The `initial`
+      * vector is passed through so any keys we didn't carry in
+      * `keys` (shouldn't happen if `build` was called with the same
+      * initial, but defensive) round-trip unchanged. */
+    def toResult(initial: Map[String, Int]): TuningResult =
+      var out = initial
+      var i = 0
+      while i < featureCount do
+        out = out.updated(keys(i), weights(i))
+        i += 1
+      TuningResult(out, currentLoss, iterations)
+
+  private object CompiledCorpus:
+
+    /** Compile a sample list into the flat representation. Two
+      * passes over the samples: one to size the inverted-index
+      * arrays per feature, one to fill them. Keys absent from
+      * `initial` are silently dropped (matches the reference
+      * [[evaluate]] semantics — only adjustable features are
+      * tracked). */
+    def build(samples: Seq[Sample], initial: Map[String, Int]): CompiledCorpus =
+      val keys: Array[String] = initial.keys.toArray
+      val featureCount = keys.length
+      val keyToIdx: Map[String, Int] = keys.iterator.zipWithIndex.toMap
+
+      val sampleArr = samples.toArray
+      val n = sampleArr.length
+
+      // First pass: count non-zero entries per feature.
+      val counts = Array.ofDim[Int](featureCount)
+      var s = 0
+      while s < n do
+        sampleArr(s).features.foreach { case (k, v) =>
+          if v != 0.0 then
+            keyToIdx.get(k) match
+              case Some(idx) => counts(idx) += 1
+              case None      => // not adjustable; drop
+        }
+        s += 1
+
+      // Allocate.
+      val featureToSamples = Array.ofDim[Array[Int]](featureCount)
+      val featureToValues  = Array.ofDim[Array[Double]](featureCount)
+      var f = 0
+      while f < featureCount do
+        featureToSamples(f) = Array.ofDim[Int](counts(f))
+        featureToValues(f)  = Array.ofDim[Double](counts(f))
+        f += 1
+
+      // Second pass: fill, tracking a per-feature write cursor.
+      val cursor = Array.ofDim[Int](featureCount)
+      var i = 0
+      while i < n do
+        sampleArr(i).features.foreach { case (k, v) =>
+          if v != 0.0 then
+            keyToIdx.get(k) match
+              case Some(idx) =>
+                val c = cursor(idx)
+                featureToSamples(idx)(c) = i
+                featureToValues(idx)(c)  = v
+                cursor(idx) = c + 1
+              case None => ()
+        }
+        i += 1
+
+      val outcomes      = sampleArr.map(_.outcome)
+      val sampleWeights = sampleArr.map(_.weight)
+      val totalSampleWeight = sampleWeights.sum
+
+      val corpus = new CompiledCorpus(
+        featureCount, n, keys,
+        featureToSamples, featureToValues,
+        outcomes, sampleWeights, totalSampleWeight,
+      )
+      // Initialise corpus.weights from initial. Done after construction
+      // so all immutable fields are set first.
+      var k = 0
+      while k < featureCount do
+        corpus.weights(k) = initial(keys(k))
+        k += 1
+      corpus
