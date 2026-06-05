@@ -114,6 +114,29 @@ object SelfPlaySpec extends ZIOSpecDefault:
         // either). The recording fires at least once per game.
         yield assertTrue(seen.size >= 2)
       },
+      test("parallelism > 1 plays the same number of games as the sequential path") {
+        // Cross-game parallelism via ZIO.foreachPar. Outcome
+        // counts must match sequential — the games are independent.
+        for
+          serial   <- SelfPlay.round(
+                        champion = materialSearch,
+                        challenger = materialSearch,
+                        games = 4, depth = 1, maxPlies = 4,
+                        parallelism = 1,
+                      )
+          parallel <- SelfPlay.round(
+                        champion = materialSearch,
+                        challenger = materialSearch,
+                        games = 4, depth = 1, maxPlies = 4,
+                        parallelism = 4,
+                      )
+        yield assertTrue(
+          parallel.games == serial.games,
+          // With material-only at depth 1 every game hits the cap
+          // → draws on both paths.
+          parallel.challengerWins + parallel.championWins + parallel.draws == 4,
+        )
+      },
       test("a 0-game round returns the zero accumulator") {
         for result <- SelfPlay.round(
                         materialSearch, materialSearch, games = 0, depth = 1,

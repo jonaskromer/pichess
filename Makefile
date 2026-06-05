@@ -383,7 +383,7 @@ endif
 # a single-line change.
 BENCH_CODEC_CLASSES   := chess.bench.FenParserBenchmark chess.bench.FenSerializerBenchmark chess.bench.SanRoundTripBenchmark chess.bench.PgnParserBenchmark chess.bench.ZobristHashBenchmark
 BENCH_RULES_CLASSES   := chess.bench.MoveValidatorBenchmark chess.bench.RayWalkBenchmark chess.bench.GameApplyMoveBenchmark
-BENCH_BOT_CLASSES     := chess.bench.SearchBenchmark chess.bench.TexelTunerBenchmark
+BENCH_BOT_CLASSES     := chess.bench.SearchBenchmark chess.bench.TexelTunerBenchmark chess.bench.SelfPlayBenchmark
 # `bench-persistence` and `bench-wire` slots are stubs at this point —
 # the bench classes land in Phase D alongside the matching optimisations.
 # Running them today errors with "No matching benchmarks" until that work

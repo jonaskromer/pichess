@@ -70,23 +70,91 @@ object SelfPlay:
     )
 
   /** Run an N-game round: `champion` and `challenger` alternate
-    * colors so neither benefits from the white-side advantage. */
+    * colors so neither benefits from the white-side advantage.
+    *
+    * When `parallelism > 1`, games run concurrently — each game is
+    * independent (no shared mutable state at the GameState level),
+    * but they share the supplied `Search` instances (so the
+    * transposition table benefits from cross-game warming, and
+    * the killer / history tables converge faster across the
+    * round). The TT (`ConcurrentHashMap`) is thread-safe; killer
+    * / history tables race-tolerate per the existing search-time
+    * guarantees (corrupt reads = worse ordering, never wrong
+    * moves).
+    *
+    * Outcomes are deterministic per game's individual moves but
+    * the order of completion + TT contents are non-deterministic
+    * — pass `parallelism = 1` (the default) when reproducibility
+    * matters. */
   def round(
       champion: Search,
       challenger: Search,
       games: Int,
       depth: Int,
       maxPlies: Int = 200,
+      parallelism: Int = 1,
+  ): UIO[RoundResult] =
+    if parallelism > 1 then
+      parallelRound(champion, challenger, games, depth, maxPlies, parallelism)
+    else
+      sequentialRound(champion, challenger, games, depth, maxPlies)
+
+  /** Sequential round — original behaviour. Kept as the default so
+    * existing callers see no semantic change. */
+  private def sequentialRound(
+      champion: Search,
+      challenger: Search,
+      games: Int,
+      depth: Int,
+      maxPlies: Int,
   ): UIO[RoundResult] =
     ZIO.foldLeft(0 until games)(emptyRound) { (acc, i) =>
       val (whitePlayer, blackPlayer, challengerIsWhite) =
-        if i % 2 == 0 then (challenger, champion, true)
-        else (champion, challenger, false)
+        gamePairing(i, champion, challenger)
       playGame(whitePlayer, blackPlayer, depth, maxPlies).map { result =>
         val rows = gameToTrainingRows(result)
         addToRound(acc, result, challengerIsWhite, rows)
       }
     }
+
+  /** Parallel round — `ZIO.foreachPar` fans out games across
+    * fibers with the supplied parallelism cap. Combination of
+    * per-game `(result, challengerIsWhite, rows)` triples happens
+    * once at the end via a sequential fold (cheap; just counter
+    * + vector-concat operations). */
+  private def parallelRound(
+      champion: Search,
+      challenger: Search,
+      games: Int,
+      depth: Int,
+      maxPlies: Int,
+      parallelism: Int,
+  ): UIO[RoundResult] =
+    ZIO
+      .foreachPar(0 until games) { i =>
+        val (whitePlayer, blackPlayer, challengerIsWhite) =
+          gamePairing(i, champion, challenger)
+        playGame(whitePlayer, blackPlayer, depth, maxPlies).map { result =>
+          (result, challengerIsWhite, gameToTrainingRows(result))
+        }
+      }
+      .withParallelism(parallelism)
+      .map { perGame =>
+        perGame.foldLeft(emptyRound) { case (acc, (result, isCh, rows)) =>
+          addToRound(acc, result, isCh, rows)
+        }
+      }
+
+  /** Color-alternation helper — shared by sequential + parallel
+    * paths so the pairing rule lives in one place. Even-indexed
+    * games put the challenger on white; odd ones swap. */
+  private def gamePairing(
+      i: Int,
+      champion: Search,
+      challenger: Search,
+  ): (Search, Search, Boolean) =
+    if i % 2 == 0 then (challenger, champion, true)
+    else (champion, challenger, false)
 
   private val emptyRound: RoundResult =
     RoundResult(0, 0, 0, 0, Vector.empty)
