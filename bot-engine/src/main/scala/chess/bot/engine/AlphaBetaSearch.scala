@@ -28,6 +28,7 @@ private[engine] final class AlphaBetaSearch(
     eval: Evaluator,
     tt: TranspositionTable,
     book: OpeningBook,
+    parallelism: Int = 1,
 ) extends Search:
 
   import Search.{Infinity, MateScore}
@@ -105,9 +106,120 @@ private[engine] final class AlphaBetaSearch(
       case None       =>
         clearKillers()
         clearHistory()
-        val bufs = new SearchBufs
-        ZIO.succeed(syncBestMove(state, depth, history, bufs).map(MoveInt.decode))
+        if parallelism > 1 then parallelBestMove(state, depth, history)
+        else
+          val bufs = new SearchBufs
+          ZIO.succeed(syncBestMove(state, depth, history, bufs).map(MoveInt.decode))
     }
+
+  /** YBWC-style ("Young Brothers Wait Concept") parallel root
+    * search.
+    *
+    * Step 1: serially search the first-ordered move (the "elder
+    * brother") to establish a real α. With good move ordering
+    * (TT bestMove + MVV-LVA), this gives a tight α before any
+    * parallelism kicks in.
+    *
+    * Step 2: fan out the remaining moves across fibers, each
+    * recursing with `(-β, -α)` as their α-β window. Fibers that
+    * can't improve on the established α cut off quickly inside
+    * their subtree, so the "wasted work" cost of simple parallel
+    * root is bounded by how many remaining moves actually beat
+    * the elder brother's score.
+    *
+    * Tradeoff vs serial: the first move is searched serially so
+    * we keep its α-β benefit; for the rest, parallel fibers can't
+    * see each other's α updates, so further pruning after the
+    * elder brother's score is one-way. In tactical positions
+    * where the elder brother's score is decisive, this approaches
+    * ideal parallel speedup. In quiet positions where many moves
+    * tie at the eval, parallel still wastes work.
+    *
+    * TT shared (`ConcurrentHashMap`, thread-safe). Killer /
+    * history tables shared but race-tolerant. Per-fiber
+    * [[SearchBufs]] keep the move buffers isolated. */
+  private def parallelBestMove(
+      state: GameState,
+      depth: Int,
+      history: Set[Long],
+  ): UIO[Option[Move]] =
+    val rootBufs = new SearchBufs
+    val capBuf   = rootBufs.captures(0)
+    val quietBuf = rootBufs.quiets(0)
+    val (capCount, quietCount) = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf)
+    if capCount == 0 && quietCount == 0 then ZIO.none
+    else
+      val rootHash    = Zobrist.hash(state)
+      val rootHistory = history + rootHash
+
+      // Order both stages so the elder brother is the
+      // best-by-ordering move (TT > captures > killers > history).
+      val scoredCap = bufsScoredFor(rootBufs, 0)
+      orderMovesInto(capBuf, capCount, scoredCap, state, rootHash, ply = 0)
+      val scoredQuiet = bufsScoredFor(rootBufs, 1)
+      orderMovesInto(quietBuf, quietCount, scoredQuiet, state, rootHash, ply = 0)
+
+      // Materialise into a flat array in iteration order (highest
+      // score first — captures bucket, then quiets bucket).
+      val total = capCount + quietCount
+      val moves = new Array[Int](total)
+      var n = 0
+      var i = capCount - 1
+      while i >= 0 do
+        moves(n) = MoveInt.fromPacked(scoredCap(i))
+        n += 1
+        i -= 1
+      var k = quietCount - 1
+      while k >= 0 do
+        moves(n) = MoveInt.fromPacked(scoredQuiet(k))
+        n += 1
+        k -= 1
+
+      // Step 1: elder brother serial search.
+      val elderMove = moves(0)
+      val elderScore: Int =
+        RulesAdapter.applyMoveInt(state, elderMove) match
+          case Some(next) =>
+            -negamax(next, depth - 1, -Infinity, Infinity, ply = 1, rootHistory, rootBufs)
+          case None       => -Infinity
+
+      if total == 1 then ZIO.some(MoveInt.decode(elderMove))
+      else
+        // Step 2: parallel young brothers, each starting with
+        // alpha = elderScore. A fiber that can't improve cuts
+        // off inside its subtree.
+        ZIO
+          .foreachPar(1 until total) { idx =>
+            ZIO.succeed {
+              val move = moves(idx)
+              val bufs = new SearchBufs
+              val score: Int =
+                RulesAdapter.applyMoveInt(state, move) match
+                  case Some(next) =>
+                    -negamax(next, depth - 1, -Infinity, -elderScore, ply = 1, rootHistory, bufs)
+                  case None       => -Infinity
+              (move, score)
+            }
+          }
+          .withParallelism(parallelism)
+          .map { youngerResults =>
+            // Combine elder + youngers; pick the highest.
+            var best       = elderMove
+            var bestScore  = elderScore
+            youngerResults.foreach { case (m, s) =>
+              if s > bestScore then
+                bestScore = s
+                best = m
+            }
+            Some(MoveInt.decode(best))
+          }
+
+  /** Tiny accessor so the YBWC root code can reuse the same
+    * pre-allocated scored buffer for both the captures and quiets
+    * passes without rebuilding it. Index 0/1 instead of `ply` here
+    * because at the root we only have one node but two stages. */
+  private inline def bufsScoredFor(bufs: SearchBufs, slot: Int): Array[Long] =
+    bufs.scored(slot)
 
   /** Reset both killer slots for every ply at the start of a new
     * search. Stale killers from a prior search would still trigger

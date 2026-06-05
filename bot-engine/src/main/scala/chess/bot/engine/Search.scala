@@ -66,8 +66,9 @@ object Search:
       eval: Evaluator,
       book: OpeningBook = OpeningBook.Empty,
       maxTtEntries: Int = 1_000_000,
+      parallelism: Int = 1,
   ): Search =
-    new AlphaBetaSearch(eval, TranspositionTable.inMemory(maxTtEntries), book)
+    new AlphaBetaSearch(eval, TranspositionTable.inMemory(maxTtEntries), book, parallelism)
 
   /** Test-only factory that lets a caller inject the [[TranspositionTable]]
     * instance, so a test can pre-seed entries to exercise the move-

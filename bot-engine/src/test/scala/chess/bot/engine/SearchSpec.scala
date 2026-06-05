@@ -249,6 +249,40 @@ object SearchSpec extends ZIOSpecDefault:
         yield assertTrue(moveOpt.isDefined)
       },
     ),
+    suite("parallel root search")(
+      test("parallel search returns a legal move") {
+        val parSearch = Search.alphaBeta(Evaluator.materialOnly, parallelism = 4)
+        for
+          state <- FenParserRegex.parse(
+                     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+                   )
+          moveOpt <- parSearch.bestMove(state, depth = 2)
+        yield assertTrue(
+          moveOpt.isDefined,
+          moveOpt.exists(m => RulesAdapter.applyMove(state, m).isDefined),
+        )
+      },
+      test("parallel search returns None at a checkmate position (no legal moves)") {
+        val parSearch = Search.alphaBeta(Evaluator.materialOnly, parallelism = 4)
+        for
+          state   <- FenParserRegex.parse("6Qk/6PK/8/8/8/8/8/8 b - - 0 1")
+          moveOpt <- parSearch.bestMove(state, depth = 2)
+        yield assertTrue(moveOpt.isEmpty)
+      },
+      test("parallel search picks the clear capture (the right move wins ties via score)") {
+        // White rook captures undefended black queen on a8. The
+        // tie-breaking across parallel fibers means we can't assert
+        // exact move order, but the unique winning move (Rxa8)
+        // should still be picked because its score dominates.
+        val parSearch = Search.alphaBeta(Evaluator.materialOnly, parallelism = 4)
+        for
+          state   <- FenParserRegex.parse("q7/8/8/8/8/8/8/R6K w - - 0 1")
+          moveOpt <- parSearch.bestMove(state, depth = 2)
+        yield assertTrue(
+          moveOpt.contains(Move(Position('a', 1), Position('a', 8), None))
+        )
+      },
+    ),
     test("returns *some* legal move at the standard starting position") {
       // No tactical pressure → any legal move is acceptable. The
       // returned move must at least be legal; we verify by re-applying.

@@ -73,6 +73,12 @@ class SearchBenchmark:
   // including it in the per-op time is acceptable.
   private def freshSearch(eval: Evaluator): Search = Search.alphaBeta(eval)
 
+  // For parallel benches: use 4 fibers by default (target multi-core
+  // machines; JMH bench host has 8+ cores so 4 leaves headroom for
+  // the bench's measurement thread).
+  private def freshParSearch(eval: Evaluator, par: Int = 4): Search =
+    Search.alphaBeta(eval, parallelism = par)
+
   // ----- material-only evaluator ---------------------------------------
 
   @Benchmark
@@ -142,6 +148,40 @@ class SearchBenchmark:
   @Benchmark
   def arrayTaperedDepth5Start: Option[Move] =
     UnsafeRuntime.run(freshSearch(arrayTaperedEval).bestMove(startingState, depth = 5))
+
+  // ----- parallel root search (LazySMP-style fan-out) ------------------
+
+  @Benchmark
+  def arrayTaperedParDepth4Start: Option[Move] =
+    UnsafeRuntime.run(freshParSearch(arrayTaperedEval).bestMove(startingState, depth = 4))
+
+  @Benchmark
+  def arrayTaperedParDepth5Start: Option[Move] =
+    UnsafeRuntime.run(freshParSearch(arrayTaperedEval).bestMove(startingState, depth = 5))
+
+  @Benchmark
+  def arrayTaperedParDepth4KiwiPete: Option[Move] =
+    UnsafeRuntime.run(freshParSearch(arrayTaperedEval).bestMove(kiwiState, depth = 4))
+
+  @Benchmark
+  def arrayTaperedParDepth3MidGame: Option[Move] =
+    UnsafeRuntime.run(freshParSearch(arrayTaperedEval).bestMove(midGameState, depth = 3))
+
+  @Benchmark
+  def arrayTaperedDepth6Start: Option[Move] =
+    UnsafeRuntime.run(freshSearch(arrayTaperedEval).bestMove(startingState, depth = 6))
+
+  @Benchmark
+  def arrayTaperedParDepth6Start: Option[Move] =
+    UnsafeRuntime.run(freshParSearch(arrayTaperedEval).bestMove(startingState, depth = 6))
+
+  @Benchmark
+  def arrayTaperedPar2Depth5Start: Option[Move] =
+    UnsafeRuntime.run(freshParSearch(arrayTaperedEval, par = 2).bestMove(startingState, depth = 5))
+
+  @Benchmark
+  def arrayTaperedPar2Depth6Start: Option[Move] =
+    UnsafeRuntime.run(freshParSearch(arrayTaperedEval, par = 2).bestMove(startingState, depth = 6))
 
   @Benchmark
   def evalArrayTaperedStart: Int =
