@@ -952,6 +952,63 @@ object GameSpec extends ZIOSpecDefault:
             .applyMove(s, Move(Position('a', 1), Position('a', 2)))
             .flip
         yield assertTrue(err.message.contains("Game is over"))
-      }
+      },
+      test("applyMoveCoreSync returns None on a terminal state") {
+        val s = GameState(
+          Map(
+            Position('a', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 8) -> Piece(Color.Black, PieceType.King)
+          ),
+          Color.White,
+          status = GameStatus.Checkmate(Color.Black)
+        )
+        assertTrue(
+          Game.applyMoveCoreSync(s, Move(Position('a', 1), Position('a', 2))).isEmpty
+        )
+      },
+      test("applyMoveCoreSync returns None when the move would fail promotion validation") {
+        // White pawn on e7. A move to e8 without specifying a
+        // promotion piece is illegal — must promote on back rank.
+        val s = GameState(
+          Map(
+            Position('e', 7) -> Piece(Color.White, PieceType.Pawn),
+            Position('h', 1) -> Piece(Color.White, PieceType.King),
+            Position('a', 8) -> Piece(Color.Black, PieceType.King),
+          ),
+          Color.White,
+        )
+        assertTrue(
+          Game.applyMoveCoreSync(s, Move(Position('e', 7), Position('e', 8), None)).isEmpty
+        )
+      },
+      test("applyMoveCoreSync returns Some(GameState) on a legal move") {
+        for io <- Game.applyMoveCore(initial, Move(Position('e', 2), Position('e', 4)))
+        yield assertTrue(
+          Game.applyMoveCoreSync(initial, Move(Position('e', 2), Position('e', 4)))
+            .exists(_.board == io.board)
+        )
+      },
+      test("applyMoveCoreSync returns None when the move would leave the king in check") {
+        // Black rook pins the white knight on d2 to the king on
+        // d1; moving the knight exposes the king.
+        val s = GameState(
+          Map(
+            Position('d', 1) -> Piece(Color.White, PieceType.King),
+            Position('d', 2) -> Piece(Color.White, PieceType.Knight),
+            Position('d', 8) -> Piece(Color.Black, PieceType.Rook),
+            Position('a', 8) -> Piece(Color.Black, PieceType.King),
+          ),
+          Color.White,
+        )
+        assertTrue(
+          Game.applyMoveCoreSync(s, Move(Position('d', 2), Position('f', 3))).isEmpty
+        )
+      },
+      test("applyMoveForSearch round-trips a legal move equivalently to applyMoveCore") {
+        for
+          core   <- Game.applyMoveCore(initial,    Move(Position('e', 2), Position('e', 4)))
+          search <- Game.applyMoveForSearch(initial, Move(Position('e', 2), Position('e', 4)))
+        yield assertTrue(core.board == search.board)
+      },
     )
   )

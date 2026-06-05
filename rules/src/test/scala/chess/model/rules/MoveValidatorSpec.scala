@@ -1102,6 +1102,40 @@ object MoveValidatorSpec extends ZIOSpecDefault:
           !quiets.get(pos('e', 5)).exists(_.contains(pos('d', 6))),
         )
       },
+      test("legalDestinationsIndexSync matches the IO variant on a tactical fixture") {
+        // KiwiPete-style position: every code path matters (pawn,
+        // sliding pieces, king with castling).
+        val s = state(
+          pos('e', 1) -> WK,
+          pos('e', 8) -> BK,
+          pos('a', 1) -> WR,
+          pos('a', 5) -> BP,
+        )
+        for io <- MoveValidator.legalDestinationsIndex(s)
+        yield assertTrue(
+          MoveValidator.legalDestinationsIndexSync(s) == io
+        )
+      },
+      test("legalMovesFromSync returns Nil on an empty square") {
+        val s = state(pos('e', 1) -> WK, pos('e', 8) -> BK)
+        assertTrue(MoveValidator.legalMovesFromSync(s, pos('d', 4)) == Nil)
+      },
+      test("legalMovesFromSync returns Nil when the piece is the inactive color") {
+        // White to move; ask about a black piece.
+        val s = state(
+          pos('e', 1) -> WK, pos('e', 8) -> BK,
+          pos('a', 6) -> BR,
+        )
+        assertTrue(MoveValidator.legalMovesFromSync(s, pos('a', 6)) == Nil)
+      },
+      test("legalMovesFromSync returns the same destinations as the IO variant") {
+        // Spot-check a pawn — covers the `Some(piece)` legal path.
+        val s = state(pos('g', 2) -> WP, pos('e', 1) -> WK, pos('e', 8) -> BK)
+        for io <- MoveValidator.legalMovesFrom(s, pos('g', 2))
+        yield assertTrue(
+          MoveValidator.legalMovesFromSync(s, pos('g', 2)).toSet == io.toSet
+        )
+      },
       test("source with only captures (no quiets) emits no quiet entry for that piece") {
         // White knight on c3 with all 8 knight squares occupied by
         // enemy pieces (and own king elsewhere). Every legal knight

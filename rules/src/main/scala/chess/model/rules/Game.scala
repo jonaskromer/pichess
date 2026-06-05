@@ -84,6 +84,28 @@ object Game:
   ): IO[GameError, GameState] =
     applyMoveCore(state, move)
 
+  /** Fully synchronous variant of [[applyMoveForSearch]] — same
+    * semantics, but returns a plain `Option[GameState]` instead of
+    * running through the ZIO scheduler. Used by the bot's tight
+    * inner loop where the per-call ZIO `runLoop` overhead was
+    * measurable (~7% of total CPU at depth 4 even after the
+    * `applyMoveForSearch` fix). `None` means the move was illegal
+    * — same as a `GameError` failure in the IO variant; no
+    * exception is constructed. */
+  def applyMoveCoreSync(state: GameState, move: Move): Option[GameState] =
+    if state.status.isOver then None
+    else
+      MoveValidator.validateSync(state, move) match
+        case Some(_) => None
+        case None =>
+          val piece = state.board(move.from)
+          validatePromotionSync(piece, move) match
+            case Some(_) => None
+            case None =>
+              val newBoard = updatedBoard(state, move, promotedPiece(piece, move))
+              if MoveValidator.isInCheck(newBoard, state.activeColor) then None
+              else Some(buildPostMoveState(state, move, piece, newBoard))
+
   /** Applies a move without detecting checkmate/stalemate. Used by
     * [[MoveValidator.hasLegalMove]] to avoid infinite recursion.
     *
@@ -160,16 +182,24 @@ object Game:
         (piece.color == Color.Black && row == 1))
 
   private def validatePromotion(piece: Piece, move: Move): IO[GameError, Unit] =
+    validatePromotionSync(piece, move) match
+      case Some(err) => ZIO.fail(err)
+      case None      => ZIO.unit
+
+  /** Pure synchronous form of [[validatePromotion]]. Returns
+    * `Some(err)` on invalid promotion; `None` otherwise. Sync core
+    * for [[applyMoveCoreSync]]. */
+  private[rules] def validatePromotionSync(piece: Piece, move: Move): Option[GameError] =
     val reachesBackRank = isPromotionRank(piece, move.to.row)
     (move.promotion, reachesBackRank) match
       case (Some(_), false) =>
-        ZIO.fail(GameError.InvalidMove("Pawn cannot promote unless it reaches the back rank"))
+        Some(GameError.InvalidMove("Pawn cannot promote unless it reaches the back rank"))
       case (Some(pt), true) if !promotionPieces.contains(pt) =>
-        ZIO.fail(GameError.InvalidMove("Pawn must promote to Queen, Rook, Bishop, or Knight"))
+        Some(GameError.InvalidMove("Pawn must promote to Queen, Rook, Bishop, or Knight"))
       case (None, true) =>
-        ZIO.fail(GameError.InvalidMove("Pawn must promote when reaching the back rank (e.g. e8=Q)"))
+        Some(GameError.InvalidMove("Pawn must promote when reaching the back rank (e.g. e8=Q)"))
       case _ =>
-        ZIO.unit
+        None
 
   private def promotedPiece(piece: Piece, move: Move): Piece =
     move.promotion match

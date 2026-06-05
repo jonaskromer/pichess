@@ -261,6 +261,57 @@ object MoveValidator:
       }
       .map(_.collect { case (k, v) if v.nonEmpty => k -> v }.toMap)
 
+  /** Fully synchronous variant of [[legalDestinationsIndex]] —
+    * mirrors the IO version's contract (returns the per-source
+    * legal-destination map) but bypasses the ZIO scheduler.
+    *
+    * Used by the bot's `RulesAdapter` to avoid paying ~7% of
+    * total search CPU in `FiberRuntime.runLoop` for what is
+    * fundamentally a pure-CPU computation. Each candidate move
+    * is filtered via [[Game.applyMoveCoreSync]] (also synchronous,
+    * no GameError exception thrown). */
+  def legalDestinationsIndexSync(
+      state: GameState
+  ): Map[Position, List[Position]] =
+    val activeBb =
+      if state.activeColor == Color.White then state.board.whitePieces.raw
+      else state.board.blackPieces.raw
+    val sources = collectSources(activeBb)
+    val builder = Map.newBuilder[Position, List[Position]]
+    val it = sources.iterator
+    while it.hasNext do
+      val from = it.next()
+      val dests = legalMovesFromSync(state, from)
+      if dests.nonEmpty then builder += (from -> dests)
+    builder.result()
+
+  /** Synchronous form of [[legalMovesFrom]]. Same behaviour:
+    * filters candidate moves by attempting [[Game.applyMoveCoreSync]]
+    * (which returns `None` for moves leaving the king in check, etc.)
+    * and projects to destination squares.
+    *
+    * Inline iteration over the candidate `List` rather than the
+    * old `ZIO.filter`; the per-element call overhead drops from a
+    * `ZIO.flatMap` + `catchAll` + fibre allocation pair to a plain
+    * `Option.isDefined` test. */
+  def legalMovesFromSync(state: GameState, from: Position): List[Position] =
+    state.board.get(from) match
+      case None => Nil
+      case Some(piece) if piece.color != state.activeColor => Nil
+      case Some(piece) =>
+        // Same `.distinct` semantics as the IO variant. The
+        // current candidate generator never emits duplicate
+        // destinations for a single piece (one promotion variant
+        // per back-rank square, one move per ray endpoint), but
+        // the `distinct` keeps the contract stable if richer
+        // under-promotions land later.
+        candidateMoves(state, from, piece).iterator
+          .collect {
+            case move if Game.applyMoveCoreSync(state, move).isDefined => move.to
+          }
+          .toList
+          .distinct
+
   /** Two-stage variant of [[legalDestinationsIndex]] — partitions
     * the legal destinations into a `(captures, quiets)` pair so a
     * lazy move generator can iterate captures first, only paying

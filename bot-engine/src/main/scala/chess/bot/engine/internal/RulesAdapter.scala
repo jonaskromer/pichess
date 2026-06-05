@@ -34,10 +34,7 @@ private[engine] object RulesAdapter:
     * concern once the engine is otherwise strong enough to notice.
     */
   def legalMoves(state: GameState): List[Move] =
-    val index = Unsafe.unsafe { implicit u =>
-      runtime.unsafe.run(MoveValidator.legalDestinationsIndex(state))
-        .getOrThrow()
-    }
+    val index = MoveValidator.legalDestinationsIndexSync(state)
     val buf = scala.collection.mutable.ListBuffer.empty[Move]
     val it = index.iterator
     while it.hasNext do
@@ -53,21 +50,15 @@ private[engine] object RulesAdapter:
     buf.toList
 
   /** Apply `move` to `state` returning the post-move state on success
-    * or `None` if the move was illegal. Defect-grade failures
-    * (`GameError.InfrastructureError`) propagate as exceptions — those
-    * aren't expected on a candidate move from `legalMoves`.
+    * or `None` if the move was illegal.
     *
-    * Routes through [[Game.applyMoveForSearch]] (the no-status-detection
-    * variant) — the bot's α-β search runs its own mate / stalemate
-    * detection via `legalMoves.isEmpty`, so the `applyMove` flavour's
-    * extra `MoveValidator.hasLegalMove` pass would just double the
-    * legal-move-generation cost per applied move. */
+    * Routes through [[Game.applyMoveCoreSync]] — the fully
+    * synchronous, no-status-detection, no-ZIO-runtime variant.
+    * Profile evidence: routing through the IO-typed
+    * `Game.applyMoveForSearch` was burning ~7% of total CPU at
+    * depth 4 just in `FiberRuntime.runLoop` overhead. */
   def applyMove(state: GameState, move: Move): Option[GameState] =
-    Unsafe.unsafe { implicit u =>
-      runtime.unsafe.run(Game.applyMoveForSearch(state, move).either)
-        .getOrThrow()
-        .toOption
-    }
+    Game.applyMoveCoreSync(state, move)
 
   /** Side-to-move-in-check predicate. Pure delegate to
     * [[MoveValidator.isInCheck]] (which is already sync). Lives here so
@@ -91,10 +82,7 @@ private[engine] object RulesAdapter:
     * Same promotion convention as [[legalMoves]] — Phase 1 always
     * promotes to Queen; under-promotions come in a later phase. */
   def fillLegalMoves(state: GameState, out: Array[Int]): Int =
-    val index = Unsafe.unsafe { implicit u =>
-      runtime.unsafe.run(MoveValidator.legalDestinationsIndex(state))
-        .getOrThrow()
-    }
+    val index = MoveValidator.legalDestinationsIndexSync(state)
     fillBuf(state, index, out)
 
   /** Int-based apply: decode the packed move into a [[Move]] case
@@ -122,10 +110,7 @@ private[engine] object RulesAdapter:
       capturesOut: Array[Int],
       quietsOut:   Array[Int],
   ): (Int, Int) =
-    val index = Unsafe.unsafe { implicit u =>
-      runtime.unsafe.run(MoveValidator.legalDestinationsIndex(state))
-        .getOrThrow()
-    }
+    val index = MoveValidator.legalDestinationsIndexSync(state)
     var nc = 0
     var nq = 0
     val it = index.iterator
