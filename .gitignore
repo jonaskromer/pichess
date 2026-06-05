@@ -54,3 +54,6 @@ metals.sbt
 
 # Per-developer Make/compose env overrides (committed: .env)
 /.env.local
+
+# Claude Code session state — local scheduling locks, etc.
+/.claude/
