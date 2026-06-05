@@ -1,10 +1,8 @@
 package chess.bot.engine
 
 import zio.UIO
-import zio.ZIO
 
 import chess.model.board.{GameState, Move}
-import chess.model.piece.Color
 
 /** Find the best move for the side to move in `state`.
   *
@@ -18,9 +16,22 @@ import chess.model.piece.Color
   * stalemate). At any legal position the search will always pick *a*
   * move — even if every option loses, it picks the one that loses the
   * latest / by the least material.
+  *
+  * `history` is the set of Zobrist hashes of positions that have
+  * already occurred in the game leading up to `state` (excluding
+  * `state` itself). The search treats any position whose Zobrist
+  * appears in `history` (or on the search path so far) as an
+  * immediate draw — engines normally collapse 2- and 3-fold this way
+  * because the opponent can claim the repetition. Pass `Set.empty`
+  * (the default) when the caller doesn't track history; tests + the
+  * standalone engine entry points use that path.
   */
 trait Search:
-  def bestMove(state: GameState, depth: Int): UIO[Option[Move]]
+  def bestMove(
+      state: GameState,
+      depth: Int,
+      history: Set[Long] = Set.empty,
+  ): UIO[Option[Move]]
 
 object Search:
 

@@ -28,23 +28,32 @@ private[engine] final class AlphaBetaSearch(
   import Search.{Infinity, MateScore}
   import TranspositionTable.{Entry, Kind}
 
-  def bestMove(state: GameState, depth: Int): UIO[Option[Move]] =
+  def bestMove(
+      state: GameState,
+      depth: Int,
+      history: Set[Long],
+  ): UIO[Option[Move]] =
     // Book lookup short-circuits search when the position is known —
     // returning Some(bookMove) skips the α-β work entirely. On miss
     // (or book exhausted) we fall through to native search.
     book.lookup(state).flatMap {
       case Some(move) => ZIO.some(move)
-      case None       => ZIO.succeed(syncBestMove(state, depth))
+      case None       => ZIO.succeed(syncBestMove(state, depth, history))
     }
 
   /** Pick the move at the root that maximises the negamax score for
     * the side to move. Mirrors the negamax recursion below but tracks
     * the *move* (not just the score) so we can return it. */
-  private def syncBestMove(state: GameState, depth: Int): Option[Move] =
+  private def syncBestMove(
+      state: GameState,
+      depth: Int,
+      history: Set[Long],
+  ): Option[Move] =
     val moves = RulesAdapter.legalMoves(state)
     if moves.isEmpty then None
     else
-      val ordered = orderMoves(moves, Zobrist.hash(state))
+      val rootHash = Zobrist.hash(state)
+      val ordered  = orderMoves(moves, rootHash)
       var alpha = -Infinity
       val beta  = Infinity
       // Seed `best` with the first move so we always return a move when
@@ -53,11 +62,15 @@ private[engine] final class AlphaBetaSearch(
       // material positions where the eval flatlines).
       var best: Option[Move] = Some(ordered.head)
       var bestScore = -Infinity
+      // Add the root position to history so the recursive search can
+      // detect repetition without a separate "path" parameter — every
+      // descendant inherits the full ancestor set.
+      val rootHistory = history + rootHash
       val it = ordered.iterator
       while it.hasNext do
         val move = it.next()
         RulesAdapter.applyMove(state, move).foreach { next =>
-          val score = -negamax(next, depth - 1, -beta, -alpha, ply = 1)
+          val score = -negamax(next, depth - 1, -beta, -alpha, ply = 1, rootHistory)
           if score > bestScore then
             bestScore = score
             best = Some(move)
@@ -73,11 +86,18 @@ private[engine] final class AlphaBetaSearch(
     * search recurses, then writes the result back keyed by Zobrist.
     *
     * Termination cases:
+    *   - 50-move rule hit (halfmoveClock ≥ 100) → draw, score 0
+    *   - Position seen before in `history`      → draw, score 0
     *   - depth ≤ 0           → static eval (leaf)
     *   - no legal moves +
     *     side-to-move in check → mate, score `-(MateScore - ply)`
     *   - no legal moves +
     *     side-to-move safe    → stalemate, score 0
+    *
+    * The repetition + 50-move checks happen BEFORE the TT probe — they
+    * can't be cached by Zobrist alone (50-move depends on the clock,
+    * repetition depends on the path), so a TT hit from a different
+    * search line would corrupt the result.
     */
   private def negamax(
       state: GameState,
@@ -85,16 +105,22 @@ private[engine] final class AlphaBetaSearch(
       alpha: Int,
       beta: Int,
       ply: Int,
+      history: Set[Long],
   ): Int =
-    val hash = Zobrist.hash(state)
-    probeTt(hash, depth, alpha, beta) match
-      case Some(score) => score
-      case None =>
-        if depth <= 0 then leafEval(state)
-        else
-          val moves = RulesAdapter.legalMoves(state)
-          if moves.isEmpty then terminalScore(state, ply)
-          else searchMoves(state, moves, depth, alpha, beta, ply, hash)
+    if state.halfmoveClock >= 100 then 0
+    else
+      val hash = Zobrist.hash(state)
+      if history.contains(hash) then 0
+      else
+        probeTt(hash, depth, alpha, beta) match
+          case Some(score) => score
+          case None =>
+            if depth <= 0 then leafEval(state)
+            else
+              val moves = RulesAdapter.legalMoves(state)
+              if moves.isEmpty then terminalScore(state, ply)
+              else
+                searchMoves(state, moves, depth, alpha, beta, ply, hash, history + hash)
 
   /** Static evaluation at a leaf node, normalised to side-to-move POV.
     * The Evaluator hands back white-POV centipawns; flip on black. */
@@ -110,7 +136,9 @@ private[engine] final class AlphaBetaSearch(
     else 0
 
   /** Iterate candidates with α-β cutoff, write the result to the TT,
-    * return the best score. */
+    * return the best score. `historyWithThis` already contains the
+    * current node's Zobrist so children can detect repetitions
+    * against it. */
   private def searchMoves(
       state: GameState,
       moves: List[Move],
@@ -119,6 +147,7 @@ private[engine] final class AlphaBetaSearch(
       beta: Int,
       ply: Int,
       hash: Long,
+      historyWithThis: Set[Long],
   ): Int =
     val ordered = orderMoves(moves, hash)
     var alphaCur  = alpha
@@ -129,7 +158,7 @@ private[engine] final class AlphaBetaSearch(
     while it.hasNext && !cutoff do
       val move = it.next()
       RulesAdapter.applyMove(state, move).foreach { next =>
-        val score = -negamax(next, depth - 1, -beta, -alphaCur, ply + 1)
+        val score = -negamax(next, depth - 1, -beta, -alphaCur, ply + 1, historyWithThis)
         if score > bestScore then
           bestScore = score
           bestMove = Some(move)

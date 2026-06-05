@@ -200,7 +200,14 @@ final class GrpcServer(
       cfg: BotConfig,
   ): IO[GameError, Unit] =
     for
-      moveOpt <- search.bestMove(state, cfg.difficulty.searchDepth)
+      // Project the session's per-position counts into a Set of
+      // Zobrist hashes so the search treats already-seen positions
+      // (including the current one) as immediate draws. This closes
+      // the rules-gap the search would otherwise be blind to:
+      // without `history` the bot can blunder into a 3-fold while
+      // winning, or fail to claim one while losing.
+      history <- ref.get.map(_.game.positionCounts.keySet)
+      moveOpt <- search.bestMove(state, cfg.difficulty.searchDepth, history)
       move    <- ZIO
                    .fromOption(moveOpt)
                    .orElseFail(GameError.InvalidMove(

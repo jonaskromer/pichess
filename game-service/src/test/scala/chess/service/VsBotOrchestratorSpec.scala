@@ -138,8 +138,11 @@ object VsBotOrchestratorSpec extends ZIOSpecDefault:
         // outside the layer so the rest of the suite still uses the
         // real search.
         val noMoveSearch = new Search:
-          def bestMove(s: chess.model.board.GameState, d: Int)
-              : UIO[Option[chess.model.board.Move]] = ZIO.succeed(None)
+          def bestMove(
+              s: chess.model.board.GameState,
+              d: Int,
+              h: Set[Long],
+          ): UIO[Option[chess.model.board.Move]] = ZIO.succeed(None)
         for
           gameService <- ZIO.service[GameService]
           configs     <- ZIO.service[BotConfigRepository]

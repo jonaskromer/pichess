@@ -7,6 +7,7 @@ import chess.bot.engine.internal.RulesAdapter
 import chess.codec.FenParserRegex
 import chess.model.board.{GameStatus, Move, Position}
 import chess.model.piece.{Color, PieceType}
+import chess.model.rules.Zobrist
 
 /** End-to-end search behaviour, pinned by FEN fixtures.
   *
@@ -250,4 +251,70 @@ object SearchSpec extends ZIOSpecDefault:
         moveOpt.exists(m => RulesAdapter.applyMove(state, m).isDefined),
       )
     },
+    suite("repetition + fifty-move")(
+      test("avoids a move when its destination is in history (repetition draw)") {
+        // Two opposing queens on the a-file with the kings tucked
+        // safely elsewhere — white can win a queen with Qxa8. Without
+        // history, the search picks Qxa8 (+9 cp). With Qxa8's
+        // destination Zobrist seeded as history, the search treats
+        // the capture as a draw (immediate repetition heuristic) and
+        // picks a different move, even though every other move scores
+        // 0 in material terms.
+        for
+          state    <- FenParserRegex.parse("q7/7k/8/8/8/8/8/Q3K3 w - - 0 1")
+          capture   = Move(Position('a', 1), Position('a', 8), None)
+          afterCap <- ZIO
+                       .fromOption(RulesAdapter.applyMove(state, capture))
+                       .orElseFail(new IllegalStateException("Qxa8 must be legal"))
+          // Sanity: without history, the bot picks the winning capture.
+          freePick    <- search.bestMove(state, depth = 2)
+          // With Qxa8's destination seeded, the bot must NOT pick it.
+          blockedPick <- search.bestMove(
+                           state,
+                           depth = 2,
+                           history = Set(Zobrist.hash(afterCap)),
+                         )
+        yield assertTrue(
+          freePick.contains(capture),
+          blockedPick.isDefined,
+          !blockedPick.contains(capture),
+          blockedPick.exists(m => RulesAdapter.applyMove(state, m).isDefined),
+        )
+      },
+      test("treats halfmoveClock ≥ 100 as a draw at non-root nodes") {
+        // Position one half-move shy of the 50-move limit: any quiet
+        // move ticks the clock to 100, so the resulting child is a
+        // draw under the rule. The only way for white to score
+        // something other than 0 here is to capture — capture resets
+        // the clock. With material-only eval, the bot must pick the
+        // capture even though depth-2 evaluation of a quiet move
+        // would otherwise tie at material 0.
+        //
+        // FEN: white king on h1, white queen on a1, a single
+        // undefended black rook on a7 — black king tucked at h8.
+        // Qxa7 captures the rook (+5 cp from white POV). Any quiet
+        // queen move scores 0 because the child immediately reaches
+        // the 50-move draw branch.
+        for
+          state   <- FenParserRegex.parse("7k/r7/8/8/8/8/8/Q6K w - - 99 100")
+          moveOpt <- search.bestMove(state, depth = 2)
+        yield assertTrue(
+          moveOpt.contains(Move(Position('a', 1), Position('a', 7), None))
+        )
+      },
+      test("still returns a legal move at the 50-move boundary itself") {
+        // Symptom test: passing a state with halfmoveClock already at
+        // 100 at the root must not crash. The root never invokes the
+        // negamax 50-move shortcut (that fires at children), so we
+        // still get a move back — but it confirms the boundary is
+        // handled cleanly.
+        for
+          state   <- FenParserRegex.parse("7k/8/8/8/8/8/8/Q6K w - - 100 51")
+          moveOpt <- search.bestMove(state, depth = 2)
+        yield assertTrue(
+          moveOpt.isDefined,
+          moveOpt.exists(m => RulesAdapter.applyMove(state, m).isDefined),
+        )
+      },
+    ),
   )
