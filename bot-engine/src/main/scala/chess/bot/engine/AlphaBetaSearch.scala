@@ -29,6 +29,9 @@ private[engine] final class AlphaBetaSearch(
     tt: TranspositionTable,
     book: OpeningBook,
     parallelism: Int = 1,
+    // See `Search.alphaBeta` for the empirical Elo finding behind the
+    // OFF default.
+    counterMoveEnabled: Boolean = false,
 ) extends Search:
 
   import Search.{Infinity, MateScore}
@@ -490,7 +493,7 @@ private[engine] final class AlphaBetaSearch(
             // `prevMove`, remember it as the canonical reply to
             // that opponent move. Skipped at the root and inside
             // YBWC fibers where `prevMove == NoKiller`.
-            if prevMove != NoKiller then
+            if counterMoveEnabled && prevMove != NoKiller then
               counterMoveTable(MoveInt.fromIdx(prevMove))(MoveInt.toIdx(prevMove)) = move
         }
         moveIndex += 1
@@ -531,7 +534,7 @@ private[engine] final class AlphaBetaSearch(
     val k0 = if ply < MaxPly then killer0(ply) else NoKiller
     val k1 = if ply < MaxPly then killer1(ply) else NoKiller
     val counter =
-      if prevMove == NoKiller then NoKiller
+      if !counterMoveEnabled || prevMove == NoKiller then NoKiller
       else counterMoveTable(MoveInt.fromIdx(prevMove))(MoveInt.toIdx(prevMove))
     var i = 0
     while i < count do

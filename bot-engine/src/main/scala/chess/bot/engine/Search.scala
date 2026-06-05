@@ -67,8 +67,21 @@ object Search:
       book: OpeningBook = OpeningBook.Empty,
       maxTtEntries: Int = 1_000_000,
       parallelism: Int = 1,
+      // OFF by default — the textbook +20-40 Elo CMH benefit didn't
+      // materialise for this engine at depth 4: a 200-game head-to-
+      // head v8-CMH vs v8-noCMH measured ΔElo = -20.9 (39-51-110,
+      // score 47.0%, parallelism 8). Likely TT + killers + history
+      // + LMR already do the cutoff work CMH would add, and giving
+      // counter-moves a higher bucket (70_000) than history dethrones
+      // a better-ranked quiet move. Kept as a flag (not deleted) so
+      // a future iterative-deepening / deeper search can re-test it
+      // cheaply — the table cost is one 64×64 Int array.
+      counterMoveEnabled: Boolean = false,
   ): Search =
-    new AlphaBetaSearch(eval, TranspositionTable.inMemory(maxTtEntries), book, parallelism)
+    new AlphaBetaSearch(
+      eval, TranspositionTable.inMemory(maxTtEntries), book,
+      parallelism, counterMoveEnabled,
+    )
 
   /** Test-only factory that lets a caller inject the [[TranspositionTable]]
     * instance, so a test can pre-seed entries to exercise the move-

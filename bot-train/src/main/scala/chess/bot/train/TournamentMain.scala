@@ -42,7 +42,7 @@ object TournamentMain extends ZIOAppDefault:
       for
         cfg <- readConfig
         _   <- ZIO.logInfo(matchupLabel(cfg))
-        challenger <- loadSearch(cfg.challenger)
+        challenger <- loadSearch(cfg.challenger, cfg.challengerCmh)
         champion   <- loadOpponent(cfg)
         // Resolve the opening pool. Empty pool → all games start
         // from startpos (90%+ draws between similar bots). Non-
@@ -84,6 +84,8 @@ object TournamentMain extends ZIOAppDefault:
       vsStockfish: Boolean,
       stockfishSkill: Int,
       useOpenings: Boolean,
+      challengerCmh: Boolean,
+      championCmh:   Boolean,
   )
 
   private def readConfig: UIO[Config] =
@@ -108,6 +110,15 @@ object TournamentMain extends ZIOAppDefault:
         // bare from-initial behaviour).
         useOpenings    = !sys.env.get("PICHESS_TOURNAMENT_OPENINGS")
                            .exists(_.equalsIgnoreCase("false")),
+        // Counter-move heuristic toggles: OFF by default to match
+        // the production [[Search.alphaBeta]] default (a 200-game
+        // v8-CMH vs v8-noCMH measured ΔElo = -20.9, so CMH ships
+        // disabled). Set `..._CHALLENGER_CMH=true` to opt in for
+        // a future A/B test at deeper search depth.
+        challengerCmh  = sys.env.get("PICHESS_TOURNAMENT_CHALLENGER_CMH")
+                           .exists(_.equalsIgnoreCase("true")),
+        championCmh    = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_CMH")
+                           .exists(_.equalsIgnoreCase("true")),
       )
     }
 
@@ -123,17 +134,18 @@ object TournamentMain extends ZIOAppDefault:
         skillLevel = Some(cfg.stockfishSkill),
         label      = s"stockfish-skill${cfg.stockfishSkill}",
       )
-    else loadSearch(cfg.champion)
+    else loadSearch(cfg.champion, cfg.championCmh)
 
   /** Build a [[Search]] for the given weights-version JSON
     * resource. Uses the array-backed tapered evaluator (the
     * production search path) — same one [[EngineBundle]] wires
     * up. No opening book in the tournament so the search itself
     * is fully exercised. */
-  private def loadSearch(version: Int): ZIO[Any, Throwable, Search] =
+  private def loadSearch(version: Int, counterMoveEnabled: Boolean): ZIO[Any, Throwable, Search] =
     WeightsLoader.load(version).map { snapshot =>
       Search.alphaBeta(
-        eval = ArrayTaperedEvaluator(snapshot.weights),
-        book = OpeningBook.Empty,
+        eval               = ArrayTaperedEvaluator(snapshot.weights),
+        book               = OpeningBook.Empty,
+        counterMoveEnabled = counterMoveEnabled,
       )
     }
