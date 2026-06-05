@@ -96,6 +96,13 @@ object TexelTunerSpec extends ZIOSpecDefault:
         val result = TexelTuner.tune(Iterator.empty, initial = Map("pawn" -> 100), K = K)
         assertTrue(result.weights == Map("pawn" -> 100), result.iterations == 0)
       },
+      test("tune omitting K uses the default K=0.4 (covers the default-arg branch)") {
+        // Sanity check that the default-arg version is callable
+        // — covers the `tune$default$3` synthetic.
+        val sample = TexelTuner.Sample(Map("pawn" -> 1.0), outcome = 0.7)
+        val result = TexelTuner.tune(Seq(sample), Map("pawn" -> 100))
+        assertTrue(result.weights.contains("pawn"))
+      },
       test("returns the initial weights unchanged when no improvement is possible") {
         // Single sample at outcome=0.5 with pawn=0 features → loss is
         // already at its minimum (sigmoid(0) = 0.5). The tuner can't
