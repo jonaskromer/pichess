@@ -90,6 +90,74 @@ private[engine] object RulesAdapter:
       runtime.unsafe.run(MoveValidator.legalDestinationsIndex(state))
         .getOrThrow()
     }
+    fillBuf(state, index, out)
+
+  /** Int-based apply: decode the packed move into a [[Move]] case
+    * class (one allocation per call, unavoidable until the rules
+    * layer accepts primitives directly) and run the existing
+    * `Game.applyMove`. The Move case class will fall out of the
+    * hot path once the rules layer's apply gets a primitive
+    * variant. */
+  def applyMoveInt(state: GameState, moveInt: Int): Option[GameState] =
+    applyMove(state, MoveInt.decode(moveInt))
+
+  /** Two-stage variant of [[fillLegalMoves]]: writes captures into
+    * `capturesOut` and quiet moves into `quietsOut`, returns the
+    * counts as a tuple. ONE rules-layer call total — classification
+    * (capture vs quiet) happens inline as we encode each (from,
+    * to) pair, so we don't allocate the intermediate
+    * `Map[Position, List[Position]]` pair that
+    * [[MoveValidator.legalCapturesAndQuiets]] would build.
+    *
+    * Capture = destination occupied by an enemy piece, OR pawn
+    * move to the current en-passant target. Everything else is
+    * quiet (including promotions to empty back-rank squares). */
+  def fillCapturesAndQuiets(
+      state: GameState,
+      capturesOut: Array[Int],
+      quietsOut:   Array[Int],
+  ): (Int, Int) =
+    val index = Unsafe.unsafe { implicit u =>
+      runtime.unsafe.run(MoveValidator.legalDestinationsIndex(state))
+        .getOrThrow()
+    }
+    var nc = 0
+    var nq = 0
+    val it = index.iterator
+    while it.hasNext do
+      val (from, destinations) = it.next()
+      val piece = state.board.get(from)
+      val isPawn = piece.exists(_.pieceType == PieceType.Pawn)
+      val fromIdx = from.squareIdx
+      val destIt = destinations.iterator
+      while destIt.hasNext do
+        val to = destIt.next()
+        val toIdx = to.squareIdx
+        val isCapture =
+          state.board.contains(to) ||
+            (isPawn && state.enPassantTarget.contains(to))
+        val promo =
+          if isPawn && (to.row == 1 || to.row == 8) then MoveInt.PromoQueen
+          else MoveInt.NoPromotion
+        val encoded = MoveInt.encode(fromIdx, toIdx, promo)
+        if isCapture then
+          capturesOut(nc) = encoded
+          nc += 1
+        else
+          quietsOut(nq) = encoded
+          nq += 1
+    (nc, nq)
+
+  /** Iterate one of the sub-indices from [[legalCapturesAndQuiets]]
+    * (or [[legalDestinationsIndex]]) and pack each (from, to) pair
+    * into `out` using [[MoveInt]]. Returns the number of moves
+    * written. Shared between the [[fillLegalMoves]] (full set) and
+    * [[fillCapturesAndQuiets]] (split) entry points. */
+  private def fillBuf(
+      state: GameState,
+      index: Map[chess.model.board.Position, List[chess.model.board.Position]],
+      out: Array[Int],
+  ): Int =
     var n = 0
     val it = index.iterator
     while it.hasNext do
@@ -107,12 +175,3 @@ private[engine] object RulesAdapter:
         out(n) = MoveInt.encode(fromIdx, toIdx, promo)
         n += 1
     n
-
-  /** Int-based apply: decode the packed move into a [[Move]] case
-    * class (one allocation per call, unavoidable until the rules
-    * layer accepts primitives directly) and run the existing
-    * `Game.applyMove`. The Move case class will fall out of the
-    * hot path once the rules layer's apply gets a primitive
-    * variant. */
-  def applyMoveInt(state: GameState, moveInt: Int): Option[GameState] =
-    applyMove(state, MoveInt.decode(moveInt))

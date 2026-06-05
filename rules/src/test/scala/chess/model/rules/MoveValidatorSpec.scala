@@ -4,7 +4,7 @@ import zio.*
 import zio.test.*
 
 import chess.model.GameError
-import chess.model.board.{CastlingRights, GameState, Move, Position}
+import chess.model.board.{BoardState, CastlingRights, GameState, Move, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 
 object MoveValidatorSpec extends ZIOSpecDefault:
@@ -1019,5 +1019,121 @@ object MoveValidatorSpec extends ZIOSpecDefault:
             .attackersOf(board, pos('a', 5), Color.Black) == List(pos('a', 8))
         )
       }
+    ),
+    suite("legalCapturesAndQuiets")(
+      test("partition is exhaustive — captures ∪ quiets equals legalDestinationsIndex") {
+        // Simple mid-game-ish position with a mix of captures + quiet moves.
+        // White rook on a1, black pawn on a5 (rook can capture or quiet move).
+        val s = state(
+          pos('a', 1) -> WR,
+          pos('a', 5) -> BP,
+          pos('e', 1) -> WK,
+          pos('e', 8) -> BK,
+        )
+        for
+          all                <- MoveValidator.legalDestinationsIndex(s)
+          (captures, quiets) <- MoveValidator.legalCapturesAndQuiets(s)
+        yield
+          // Union of the two partitions must equal the full index;
+          // both sides keyed by from-square with deduplication.
+          val unionByFrom: Map[Position, Set[Position]] =
+            (captures.toSeq ++ quiets.toSeq)
+              .groupMapReduce(_._1)(_._2.toSet)(_ ++ _)
+          val expected: Map[Position, Set[Position]] =
+            all.view.mapValues(_.toSet).toMap
+          assertTrue(unionByFrom == expected)
+      },
+      test("partition is disjoint — no destination appears in both sub-maps for the same source") {
+        // Pure quiet position would leave captures empty; pure
+        // capture position would leave quiets empty. A mix tests
+        // the disjointness invariant.
+        val s = state(
+          pos('a', 1) -> WR,
+          pos('a', 5) -> BP,
+          pos('e', 1) -> WK,
+          pos('e', 8) -> BK,
+        )
+        for (captures, quiets) <- MoveValidator.legalCapturesAndQuiets(s)
+        yield
+          val overlap = captures.iterator.flatMap { case (from, dests) =>
+            val q = quiets.getOrElse(from, Nil).toSet
+            dests.filter(q.contains)
+          }
+          assertTrue(overlap.isEmpty)
+      },
+      test("destination with an enemy piece classifies as capture") {
+        val s = state(
+          pos('a', 1) -> WR,
+          pos('a', 5) -> BP,
+          pos('e', 1) -> WK,
+          pos('e', 8) -> BK,
+        )
+        for (captures, _) <- MoveValidator.legalCapturesAndQuiets(s)
+        yield assertTrue(
+          captures.get(pos('a', 1)).exists(_.contains(pos('a', 5)))
+        )
+      },
+      test("destination with no piece classifies as quiet") {
+        val s = state(
+          pos('a', 1) -> WR,
+          pos('a', 5) -> BP,
+          pos('e', 1) -> WK,
+          pos('e', 8) -> BK,
+        )
+        for (_, quiets) <- MoveValidator.legalCapturesAndQuiets(s)
+        yield assertTrue(
+          quiets.get(pos('a', 1)).exists(_.contains(pos('a', 2)))
+        )
+      },
+      test("en passant target classifies as a capture (no piece on dest square)") {
+        // White pawn on e5, black just played d7-d5 → EP square is d6.
+        // White's exd6 ep is a capture even though d6 is empty.
+        val board = BoardState.fromMap(
+          Map(pos('e', 5) -> WP, pos('d', 5) -> BP, pos('e', 1) -> WK, pos('e', 8) -> BK)
+        )
+        val s = GameState(
+          board           = board,
+          activeColor     = Color.White,
+          enPassantTarget = Some(pos('d', 6)),
+        )
+        for (captures, quiets) <- MoveValidator.legalCapturesAndQuiets(s)
+        yield assertTrue(
+          captures.get(pos('e', 5)).exists(_.contains(pos('d', 6))),
+          !quiets.get(pos('e', 5)).exists(_.contains(pos('d', 6))),
+        )
+      },
+      test("source with only captures (no quiets) emits no quiet entry for that piece") {
+        // White knight on c3 with all 8 knight squares occupied by
+        // enemy pieces (and own king elsewhere). Every legal knight
+        // move is a capture; nothing should land in the quiets map.
+        val s = state(
+          pos('c', 3) -> WN,
+          pos('a', 2) -> BP,
+          pos('a', 4) -> BP,
+          pos('b', 1) -> BP,
+          pos('b', 5) -> BP,
+          pos('d', 1) -> BP,
+          pos('d', 5) -> BP,
+          pos('e', 2) -> BP,
+          pos('e', 4) -> BP,
+          pos('h', 1) -> WK,
+          pos('h', 8) -> BK,
+        )
+        for (captures, quiets) <- MoveValidator.legalCapturesAndQuiets(s)
+        yield assertTrue(
+          captures.contains(pos('c', 3)),
+          !quiets.contains(pos('c', 3)),
+        )
+      },
+      test("position with no legal moves returns two empty maps") {
+        // Lone king in stalemate: no moves of any kind.
+        val s = blackState(
+          pos('h', 1) -> BK,
+          pos('f', 2) -> WK,
+          pos('g', 3) -> WQ,
+        )
+        for (captures, quiets) <- MoveValidator.legalCapturesAndQuiets(s)
+        yield assertTrue(captures.isEmpty, quiets.isEmpty)
+      },
     )
   )

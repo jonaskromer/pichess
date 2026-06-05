@@ -261,6 +261,40 @@ object MoveValidator:
       }
       .map(_.collect { case (k, v) if v.nonEmpty => k -> v }.toMap)
 
+  /** Two-stage variant of [[legalDestinationsIndex]] — partitions
+    * the legal destinations into a `(captures, quiets)` pair so a
+    * lazy move generator can iterate captures first, only paying
+    * the quiet-move ordering / iteration cost when no α-β cutoff
+    * fired in the captures stage.
+    *
+    * A "capture" is a move whose destination square holds an enemy
+    * piece, OR a pawn move to the current en-passant target. Both
+    * sub-indices are returned from a single
+    * [[legalDestinationsIndex]] call — no extra rules-layer work.
+    *
+    * Same purity contract as [[legalDestinationsIndex]]: no
+    * mutation, no callbacks. Returns empty sub-maps when the
+    * partition is empty on a side. */
+  def legalCapturesAndQuiets(
+      state: GameState
+  ): IO[GameError, (Map[Position, List[Position]], Map[Position, List[Position]])] =
+    legalDestinationsIndex(state).map { index =>
+      val captures = scala.collection.mutable.Map.empty[Position, List[Position]]
+      val quiets   = scala.collection.mutable.Map.empty[Position, List[Position]]
+      val it = index.iterator
+      while it.hasNext do
+        val (from, destinations) = it.next()
+        val piece = state.board.get(from)
+        val isPawn = piece.exists(_.pieceType == PieceType.Pawn)
+        val (cap, qui) = destinations.partition { to =>
+          state.board.contains(to) ||
+          (isPawn && state.enPassantTarget.contains(to))
+        }
+        if cap.nonEmpty then captures.update(from, cap)
+        if qui.nonEmpty then quiets.update(from, qui)
+      (captures.toMap, quiets.toMap)
+    }
+
   private def collectSources(bb: Long): List[Position] =
     val buf = scala.collection.mutable.ListBuffer.empty[Position]
     var rem = bb

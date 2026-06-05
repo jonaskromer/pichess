@@ -81,7 +81,12 @@ object SearchSpec extends ZIOSpecDefault:
       // Black pawn on b2 can either capture white's a3 pawn (+100 cp)
       // or promote on b1=Q (+800 cp net: -100 pawn + 900 queen).
       // Material-only eval must pick the promotion.
-      for moveOpt <- bestMoveOf("7k/8/8/8/8/P7/1p6/7K b - - 0 1", depth = 3)
+      //
+      // Depth must be shallow enough that the bot can't see the
+      // promotion as available *next* turn (which would tie b1=Q
+      // with any quiet move). At depth 2 the immediate-promotion
+      // gain is uniquely visible.
+      for moveOpt <- bestMoveOf("7k/8/8/8/8/P7/1p6/7K b - - 0 1", depth = 2)
       yield assertTrue(
         moveOpt.contains(
           Move(Position('b', 2), Position('b', 1), Some(PieceType.Queen))

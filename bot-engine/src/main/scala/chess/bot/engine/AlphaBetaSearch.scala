@@ -73,15 +73,24 @@ private[engine] final class AlphaBetaSearch(
     case PieceType.Queen  => 900
     case PieceType.King   => 20_000
 
-  /** Search-call-scoped scratch buffers — one move list + one
-    * scored-pack list per ply. Allocated fresh on each
-    * [[bestMove]] call so concurrent calls (e.g. parallel test
-    * runs) don't share mutable state. Per-call cost: ~64 KB for
-    * the whole stack, trivial vs the ~100 MB of allocations
-    * elsewhere in a depth-4 search. */
+  /** Search-call-scoped scratch buffers — one capture list, one
+    * quiet-move list, and one scored-pack list per ply. Allocated
+    * fresh on each [[bestMove]] call so concurrent calls (e.g.
+    * parallel test runs) don't share mutable state. Per-call
+    * cost: ~128 KB for the whole stack, trivial vs the ~100 MB
+    * of allocations elsewhere in a depth-4 search.
+    *
+    * The split into separate `captures` and `quiets` buffers
+    * supports the two-stage move generator: stage 1 fills both
+    * via one rules-layer call, stage 1 iterates captures with
+    * MVV-LVA ordering, and if no α-β cutoff fires, stage 2
+    * iterates quiets with history ordering. `scored` is reused
+    * between the two stages because we never need them
+    * simultaneously. */
   private final class SearchBufs:
-    val moves:  Array[Array[Int]]  = Array.fill(MaxPly + 1)(new Array[Int](MaxMovesPerNode))
-    val scored: Array[Array[Long]] = Array.fill(MaxPly + 1)(new Array[Long](MaxMovesPerNode))
+    val captures: Array[Array[Int]]  = Array.fill(MaxPly + 1)(new Array[Int](MaxMovesPerNode))
+    val quiets:   Array[Array[Int]]  = Array.fill(MaxPly + 1)(new Array[Int](MaxMovesPerNode))
+    val scored:   Array[Array[Long]] = Array.fill(MaxPly + 1)(new Array[Long](MaxMovesPerNode))
 
   def bestMove(
       state: GameState,
@@ -121,40 +130,67 @@ private[engine] final class AlphaBetaSearch(
 
   /** Pick the move at the root that maximises the negamax score for
     * the side to move. Returns the chosen move's [[MoveInt]]
-    * encoding; the public [[bestMove]] decodes once at the boundary. */
+    * encoding; the public [[bestMove]] decodes once at the boundary.
+    *
+    * Two-stage move generation — captures first, then quiets. The
+    * root has no β-cutoff (β = +∞) so we always iterate both
+    * stages, but the split still pays for itself: sorting 5 + 25
+    * moves is cheaper than sorting 30, and the sort cache stays
+    * smaller. */
   private def syncBestMove(
       state: GameState,
       depth: Int,
       history: Set[Long],
       bufs: SearchBufs,
   ): Option[Int] =
-    val moveBuf = bufs.moves(0)
-    val count = RulesAdapter.fillLegalMoves(state, moveBuf)
-    if count == 0 then None
+    val capBuf   = bufs.captures(0)
+    val quietBuf = bufs.quiets(0)
+    val (capCount, quietCount) = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf)
+    if capCount == 0 && quietCount == 0 then None
     else
       val rootHash = Zobrist.hash(state)
-      val ordered = bufs.scored(0)
-      orderMovesInto(moveBuf, count, ordered, state, rootHash, ply = 0)
+      val rootHistory = history + rootHash
       var alpha = -Infinity
       val beta  = Infinity
-      // Seed `best` with the first ordered move so we always return
-      // something for a legal position.
-      var best: Int = MoveInt.fromPacked(ordered(count - 1))
       var bestScore = -Infinity
-      val rootHistory = history + rootHash
-      // Iterate from the END of the ascending-sorted scored array
-      // → highest score first (descending order of preference).
-      var i = count - 1
-      while i >= 0 do
-        val move = MoveInt.fromPacked(ordered(i))
-        RulesAdapter.applyMoveInt(state, move).foreach { next =>
-          val score = -negamax(next, depth - 1, -beta, -alpha, ply = 1, rootHistory, bufs)
-          if score > bestScore then
-            bestScore = score
-            best = move
-          if score > alpha then alpha = score
-        }
-        i -= 1
+      // Seed `best` with the first available move so we always
+      // return something for a legal position (captures preferred).
+      var best: Int =
+        if capCount > 0 then capBuf(0)
+        else quietBuf(0)
+
+      // Stage 1: captures
+      if capCount > 0 then
+        val scored = bufs.scored(0)
+        orderMovesInto(capBuf, capCount, scored, state, rootHash, ply = 0)
+        var i = capCount - 1
+        while i >= 0 do
+          val move = MoveInt.fromPacked(scored(i))
+          RulesAdapter.applyMoveInt(state, move).foreach { next =>
+            val score = -negamax(next, depth - 1, -beta, -alpha, ply = 1, rootHistory, bufs)
+            if score > bestScore then
+              bestScore = score
+              best = move
+            if score > alpha then alpha = score
+          }
+          i -= 1
+
+      // Stage 2: quiets
+      if quietCount > 0 then
+        val scored = bufs.scored(0)
+        orderMovesInto(quietBuf, quietCount, scored, state, rootHash, ply = 0)
+        var i = quietCount - 1
+        while i >= 0 do
+          val move = MoveInt.fromPacked(scored(i))
+          RulesAdapter.applyMoveInt(state, move).foreach { next =>
+            val score = -negamax(next, depth - 1, -beta, -alpha, ply = 1, rootHistory, bufs)
+            if score > bestScore then
+              bestScore = score
+              best = move
+            if score > alpha then alpha = score
+          }
+          i -= 1
+
       Some(best)
 
   /** Negamax core.
@@ -198,13 +234,15 @@ private[engine] final class AlphaBetaSearch(
             if depth <= 0 then leafEval(state)
             else if ply >= MaxPly then leafEval(state)
             else
-              val moveBuf = bufs.moves(ply)
-              val count = RulesAdapter.fillLegalMoves(state, moveBuf)
-              if count == 0 then terminalScore(state, ply)
+              val capBuf   = bufs.captures(ply)
+              val quietBuf = bufs.quiets(ply)
+              val (capCount, quietCount) =
+                RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf)
+              if capCount == 0 && quietCount == 0 then terminalScore(state, ply)
               else
                 searchMoves(
-                  state, moveBuf, count, depth, alpha, beta, ply, hash,
-                  history + hash, bufs,
+                  state, capBuf, capCount, quietBuf, quietCount,
+                  depth, alpha, beta, ply, hash, history + hash, bufs,
                 )
 
   /** Static evaluation at a leaf node, normalised to side-to-move POV.
@@ -225,24 +263,28 @@ private[engine] final class AlphaBetaSearch(
     * current node's Zobrist so children can detect repetitions
     * against it.
     *
-    * Two refinements layered on top of plain α-β:
-    *   - Late move reductions (LMR): for quiet, non-killer moves
-    *     past index [[LmrMoveThreshold]] at depth ≥ [[LmrMinDepth]],
-    *     search at depth-2 (one ply less than usual). If the reduced
-    *     search returns a score > α, the reduction was wrong, so
-    *     re-search at full depth. The intuition is that move
-    *     ordering puts the most promising moves first; later
-    *     moves rarely improve α, so paying full depth for them is
-    *     wasted work. The re-search guards correctness.
-    *   - History bookkeeping on cutoffs: when a quiet move causes a
-    *     β-cutoff, bump `historyTable(from)(to)` by depth² so future
-    *     ordering at OTHER nodes tries the move earlier. Killer
-    *     update + history bookkeeping happen together for quiet
-    *     cutoffs. */
+    * Two-stage lazy move generation:
+    *   - Stage 1: captures (MVV-LVA ordered via [[orderMovesInto]]).
+    *     Most β-cutoffs in tactical positions land here.
+    *   - Stage 2: quiet moves (history-heuristic ordered). Only
+    *     reached if Stage 1 didn't cut off — saves the sort +
+    *     iterate cost of every quiet move on tactical cutoffs.
+    *
+    * LMR ([[LmrMoveThreshold]] / [[LmrMinDepth]]) only fires on
+    * Stage 2 because Stage 1 moves are all captures (not eligible
+    * for reduction). The `moveIndex` counter is shared across both
+    * stages so the "first N moves searched at full depth" rule
+    * applies as a whole, not per stage.
+    *
+    * History bonus on cutoff: only stamped for quiet moves (Stage 2)
+    * since captures are already ordered by MVV-LVA and don't
+    * benefit from cross-node history reinforcement. */
   private def searchMoves(
       state: GameState,
-      moveBuf: Array[Int],
-      count: Int,
+      capBuf: Array[Int],
+      capCount: Int,
+      quietBuf: Array[Int],
+      quietCount: Int,
       depth: Int,
       alpha: Int,
       beta: Int,
@@ -251,57 +293,67 @@ private[engine] final class AlphaBetaSearch(
       historyWithThis: Set[Long],
       bufs: SearchBufs,
   ): Int =
-    val ordered = bufs.scored(ply)
-    orderMovesInto(moveBuf, count, ordered, state, hash, ply)
     val inCheckHere = RulesAdapter.isInCheck(state)
-    var alphaCur  = alpha
-    var bestScore = -Infinity
-    var bestMove: Int = NoKiller   // NoKiller (-1) doubles as "no best move yet"
-    var cutoff = false
-    var moveIndex = 0
     val k0Here = if ply < MaxPly then killer0(ply) else NoKiller
     val k1Here = if ply < MaxPly then killer1(ply) else NoKiller
-    // Iterate from the END of the ascending-sorted scored array
-    // → highest score first.
-    var i = count - 1
-    while i >= 0 && !cutoff do
-      val move = MoveInt.fromPacked(ordered(i))
-      RulesAdapter.applyMoveInt(state, move).foreach { next =>
-        val capture = isCapture(state, move)
-        val isKiller = move == k0Here || move == k1Here
-        val reduce =
-          depth >= LmrMinDepth &&
-            moveIndex >= LmrMoveThreshold &&
-            !capture &&
-            !isKiller &&
-            !inCheckHere
-        val searchDepth = if reduce then depth - 2 else depth - 1
-        var score = -negamax(next, searchDepth, -beta, -alphaCur, ply + 1, historyWithThis, bufs)
-        // Re-search at full depth if the reduction's "first guess"
-        // looks promising. Preserves correctness while paying full
-        // depth only when needed.
-        if reduce && score > alphaCur then
-          score = -negamax(next, depth - 1, -beta, -alphaCur, ply + 1, historyWithThis, bufs)
-        if score > bestScore then
-          bestScore = score
-          bestMove = move
-        if score > alphaCur then alphaCur = score
-        if alphaCur >= beta then
-          cutoff = true
-          if !capture then
+    val scored = bufs.scored(ply)
+    var alphaCur  = alpha
+    var bestScore = -Infinity
+    var bestMove: Int = NoKiller
+    var cutoff = false
+    var moveIndex = 0
+
+    // ── Stage 1: captures ───────────────────────────────────────
+    if capCount > 0 then
+      orderMovesInto(capBuf, capCount, scored, state, hash, ply)
+      var i = capCount - 1
+      while i >= 0 && !cutoff do
+        val move = MoveInt.fromPacked(scored(i))
+        RulesAdapter.applyMoveInt(state, move).foreach { next =>
+          // Captures don't get reduced (always "loud" by definition).
+          val score = -negamax(next, depth - 1, -beta, -alphaCur, ply + 1, historyWithThis, bufs)
+          if score > bestScore then
+            bestScore = score
+            bestMove = move
+          if score > alphaCur then alphaCur = score
+          if alphaCur >= beta then cutoff = true
+        }
+        moveIndex += 1
+        i -= 1
+
+    // ── Stage 2: quiet moves (only if Stage 1 didn't cut off) ──
+    if !cutoff && quietCount > 0 then
+      orderMovesInto(quietBuf, quietCount, scored, state, hash, ply)
+      var i = quietCount - 1
+      while i >= 0 && !cutoff do
+        val move = MoveInt.fromPacked(scored(i))
+        RulesAdapter.applyMoveInt(state, move).foreach { next =>
+          val isKiller = move == k0Here || move == k1Here
+          val reduce =
+            depth >= LmrMinDepth &&
+              moveIndex >= LmrMoveThreshold &&
+              !isKiller &&
+              !inCheckHere
+          val searchDepth = if reduce then depth - 2 else depth - 1
+          var score = -negamax(next, searchDepth, -beta, -alphaCur, ply + 1, historyWithThis, bufs)
+          if reduce && score > alphaCur then
+            score = -negamax(next, depth - 1, -beta, -alphaCur, ply + 1, historyWithThis, bufs)
+          if score > bestScore then
+            bestScore = score
+            bestMove = move
+          if score > alphaCur then alphaCur = score
+          if alphaCur >= beta then
+            cutoff = true
             recordKiller(ply, move)
             historyTable(MoveInt.fromIdx(move))(MoveInt.toIdx(move)) += depth * depth
-      }
-      moveIndex += 1
-      i -= 1
+        }
+        moveIndex += 1
+        i -= 1
+
     val kind =
       if bestScore <= alpha then Kind.Upper
       else if bestScore >= beta then Kind.Lower
       else Kind.Exact
-    // TT entry still carries an `Option[Move]` (the old codec/wire
-    // shape). Decode here at the boundary — only when we actually
-    // write a TT entry, which is far less frequent than the inner
-    // loop's per-move work.
     val bestMoveOpt = if bestMove == NoKiller then None else Some(MoveInt.decode(bestMove))
     tt.put(hash, Entry(depth, bestScore, kind, bestMoveOpt))
     bestScore
@@ -374,11 +426,6 @@ private[engine] final class AlphaBetaSearch(
     * flyweight — no allocation. */
   private inline def positionAt(idx: Int): Position =
     Position(('a' + (idx % 8)).toChar, idx / 8 + 1)
-
-  /** True if `move` captures a piece on its destination. False for
-    * en passant (rare; ok to treat as quiet for ordering). */
-  private def isCapture(state: GameState, move: Int): Boolean =
-    state.board.contains(positionAt(MoveInt.toIdx(move)))
 
   /** Record a quiet move that caused a β-cutoff as a killer for
     * this ply. */
