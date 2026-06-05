@@ -8,7 +8,7 @@ import zio.*
 import zio.json.*
 
 import chess.bot.data.{BookRepo, Db, IngestedFilesRepo, TrainingRepo, WeightsRepo}
-import chess.bot.engine.{WeightSnapshot, WeightsLoader}
+import chess.bot.engine.{TaperedFeatureExtractor, WeightSnapshot, WeightsLoader}
 
 /** End-to-end "train the bot" entry point.
   *
@@ -70,19 +70,31 @@ object TrainMain extends ZIOAppDefault:
                  )
       stats   <- CorpusTrainer.ingestAll(inputs, repos)
       _       <- ZIO.logInfo(s"Ingest: $stats")
-      initial <- WeightsLoader.load(cfg.nextVersion - 1).catchAll { err =>
-                   ZIO.logWarning(
-                     s"Couldn't load weights v${cfg.nextVersion - 1}: ${err.getMessage}",
-                   ) *> ZIO.succeed(fallbackInitial)
-                 }
-      _       <- ZIO.logInfo(s"Initial weights v${initial.version}: ${initial.weights}")
-      result  <- CorpusTrainer.tuneAndPersist(
-                   repos       = repos,
-                   initial     = initial.weights,
-                   nextVersion = cfg.nextVersion,
-                   writeJsonTo = Some(Paths.get(cfg.outputPath)),
-                   ingestStats = stats,
-                 )
+      previous <- WeightsLoader.load(cfg.nextVersion - 1).catchAll { err =>
+                    ZIO.logWarning(
+                      s"Couldn't load weights v${cfg.nextVersion - 1}: ${err.getMessage}; " +
+                        s"starting from default seed",
+                    ) *> ZIO.succeed(fallbackInitial)
+                  }
+      // Promote a legacy un-tapered snapshot (e.g. v1 / v2 with just
+      // material keys) to the tapered key space so the tuner has
+      // sensible starting points for material weights on its first
+      // tapered run. Overlay onto the full default-seed map so every
+      // PST / mobility / etc. key is also present (and adjustable).
+      // Existing tapered keys in `previous.weights` override seeds.
+      initial    = TaperedFeatureExtractor.defaultSeedWeights ++
+                     TaperedFeatureExtractor.promoteToTapered(previous.weights)
+      _         <- ZIO.logInfo(
+                     s"Starting from v${previous.version} " +
+                       s"(promoted to ${initial.size} tapered keys)",
+                   )
+      result   <- CorpusTrainer.tuneAndPersist(
+                    repos       = repos,
+                    initial     = initial,
+                    nextVersion = cfg.nextVersion,
+                    writeJsonTo = Some(Paths.get(cfg.outputPath)),
+                    ingestStats = stats,
+                  )
       _       <- ZIO.logInfo(
                    s"Tuned in ${result.iterations} iterations: " +
                      s"loss ${"%.6f".format(result.lossBefore)} → " +

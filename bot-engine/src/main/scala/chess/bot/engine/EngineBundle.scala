@@ -42,12 +42,14 @@ object EngineBundle:
     for
       weights <- WeightsLoader.load(weightsVersion)
       book    <- OpeningBookLoader.loadDefault(maxBookPly)
-      // Use the full feature extractor at runtime — older weights
-      // snapshots that only contain material keys still work,
-      // because missing keys are treated as 0 by [[TunedEvaluator]].
-      // Newer snapshots include PST + bishop-pair weights and the
-      // engine starts playing positional moves immediately.
-      eval     = TunedEvaluator(weights.weights, FeatureExtractor.full)
+      // Tapered runtime evaluator: looks up `_mg` / `_eg` weights and
+      // blends by game phase, falling back to an unsuffixed key when
+      // a tapered variant isn't present. So legacy `v1.json` /
+      // `v2.json` snapshots (no `_mg` / `_eg` keys) keep working
+      // exactly as they did before tapered eval landed — both
+      // branches read the same unsuffixed weight and the blend
+      // collapses to `weight * count`.
+      eval     = TaperedEvaluator(weights.weights, FeatureExtractor.full)
       search   = Search.alphaBeta(eval, book, maxTtEntries)
     yield EngineBundle(weights, book, search)
 
@@ -67,11 +69,12 @@ object EngineBundle:
             EngineBundle(
               weights     = fallbackSnapshot,
               openingBook = OpeningBook.Empty,
-              // Same extractor as the success path so a fallback
-              // bundle accepts the full feature vector when later
-              // snapshots are added live (e.g. via WeightsRepo).
+              // Same extractor + tapered eval as the success path so
+              // the fallback bundle still benefits from tapered
+              // weights if a live WeightsRepo later attaches a tuned
+              // snapshot with `_mg` / `_eg` keys.
               search      = Search.alphaBeta(
-                TunedEvaluator(fallbackSnapshot.weights, FeatureExtractor.full),
+                TaperedEvaluator(fallbackSnapshot.weights, FeatureExtractor.full),
                 OpeningBook.Empty,
                 maxTtEntries,
               ),

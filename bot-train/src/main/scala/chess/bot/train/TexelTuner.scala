@@ -42,7 +42,7 @@ object TexelTuner:
     *                — it just emphasises the rows we trust more.
     */
   final case class Sample(
-      features: Map[String, Int],
+      features: Map[String, Double],
       outcome: Double,
       weight: Double = 1.0,
   )
@@ -143,15 +143,17 @@ object TexelTuner:
         sumWeights += s.weight
       if sumWeights == 0.0 then 0.0 else sumSq / sumWeights
 
-  /** Linear evaluator: Σ (count_f × weight_f). Missing weights treat
-    * as 0 so additional feature keys in the sample are silently
-    * ignored — the tuner only optimises features the caller chose to
-    * initialise. */
+  /** Linear evaluator: Σ (count_f × weight_f). Features carry
+    * `Double` values (the tapered extractor scales by game phase so
+    * integers wouldn't suffice); weights remain `Int` centipawns.
+    * Missing weights are treated as 0 so additional feature keys in
+    * the sample are silently ignored — the tuner only optimises
+    * features the caller chose to initialise. */
   private[train] def evaluate(
-      features: Map[String, Int],
+      features: Map[String, Double],
       weights: Map[String, Int],
-  ): Int =
-    var sum = 0
+  ): Double =
+    var sum = 0.0
     val it = features.iterator
     while it.hasNext do
       val (k, v) = it.next()

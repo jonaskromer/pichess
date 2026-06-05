@@ -35,20 +35,32 @@ object CorpusTrainerSpec extends ZIOSpecDefault:
 
   def spec = suite("CorpusTrainer")(
     suite("toSample")(
-      test("material extractor reads diff columns directly (legacy path)") {
+      test("tapered material extractor over FeatureExtractor.material") {
+        // Replaces the dropped "material-by-columns" legacy path.
+        // Tapered wrapper over `FeatureExtractor.material` still
+        // gives a material-only feature set, just `_mg` / `_eg`
+        // suffixed + phase-scaled values.
         val row = TrainingRow(
           zobrist = 1L, outcome = 1.0f, quiet = true, weight = 0.7f,
-          pawnDiff = 1, knightDiff = -1, bishopDiff = 0,
-          rookDiff = 0, queenDiff = 1,
-          fen = None,
+          // Black missing queen — material "queen" raw = +1.
+          fen = Some("rnb1kbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"),
         )
         val sample = CorpusTrainer
-          .toSample(row, chess.bot.engine.FeatureExtractor.material)
+          .toSample(
+            row,
+            chess.bot.engine.TaperedFeatureExtractor.over(
+              chess.bot.engine.FeatureExtractor.material
+            ),
+          )
           .get
         assertTrue(
-          sample.features("pawn")   == 1,
-          sample.features("knight") == -1,
-          sample.features("queen")  == 1,
+          // Only `_mg` / `_eg` keys; no PST chatter.
+          sample.features.keySet.forall(k =>
+            k.endsWith("_mg") || k.endsWith("_eg")
+          ),
+          // Phase ≈ 0.92 (missing one queen → raw = 24 − 4·1 = 20 → 20/24).
+          // queen_mg should be the raw queen feature scaled by ~0.83 ≈ 0.83.
+          sample.features("queen_mg") > 0.5,
           sample.outcome == 1.0,
           math.abs(sample.weight - 0.7) < 1e-5,
         )
@@ -58,17 +70,21 @@ object CorpusTrainerSpec extends ZIOSpecDefault:
           zobrist = 1L, outcome = 0.5f, quiet = true, weight = 1.0f,
           fen = Some("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"),
         )
-        val sample = CorpusTrainer.toSample(row).get   // default = full
+        val sample = CorpusTrainer.toSample(row).get   // default = tapered full
         assertTrue(
-          // Starting position → material features net zero.
-          sample.features("pawn") == 0,
-          // PST keys present (only touched squares, but at minimum
-          // the 16 white-piece squares appear; the starting position
-          // touches 16 distinct white squares which black mirrors
-          // onto identically, so the keys exist with value 0).
-          sample.features.keySet.exists(_.startsWith("pawn_")),
-          sample.features.keySet.exists(_.startsWith("knight_")),
-          sample.features.keySet.contains("bishop_pair"),
+          // Starting position → material features net zero in both
+          // mg and eg halves of the tapered representation.
+          sample.features("pawn_mg") == 0.0,
+          sample.features("pawn_eg") == 0.0,
+          // Tapered PST keys present — every base key gets `_mg` / `_eg`.
+          sample.features.keySet.exists(k =>
+            k.startsWith("pawn_") && k.endsWith("_mg")
+          ),
+          sample.features.keySet.exists(k =>
+            k.startsWith("knight_") && k.endsWith("_mg")
+          ),
+          sample.features.keySet.contains("bishop_pair_mg"),
+          sample.features.keySet.contains("bishop_pair_eg"),
         )
       },
       test("full extractor returns None when the row has no FEN (legacy schema)") {

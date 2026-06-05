@@ -10,7 +10,7 @@ import zio.json.*
 import java.sql.Connection
 
 import chess.bot.data.{BookRepo, Db, IngestedFilesRepo, TrainingRepo, TrainingRow, WeightsRepo}
-import chess.bot.engine.{FeatureExtractor, WeightSnapshot, WeightsLoader}
+import chess.bot.engine.{FeatureExtractor, TaperedFeatureExtractor, WeightSnapshot, WeightsLoader}
 import chess.codec.FenParserRegex
 
 /** End-to-end training orchestration: ingest one or more PGN
@@ -141,7 +141,7 @@ object CorpusTrainer:
       maxIterations: Int = 100,
       initialStep: Int = 16,
       ingestStats: PgnIngest.Stats = PgnIngest.Stats.Zero,
-      extractor: FeatureExtractor = FeatureExtractor.full,
+      extractor: TaperedFeatureExtractor = TaperedFeatureExtractor.full,
       subsample: Long = Long.MaxValue,
   ): IO[Throwable, TrainResult] =
     for
@@ -187,44 +187,29 @@ object CorpusTrainer:
   /** Convert one persisted [[TrainingRow]] into a tuner
     * [[TexelTuner.Sample]] using `extractor`.
     *
-    * For [[FeatureExtractor.material]]: builds features straight
-    * from the per-row material-diff columns — no FEN reparse.
-    *
-    * For [[FeatureExtractor.full]] (default): parses the row's FEN
-    * back to a [[chess.model.board.GameState]] and re-extracts the
-    * full feature vector (material + PST + bishop pair). Rows
-    * without a FEN (older schema) return `None` and the tuner sees
-    * one fewer sample. */
+    * The tapered extractor needs the row's stored FEN to re-build
+    * the [[chess.model.board.GameState]]; rows without one (legacy
+    * schema before the FEN column landed) return `None` and the
+    * tuner sees one fewer sample. */
   private[train] def toSample(
       row: TrainingRow,
-      extractor: FeatureExtractor = FeatureExtractor.full,
+      extractor: TaperedFeatureExtractor = TaperedFeatureExtractor.full,
   ): Option[TexelTuner.Sample] =
-    val featuresOpt: Option[Map[String, Int]] =
-      if extractor eq FeatureExtractor.material then
-        Some(Map(
-          "pawn"   -> row.pawnDiff,
-          "knight" -> row.knightDiff,
-          "bishop" -> row.bishopDiff,
-          "rook"   -> row.rookDiff,
-          "queen"  -> row.queenDiff,
-        ))
-      else
-        row.fen.flatMap { fen =>
-          // Unsafe-run is fine here — FenParserRegex.parse is sync
-          // CPU work, the IO wrapping is purely for error typing.
-          zio.Unsafe.unsafe { implicit u =>
-            zio.Runtime.default.unsafe.run(FenParserRegex.parse(fen).either)
-              .getOrThrow()
-              .toOption
-              .map(extractor.features)
+    row.fen.flatMap { fen =>
+      // Unsafe-run is fine — FenParserRegex.parse is sync CPU work;
+      // the IO wrapping is purely for error typing.
+      zio.Unsafe.unsafe { implicit u =>
+        zio.Runtime.default.unsafe.run(FenParserRegex.parse(fen).either)
+          .getOrThrow()
+          .toOption
+          .map { state =>
+            TexelTuner.Sample(
+              features = extractor.features(state),
+              outcome  = row.outcome.toDouble,
+              weight   = row.weight.toDouble,
+            )
           }
-        }
-    featuresOpt.map { f =>
-      TexelTuner.Sample(
-        features = f,
-        outcome  = row.outcome.toDouble,
-        weight   = row.weight.toDouble,
-      )
+      }
     }
 
   /** Read a PGN file as UTF-8. Used as the read step in [[ingestAll]];
