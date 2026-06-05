@@ -68,10 +68,16 @@ object SearchSpec extends ZIOSpecDefault:
       // position — material-only eval can pick either. The robust
       // assertion is "applying the chosen move ends the game with
       // white as the winner via checkmate", not the specific move.
+      //
+      // Drives the move through `Game.applyMove` (full status
+      // detection) rather than `RulesAdapter.applyMove` (the bot's
+      // status-less search variant) — we're asserting on the
+      // resulting `status` field, which only the full apply path
+      // populates.
       for
         state  <- FenParserRegex.parse("7k/8/6KQ/8/8/8/8/8 w - - 0 1")
         moveOpt <- search.bestMove(state, depth = 2)
-        nextOpt = moveOpt.flatMap(m => RulesAdapter.applyMove(state, m))
+        nextOpt <- ZIO.foreach(moveOpt)(m => chess.model.rules.Game.applyMove(state, m))
       yield assertTrue(
         moveOpt.isDefined,
         nextOpt.exists(_.status == GameStatus.Checkmate(Color.White)),

@@ -64,6 +64,26 @@ object Game:
           }
     yield newState.copy(status = status)
 
+  /** Search-friendly variant of [[applyMove]] for tight inner-loop
+    * use. Same validation as [[applyMove]] — piece rules, king-
+    * safety, promotion — but '''skips''' the post-apply
+    * `isInsufficientMaterial` + `MoveValidator.hasLegalMove`
+    * status-detection step. The returned state's `status` field is
+    * therefore always `GameStatus.Playing`; callers that need
+    * terminal detection do it themselves (the bot's search uses
+    * its own `legalMoves.isEmpty` check at every node).
+    *
+    * Profile evidence: `applyMove` was 34% of chess CPU at depth 4
+    * in the bot search because every applied move triggered a
+    * second full legal-move generation via `hasLegalMove`. Routing
+    * the bot through this lighter entry point eliminates that
+    * doubled work. */
+  def applyMoveForSearch(
+      state: GameState,
+      move: Move
+  ): IO[GameError, GameState] =
+    applyMoveCore(state, move)
+
   /** Applies a move without detecting checkmate/stalemate. Used by
     * [[MoveValidator.hasLegalMove]] to avoid infinite recursion.
     *

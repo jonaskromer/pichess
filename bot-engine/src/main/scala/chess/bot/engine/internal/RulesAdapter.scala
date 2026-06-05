@@ -56,10 +56,15 @@ private[engine] object RulesAdapter:
     * or `None` if the move was illegal. Defect-grade failures
     * (`GameError.InfrastructureError`) propagate as exceptions — those
     * aren't expected on a candidate move from `legalMoves`.
-    */
+    *
+    * Routes through [[Game.applyMoveForSearch]] (the no-status-detection
+    * variant) — the bot's α-β search runs its own mate / stalemate
+    * detection via `legalMoves.isEmpty`, so the `applyMove` flavour's
+    * extra `MoveValidator.hasLegalMove` pass would just double the
+    * legal-move-generation cost per applied move. */
   def applyMove(state: GameState, move: Move): Option[GameState] =
     Unsafe.unsafe { implicit u =>
-      runtime.unsafe.run(Game.applyMove(state, move).either)
+      runtime.unsafe.run(Game.applyMoveForSearch(state, move).either)
         .getOrThrow()
         .toOption
     }
