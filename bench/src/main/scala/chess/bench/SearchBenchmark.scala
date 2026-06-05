@@ -136,6 +136,14 @@ class SearchBenchmark:
     UnsafeRuntime.run(freshSearch(arrayTaperedEval).bestMove(kiwiState, depth = 3))
 
   @Benchmark
+  def arrayTaperedDepth4KiwiPete: Option[Move] =
+    UnsafeRuntime.run(freshSearch(arrayTaperedEval).bestMove(kiwiState, depth = 4))
+
+  @Benchmark
+  def arrayTaperedDepth5Start: Option[Move] =
+    UnsafeRuntime.run(freshSearch(arrayTaperedEval).bestMove(startingState, depth = 5))
+
+  @Benchmark
   def evalArrayTaperedStart: Int =
     arrayTaperedEval.evaluate(startingState)
 

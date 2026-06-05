@@ -43,6 +43,31 @@ private[engine] final class AlphaBetaSearch(
   private val killer0: Array[Move] = new Array[Move](MaxPly)
   private val killer1: Array[Move] = new Array[Move](MaxPly)
 
+  // History heuristic — `historyTable(fromSq)(toSq)` accumulates
+  // depth² each time the (from→to) move causes a β-cutoff (for
+  // quiet moves only). Refines [[scoreMove]]'s quiet-move ranking
+  // beyond what killers can cover (2 moves per ply isn't enough
+  // when the tree visits the same quiet move at many different
+  // plies). A historically-strong move is tried earlier, which
+  // compounds cutoffs.
+  //
+  // Same race tolerance as the killer table: torn reads/writes
+  // from concurrent searches yield suboptimal ordering, never an
+  // incorrect move pick.
+  private val historyTable: Array[Array[Int]] = Array.ofDim[Int](64, 64)
+
+  // LMR move-index threshold: the first N moves at any node are
+  // searched at full depth; only moves past index N qualify for
+  // reduction. 3 is a conservative default — first 3 are
+  // typically the TT bestMove + the top two captures (or the
+  // killer), which we don't want to reduce.
+  private inline val LmrMoveThreshold = 3
+
+  // LMR minimum depth — below this, the search is too shallow to
+  // benefit from reducing further (reduction would land at depth 0
+  // which is just an eval).
+  private inline val LmrMinDepth = 3
+
   /** Centipawn value used for MVV-LVA scoring. Matches the
     * classic Kaufman values; king set to a value far above any
     * other so capturing the king (which shouldn't happen — illegal —
@@ -67,6 +92,7 @@ private[engine] final class AlphaBetaSearch(
       case Some(move) => ZIO.some(move)
       case None       =>
         clearKillers()
+        clearHistory()
         ZIO.succeed(syncBestMove(state, depth, history))
     }
 
@@ -77,6 +103,17 @@ private[engine] final class AlphaBetaSearch(
   private def clearKillers(): Unit =
     java.util.Arrays.fill(killer0.asInstanceOf[Array[AnyRef]], null)
     java.util.Arrays.fill(killer1.asInstanceOf[Array[AnyRef]], null)
+
+  /** Reset the history table at the start of each fresh search.
+    * Like killers, stale history is still safe (just suboptimal
+    * ordering); the explicit reset keeps ordering decisions tied
+    * to the current root position rather than carrying over biases
+    * from a prior game phase. */
+  private def clearHistory(): Unit =
+    var i = 0
+    while i < 64 do
+      java.util.Arrays.fill(historyTable(i), 0)
+      i += 1
 
   /** Pick the move at the root that maximises the negamax score for
     * the side to move. Mirrors the negamax recursion below but tracks
@@ -175,7 +212,22 @@ private[engine] final class AlphaBetaSearch(
   /** Iterate candidates with α-β cutoff, write the result to the TT,
     * return the best score. `historyWithThis` already contains the
     * current node's Zobrist so children can detect repetitions
-    * against it. */
+    * against it.
+    *
+    * Two refinements layered on top of plain α-β:
+    *   - Late move reductions (LMR): for quiet, non-killer moves
+    *     past index [[LmrMoveThreshold]] at depth ≥ [[LmrMinDepth]],
+    *     search at depth-2 (one ply less than usual). If the reduced
+    *     search returns a score > α, the reduction was wrong, so
+    *     re-search at full depth. The intuition is that move
+    *     ordering puts the most promising moves first; later
+    *     moves rarely improve α, so paying full depth for them is
+    *     wasted work. The re-search guards correctness.
+    *   - History bookkeeping on cutoffs: when a quiet move causes a
+    *     β-cutoff, bump `historyTable(from)(to)` by depth² so future
+    *     ordering at OTHER nodes tries the move earlier. Killer
+    *     update + history bookkeeping happen together for quiet
+    *     cutoffs. */
   private def searchMoves(
       state: GameState,
       moves: List[Move],
@@ -187,27 +239,56 @@ private[engine] final class AlphaBetaSearch(
       historyWithThis: Set[Long],
   ): Int =
     val ordered = orderMoves(moves, state, hash, ply)
+    val inCheckHere = RulesAdapter.isInCheck(state)
     var alphaCur  = alpha
     var bestScore = -Infinity
     var bestMove: Option[Move] = None
     var cutoff = false
+    var moveIndex = 0
+    val k0Here = if ply < MaxPly then killer0(ply) else null
+    val k1Here = if ply < MaxPly then killer1(ply) else null
     val it = ordered.iterator
     while it.hasNext && !cutoff do
       val move = it.next()
       RulesAdapter.applyMove(state, move).foreach { next =>
-        val score = -negamax(next, depth - 1, -beta, -alphaCur, ply + 1, historyWithThis)
+        val capture = isCapture(state, move)
+        val isKiller =
+          (k0Here != null && k0Here == move) ||
+            (k1Here != null && k1Here == move)
+        // LMR conditions: depth deep enough to reduce, move late
+        // enough in the order, quiet (not a capture, not a killer),
+        // not in check at this node (escape moves shouldn't be
+        // reduced). Promotions also skip the reduction implicitly
+        // because the rules layer doesn't include them in the
+        // capture set for ordering but they're "loud" enough that
+        // LMR's "quiet move probably won't improve α" assumption is
+        // weak — caller note rather than enforced.
+        val reduce =
+          depth >= LmrMinDepth &&
+            moveIndex >= LmrMoveThreshold &&
+            !capture &&
+            !isKiller &&
+            !inCheckHere
+        val searchDepth = if reduce then depth - 2 else depth - 1
+        var score = -negamax(next, searchDepth, -beta, -alphaCur, ply + 1, historyWithThis)
+        // If the reduced search hinted at an improvement, re-search
+        // at full depth to confirm. This preserves correctness — a
+        // missed improvement at one node would be caught here.
+        if reduce && score > alphaCur then
+          score = -negamax(next, depth - 1, -beta, -alphaCur, ply + 1, historyWithThis)
         if score > bestScore then
           bestScore = score
           bestMove = Some(move)
         if score > alphaCur then alphaCur = score
         if alphaCur >= beta then
           cutoff = true
-          // Quiet (non-capture) cutoff → record as a killer at this
-          // ply so the next sibling search tries it before the rest.
-          // Captures are already ordered via MVV-LVA, so we don't
-          // double-up on them.
-          if !isCapture(state, move) then recordKiller(ply, move)
+          if !capture then
+            recordKiller(ply, move)
+            // History bonus = depth²: a cutoff caused at high depth
+            // is much more informative than one at low depth.
+            historyTable(move.from.squareIdx)(move.to.squareIdx) += depth * depth
       }
+      moveIndex += 1
     val kind =
       if bestScore <= alpha then Kind.Upper
       else if bestScore >= beta then Kind.Lower
@@ -239,11 +320,13 @@ private[engine] final class AlphaBetaSearch(
     moves.sortBy(m => -scoreMove(state, m, ttBest, k0, k1))
 
   /** Per-move ordering score. Higher is tried first. Score buckets:
-    *   - 1_000_000  TT bestMove
-    *   -   100_000  any capture (with MVV-LVA tiebreak: victim×10 − attacker)
-    *   -    90_000  killer slot 0 (most recent)
-    *   -    80_000  killer slot 1
-    *   -         0  everything else (quiet, generation order)
+    *   - 1_000_000           TT bestMove
+    *   -   100_000           any capture (MVV-LVA tiebreak: victim×10 − attacker)
+    *   -    90_000           killer slot 0 (most recent)
+    *   -    80_000           killer slot 1
+    *   -        0..79_999    quiet — history-heuristic score (capped at
+    *                         79_999 so a hot history entry can't sneak
+    *                         past a killer)
     *
     * Capture detection uses `BoardState.get(move.to)` — cheap (a
     * dozen mask checks) and handles all normal captures. En passant
@@ -269,7 +352,11 @@ private[engine] final class AlphaBetaSearch(
         case None =>
           if k0 != null && k0 == move then 90_000
           else if k1 != null && k1 == move then 80_000
-          else 0
+          else
+            // History heuristic: quiet moves with a higher cutoff
+            // count get tried earlier. Cap below the killer bucket so
+            // a hot history entry never pre-empts a killer.
+            math.min(historyTable(move.from.squareIdx)(move.to.squareIdx), 79_999)
 
   /** True if `move` captures a piece on its destination. False for
     * en passant (rare; ok to treat as quiet for ordering). */
