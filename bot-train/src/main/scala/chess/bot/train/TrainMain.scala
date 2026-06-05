@@ -30,6 +30,14 @@ import chess.bot.engine.{TaperedFeatureExtractor, WeightSnapshot, WeightsLoader}
   *   - `PICHESS_OUTPUT_WEIGHTS`   (default
   *       `bot-engine/src/main/resources/weights/v2.json`)
   *   - `PICHESS_NEXT_VERSION`     (default `2`)
+  *   - `PICHESS_SUBSAMPLE`        cap on the number of training rows
+  *                                consumed by the tuner (default
+  *                                `500_000`). The Map[String, Double]
+  *                                per-sample feature representation
+  *                                doesn't fit > ~1M positions in a
+  *                                normal heap; deterministic stride-
+  *                                based subsampling keeps the corpus
+  *                                representative without an OOM.
   *
   * Missing directories are silently skipped — running with just one
   * source is fine, the run reports "ingested 0 games for X" and
@@ -46,6 +54,7 @@ object TrainMain extends ZIOAppDefault:
   private val defaultOutputPath    =
     "bot-engine/src/main/resources/weights/v2.json"
   private val defaultNextVersion   = 2
+  private val defaultSubsample     = 500_000L
 
   def run: ZIO[ZIOAppArgs & Scope, Any, Any] =
     program
@@ -94,6 +103,7 @@ object TrainMain extends ZIOAppDefault:
                     nextVersion = cfg.nextVersion,
                     writeJsonTo = Some(Paths.get(cfg.outputPath)),
                     ingestStats = stats,
+                    subsample   = cfg.subsample,
                   )
       _       <- ZIO.logInfo(
                    s"Tuned in ${result.iterations} iterations: " +
@@ -110,6 +120,7 @@ object TrainMain extends ZIOAppDefault:
       dbPath: String,
       outputPath: String,
       nextVersion: Int,
+      subsample: Long,
   )
 
   private def readConfig: UIO[Config] =
@@ -122,6 +133,9 @@ object TrainMain extends ZIOAppDefault:
         nextVersion  = sys.env.get("PICHESS_NEXT_VERSION")
                          .flatMap(_.toIntOption)
                          .getOrElse(defaultNextVersion),
+        subsample    = sys.env.get("PICHESS_SUBSAMPLE")
+                         .flatMap(_.toLongOption)
+                         .getOrElse(defaultSubsample),
       )
     )
 

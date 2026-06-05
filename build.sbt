@@ -292,7 +292,12 @@ lazy val botTrain = project
   .settings(commonSettings)
   .settings(
     name := "pichess-bot-train",
-    coverageExcludedFiles := ".*TrainMain.*",
+    // TrainMain + TournamentMain: orchestration entry points (sbt
+    // runMain), only meaningful when run with a real PGN corpus or
+    // a Stockfish subprocess. StockfishSearch: external subprocess
+    // adapter, integration-tested in StockfishSearchSpec when the
+    // binary is on PATH (skipped otherwise).
+    coverageExcludedFiles := ".*(TrainMain|TournamentMain|StockfishSearch).*",
     Compile / run / fork := true,
     Compile / run := (Compile / run)
       .dependsOn(botEngine / Compile / copyResources)
