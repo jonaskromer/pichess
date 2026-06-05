@@ -4,7 +4,7 @@ import java.util.concurrent.TimeUnit
 
 import org.openjdk.jmh.annotations.*
 
-import chess.bot.engine.{Evaluator, FeatureExtractor, Search, TaperedEvaluator, TaperedFeatureExtractor}
+import chess.bot.engine.{ArrayTaperedEvaluator, Evaluator, FeatureExtractor, Search, TaperedEvaluator, TaperedFeatureExtractor}
 import chess.codec.FenParserRegex
 import chess.model.board.{GameState, Move}
 
@@ -51,11 +51,19 @@ class SearchBenchmark:
   // production cost than material-only without depending on a tuned
   // snapshot landing in the bench classpath. The feature extractor
   // still does the full ~690-feature pass at every leaf.
+  //
+  // Two flavours: `taperedEval` is the Map-backed [[TaperedEvaluator]]
+  // (the historical impl, still used for comparison + tests);
+  // `arrayTaperedEval` is the array-backed [[ArrayTaperedEvaluator]]
+  // wired into EngineBundle. Bench both so we can see the speedup.
+  private val seedWeights: Map[String, Int] =
+    TaperedFeatureExtractor.defaultSeedWeights
+
   private val taperedEval: Evaluator =
-    TaperedEvaluator(
-      TaperedFeatureExtractor.defaultSeedWeights,
-      FeatureExtractor.full,
-    )
+    TaperedEvaluator(seedWeights, FeatureExtractor.full)
+
+  private val arrayTaperedEval: Evaluator =
+    ArrayTaperedEvaluator(seedWeights)
 
   // Each `bestMove` benchmark creates a fresh [[Search]] inside the
   // body. The first invocation populates the transposition table; if
@@ -108,6 +116,32 @@ class SearchBenchmark:
   @Benchmark
   def taperedDepth3KiwiPete: Option[Move] =
     UnsafeRuntime.run(freshSearch(taperedEval).bestMove(kiwiState, depth = 3))
+
+  // ----- array tapered evaluator (zero-alloc hot path) -----------------
+
+  @Benchmark
+  def arrayTaperedDepth3Start: Option[Move] =
+    UnsafeRuntime.run(freshSearch(arrayTaperedEval).bestMove(startingState, depth = 3))
+
+  @Benchmark
+  def arrayTaperedDepth4Start: Option[Move] =
+    UnsafeRuntime.run(freshSearch(arrayTaperedEval).bestMove(startingState, depth = 4))
+
+  @Benchmark
+  def arrayTaperedDepth3MidGame: Option[Move] =
+    UnsafeRuntime.run(freshSearch(arrayTaperedEval).bestMove(midGameState, depth = 3))
+
+  @Benchmark
+  def arrayTaperedDepth3KiwiPete: Option[Move] =
+    UnsafeRuntime.run(freshSearch(arrayTaperedEval).bestMove(kiwiState, depth = 3))
+
+  @Benchmark
+  def evalArrayTaperedStart: Int =
+    arrayTaperedEval.evaluate(startingState)
+
+  @Benchmark
+  def evalArrayTaperedKiwiPete: Int =
+    arrayTaperedEval.evaluate(kiwiState)
 
   // ----- isolated evaluator cost ---------------------------------------
   // Pull the eval out of the search to see how much of search time is

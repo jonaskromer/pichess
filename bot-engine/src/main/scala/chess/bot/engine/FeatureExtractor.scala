@@ -105,6 +105,96 @@ object FeatureExtractor:
     * PST keys so the tuner only learns one set of tables. */
   private[engine] inline def mirror(idx: Int): Int = idx ^ 56
 
+  // ── Canonical feature index ─────────────────────────────────────
+  //
+  // Each feature has a stable integer ID. The geometric helpers in
+  // [[FullFeatures]] write into a `FeatureSink` keyed by this ID;
+  // both the Map-returning legacy API and the array-mutating fast
+  // path share the same geometry. The constants below are the only
+  // place that knows feature layout — adding a feature touches:
+  //   1. [[allFeatureNames]] (canonical order)
+  //   2. an entry in [[FeatureIndex]]
+  //   3. the helper that emits it.
+  //
+  // `Count` is asserted against `allFeatureNames.size` in the tests
+  // so any drift between the two is caught at build time.
+
+  private[engine] object FeatureIndex:
+    inline val Pawn   = 0
+    inline val Knight = 1
+    inline val Bishop = 2
+    inline val Rook   = 3
+    inline val Queen  = 4
+
+    // Each PST has 64 entries (a1=+0, h8=+63 LERF). Black pieces
+    // contribute -1 at their mirrored square.
+    inline val PstPawnBase   = 5
+    inline val PstKnightBase = 69
+    inline val PstBishopBase = 133
+    inline val PstRookBase   = 197
+    inline val PstQueenBase  = 261
+
+    inline val BishopPair    = 325
+    inline val KnightMob     = 326
+    inline val BishopMob     = 327
+    inline val RookMob       = 328
+    inline val QueenMob      = 329
+
+    // passed_rank_2 .. passed_rank_7 land at 330..335 (rank − 2 offset).
+    inline val PassedRankBase = 330
+
+    inline val IsolatedPawn   = 336
+    inline val DoubledPawn    = 337
+    inline val ConnectedPawn  = 338
+    inline val PawnShield     = 339
+    inline val KingAttackers  = 340
+    inline val RookOpenFile   = 341
+    inline val RookSemiOpenFile = 342
+    inline val KnightOutpost  = 343
+    inline val Tempo          = 344
+
+    inline val Count          = 345
+
+    /** Reverse lookup: idx → canonical key name. Built once from
+      * [[allFeatureNames]]. Used by the [[MapSink]] to convert
+      * array writes back into the Map[String, Int] shape. */
+    val keyByIdx: Array[String] = allFeatureNames.toArray
+
+    /** Forward lookup: key → idx, for converting a `Map[String, Int]`
+      * weight vector into a pair of `Array[Int]` for the fast eval
+      * path. Returns -1 for keys outside the canonical set. */
+    private val keyToIdx: Map[String, Int] =
+      keyByIdx.iterator.zipWithIndex.toMap
+
+    def indexOf(key: String): Int = keyToIdx.getOrElse(key, -1)
+
+  /** Storage abstraction used by the geometric helpers. The
+    * [[FullFeatures]] code does not care whether values land in a
+    * `Map[String, Int]` (legacy API path) or in an `Array[Int]`
+    * (fast eval path) — both implementations of [[FeatureSink]]
+    * preserve `acc(idx) += value` semantics. */
+  private[engine] sealed trait FeatureSink:
+    def add(idx: Int, value: Int): Unit
+
+  /** Mutates a pre-allocated `Array[Int]`. Zero allocation per
+    * call. The caller is responsible for clearing the array before
+    * each fill ([[FullFeatures.fillArray]] does so). */
+  private[engine] final class ArraySink(val arr: Array[Int]) extends FeatureSink:
+    def add(idx: Int, value: Int): Unit = arr(idx) += value
+
+  /** Accumulates into a `mutable.HashMap[String, Int]` keyed by the
+    * canonical names. Preserves the historical behaviour where
+    * `add(idx, 0)` still emits a `(key -> 0)` entry — the legacy
+    * test suite leans on that for the "always-emit" features
+    * (material, mobility, etc.). PST keys, which only see
+    * `add(idx, ±1)` for occupied squares, naturally stay sparse. */
+  private[engine] final class MapSink extends FeatureSink:
+    val acc: scala.collection.mutable.HashMap[String, Int] =
+      scala.collection.mutable.HashMap.empty
+    def add(idx: Int, value: Int): Unit =
+      val k = FeatureIndex.keyByIdx(idx)
+      acc(k) = acc.getOrElse(k, 0) + value
+
   private object MaterialFeatures extends FeatureExtractor:
     def features(state: GameState): Map[String, Int] =
       val b = state.board
@@ -116,59 +206,63 @@ object FeatureExtractor:
         "queen"  -> (b.queensW.popCount  - b.queensB.popCount),
       )
 
-  private object FullFeatures extends FeatureExtractor:
+  private[engine] object FullFeatures extends FeatureExtractor:
+
     def features(state: GameState): Map[String, Int] =
-      val acc = scala.collection.mutable.HashMap.empty[String, Int]
-      val b   = state.board
+      val sink = new MapSink
+      compute(state, sink)
+      sink.acc.toMap
 
-      addMaterial(acc, b)
-      addPstAllPieces(acc, b)
-      addBishopPair(acc, b)
-      addMobility(acc, b)
-      addPawnStructure(acc, b)
-      addKingSafety(acc, b)
-      addRookActivity(acc, b)
-      addKnightOutpost(acc, b)
-      add(acc, "tempo", if state.activeColor == Color.White then 1 else -1)
+    /** Zero-allocation fast path: clears `out`, then fills feature
+      * values at canonical indices. Used by [[ArrayTaperedEvaluator]]
+      * on the search hot loop. The same geometric helpers as the
+      * Map path — drift between the two is impossible. */
+    def fillArray(state: GameState, out: Array[Int]): Unit =
+      java.util.Arrays.fill(out, 0)
+      compute(state, new ArraySink(out))
 
-      acc.toMap
+    /** Shared compute path. Writes to whichever sink the caller
+      * supplies. */
+    private def compute(state: GameState, sink: FeatureSink): Unit =
+      val b = state.board
+
+      addMaterial(sink, b)
+      addPstAllPieces(sink, b)
+      addBishopPair(sink, b)
+      addMobility(sink, b)
+      addPawnStructure(sink, b)
+      addKingSafety(sink, b)
+      addRookActivity(sink, b)
+      addKnightOutpost(sink, b)
+      sink.add(FeatureIndex.Tempo, if state.activeColor == Color.White then 1 else -1)
 
     // ── Material + PST + bishop pair (existing features) ──────────
 
-    private def addMaterial(
-        acc: scala.collection.mutable.HashMap[String, Int],
-        b: chess.model.board.BoardState,
-    ): Unit =
-      add(acc, "pawn",   b.pawnsW.popCount   - b.pawnsB.popCount)
-      add(acc, "knight", b.knightsW.popCount - b.knightsB.popCount)
-      add(acc, "bishop", b.bishopsW.popCount - b.bishopsB.popCount)
-      add(acc, "rook",   b.rooksW.popCount   - b.rooksB.popCount)
-      add(acc, "queen",  b.queensW.popCount  - b.queensB.popCount)
+    private def addMaterial(sink: FeatureSink, b: chess.model.board.BoardState): Unit =
+      sink.add(FeatureIndex.Pawn,   b.pawnsW.popCount   - b.pawnsB.popCount)
+      sink.add(FeatureIndex.Knight, b.knightsW.popCount - b.knightsB.popCount)
+      sink.add(FeatureIndex.Bishop, b.bishopsW.popCount - b.bishopsB.popCount)
+      sink.add(FeatureIndex.Rook,   b.rooksW.popCount   - b.rooksB.popCount)
+      sink.add(FeatureIndex.Queen,  b.queensW.popCount  - b.queensB.popCount)
 
-    private def addPstAllPieces(
-        acc: scala.collection.mutable.HashMap[String, Int],
-        b: chess.model.board.BoardState,
-    ): Unit =
-      addPst(acc, "pawn",   b.pawnsW.raw,   b.pawnsB.raw)
-      addPst(acc, "knight", b.knightsW.raw, b.knightsB.raw)
-      addPst(acc, "bishop", b.bishopsW.raw, b.bishopsB.raw)
-      addPst(acc, "rook",   b.rooksW.raw,   b.rooksB.raw)
-      addPst(acc, "queen",  b.queensW.raw,  b.queensB.raw)
+    private def addPstAllPieces(sink: FeatureSink, b: chess.model.board.BoardState): Unit =
+      addPst(sink, FeatureIndex.PstPawnBase,   b.pawnsW.raw,   b.pawnsB.raw)
+      addPst(sink, FeatureIndex.PstKnightBase, b.knightsW.raw, b.knightsB.raw)
+      addPst(sink, FeatureIndex.PstBishopBase, b.bishopsW.raw, b.bishopsB.raw)
+      addPst(sink, FeatureIndex.PstRookBase,   b.rooksW.raw,   b.rooksB.raw)
+      addPst(sink, FeatureIndex.PstQueenBase,  b.queensW.raw,  b.queensB.raw)
 
-    private def addBishopPair(
-        acc: scala.collection.mutable.HashMap[String, Int],
-        b: chess.model.board.BoardState,
-    ): Unit =
+    private def addBishopPair(sink: FeatureSink, b: chess.model.board.BoardState): Unit =
       val whitePair = if b.bishopsW.popCount >= 2 then 1 else 0
       val blackPair = if b.bishopsB.popCount >= 2 then 1 else 0
-      add(acc, "bishop_pair", whitePair - blackPair)
+      sink.add(FeatureIndex.BishopPair, whitePair - blackPair)
 
     /** PST helper: each piece adds ±1 to its square's PST key;
       * black squares mirror to white-coordinate keys so the tuner
       * learns a single 64-square table per piece type. */
     private def addPst(
-        acc: scala.collection.mutable.HashMap[String, Int],
-        piece: String,
+        sink: FeatureSink,
+        pstBase: Int,
         whiteBits: Long,
         blackBits: Long,
     ): Unit =
@@ -176,12 +270,12 @@ object FeatureExtractor:
       while w != 0L do
         val idx = java.lang.Long.numberOfTrailingZeros(w)
         w &= w - 1L
-        add(acc, s"${piece}_${squareName(idx)}", 1)
+        sink.add(pstBase + idx, 1)
       var bb = blackBits
       while bb != 0L do
         val idx = java.lang.Long.numberOfTrailingZeros(bb)
         bb &= bb - 1L
-        add(acc, s"${piece}_${squareName(mirror(idx))}", -1)
+        sink.add(pstBase + mirror(idx), -1)
 
     // ── Mobility ──────────────────────────────────────────────────
     //
@@ -191,23 +285,20 @@ object FeatureExtractor:
     // learns ~3-5 cp per knight/bishop move, ~2 cp per rook/queen
     // move (queens have lots of moves so each is worth less).
 
-    private def addMobility(
-        acc: scala.collection.mutable.HashMap[String, Int],
-        b: chess.model.board.BoardState,
-    ): Unit =
+    private def addMobility(sink: FeatureSink, b: chess.model.board.BoardState): Unit =
       val wOcc = b.whitePieces.raw
       val bOcc = b.blackPieces.raw
       val occ  = b.occupancy.raw
-      add(acc, "knight_mobility",
+      sink.add(FeatureIndex.KnightMob,
         knightMobility(b.knightsW.raw, wOcc) -
           knightMobility(b.knightsB.raw, bOcc))
-      add(acc, "bishop_mobility",
+      sink.add(FeatureIndex.BishopMob,
         bishopMobility(b.bishopsW.raw, occ, wOcc) -
           bishopMobility(b.bishopsB.raw, occ, bOcc))
-      add(acc, "rook_mobility",
+      sink.add(FeatureIndex.RookMob,
         rookMobility(b.rooksW.raw, occ, wOcc) -
           rookMobility(b.rooksB.raw, occ, bOcc))
-      add(acc, "queen_mobility",
+      sink.add(FeatureIndex.QueenMob,
         queenMobility(b.queensW.raw, occ, wOcc) -
           queenMobility(b.queensB.raw, occ, bOcc))
 
@@ -258,20 +349,17 @@ object FeatureExtractor:
     // Connected: pawn with at least one friendly pawn on an adjacent
     //            file within ±1 rank (defender or shoulder-mate).
 
-    private def addPawnStructure(
-        acc: scala.collection.mutable.HashMap[String, Int],
-        b: chess.model.board.BoardState,
-    ): Unit =
+    private def addPawnStructure(sink: FeatureSink, b: chess.model.board.BoardState): Unit =
       val wPawns = b.pawnsW.raw
       val bPawns = b.pawnsB.raw
-      addPassedPawns(acc, wPawns, bPawns, white = true)
-      addPassedPawns(acc, bPawns, wPawns, white = false)
-      add(acc, "isolated_pawn",  isolatedCount(wPawns) - isolatedCount(bPawns))
-      add(acc, "doubled_pawn",   doubledCount(wPawns)  - doubledCount(bPawns))
-      add(acc, "connected_pawn", connectedCount(wPawns) - connectedCount(bPawns))
+      addPassedPawns(sink, wPawns, bPawns, white = true)
+      addPassedPawns(sink, bPawns, wPawns, white = false)
+      sink.add(FeatureIndex.IsolatedPawn,  isolatedCount(wPawns) - isolatedCount(bPawns))
+      sink.add(FeatureIndex.DoubledPawn,   doubledCount(wPawns)  - doubledCount(bPawns))
+      sink.add(FeatureIndex.ConnectedPawn, connectedCount(wPawns) - connectedCount(bPawns))
 
     private def addPassedPawns(
-        acc: scala.collection.mutable.HashMap[String, Int],
+        sink: FeatureSink,
         ownPawns: Long,
         enemyPawns: Long,
         white: Boolean,
@@ -291,7 +379,7 @@ object FeatureExtractor:
           val sign = if white then 1 else -1
           // Passed pawn ranks land in 2..7 (rank 1 = source, rank 8 = promoted).
           if whiteEquivRank >= 2 && whiteEquivRank <= 7 then
-            add(acc, s"passed_rank_$whiteEquivRank", sign)
+            sink.add(FeatureIndex.PassedRankBase + (whiteEquivRank - 2), sign)
 
     private def isolatedCount(pawns: Long): Int =
       var total = 0
@@ -332,10 +420,7 @@ object FeatureExtractor:
     //                 intersects the own king's zone, signed so
     //                 positive = white attacks more.
 
-    private def addKingSafety(
-        acc: scala.collection.mutable.HashMap[String, Int],
-        b: chess.model.board.BoardState,
-    ): Unit =
+    private def addKingSafety(sink: FeatureSink, b: chess.model.board.BoardState): Unit =
       val wKingBb = b.kingW.raw
       val bKingBb = b.kingB.raw
       // Empty-king positions can occur in some test fixtures — guard
@@ -347,12 +432,12 @@ object FeatureExtractor:
         val bKingSq = java.lang.Long.numberOfTrailingZeros(bKingBb)
         val wShield = java.lang.Long.bitCount(PawnMasks.kingZone(wKingSq) & b.pawnsW.raw)
         val bShield = java.lang.Long.bitCount(PawnMasks.kingZone(bKingSq) & b.pawnsB.raw)
-        add(acc, "pawn_shield", wShield - bShield)
+        sink.add(FeatureIndex.PawnShield, wShield - bShield)
 
         // Count enemy non-pawn, non-king pieces attacking the king zone.
         val whiteOnBlackKing = kingZoneAttackers(b, PawnMasks.kingZone(bKingSq), byWhite = true)
         val blackOnWhiteKing = kingZoneAttackers(b, PawnMasks.kingZone(wKingSq), byWhite = false)
-        add(acc, "king_attackers", whiteOnBlackKing - blackOnWhiteKing)
+        sink.add(FeatureIndex.KingAttackers, whiteOnBlackKing - blackOnWhiteKing)
 
     /** Count enemy pieces (N/B/R/Q) whose attack-set intersects
       * `kingZone`. Each attacker counted once; an attacker that
@@ -388,16 +473,13 @@ object FeatureExtractor:
 
     // ── Rook activity ────────────────────────────────────────────
 
-    private def addRookActivity(
-        acc: scala.collection.mutable.HashMap[String, Int],
-        b: chess.model.board.BoardState,
-    ): Unit =
+    private def addRookActivity(sink: FeatureSink, b: chess.model.board.BoardState): Unit =
       val wPawns = b.pawnsW.raw
       val bPawns = b.pawnsB.raw
       val (wOpen, wSemi) = rookFileBonuses(b.rooksW.raw, wPawns, bPawns)
       val (bOpen, bSemi) = rookFileBonuses(b.rooksB.raw, bPawns, wPawns)
-      add(acc, "rook_open_file",      wOpen - bOpen)
-      add(acc, "rook_semi_open_file", wSemi - bSemi)
+      sink.add(FeatureIndex.RookOpenFile,      wOpen - bOpen)
+      sink.add(FeatureIndex.RookSemiOpenFile, wSemi - bSemi)
 
     /** Per rook, count whether its file is open (no pawns of either
       * side) or semi-open (no own pawns; enemy pawns ok). */
@@ -426,10 +508,7 @@ object FeatureExtractor:
     // the opponent's half (rank ≥ 5 for white, ≤ 4 for black) so
     // we don't credit knights in their own territory.
 
-    private def addKnightOutpost(
-        acc: scala.collection.mutable.HashMap[String, Int],
-        b: chess.model.board.BoardState,
-    ): Unit =
+    private def addKnightOutpost(sink: FeatureSink, b: chess.model.board.BoardState): Unit =
       val whiteOutposts = countOutposts(
         knights      = b.knightsW.raw,
         ownPawns     = b.pawnsW.raw,
@@ -442,7 +521,7 @@ object FeatureExtractor:
         enemyPawns   = b.pawnsW.raw,
         white        = false,
       )
-      add(acc, "knight_outpost", whiteOutposts - blackOutposts)
+      sink.add(FeatureIndex.KnightOutpost, whiteOutposts - blackOutposts)
 
     private def countOutposts(
         knights: Long,
@@ -466,11 +545,3 @@ object FeatureExtractor:
             else          (BitboardAttacks.whitePawnAttackersOf(sq) & enemyPawns) != 0L
           if defendedByPawn && !attackedByEnemyPawn then total += 1
       total
-
-    /** `acc(key) += value`, treating missing keys as 0. */
-    private inline def add(
-        acc: scala.collection.mutable.HashMap[String, Int],
-        key: String,
-        value: Int,
-    ): Unit =
-      acc.update(key, acc.getOrElse(key, 0) + value)

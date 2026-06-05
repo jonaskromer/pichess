@@ -42,14 +42,14 @@ object EngineBundle:
     for
       weights <- WeightsLoader.load(weightsVersion)
       book    <- OpeningBookLoader.loadDefault(maxBookPly)
-      // Tapered runtime evaluator: looks up `_mg` / `_eg` weights and
-      // blends by game phase, falling back to an unsuffixed key when
-      // a tapered variant isn't present. So legacy `v1.json` /
-      // `v2.json` snapshots (no `_mg` / `_eg` keys) keep working
-      // exactly as they did before tapered eval landed — both
-      // branches read the same unsuffixed weight and the blend
-      // collapses to `weight * count`.
-      eval     = TaperedEvaluator(weights.weights, FeatureExtractor.full)
+      // Tapered runtime evaluator: array-backed, zero-allocation on
+      // the search hot loop. Weight `_mg` / `_eg` lookups + the
+      // legacy un-suffixed fallback happen once at construction so
+      // the per-eval cost is a single while over `Array[Int]`. Same
+      // scoring as [[TaperedEvaluator]] (pinned by spec) but ~10×
+      // cheaper per call — the Map[String, Int] feature path was the
+      // dominant allocator (~121 MB/op at depth 4).
+      eval     = ArrayTaperedEvaluator(weights.weights)
       search   = Search.alphaBeta(eval, book, maxTtEntries)
     yield EngineBundle(weights, book, search)
 
@@ -69,12 +69,12 @@ object EngineBundle:
             EngineBundle(
               weights     = fallbackSnapshot,
               openingBook = OpeningBook.Empty,
-              // Same extractor + tapered eval as the success path so
+              // Same array-backed tapered eval as the success path —
               // the fallback bundle still benefits from tapered
               // weights if a live WeightsRepo later attaches a tuned
               // snapshot with `_mg` / `_eg` keys.
               search      = Search.alphaBeta(
-                TaperedEvaluator(fallbackSnapshot.weights, FeatureExtractor.full),
+                ArrayTaperedEvaluator(fallbackSnapshot.weights),
                 OpeningBook.Empty,
                 maxTtEntries,
               ),
