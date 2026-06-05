@@ -38,6 +38,26 @@ import chess.bot.engine.{TaperedFeatureExtractor, WeightSnapshot, WeightsLoader}
   *                                normal heap; deterministic stride-
   *                                based subsampling keeps the corpus
   *                                representative without an OOM.
+  *   - `PICHESS_STARTING_VERSION` override which prior snapshot to
+  *                                seed from. Defaults to
+  *                                `nextVersion - 1`. Useful when a
+  *                                later version regressed (e.g. v5
+  *                                worse than v4) and we want to
+  *                                resume from the best known good
+  *                                version instead of the immediate
+  *                                predecessor.
+  *   - `PICHESS_K`                sigmoid steepness for the loss
+  *                                function. Default `0.4` is the
+  *                                classic Texel value.
+  *   - `PICHESS_MAX_ITERATIONS`   coordinate-descent iteration cap
+  *                                (default 100). Higher allows more
+  *                                refinement at low step sizes.
+  *   - `PICHESS_INITIAL_STEP`     starting step size in centipawns
+  *                                (default 16). Smaller values
+  *                                explore the local neighbourhood
+  *                                more finely — useful when seeding
+  *                                from a snapshot that's near a
+  *                                local minimum.
   *
   * Missing directories are silently skipped — running with just one
   * source is fine, the run reports "ingested 0 games for X" and
@@ -55,6 +75,9 @@ object TrainMain extends ZIOAppDefault:
     "bot-engine/src/main/resources/weights/v2.json"
   private val defaultNextVersion   = 2
   private val defaultSubsample     = 500_000L
+  private val defaultK             = 0.4
+  private val defaultMaxIterations = 100
+  private val defaultInitialStep   = 16
 
   def run: ZIO[ZIOAppArgs & Scope, Any, Any] =
     program
@@ -79,9 +102,10 @@ object TrainMain extends ZIOAppDefault:
                  )
       stats   <- CorpusTrainer.ingestAll(inputs, repos)
       _       <- ZIO.logInfo(s"Ingest: $stats")
-      previous <- WeightsLoader.load(cfg.nextVersion - 1).catchAll { err =>
+      startingVersion = cfg.startingVersion.getOrElse(cfg.nextVersion - 1)
+      previous <- WeightsLoader.load(startingVersion).catchAll { err =>
                     ZIO.logWarning(
-                      s"Couldn't load weights v${cfg.nextVersion - 1}: ${err.getMessage}; " +
+                      s"Couldn't load weights v$startingVersion: ${err.getMessage}; " +
                         s"starting from default seed",
                     ) *> ZIO.succeed(fallbackInitial)
                   }
@@ -98,12 +122,15 @@ object TrainMain extends ZIOAppDefault:
                        s"(promoted to ${initial.size} tapered keys)",
                    )
       result   <- CorpusTrainer.tuneAndPersist(
-                    repos       = repos,
-                    initial     = initial,
-                    nextVersion = cfg.nextVersion,
-                    writeJsonTo = Some(Paths.get(cfg.outputPath)),
-                    ingestStats = stats,
-                    subsample   = cfg.subsample,
+                    repos         = repos,
+                    initial       = initial,
+                    nextVersion   = cfg.nextVersion,
+                    writeJsonTo   = Some(Paths.get(cfg.outputPath)),
+                    K             = cfg.K,
+                    maxIterations = cfg.maxIterations,
+                    initialStep   = cfg.initialStep,
+                    ingestStats   = stats,
+                    subsample     = cfg.subsample,
                   )
       _       <- ZIO.logInfo(
                    s"Tuned in ${result.iterations} iterations: " +
@@ -121,21 +148,35 @@ object TrainMain extends ZIOAppDefault:
       outputPath: String,
       nextVersion: Int,
       subsample: Long,
+      startingVersion: Option[Int],
+      K: Double,
+      maxIterations: Int,
+      initialStep: Int,
   )
 
   private def readConfig: UIO[Config] =
     ZIO.succeed(
       Config(
-        twicDir      = sys.env.getOrElse("PICHESS_TWIC_DIR",       defaultTwicDir),
-        pgnMentorDir = sys.env.getOrElse("PICHESS_PGN_MENTOR_DIR", defaultPgnMentorDir),
-        dbPath       = sys.env.getOrElse("PICHESS_DUCKDB_PATH",    defaultDbPath),
-        outputPath   = sys.env.getOrElse("PICHESS_OUTPUT_WEIGHTS", defaultOutputPath),
-        nextVersion  = sys.env.get("PICHESS_NEXT_VERSION")
-                         .flatMap(_.toIntOption)
-                         .getOrElse(defaultNextVersion),
-        subsample    = sys.env.get("PICHESS_SUBSAMPLE")
-                         .flatMap(_.toLongOption)
-                         .getOrElse(defaultSubsample),
+        twicDir         = sys.env.getOrElse("PICHESS_TWIC_DIR",       defaultTwicDir),
+        pgnMentorDir    = sys.env.getOrElse("PICHESS_PGN_MENTOR_DIR", defaultPgnMentorDir),
+        dbPath          = sys.env.getOrElse("PICHESS_DUCKDB_PATH",    defaultDbPath),
+        outputPath      = sys.env.getOrElse("PICHESS_OUTPUT_WEIGHTS", defaultOutputPath),
+        nextVersion     = sys.env.get("PICHESS_NEXT_VERSION")
+                            .flatMap(_.toIntOption)
+                            .getOrElse(defaultNextVersion),
+        subsample       = sys.env.get("PICHESS_SUBSAMPLE")
+                            .flatMap(_.toLongOption)
+                            .getOrElse(defaultSubsample),
+        startingVersion = sys.env.get("PICHESS_STARTING_VERSION").flatMap(_.toIntOption),
+        K               = sys.env.get("PICHESS_K")
+                            .flatMap(_.toDoubleOption)
+                            .getOrElse(defaultK),
+        maxIterations   = sys.env.get("PICHESS_MAX_ITERATIONS")
+                            .flatMap(_.toIntOption)
+                            .getOrElse(defaultMaxIterations),
+        initialStep     = sys.env.get("PICHESS_INITIAL_STEP")
+                            .flatMap(_.toIntOption)
+                            .getOrElse(defaultInitialStep),
       )
     )
 
