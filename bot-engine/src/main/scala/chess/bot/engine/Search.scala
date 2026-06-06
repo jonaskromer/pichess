@@ -104,11 +104,19 @@ object Search:
       // on top of it later — without ID you can't gracefully
       // trade depth for budget.
       iterativeDeepeningEnabled: Boolean = false,
+      // ON — a 200-game v8+Q+NMP vs v8+Q head-to-head at depth 4
+      // parallelism 8 measured ΔElo = +15.6 (46-37-117, score
+      // 52.3%) AND 15% faster wall time (1009s vs 1184s baseline).
+      // Borderline-positive Elo plus a real speedup is a clear
+      // ship-on. Smaller than textbook +50-80 because quiescence
+      // already prunes many tactical lines NMP would prune;
+      // R=2/3 reduction is conservative.
+      nullMovePruningEnabled: Boolean = true,
   ): Search =
     new AlphaBetaSearch(
       eval, TranspositionTable.inMemory(maxTtEntries), book,
       parallelism, counterMoveEnabled, quiescenceEnabled, seeEnabled,
-      iterativeDeepeningEnabled,
+      iterativeDeepeningEnabled, nullMovePruningEnabled,
     )
 
   /** Test-only factory that lets a caller inject the [[TranspositionTable]]

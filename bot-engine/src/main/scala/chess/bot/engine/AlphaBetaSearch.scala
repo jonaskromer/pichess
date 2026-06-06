@@ -46,6 +46,12 @@ private[engine] final class AlphaBetaSearch(
     // iteration seeds the next one's move ordering. Same final
     // depth, better cutoffs from the warmed TT.
     iterativeDeepeningEnabled: Boolean = false,
+    // Null-move pruning: at non-PV non-check nodes with non-pawn
+    // material for the side to move, give the opponent a free
+    // move and search at reduced depth with a null window — if the
+    // result still ≥ β, prune the whole subtree. See
+    // [[Search.alphaBeta]] for the empirical Elo finding.
+    nullMovePruningEnabled: Boolean = true,
 ) extends Search:
 
   import Search.{Infinity, MateScore}
@@ -421,6 +427,7 @@ private[engine] final class AlphaBetaSearch(
       history: Set[Long],
       bufs: SearchBufs,
       prevMove: Int,
+      nullAllowed: Boolean = true,
   ): Int =
     if state.halfmoveClock >= 100 then 0
     else
@@ -433,16 +440,89 @@ private[engine] final class AlphaBetaSearch(
             if depth <= 0 then leafScore(state, alpha, beta, ply, bufs)
             else if ply >= MaxPly then leafEval(state)
             else
-              val capBuf   = bufs.captures(ply)
-              val quietBuf = bufs.quiets(ply)
-              val (capCount, quietCount) =
-                RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf)
-              if capCount == 0 && quietCount == 0 then terminalScore(state, ply)
-              else
-                searchMoves(
-                  state, capBuf, capCount, quietBuf, quietCount,
-                  depth, alpha, beta, ply, hash, history + hash, bufs, prevMove,
+              // Null-move pruning. Standard gates:
+              //   * not in check (a null move while in check leaves
+              //     the king en-prise, an illegal position)
+              //   * sufficient depth left (R reduces by ≥ 2, so we
+              //     need depth ≥ 3 to even attempt)
+              //   * non-pawn material for the side to move
+              //     (zugzwang-prone endings — k+p vs k+p often have
+              //     every real move losing, and would falsely prune
+              //     here)
+              //   * not the immediate child of a prior null search
+              //     (double-null is meaningless and slows the
+              //     search down with no Elo)
+              //   * non-PV-ish: caller window already non-narrow
+              //     (we check `beta - alpha > 1` as a cheap proxy)
+              val canNullMove =
+                nullMovePruningEnabled
+                  && nullAllowed
+                  && depth >= 3
+                  && !RulesAdapter.isInCheck(state)
+                  && hasNonPawnMaterial(state)
+                  && (beta - alpha) > 1
+              if canNullMove then
+                val r = if depth >= 6 then 3 else 2
+                val nullState = nullMoveState(state)
+                val nullScore = -negamax(
+                  nullState, depth - 1 - r, -beta, -beta + 1,
+                  ply + 1, history + hash, bufs, prevMove = NoKiller,
+                  nullAllowed = false,
                 )
+                if nullScore >= beta then beta
+                else fullSearch(state, hash, depth, alpha, beta, ply, history, bufs, prevMove)
+              else
+                fullSearch(state, hash, depth, alpha, beta, ply, history, bufs, prevMove)
+
+  /** Helper: the negamax branch that actually generates and searches
+    * all legal moves. Extracted so [[negamax]]'s NMP path can fall
+    * through to it on `nullScore < beta`. */
+  private def fullSearch(
+      state: GameState,
+      hash: Long,
+      depth: Int,
+      alpha: Int,
+      beta: Int,
+      ply: Int,
+      history: Set[Long],
+      bufs: SearchBufs,
+      prevMove: Int,
+  ): Int =
+    val capBuf   = bufs.captures(ply)
+    val quietBuf = bufs.quiets(ply)
+    val (capCount, quietCount) =
+      RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf)
+    if capCount == 0 && quietCount == 0 then terminalScore(state, ply)
+    else
+      searchMoves(
+        state, capBuf, capCount, quietBuf, quietCount,
+        depth, alpha, beta, ply, hash, history + hash, bufs, prevMove,
+      )
+
+  /** Side-to-move has at least one knight/bishop/rook/queen — the
+    * cheap proxy for "this isn't a pure king-pawn endgame, NMP is
+    * unlikely to mis-fire on zugzwang here". Inlined to avoid the
+    * Color branch on every NMP probe. */
+  private def hasNonPawnMaterial(state: GameState): Boolean =
+    val b = state.board
+    if state.activeColor == Color.White then
+      (b.knightsW.raw | b.bishopsW.raw | b.rooksW.raw | b.queensW.raw) != 0L
+    else
+      (b.knightsB.raw | b.bishopsB.raw | b.rooksB.raw | b.queensB.raw) != 0L
+
+  /** Apply a null move — pass the turn without actually moving.
+    * Used by [[nullMovePruningEnabled]] to test whether the
+    * position is already so good that giving the opponent a free
+    * move still leaves us with ≥ β. */
+  private def nullMoveState(state: GameState): GameState =
+    state.copy(
+      activeColor     = if state.activeColor == Color.White then Color.Black else Color.White,
+      enPassantTarget = None,
+      halfmoveClock   = state.halfmoveClock + 1,
+      fullmoveNumber  = if state.activeColor == Color.Black then state.fullmoveNumber + 1
+                        else state.fullmoveNumber,
+      inCheck         = false,
+    )
 
   /** Static evaluation at a leaf node, normalised to side-to-move POV.
     * The Evaluator hands back white-POV centipawns; flip on black. */

@@ -44,7 +44,7 @@ object TournamentMain extends ZIOAppDefault:
         _   <- ZIO.logInfo(matchupLabel(cfg))
         challenger <- loadSearch(
                         cfg.challenger, cfg.challengerCmh, cfg.challengerQ,
-                        cfg.challengerSee, cfg.challengerId,
+                        cfg.challengerSee, cfg.challengerId, cfg.challengerNmp,
                       )
         champion   <- loadOpponent(cfg)
         // Resolve the opening pool. Empty pool → all games start
@@ -95,6 +95,8 @@ object TournamentMain extends ZIOAppDefault:
       championSee:   Boolean,
       challengerId:  Boolean,
       championId:    Boolean,
+      challengerNmp: Boolean,
+      championNmp:   Boolean,
   )
 
   private def readConfig: UIO[Config] =
@@ -143,6 +145,11 @@ object TournamentMain extends ZIOAppDefault:
                            .exists(_.equalsIgnoreCase("true")),
         championId     = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_ID")
                            .exists(_.equalsIgnoreCase("true")),
+        // Null-move-pruning toggles.
+        challengerNmp  = sys.env.get("PICHESS_TOURNAMENT_CHALLENGER_NMP")
+                           .exists(_.equalsIgnoreCase("true")),
+        championNmp    = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_NMP")
+                           .exists(_.equalsIgnoreCase("true")),
       )
     }
 
@@ -159,7 +166,8 @@ object TournamentMain extends ZIOAppDefault:
         label      = s"stockfish-skill${cfg.stockfishSkill}",
       )
     else loadSearch(
-      cfg.champion, cfg.championCmh, cfg.championQ, cfg.championSee, cfg.championId,
+      cfg.champion, cfg.championCmh, cfg.championQ, cfg.championSee,
+      cfg.championId, cfg.championNmp,
     )
 
   /** Build a [[Search]] for the given weights-version JSON
@@ -173,6 +181,7 @@ object TournamentMain extends ZIOAppDefault:
       quiescenceEnabled: Boolean,
       seeEnabled: Boolean,
       iterativeDeepeningEnabled: Boolean,
+      nullMovePruningEnabled: Boolean,
   ): ZIO[Any, Throwable, Search] =
     WeightsLoader.load(version).map { snapshot =>
       Search.alphaBeta(
@@ -182,5 +191,6 @@ object TournamentMain extends ZIOAppDefault:
         quiescenceEnabled         = quiescenceEnabled,
         seeEnabled                = seeEnabled,
         iterativeDeepeningEnabled = iterativeDeepeningEnabled,
+        nullMovePruningEnabled    = nullMovePruningEnabled,
       )
     }
