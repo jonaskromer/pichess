@@ -61,6 +61,13 @@ private[engine] final class AlphaBetaSearch(
     // false, the per-search reset uses NoKiller (cold start)
     // instead — useful for A/B comparison of seeded vs cold CMH.
     counterMoveSeedEnabled: Boolean = true,
+    // Continuation history: replace CMH's (from, to) key with
+    // (piece-type-on-to-square, to-square). Same per-cutoff
+    // write shape, smaller (6×64=384) table, semantically
+    // richer (the same destination square from different starting
+    // squares often shares the same refutation). When ON,
+    // overrides the CMH lookup at the 70_000 ordering bucket.
+    continuationHistoryEnabled: Boolean = false,
 ) extends Search:
 
   import Search.{Infinity, MateScore}
@@ -110,6 +117,14 @@ private[engine] final class AlphaBetaSearch(
   private val counterMoveSeed: Array[Int] =
     if counterMoveSeedEnabled then CounterMoveSeed.load()
     else Array.fill(CounterMoveSeed.Size)(NoKiller)
+
+  // Continuation-history table — same role as `counterMoveTable`
+  // but keyed by (piece-type-on-to-square, to-square). 6 × 64 =
+  // 384 cells, half the memory and (per Stockfish & friends) a
+  // semantically stronger refutation signal because the same
+  // destination square from different starting squares often
+  // shares the same best reply.
+  private val continuationTable: Array[Int] = Array.fill(6 * 64)(NoKiller)
 
   // LMR thresholds. See doc-comments on `searchMoves` for tuning.
   private inline val LmrMoveThreshold = 3
@@ -358,6 +373,7 @@ private[engine] final class AlphaBetaSearch(
     while from < 64 do
       System.arraycopy(counterMoveSeed, from * 64, counterMoveTable(from), 0, 64)
       from += 1
+    java.util.Arrays.fill(continuationTable, NoKiller)
 
   /** Pick the move at the root that maximises the negamax score for
     * the side to move. Returns the chosen move's [[MoveInt]]
@@ -811,8 +827,20 @@ private[engine] final class AlphaBetaSearch(
               // `prevMove`, remember it as the canonical reply to
               // that opponent move. Skipped at the root and inside
               // YBWC fibers where `prevMove == NoKiller`.
-              if counterMoveEnabled && prevMove != NoKiller then
-                counterMoveTable(MoveInt.fromIdx(prevMove))(MoveInt.toIdx(prevMove)) = move
+              //
+              // When continuation history is on, write to the
+              // (piece, to-square) table instead of the (from, to)
+              // CMH table. Both maintain their own state for clean
+              // A/B; the lookup side in [[orderMovesInto]] picks
+              // which one to consult based on the flag.
+              if prevMove != NoKiller then
+                if continuationHistoryEnabled then
+                  val prevTo = MoveInt.toIdx(prevMove)
+                  state.board.get(positionAt(prevTo)).foreach { p =>
+                    continuationTable(p.pieceType.ordinal * 64 + prevTo) = move
+                  }
+                else if counterMoveEnabled then
+                  counterMoveTable(MoveInt.fromIdx(prevMove))(MoveInt.toIdx(prevMove)) = move
           }
         moveIndex += 1
         i -= 1
@@ -852,8 +880,18 @@ private[engine] final class AlphaBetaSearch(
     val k0 = if ply < MaxPly then killer0(ply) else NoKiller
     val k1 = if ply < MaxPly then killer1(ply) else NoKiller
     val counter =
-      if !counterMoveEnabled || prevMove == NoKiller then NoKiller
-      else counterMoveTable(MoveInt.fromIdx(prevMove))(MoveInt.toIdx(prevMove))
+      if prevMove == NoKiller then NoKiller
+      else if continuationHistoryEnabled then
+        // Continuation: key by (piece-on-prev_to-square, prev_to).
+        // The piece sitting on prev_to in the current state is the
+        // opponent's piece that just moved there.
+        val prevTo = MoveInt.toIdx(prevMove)
+        state.board.get(positionAt(prevTo)) match
+          case Some(p) => continuationTable(p.pieceType.ordinal * 64 + prevTo)
+          case None    => NoKiller
+      else if counterMoveEnabled then
+        counterMoveTable(MoveInt.fromIdx(prevMove))(MoveInt.toIdx(prevMove))
+      else NoKiller
     var i = 0
     while i < count do
       val m = moveBuf(i)

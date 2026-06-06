@@ -134,12 +134,20 @@ object Search:
       // reply per (prev_from, prev_to). Falls back to cold-start
       // (NoKiller everywhere) when the resource isn't packaged.
       counterMoveSeedEnabled: Boolean = true,
+      // OFF pending A/B. Continuation history replaces the
+      // (from, to)-keyed CMH table with a (piece-on-to-square,
+      // to-square) one — semantically richer because the same
+      // destination from different sources often shares a
+      // refutation. Override: when ON, the CMH bucket at 70_000
+      // uses the continuation table instead of the CMH table.
+      continuationHistoryEnabled: Boolean = false,
   ): Search =
     new AlphaBetaSearch(
       eval, TranspositionTable.inMemory(maxTtEntries), book,
       parallelism, counterMoveEnabled, quiescenceEnabled, seeEnabled,
       iterativeDeepeningEnabled, nullMovePruningEnabled,
       lmpFutilityEnabled, counterMoveSeedEnabled,
+      continuationHistoryEnabled,
     )
 
   /** Test-only factory that lets a caller inject the [[TranspositionTable]]
