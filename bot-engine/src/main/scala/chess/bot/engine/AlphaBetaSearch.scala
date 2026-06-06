@@ -768,39 +768,43 @@ private[engine] final class AlphaBetaSearch(
     // ── Stage 2: quiet moves (only if Stage 1 didn't cut off) ──
     if !cutoff && quietCount > 0 then
       orderMovesInto(quietBuf, quietCount, scored, state, hash, ply, prevMove)
-      // Pre-compute futility margin + static eval once per node —
-      // both reused for every quiet move in the loop.
-      //   margin(d) = d=1:100, d=2:300, d=3:500 (pawn / minor /
-      //   rook value). Same scale as classic futility-pruning
-      //   margins. Static eval is only computed when LMP/futility
-      //   is on AND we're at a frontier-ish node (depth ≤ 3, not
-      //   in check) — otherwise the eval call would be wasted.
-      val frontierish = lmpFutilityEnabled && depth <= 3 && !inCheckHere
-      val futilityMargin = depth match
-        case 1 => 100
-        case 2 => 300
-        case 3 => 500
-        case _ => 0
+      // Conservative tuning after the first attempt (`4 + depth*2`
+      // LMP + 100/300/500 futility w/ bare leafEval) lost -195 Elo.
+      // Failure modes:
+      //   * bare leafEval missed hanging pieces, so positions with
+      //     loose material looked worse than they were → futility
+      //     pruned the defensive replies.
+      //   * LMP at depth 1 with threshold 6 dropped 80 % of quiets
+      //     before the head was even searched.
+      // Re-tuning:
+      //   * LMP only at depth ≥ 2 with threshold `3 + depth^2`
+      //     (gives 7 at d=2, 12 at d=3) — leaves the d=1 frontier
+      //     alone where every move could still matter.
+      //   * Futility only at depth = 1, margin 100, baseline = the
+      //     quiescence-aware [[leafScore]] (resolves obvious
+      //     captures before deciding "no move can lift this to α").
+      val frontierish = lmpFutilityEnabled && !inCheckHere
+      val futilityActive  = frontierish && depth == 1
+      val lmpActive       = frontierish && depth >= 2 && depth <= 3
+      val futilityMargin  = 100
       val staticEvalForFutility =
-        if frontierish then leafEval(state) else 0
+        if futilityActive then leafScore(state, alphaCur, beta, ply, bufs)
+        else 0
       val futilityCanPrune =
-        frontierish && (staticEvalForFutility + futilityMargin <= alphaCur)
-      val lmpQuietLimit = 4 + depth * 2
+        futilityActive && (staticEvalForFutility + futilityMargin <= alphaCur)
+      val lmpQuietLimit = 3 + depth * depth
       var lmpPrune = false
       var i = quietCount - 1
       while i >= 0 && !cutoff && !lmpPrune do
         val move = MoveInt.fromPacked(scored(i))
         val isKiller = move == k0Here || move == k1Here
-        // LMP: at low depth, after enough quiets searched, drop
-        // the rest. The well-ordered head of the quiet list got
-        // its full search; the tail is unlikely to beat α at
-        // remaining depth ≤ 3 and exhausting it is mostly wasted
-        // work. Killers + check-in escape the prune.
-        if frontierish && moveIndex >= lmpQuietLimit && !isKiller then
+        // LMP: at depth 2-3, after the well-ordered head was
+        // searched (limit = 3+d²), drop the rest. Killers / in-
+        // check escape the prune.
+        if lmpActive && moveIndex >= lmpQuietLimit && !isKiller then
           lmpPrune = true
-        // Futility: this move's parent already scored too low to
-        // hope a quiet reply (avg payoff ≤ futilityMargin) lifts
-        // it to α. Skip the apply-and-recurse cost.
+        // Futility: depth 1 only. Skip individual quiets whose
+        // qsearched-baseline + margin can't even reach α.
         else if futilityCanPrune && !isKiller then
           // Tick moveIndex / i below so the loop progresses.
           ()
