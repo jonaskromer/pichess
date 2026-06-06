@@ -67,7 +67,11 @@ object NnueDataGen extends ZIOAppDefault:
     for
       cfg     <- readConfig
       _       <- ZIO.logInfo(s"NnueDataGen config: $cfg")
-      search  <- buildSearch(cfg.weightsVersion, cfg.parallelism)
+      // Search itself runs single-thread — the game-level
+      // `ZIO.foreachPar` saturates the CPU with one fiber per
+      // game, so any YBWC fan-out inside each search would just
+      // fight other games for cores.
+      search  <- buildSearch(cfg.weightsVersion, searchParallelism = 1)
       // Round-robin through the opening pool so the dataset
       // covers a variety of pawn structures, not 1000 games of
       // the same line.
@@ -107,12 +111,12 @@ object NnueDataGen extends ZIOAppDefault:
     )
   }
 
-  private def buildSearch(version: Int, par: Int): ZIO[Any, Throwable, Search] =
+  private def buildSearch(version: Int, searchParallelism: Int): ZIO[Any, Throwable, Search] =
     WeightsLoader.load(version).map { snapshot =>
       Search.alphaBeta(
         eval        = ArrayTaperedEvaluator(snapshot.weights),
         book        = OpeningBook.Empty,
-        parallelism = par,
+        parallelism = searchParallelism,
       )
     }
 
