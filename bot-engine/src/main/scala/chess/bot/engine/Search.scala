@@ -128,12 +128,18 @@ object Search:
       // qsearched baseline, or LMP at depth ≥ 2 only) can be A/B'd
       // later without re-writing the surface.
       lmpFutilityEnabled: Boolean = false,
+      // ON by default — the baked `/counter-seed.bin` (built once
+      // by `CounterSeedMain` from the PGN corpus) prefills the CMH
+      // table at every search reset with the modal master-game
+      // reply per (prev_from, prev_to). Falls back to cold-start
+      // (NoKiller everywhere) when the resource isn't packaged.
+      counterMoveSeedEnabled: Boolean = true,
   ): Search =
     new AlphaBetaSearch(
       eval, TranspositionTable.inMemory(maxTtEntries), book,
       parallelism, counterMoveEnabled, quiescenceEnabled, seeEnabled,
       iterativeDeepeningEnabled, nullMovePruningEnabled,
-      lmpFutilityEnabled,
+      lmpFutilityEnabled, counterMoveSeedEnabled,
     )
 
   /** Test-only factory that lets a caller inject the [[TranspositionTable]]

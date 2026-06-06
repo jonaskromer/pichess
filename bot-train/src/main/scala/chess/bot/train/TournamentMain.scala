@@ -45,7 +45,7 @@ object TournamentMain extends ZIOAppDefault:
         challenger <- loadSearch(
                         cfg.challenger, cfg.challengerCmh, cfg.challengerQ,
                         cfg.challengerSee, cfg.challengerId, cfg.challengerNmp,
-                        cfg.challengerLmpFut,
+                        cfg.challengerLmpFut, cfg.challengerSeed,
                       )
         champion   <- loadOpponent(cfg)
         // Resolve the opening pool. Empty pool → all games start
@@ -100,6 +100,8 @@ object TournamentMain extends ZIOAppDefault:
       championNmp:   Boolean,
       challengerLmpFut: Boolean,
       championLmpFut:   Boolean,
+      challengerSeed:   Boolean,
+      championSeed:     Boolean,
   )
 
   private def readConfig: UIO[Config] =
@@ -158,6 +160,11 @@ object TournamentMain extends ZIOAppDefault:
                              .exists(_.equalsIgnoreCase("true")),
         championLmpFut   = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_LMP")
                              .exists(_.equalsIgnoreCase("true")),
+        // CMH-seed toggle. Default ON; opt out with =false.
+        challengerSeed = !sys.env.get("PICHESS_TOURNAMENT_CHALLENGER_SEED")
+                            .exists(_.equalsIgnoreCase("false")),
+        championSeed   = !sys.env.get("PICHESS_TOURNAMENT_CHAMPION_SEED")
+                            .exists(_.equalsIgnoreCase("false")),
       )
     }
 
@@ -175,7 +182,7 @@ object TournamentMain extends ZIOAppDefault:
       )
     else loadSearch(
       cfg.champion, cfg.championCmh, cfg.championQ, cfg.championSee,
-      cfg.championId, cfg.championNmp, cfg.championLmpFut,
+      cfg.championId, cfg.championNmp, cfg.championLmpFut, cfg.championSeed,
     )
 
   /** Build a [[Search]] for the given weights-version JSON
@@ -191,6 +198,7 @@ object TournamentMain extends ZIOAppDefault:
       iterativeDeepeningEnabled: Boolean,
       nullMovePruningEnabled: Boolean,
       lmpFutilityEnabled: Boolean,
+      counterMoveSeedEnabled: Boolean,
   ): ZIO[Any, Throwable, Search] =
     WeightsLoader.load(version).map { snapshot =>
       Search.alphaBeta(
@@ -202,5 +210,6 @@ object TournamentMain extends ZIOAppDefault:
         iterativeDeepeningEnabled = iterativeDeepeningEnabled,
         nullMovePruningEnabled    = nullMovePruningEnabled,
         lmpFutilityEnabled        = lmpFutilityEnabled,
+        counterMoveSeedEnabled    = counterMoveSeedEnabled,
       )
     }

@@ -2,7 +2,7 @@ package chess.bot.engine
 
 import zio.{UIO, ZIO}
 
-import chess.bot.engine.internal.{RulesAdapter, StaticExchange}
+import chess.bot.engine.internal.{CounterMoveSeed, RulesAdapter, StaticExchange}
 import chess.model.board.{GameState, Move, MoveInt, Position}
 import chess.model.piece.{Color, PieceType}
 import chess.model.rules.Zobrist
@@ -57,6 +57,10 @@ private[engine] final class AlphaBetaSearch(
     // threshold (LMP) and skip individual quiets whose static
     // eval + margin can't reach α (futility).
     lmpFutilityEnabled: Boolean = false,
+    // Load the baked PGN-derived CMH seed when present. When
+    // false, the per-search reset uses NoKiller (cold start)
+    // instead — useful for A/B comparison of seeded vs cold CMH.
+    counterMoveSeedEnabled: Boolean = true,
 ) extends Search:
 
   import Search.{Infinity, MateScore}
@@ -94,6 +98,18 @@ private[engine] final class AlphaBetaSearch(
   // scoring helpers can compare with `==` against `Int`.
   // Race-tolerant just like the other ordering heuristics.
   private val counterMoveTable: Array[Array[Int]] = Array.fill(64, 64)(NoKiller)
+
+  // Baked CMH seed loaded once at class init from the
+  // `/counter-seed.bin` resource (built by `CounterSeedMain` from
+  // the master-game PGN corpus). When the seed resource is
+  // missing — e.g., engine launched without the training artefact —
+  // or when [[counterMoveSeedEnabled]] is false (A/B comparison),
+  // we use an all-NoKiller buffer matching the cold-start
+  // behaviour. Stored as a flat `Array[Int]` of size 4096 (64×64)
+  // for cheap copy-into-table on every search reset.
+  private val counterMoveSeed: Array[Int] =
+    if counterMoveSeedEnabled then CounterMoveSeed.load()
+    else Array.fill(CounterMoveSeed.Size)(NoKiller)
 
   // LMR thresholds. See doc-comments on `searchMoves` for tuning.
   private inline val LmrMoveThreshold = 3
@@ -330,12 +346,18 @@ private[engine] final class AlphaBetaSearch(
 
   /** Reset the counter-move table for the same reason as the
     * killer table — stale entries from a prior search position
-    * would suggest the wrong refutation. */
+    * would suggest the wrong refutation.
+    *
+    * Reset baseline: when the baked seed is present (loaded once
+    * at class init), reset row-by-row to the seed's contents
+    * instead of all-NoKiller. The search then enters with a
+    * master-derived prior for every common opponent move, which
+    * the runtime cutoffs can still overwrite as they happen. */
   private def clearCounterMoves(): Unit =
-    var i = 0
-    while i < 64 do
-      java.util.Arrays.fill(counterMoveTable(i), NoKiller)
-      i += 1
+    var from = 0
+    while from < 64 do
+      System.arraycopy(counterMoveSeed, from * 64, counterMoveTable(from), 0, 64)
+      from += 1
 
   /** Pick the move at the root that maximises the negamax score for
     * the side to move. Returns the chosen move's [[MoveInt]]
