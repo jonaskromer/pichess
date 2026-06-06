@@ -46,8 +46,9 @@ object TournamentMain extends ZIOAppDefault:
                         cfg.challenger, cfg.challengerCmh, cfg.challengerQ,
                         cfg.challengerSee, cfg.challengerId, cfg.challengerNmp,
                         cfg.challengerLmpFut, cfg.challengerSeed, cfg.challengerContHist,
-                      )
+                      ).flatMap(maybeWrapSyzygy(_, cfg.challengerSyzygy, cfg))
         champion   <- loadOpponent(cfg)
+                        .flatMap(maybeWrapSyzygy(_, cfg.championSyzygy, cfg))
         // Resolve the opening pool. Empty pool → all games start
         // from startpos (90%+ draws between similar bots). Non-
         // empty pool → diversifies games for a decisive signal.
@@ -104,6 +105,10 @@ object TournamentMain extends ZIOAppDefault:
       championSeed:     Boolean,
       challengerContHist: Boolean,
       championContHist:   Boolean,
+      challengerSyzygy:   Boolean,
+      championSyzygy:     Boolean,
+      syzygyPath:         Option[String],
+      syzygyPieceLimit:   Int,
   )
 
   private def readConfig: UIO[Config] =
@@ -172,11 +177,45 @@ object TournamentMain extends ZIOAppDefault:
                                .exists(_.equalsIgnoreCase("true")),
         championContHist   = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_CONT")
                                .exists(_.equalsIgnoreCase("true")),
+        // Syzygy TB augmentation toggles.
+        challengerSyzygy   = sys.env.get("PICHESS_TOURNAMENT_CHALLENGER_SYZYGY")
+                               .exists(_.equalsIgnoreCase("true")),
+        championSyzygy     = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_SYZYGY")
+                               .exists(_.equalsIgnoreCase("true")),
+        syzygyPath         = sys.env.get("PICHESS_SYZYGY_PATH")
+                               .orElse(Some("/tmp/chess-corpus/syzygy"))
+                               .filter(p => java.nio.file.Files.isDirectory(java.nio.file.Paths.get(p))),
+        syzygyPieceLimit   = sys.env.get("PICHESS_SYZYGY_PIECE_LIMIT")
+                               .flatMap(_.toIntOption).getOrElse(5),
       )
     }
 
   private def intEnv(name: String, default: Int): Int =
     sys.env.get(name).flatMap(_.toIntOption).getOrElse(default)
+
+  /** Optionally wrap a search in a TB-augmentation layer that
+    * delegates low-piece positions (≤ `syzygyPieceLimit`) to a
+    * Stockfish-with-Syzygy oracle. The Stockfish subprocess is
+    * scoped to the current effect's Scope, so it shuts down when
+    * the tournament finishes.
+    *
+    * When the configured `syzygyPath` is missing (e.g., the user
+    * forgot to download the TBs), this no-ops and returns
+    * `inner` unchanged — the bot still plays, just without TB
+    * augmentation. */
+  private def maybeWrapSyzygy(
+      inner: Search,
+      enabled: Boolean,
+      cfg: Config,
+  ): ZIO[Scope, Throwable, Search] =
+    if !enabled then ZIO.succeed(inner)
+    else cfg.syzygyPath match
+      case None       => ZIO.succeed(inner)
+      case Some(path) =>
+        StockfishSearch
+          .spawn(syzygyPath = Some(path), syzygyProbeLimit = cfg.syzygyPieceLimit,
+                 label = "syzygy-oracle")
+          .map(oracle => new TbAugmentedSearch(inner, oracle, cfg.syzygyPieceLimit))
 
   /** Pick the opponent based on config — either Stockfish or
     * another pichess weights snapshot. The Stockfish path is

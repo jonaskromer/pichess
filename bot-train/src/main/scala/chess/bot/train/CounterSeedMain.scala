@@ -9,7 +9,8 @@ import scala.jdk.CollectionConverters.*
 import zio.*
 
 import chess.codec.PgnParser
-import chess.model.board.MoveInt
+import chess.model.board.{Move, MoveInt, Position}
+import chess.model.piece.PieceType
 
 /** Precompute a Counter-Move Heuristic seed table from the
   * ingested PGN corpus and persist it as a binary resource.
@@ -62,11 +63,18 @@ object CounterSeedMain extends ZIOAppDefault:
       corpusDir <- ZIO.succeed(
                      sys.env.getOrElse("PICHESS_CORPUS_DIR", defaultCorpusRoot)
                    )
+      puzzleCsv  = sys.env.get("PICHESS_PUZZLE_CSV")
+                     .orElse(Some(s"$corpusDir/lichess_db_puzzle.csv"))
+                     .filter(p => Files.exists(Paths.get(p)))
       outputPath = sys.env.getOrElse("PICHESS_COUNTER_SEED_OUT", defaultOutputPath())
-      _      <- ZIO.logInfo(s"Counter-seed scan under: $corpusDir")
+      _      <- ZIO.logInfo(s"Counter-seed scan under: $corpusDir (puzzles: $puzzleCsv)")
       pgns   <- listPgnFiles(corpusDir)
       _      <- ZIO.logInfo(s"Found ${pgns.size} PGN files")
-      seed   <- buildSeed(pgns)
+      pgnAcc <- buildPgnAcc(pgns)
+      acc    <- puzzleCsv match
+                  case Some(p) => mergePuzzles(pgnAcc, Paths.get(p))
+                  case None    => ZIO.succeed(pgnAcc)
+      seed    = foldModal(acc)
       filled  = seed.count(_ != NoReply)
       _      <- ZIO.logInfo(s"Filled $filled / ${seed.length} (from,to) keys")
       _      <- writeSeed(seed, Paths.get(outputPath))
@@ -91,26 +99,108 @@ object CounterSeedMain extends ZIOAppDefault:
     * reply counts. Per-file fold keeps the in-memory aggregate
     * manageable — for ~1M games and ~4M move pairs the final map
     * has ~4096 outer entries × N inner reply variants ≈ few MB. */
-  private def buildSeed(files: List[Path]): UIO[Array[Int]] =
+  private def buildPgnAcc(files: List[Path]): UIO[Acc] =
+    ZIO.foldLeft(files)(emptyAcc) { (acc, file) =>
+      ZIO
+        .attemptBlocking(
+          // ISO-8859-1: PGN sources frequently embed Latin-1
+          // characters in player names (`Petrosián`, `Reșko`).
+          // `Files.readString` defaults to UTF-8 and throws
+          // `MalformedInputException` on such files, dropping
+          // the entire game collection. Latin-1 maps any single
+          // byte to a char without complaint, which lets the
+          // PGN parser still see the SAN tokens.
+          Files.readString(file, java.nio.charset.StandardCharsets.ISO_8859_1)
+        )
+        .flatMap(processFile(_, acc))
+        .catchAll(err =>
+          ZIO.logWarning(s"skip ${file.getFileName}: ${err.getMessage}").as(acc)
+        )
+    }
+
+  /** Stream-parse the Lichess puzzle CSV and fold its intra-
+    * solution `(opp_move, our_reply)` pairs into the same
+    * accumulator. Format per row:
+    *   `PuzzleId,FEN,Moves,Rating,...`
+    * where `Moves` is a space-separated UCI sequence with index
+    * 0 = our move, 1 = opponent, 2 = our reply, …
+    * So the CMH pairs are (Moves[1], Moves[2]), (Moves[3], Moves[4]), …
+    *
+    * Each puzzle counts with the same per-pair weight as a PGN
+    * game move — heavy-weighting puzzles would skew the modal
+    * pick away from genuinely common master replies. Use the
+    * default 1:1 weight; if a refutation pattern is real, it'll
+    * already dominate via repetition. */
+  private def mergePuzzles(acc: Acc, csv: Path): UIO[Acc] =
     ZIO
-      .foldLeft(files)(emptyAcc) { (acc, file) =>
-        ZIO
-          .attemptBlocking(
-            // ISO-8859-1: PGN sources frequently embed Latin-1
-            // characters in player names (`Petrosián`, `Reșko`).
-            // `Files.readString` defaults to UTF-8 and throws
-            // `MalformedInputException` on such files, dropping
-            // the entire game collection. Latin-1 maps any single
-            // byte to a char without complaint, which lets the
-            // PGN parser still see the SAN tokens.
-            Files.readString(file, java.nio.charset.StandardCharsets.ISO_8859_1)
-          )
-          .flatMap(processFile(_, acc))
-          .catchAll(err =>
-            ZIO.logWarning(s"skip ${file.getFileName}: ${err.getMessage}").as(acc)
-          )
+      .attemptBlocking {
+        var i      = 0L
+        var pairs  = 0L
+        val reader = Files.newBufferedReader(csv, java.nio.charset.StandardCharsets.UTF_8)
+        try
+          val header = reader.readLine() // discard column names
+          var line   = reader.readLine()
+          while line != null do
+            pairs += foldPuzzleLine(line, acc)
+            i += 1
+            line = reader.readLine()
+        finally reader.close()
+        (i, pairs)
       }
-      .map(foldModal)
+      .tap { case (n, pairs) =>
+        ZIO.logInfo(s"Folded $pairs CMH pairs from $n puzzle rows")
+      }
+      .as(acc)
+      .orElseSucceed(acc)
+
+  /** Parse one puzzle CSV row, walk its `Moves` UCI sequence, and
+    * fold `(opp, reply)` pairs into `acc`. Returns the number of
+    * pairs added (for the per-file log). Malformed rows are
+    * silently skipped — the CSV has ~6 M rows and a handful of
+    * format anomalies isn't worth aborting over. */
+  private def foldPuzzleLine(line: String, acc: Acc): Int =
+    // CSV is well-formed in this dump — comma-split is safe for
+    // the first 3 fields we care about (PuzzleId, FEN, Moves);
+    // later fields (themes, openings) may contain quoted strings
+    // but we ignore those.
+    val cols = line.split(',')
+    if cols.length < 3 then 0
+    else
+      val moves = cols(2).split(' ')
+      var pairs = 0
+      var i = 1
+      while i + 1 < moves.length do
+        val opp   = parseUci(moves(i))
+        val reply = parseUci(moves(i + 1))
+        if opp != -1 && reply != -1 then
+          val key = MoveInt.fromIdx(opp) * 64 + MoveInt.toIdx(opp)
+          val tally = acc(key)
+          val cur = tally.getOrElse(reply.toLong, 0)
+          tally.update(reply.toLong, cur + 1)
+          pairs += 1
+        i += 2
+      pairs
+
+  /** Parse a UCI move like `e2e4` or `e7e8q` into its `MoveInt`
+    * encoding. Returns -1 on malformed input. */
+  private def parseUci(uci: String): Int =
+    if uci.length < 4 then -1
+    else
+      try
+        val fromFile = uci.charAt(0)
+        val fromRank = uci.charAt(1).toString.toInt
+        val toFile   = uci.charAt(2)
+        val toRank   = uci.charAt(3).toString.toInt
+        val promo: Option[PieceType] =
+          if uci.length >= 5 then uci.charAt(4) match
+            case 'q' => Some(PieceType.Queen)
+            case 'r' => Some(PieceType.Rook)
+            case 'b' => Some(PieceType.Bishop)
+            case 'n' => Some(PieceType.Knight)
+            case _   => None
+          else None
+        MoveInt.encodeMove(Move(Position(fromFile, fromRank), Position(toFile, toRank), promo))
+      catch case _: Throwable => -1
 
   private def processFile(
       content: String,

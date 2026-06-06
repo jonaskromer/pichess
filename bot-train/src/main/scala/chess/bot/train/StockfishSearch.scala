@@ -114,10 +114,15 @@ object StockfishSearch:
       threads: Int = 1,
       hashMb: Int = 16,
       label: String = "stockfish",
+      syzygyPath: Option[String] = None,
+      // When > 0, Stockfish probes Syzygy as soon as the position
+      // has ≤ this many pieces. Default 5 matches the 3-4-5 TB set
+      // we ship; raise to 7 if 6-7-piece tables are mirrored too.
+      syzygyProbeLimit: Int = 5,
   ): ZIO[Scope, Throwable, StockfishSearch] =
-    ZIO.acquireRelease(start(binary, skillLevel, threads, hashMb, label))(s =>
-      ZIO.attemptBlocking(s.shutdown()).orDie
-    )
+    ZIO.acquireRelease(
+      start(binary, skillLevel, threads, hashMb, label, syzygyPath, syzygyProbeLimit)
+    )(s => ZIO.attemptBlocking(s.shutdown()).orDie)
 
   /** Internal — spawn + handshake without resource management. */
   private def start(
@@ -126,6 +131,8 @@ object StockfishSearch:
       threads: Int,
       hashMb: Int,
       label: String,
+      syzygyPath: Option[String],
+      syzygyProbeLimit: Int,
   ): ZIO[Any, Throwable, StockfishSearch] =
     ZIO.attemptBlocking {
       val pb = new ProcessBuilder(binary)
@@ -145,6 +152,15 @@ object StockfishSearch:
       }
       in.write(s"setoption name Threads value $threads"); in.newLine()
       in.write(s"setoption name Hash value $hashMb"); in.newLine()
+      // Syzygy tablebase wiring — Stockfish loads `.rtbw`/`.rtbz`
+      // files from `SyzygyPath` (semicolon-separated dir list) and
+      // probes at `SyzygyProbeLimit`-or-fewer pieces. With these
+      // set, SF's `bestmove` for low-piece positions is TB-perfect
+      // even when the search depth is shallow.
+      syzygyPath.foreach { path =>
+        in.write(s"setoption name SyzygyPath value $path"); in.newLine()
+        in.write(s"setoption name SyzygyProbeLimit value $syzygyProbeLimit"); in.newLine()
+      }
       in.write("isready"); in.newLine(); in.flush()
       drainUntil(out, _ == "readyok")
 
