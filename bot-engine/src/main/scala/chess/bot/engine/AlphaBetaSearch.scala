@@ -57,6 +57,13 @@ private[engine] final class AlphaBetaSearch(
     // threshold (LMP) and skip individual quiets whose static
     // eval + margin can't reach α (futility).
     lmpFutilityEnabled: Boolean = false,
+    // Aspiration windows on iterative deepening. Once ID has a
+    // root score from one iteration, the next iteration searches
+    // with `[score - 50, score + 50]` so cutoffs land sooner.
+    // Re-searches with widened window on fail-low/high. Sync
+    // path only — parallel YBWC root doesn't honour aspiration
+    // yet.
+    aspirationWindowsEnabled: Boolean = false,
     // Load the baked PGN-derived CMH seed when present. When
     // false, the per-search reset uses NoKiller (cold start)
     // instead — useful for A/B comparison of seeded vs cold CMH.
@@ -198,6 +205,16 @@ private[engine] final class AlphaBetaSearch(
     * "cutoff on the first move tried", which dwarfs the extra
     * shallow-depth work.
     *
+    * Aspiration windows: once iteration d-1 returns a score, the
+    * iteration at depth d starts with `[score - 50, score + 50]`
+    * instead of the full `[-Infinity, Infinity]`. Tighter window =
+    * faster cutoffs = fewer nodes. On fail-low/high the window
+    * widens by doubling the delta and the search re-runs at the
+    * same depth. Disabled at d ≤ 2 (the window isn't worth the
+    * re-search risk that early) and skipped when running parallel
+    * — YBWC's elder-brother logic doesn't compose with aspiration
+    * yet.
+    *
     * Forced-mate short-circuit: if a shallower depth finds a
     * mate-in-N score, deeper iterations can't improve it, so we
     * return early. Avoids wasting time at high depth when the
@@ -212,23 +229,52 @@ private[engine] final class AlphaBetaSearch(
       depth: Int,
       history: Set[Long],
   ): UIO[Option[Move]] =
-    def loop(d: Int, last: Option[Move]): UIO[Option[Move]] =
+    val rootHash = Zobrist.hash(state)
+
+    def runAtDepth(d: Int, alphaInit: Int, betaInit: Int): UIO[Option[Move]] =
+      if parallelism > 1 then parallelBestMove(state, d, history)
+      else
+        val bufs = new SearchBufs
+        ZIO.succeed(
+          syncBestMove(state, d, history, bufs, alphaInit, betaInit).map(MoveInt.decode)
+        )
+
+    def aspirated(d: Int, prevScore: Int): UIO[Option[Move]] =
+      // Aspiration only kicks in once we have a real prior score
+      // AND we're past the shallow iterations where the window
+      // can't be trusted yet.
+      val useAspiration =
+        aspirationWindowsEnabled && parallelism == 1 && d >= 3
+      if !useAspiration then runAtDepth(d, -Infinity, Infinity)
+      else
+        def attempt(alphaInit: Int, betaInit: Int, delta: Int): UIO[Option[Move]] =
+          runAtDepth(d, alphaInit, betaInit).flatMap { result =>
+            val rootEntry = tt.get(rootHash)
+            val rootScore = rootEntry.map(_.score).getOrElse(prevScore)
+            val rootKind  = rootEntry.map(_.kind)
+            rootKind match
+              case Some(Kind.Upper) if delta < 4 * Infinity =>
+                // Fail-low: true score is below alphaInit. Widen down.
+                attempt(rootScore - delta * 2, betaInit, delta * 2)
+              case Some(Kind.Lower) if delta < 4 * Infinity =>
+                // Fail-high: true score is above betaInit. Widen up.
+                attempt(alphaInit, rootScore + delta * 2, delta * 2)
+              case _ =>
+                ZIO.succeed(result)
+          }
+        attempt(prevScore - 50, prevScore + 50, 50)
+
+    def loop(d: Int, last: Option[Move], prevScore: Int): UIO[Option[Move]] =
       if d > depth then ZIO.succeed(last)
       else
-        val iterEffect =
-          if parallelism > 1 then parallelBestMove(state, d, history)
-          else
-            val bufs = new SearchBufs
-            ZIO.succeed(syncBestMove(state, d, history, bufs).map(MoveInt.decode))
-        iterEffect.flatMap { result =>
+        aspirated(d, prevScore).flatMap { result =>
+          val rootScore = tt.get(rootHash).map(_.score).getOrElse(prevScore)
           // Mate-in-N is already found; no point going deeper.
-          val rootHash = Zobrist.hash(state)
-          val rootScore = tt.get(rootHash).map(_.score).getOrElse(0)
           val mateFound = math.abs(rootScore) >= MateScore - MaxPly
           if mateFound then ZIO.succeed(result)
-          else loop(d + 1, result)
+          else loop(d + 1, result, rootScore)
         }
-    loop(1, None)
+    loop(1, None, 0)
 
   /** YBWC-style ("Young Brothers Wait Concept") parallel root
     * search.
@@ -379,16 +425,24 @@ private[engine] final class AlphaBetaSearch(
     * the side to move. Returns the chosen move's [[MoveInt]]
     * encoding; the public [[bestMove]] decodes once at the boundary.
     *
-    * Two-stage move generation — captures first, then quiets. The
-    * root has no β-cutoff (β = +∞) so we always iterate both
-    * stages, but the split still pays for itself: sorting 5 + 25
-    * moves is cheaper than sorting 30, and the sort cache stays
-    * smaller. */
+    * Two-stage move generation — captures first, then quiets. With
+    * the default `[-Infinity, Infinity]` window the search has no
+    * β-cutoff at the root so we always iterate both stages; with
+    * aspiration windows (narrow `[α, β]` from a prior ID iteration's
+    * score) the root *can* cut off, and the same two-stage iteration
+    * just honours the tighter window.
+    *
+    * Aspiration: writes a root TT entry at the end so the outer
+    * [[iterativeBestMove]] loop can read the score for the next
+    * iteration's window — kind is `Exact` inside `(α, β)`,
+    * `Upper` on fail-low, `Lower` on fail-high. */
   private def syncBestMove(
       state: GameState,
       depth: Int,
       history: Set[Long],
       bufs: SearchBufs,
+      alphaInit: Int = -Infinity,
+      betaInit: Int = Infinity,
   ): Option[Int] =
     val capBuf   = bufs.captures(0)
     val quietBuf = bufs.quiets(0)
@@ -397,9 +451,10 @@ private[engine] final class AlphaBetaSearch(
     else
       val rootHash = Zobrist.hash(state)
       val rootHistory = history + rootHash
-      var alpha = -Infinity
-      val beta  = Infinity
+      var alpha = alphaInit
+      val beta  = betaInit
       var bestScore = -Infinity
+      var cutoff = false
       // Seed `best` with the first available move so we always
       // return something for a legal position (captures preferred).
       var best: Int =
@@ -411,7 +466,7 @@ private[engine] final class AlphaBetaSearch(
         val scored = bufs.scored(0)
         orderMovesInto(capBuf, capCount, scored, state, rootHash, ply = 0, prevMove = NoKiller)
         var i = capCount - 1
-        while i >= 0 do
+        while i >= 0 && !cutoff do
           val move = MoveInt.fromPacked(scored(i))
           RulesAdapter.applyMoveInt(state, move).foreach { next =>
             val score = -negamax(next, depth - 1, -beta, -alpha, ply = 1, rootHistory, bufs, prevMove = move)
@@ -419,15 +474,16 @@ private[engine] final class AlphaBetaSearch(
               bestScore = score
               best = move
             if score > alpha then alpha = score
+            if alpha >= beta then cutoff = true
           }
           i -= 1
 
       // Stage 2: quiets
-      if quietCount > 0 then
+      if !cutoff && quietCount > 0 then
         val scored = bufs.scored(0)
         orderMovesInto(quietBuf, quietCount, scored, state, rootHash, ply = 0, prevMove = NoKiller)
         var i = quietCount - 1
-        while i >= 0 do
+        while i >= 0 && !cutoff do
           val move = MoveInt.fromPacked(scored(i))
           RulesAdapter.applyMoveInt(state, move).foreach { next =>
             val score = -negamax(next, depth - 1, -beta, -alpha, ply = 1, rootHistory, bufs, prevMove = move)
@@ -435,9 +491,20 @@ private[engine] final class AlphaBetaSearch(
               bestScore = score
               best = move
             if score > alpha then alpha = score
+            if alpha >= beta then cutoff = true
           }
           i -= 1
 
+      // Aspiration support — stamp the root TT so the outer ID loop
+      // can read the score back. The bound kind tells it whether the
+      // search converged inside (Exact) or fell off one side (Upper/
+      // Lower), which then drives the re-search window in
+      // [[iterativeBestMove]].
+      val kind =
+        if bestScore <= alphaInit then Kind.Upper
+        else if bestScore >= betaInit then Kind.Lower
+        else Kind.Exact
+      tt.put(rootHash, Entry(depth, bestScore, kind, Some(MoveInt.decode(best))))
       Some(best)
 
   /** Negamax core.

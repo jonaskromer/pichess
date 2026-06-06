@@ -46,6 +46,7 @@ object TournamentMain extends ZIOAppDefault:
                         cfg.challenger, cfg.challengerCmh, cfg.challengerQ,
                         cfg.challengerSee, cfg.challengerId, cfg.challengerNmp,
                         cfg.challengerLmpFut, cfg.challengerSeed, cfg.challengerContHist,
+                        cfg.challengerAsp,
                       ).flatMap(maybeWrapSyzygy(_, cfg.challengerSyzygy, cfg))
         champion   <- loadOpponent(cfg)
                         .flatMap(maybeWrapSyzygy(_, cfg.championSyzygy, cfg))
@@ -109,6 +110,8 @@ object TournamentMain extends ZIOAppDefault:
       championSyzygy:     Boolean,
       syzygyPath:         Option[String],
       syzygyPieceLimit:   Int,
+      challengerAsp:      Boolean,
+      championAsp:        Boolean,
   )
 
   private def readConfig: UIO[Config] =
@@ -187,6 +190,11 @@ object TournamentMain extends ZIOAppDefault:
                                .filter(p => java.nio.file.Files.isDirectory(java.nio.file.Paths.get(p))),
         syzygyPieceLimit   = sys.env.get("PICHESS_SYZYGY_PIECE_LIMIT")
                                .flatMap(_.toIntOption).getOrElse(5),
+        // Aspiration-windows toggles. Defaults OFF; opt in.
+        challengerAsp      = sys.env.get("PICHESS_TOURNAMENT_CHALLENGER_ASP")
+                               .exists(_.equalsIgnoreCase("true")),
+        championAsp        = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_ASP")
+                               .exists(_.equalsIgnoreCase("true")),
       )
     }
 
@@ -229,7 +237,7 @@ object TournamentMain extends ZIOAppDefault:
     else loadSearch(
       cfg.champion, cfg.championCmh, cfg.championQ, cfg.championSee,
       cfg.championId, cfg.championNmp, cfg.championLmpFut, cfg.championSeed,
-      cfg.championContHist,
+      cfg.championContHist, cfg.championAsp,
     )
 
   /** Build a [[Search]] for the given weights-version JSON
@@ -247,6 +255,7 @@ object TournamentMain extends ZIOAppDefault:
       lmpFutilityEnabled: Boolean,
       counterMoveSeedEnabled: Boolean,
       continuationHistoryEnabled: Boolean,
+      aspirationWindowsEnabled: Boolean,
   ): ZIO[Any, Throwable, Search] =
     WeightsLoader.load(version).map { snapshot =>
       Search.alphaBeta(
@@ -260,5 +269,6 @@ object TournamentMain extends ZIOAppDefault:
         lmpFutilityEnabled         = lmpFutilityEnabled,
         counterMoveSeedEnabled     = counterMoveSeedEnabled,
         continuationHistoryEnabled = continuationHistoryEnabled,
+        aspirationWindowsEnabled   = aspirationWindowsEnabled,
       )
     }

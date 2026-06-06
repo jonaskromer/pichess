@@ -112,22 +112,24 @@ object Search:
       // already prunes many tactical lines NMP would prune;
       // R=2/3 reduction is conservative.
       nullMovePruningEnabled: Boolean = true,
-      // OFF — a 200-game v8+Q+NMP+LMP vs v8+Q+NMP head-to-head at
-      // depth 4 parallelism 8 measured ΔElo = -195.5 (10-112-78,
-      // score 24.5%, finished in 353s because so much got pruned).
-      // Two failure modes the as-shipped tuning hits hard:
-      //   (a) Futility uses bare `leafEval` for its baseline, so a
-      //       position with a hanging piece looks worse than it is;
-      //       we then skip the move that would resolve the threat.
-      //       Standard fix is qsearch'd eval but expensive.
-      //   (b) LMP threshold `4 + depth*2` means depth 1 searches
-      //       just 6 quiets; typical positions have 30+. Skipping
-      //       24 quiet moves at frontier-of-frontier costs the
-      //       refutations the engine needed to see.
-      // Kept as a flag so a tuned variant (conservative margins +
-      // qsearched baseline, or LMP at depth ≥ 2 only) can be A/B'd
-      // later without re-writing the surface.
+      // OFF — original tuning was -195 Elo at depth 4; conservative
+      // re-tune (LMP gated to d=2-3 with threshold `3+d²`, futility
+      // only at d=1 with qsearched baseline + 100 cp margin) cut
+      // that to -52.5 Elo. Pruning quiet moves is the wrong call
+      // for this engine at depth 4 — even the well-ordered quiet
+      // head occasionally hides a refutation that LMP drops. Kept
+      // as a flag for future depth-6+ re-test where each move
+      // costs more.
       lmpFutilityEnabled: Boolean = false,
+      // Aspiration windows on iterative deepening. Defaults OFF
+      // after the depth-4 par=1 A/B (challenger ID+asp vs champion
+      // no-ID) measured ΔElo = -27.9 (1-9-90, 46%) — essentially
+      // the same as ID alone at d4 (-24.4), so aspiration doesn't
+      // recover the shallow-iteration overhead at this depth. The
+      // window-narrowing benefit is expected to grow with depth;
+      // re-test at depth 6+ before flipping ON. Sync path only —
+      // YBWC parallel root doesn't honour aspiration yet.
+      aspirationWindowsEnabled: Boolean = false,
       // ON by default — the baked `/counter-seed.bin` (built once
       // by `CounterSeedMain` from the PGN corpus) prefills the CMH
       // table at every search reset with the modal master-game
@@ -146,7 +148,7 @@ object Search:
       eval, TranspositionTable.inMemory(maxTtEntries), book,
       parallelism, counterMoveEnabled, quiescenceEnabled, seeEnabled,
       iterativeDeepeningEnabled, nullMovePruningEnabled,
-      lmpFutilityEnabled, counterMoveSeedEnabled,
+      lmpFutilityEnabled, aspirationWindowsEnabled, counterMoveSeedEnabled,
       continuationHistoryEnabled,
     )
 
