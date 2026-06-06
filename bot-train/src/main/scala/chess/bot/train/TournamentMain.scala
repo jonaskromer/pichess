@@ -45,6 +45,7 @@ object TournamentMain extends ZIOAppDefault:
         challenger <- loadSearch(
                         cfg.challenger, cfg.challengerCmh, cfg.challengerQ,
                         cfg.challengerSee, cfg.challengerId, cfg.challengerNmp,
+                        cfg.challengerLmpFut,
                       )
         champion   <- loadOpponent(cfg)
         // Resolve the opening pool. Empty pool → all games start
@@ -97,6 +98,8 @@ object TournamentMain extends ZIOAppDefault:
       championId:    Boolean,
       challengerNmp: Boolean,
       championNmp:   Boolean,
+      challengerLmpFut: Boolean,
+      championLmpFut:   Boolean,
   )
 
   private def readConfig: UIO[Config] =
@@ -150,6 +153,11 @@ object TournamentMain extends ZIOAppDefault:
                            .exists(_.equalsIgnoreCase("true")),
         championNmp    = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_NMP")
                            .exists(_.equalsIgnoreCase("true")),
+        // LMP + futility toggles.
+        challengerLmpFut = sys.env.get("PICHESS_TOURNAMENT_CHALLENGER_LMP")
+                             .exists(_.equalsIgnoreCase("true")),
+        championLmpFut   = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_LMP")
+                             .exists(_.equalsIgnoreCase("true")),
       )
     }
 
@@ -167,7 +175,7 @@ object TournamentMain extends ZIOAppDefault:
       )
     else loadSearch(
       cfg.champion, cfg.championCmh, cfg.championQ, cfg.championSee,
-      cfg.championId, cfg.championNmp,
+      cfg.championId, cfg.championNmp, cfg.championLmpFut,
     )
 
   /** Build a [[Search]] for the given weights-version JSON
@@ -182,6 +190,7 @@ object TournamentMain extends ZIOAppDefault:
       seeEnabled: Boolean,
       iterativeDeepeningEnabled: Boolean,
       nullMovePruningEnabled: Boolean,
+      lmpFutilityEnabled: Boolean,
   ): ZIO[Any, Throwable, Search] =
     WeightsLoader.load(version).map { snapshot =>
       Search.alphaBeta(
@@ -192,5 +201,6 @@ object TournamentMain extends ZIOAppDefault:
         seeEnabled                = seeEnabled,
         iterativeDeepeningEnabled = iterativeDeepeningEnabled,
         nullMovePruningEnabled    = nullMovePruningEnabled,
+        lmpFutilityEnabled        = lmpFutilityEnabled,
       )
     }

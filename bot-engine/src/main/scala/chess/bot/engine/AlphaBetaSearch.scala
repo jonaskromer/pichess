@@ -52,6 +52,11 @@ private[engine] final class AlphaBetaSearch(
     // result still ≥ β, prune the whole subtree. See
     // [[Search.alphaBeta]] for the empirical Elo finding.
     nullMovePruningEnabled: Boolean = true,
+    // Late-Move Pruning + Futility (frontier pruning bundle). At
+    // low remaining depth, drop quiet moves past a move-count
+    // threshold (LMP) and skip individual quiets whose static
+    // eval + margin can't reach α (futility).
+    lmpFutilityEnabled: Boolean = false,
 ) extends Search:
 
   import Search.{Infinity, MateScore}
@@ -725,35 +730,68 @@ private[engine] final class AlphaBetaSearch(
     // ── Stage 2: quiet moves (only if Stage 1 didn't cut off) ──
     if !cutoff && quietCount > 0 then
       orderMovesInto(quietBuf, quietCount, scored, state, hash, ply, prevMove)
+      // Pre-compute futility margin + static eval once per node —
+      // both reused for every quiet move in the loop.
+      //   margin(d) = d=1:100, d=2:300, d=3:500 (pawn / minor /
+      //   rook value). Same scale as classic futility-pruning
+      //   margins. Static eval is only computed when LMP/futility
+      //   is on AND we're at a frontier-ish node (depth ≤ 3, not
+      //   in check) — otherwise the eval call would be wasted.
+      val frontierish = lmpFutilityEnabled && depth <= 3 && !inCheckHere
+      val futilityMargin = depth match
+        case 1 => 100
+        case 2 => 300
+        case 3 => 500
+        case _ => 0
+      val staticEvalForFutility =
+        if frontierish then leafEval(state) else 0
+      val futilityCanPrune =
+        frontierish && (staticEvalForFutility + futilityMargin <= alphaCur)
+      val lmpQuietLimit = 4 + depth * 2
+      var lmpPrune = false
       var i = quietCount - 1
-      while i >= 0 && !cutoff do
+      while i >= 0 && !cutoff && !lmpPrune do
         val move = MoveInt.fromPacked(scored(i))
-        RulesAdapter.applyMoveInt(state, move).foreach { next =>
-          val isKiller = move == k0Here || move == k1Here
-          val reduce =
-            depth >= LmrMinDepth &&
-              moveIndex >= LmrMoveThreshold &&
-              !isKiller &&
-              !inCheckHere
-          val searchDepth = if reduce then depth - 2 else depth - 1
-          var score = -negamax(next, searchDepth, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
-          if reduce && score > alphaCur then
-            score = -negamax(next, depth - 1, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
-          if score > bestScore then
-            bestScore = score
-            bestMove = move
-          if score > alphaCur then alphaCur = score
-          if alphaCur >= beta then
-            cutoff = true
-            recordKiller(ply, move)
-            historyTable(MoveInt.fromIdx(move))(MoveInt.toIdx(move)) += depth * depth
-            // Counter-move heuristic: when a quiet move refutes
-            // `prevMove`, remember it as the canonical reply to
-            // that opponent move. Skipped at the root and inside
-            // YBWC fibers where `prevMove == NoKiller`.
-            if counterMoveEnabled && prevMove != NoKiller then
-              counterMoveTable(MoveInt.fromIdx(prevMove))(MoveInt.toIdx(prevMove)) = move
-        }
+        val isKiller = move == k0Here || move == k1Here
+        // LMP: at low depth, after enough quiets searched, drop
+        // the rest. The well-ordered head of the quiet list got
+        // its full search; the tail is unlikely to beat α at
+        // remaining depth ≤ 3 and exhausting it is mostly wasted
+        // work. Killers + check-in escape the prune.
+        if frontierish && moveIndex >= lmpQuietLimit && !isKiller then
+          lmpPrune = true
+        // Futility: this move's parent already scored too low to
+        // hope a quiet reply (avg payoff ≤ futilityMargin) lifts
+        // it to α. Skip the apply-and-recurse cost.
+        else if futilityCanPrune && !isKiller then
+          // Tick moveIndex / i below so the loop progresses.
+          ()
+        else
+          RulesAdapter.applyMoveInt(state, move).foreach { next =>
+            val reduce =
+              depth >= LmrMinDepth &&
+                moveIndex >= LmrMoveThreshold &&
+                !isKiller &&
+                !inCheckHere
+            val searchDepth = if reduce then depth - 2 else depth - 1
+            var score = -negamax(next, searchDepth, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
+            if reduce && score > alphaCur then
+              score = -negamax(next, depth - 1, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
+            if score > bestScore then
+              bestScore = score
+              bestMove = move
+            if score > alphaCur then alphaCur = score
+            if alphaCur >= beta then
+              cutoff = true
+              recordKiller(ply, move)
+              historyTable(MoveInt.fromIdx(move))(MoveInt.toIdx(move)) += depth * depth
+              // Counter-move heuristic: when a quiet move refutes
+              // `prevMove`, remember it as the canonical reply to
+              // that opponent move. Skipped at the root and inside
+              // YBWC fibers where `prevMove == NoKiller`.
+              if counterMoveEnabled && prevMove != NoKiller then
+                counterMoveTable(MoveInt.fromIdx(prevMove))(MoveInt.toIdx(prevMove)) = move
+          }
         moveIndex += 1
         i -= 1
 

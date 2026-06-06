@@ -112,11 +112,28 @@ object Search:
       // already prunes many tactical lines NMP would prune;
       // R=2/3 reduction is conservative.
       nullMovePruningEnabled: Boolean = true,
+      // OFF — a 200-game v8+Q+NMP+LMP vs v8+Q+NMP head-to-head at
+      // depth 4 parallelism 8 measured ΔElo = -195.5 (10-112-78,
+      // score 24.5%, finished in 353s because so much got pruned).
+      // Two failure modes the as-shipped tuning hits hard:
+      //   (a) Futility uses bare `leafEval` for its baseline, so a
+      //       position with a hanging piece looks worse than it is;
+      //       we then skip the move that would resolve the threat.
+      //       Standard fix is qsearch'd eval but expensive.
+      //   (b) LMP threshold `4 + depth*2` means depth 1 searches
+      //       just 6 quiets; typical positions have 30+. Skipping
+      //       24 quiet moves at frontier-of-frontier costs the
+      //       refutations the engine needed to see.
+      // Kept as a flag so a tuned variant (conservative margins +
+      // qsearched baseline, or LMP at depth ≥ 2 only) can be A/B'd
+      // later without re-writing the surface.
+      lmpFutilityEnabled: Boolean = false,
   ): Search =
     new AlphaBetaSearch(
       eval, TranspositionTable.inMemory(maxTtEntries), book,
       parallelism, counterMoveEnabled, quiescenceEnabled, seeEnabled,
       iterativeDeepeningEnabled, nullMovePruningEnabled,
+      lmpFutilityEnabled,
     )
 
   /** Test-only factory that lets a caller inject the [[TranspositionTable]]
