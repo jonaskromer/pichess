@@ -85,14 +85,14 @@ object Search:
       // vs 83s baseline for the 200-game tournament with quiescence
       // on only the challenger side). Worth the time per move.
       quiescenceEnabled: Boolean = true,
-      // OFF — a 200-game v8+Q+SEE vs v8+Q head-to-head at depth 4
-      // parallelism 8 measured ΔElo = -3.5 (45-47-108, score 49.5%),
-      // i.e. neutral within noise. Quiescence already cleans up
-      // losing-capture mistakes by recursing on the capture chain,
-      // so SEE's marginal ordering improvement collapses to zero.
-      // Likely to pay off at deeper depth where main-search ordering
-      // matters more; keep the flag for future re-test.
-      seeEnabled: Boolean = false,
+      // ON — at depth 4 SEE is neutral (-3.5 Elo, in noise), but a
+      // 100-game depth-6 v8+Q+NMP+SEE vs v8+Q+NMP run measured
+      // ΔElo = +17.4 (22-17-61, score 52.5%). The depth-4 finding
+      // was correct (quiescence already cleans losing captures at
+      // shallow search) but the deeper-search case is what matters
+      // in production: better main-search ordering at depth 6+
+      // wins back the lost cutoffs SEE prevents.
+      seeEnabled: Boolean = true,
       // OFF — a 200-game v8+Q+ID vs v8+Q head-to-head at depth 4
       // parallelism 8 (with depth-preferred TT replacement, which
       // is a separate bugfix) measured ΔElo = -24.4 (35-49-116,
