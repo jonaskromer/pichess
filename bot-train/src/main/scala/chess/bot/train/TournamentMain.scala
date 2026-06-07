@@ -46,7 +46,7 @@ object TournamentMain extends ZIOAppDefault:
                         cfg.challenger, cfg.challengerCmh, cfg.challengerQ,
                         cfg.challengerSee, cfg.challengerId, cfg.challengerNmp,
                         cfg.challengerLmpFut, cfg.challengerSeed, cfg.challengerContHist,
-                        cfg.challengerAsp,
+                        cfg.challengerAsp, cfg.challengerNnue,
                       ).flatMap(maybeWrapSyzygy(_, cfg.challengerSyzygy, cfg))
         champion   <- loadOpponent(cfg)
                         .flatMap(maybeWrapSyzygy(_, cfg.championSyzygy, cfg))
@@ -112,6 +112,8 @@ object TournamentMain extends ZIOAppDefault:
       syzygyPieceLimit:   Int,
       challengerAsp:      Boolean,
       championAsp:        Boolean,
+      challengerNnue:     Boolean,
+      championNnue:       Boolean,
   )
 
   private def readConfig: UIO[Config] =
@@ -195,6 +197,12 @@ object TournamentMain extends ZIOAppDefault:
                                .exists(_.equalsIgnoreCase("true")),
         championAsp        = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_ASP")
                                .exists(_.equalsIgnoreCase("true")),
+        // NNUE evaluator toggles. When ON, the side uses the baked
+        // `/nnue-v1.bin` evaluator instead of the tapered HCE eval.
+        challengerNnue     = sys.env.get("PICHESS_TOURNAMENT_CHALLENGER_NNUE")
+                               .exists(_.equalsIgnoreCase("true")),
+        championNnue       = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_NNUE")
+                               .exists(_.equalsIgnoreCase("true")),
       )
     }
 
@@ -237,7 +245,7 @@ object TournamentMain extends ZIOAppDefault:
     else loadSearch(
       cfg.champion, cfg.championCmh, cfg.championQ, cfg.championSee,
       cfg.championId, cfg.championNmp, cfg.championLmpFut, cfg.championSeed,
-      cfg.championContHist, cfg.championAsp,
+      cfg.championContHist, cfg.championAsp, cfg.championNnue,
     )
 
   /** Build a [[Search]] for the given weights-version JSON
@@ -256,10 +264,19 @@ object TournamentMain extends ZIOAppDefault:
       counterMoveSeedEnabled: Boolean,
       continuationHistoryEnabled: Boolean,
       aspirationWindowsEnabled: Boolean,
+      nnueEnabled: Boolean,
   ): ZIO[Any, Throwable, Search] =
     WeightsLoader.load(version).map { snapshot =>
+      val eval: chess.bot.engine.Evaluator =
+        if nnueEnabled then
+          chess.bot.engine.nnue.NnueEvaluator
+            .loadResource("/nnue-v1.bin")
+            .getOrElse(
+              throw new IllegalStateException("NNUE resource /nnue-v1.bin not packaged")
+            )
+        else ArrayTaperedEvaluator(snapshot.weights)
       Search.alphaBeta(
-        eval                       = ArrayTaperedEvaluator(snapshot.weights),
+        eval                       = eval,
         book                       = OpeningBook.Empty,
         counterMoveEnabled         = counterMoveEnabled,
         quiescenceEnabled          = quiescenceEnabled,
