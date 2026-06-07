@@ -183,6 +183,11 @@ object Search:
       // refutation. Override: when ON, the CMH bucket at 70_000
       // uses the continuation table instead of the CMH table.
       continuationHistoryEnabled: Boolean = false,
+      // OFF pending A/B. LazySMP: parallelism-1 helper fibers run
+      // searches at depth +/- 1, sharing the TT with the main
+      // worker. Replaces YBWC when both `lazySmpEnabled` and
+      // `parallelism > 1`.
+      lazySmpEnabled: Boolean = false,
   ): Search =
     new AlphaBetaSearch(
       eval, TranspositionTable.inMemory(maxTtEntries), book,
@@ -190,6 +195,7 @@ object Search:
       iterativeDeepeningEnabled, nullMovePruningEnabled,
       lmpFutilityEnabled, aspirationWindowsEnabled, counterMoveSeedEnabled,
       continuationHistoryEnabled, singularExtensionsEnabled,
+      lazySmpEnabled,
     )
 
   /** Test-only factory that lets a caller inject the [[TranspositionTable]]

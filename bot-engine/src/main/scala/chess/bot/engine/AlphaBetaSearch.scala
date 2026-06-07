@@ -70,6 +70,14 @@ private[engine] final class AlphaBetaSearch(
     // canonical verification re-search (which doubles per-node
     // cost) but captures most of the Elo bump.
     singularExtensionsEnabled: Boolean = false,
+    // LazySMP: when ON and `parallelism > 1`, replace the YBWC
+    // root fan-out with K-1 helper fibers each running a sync
+    // search at a slightly different depth, all sharing the TT.
+    // The main fiber returns at the requested depth; helpers are
+    // cancelled on return. Cross-pollination via the shared TT
+    // is the win — helpers' deeper-search TT entries help main's
+    // ordering, and main's entries help helpers cut off faster.
+    lazySmpEnabled: Boolean = false,
     // Load the baked PGN-derived CMH seed when present. When
     // false, the per-search reset uses NoKiller (cold start)
     // instead — useful for A/B comparison of seeded vs cold CMH.
@@ -195,11 +203,62 @@ private[engine] final class AlphaBetaSearch(
         clearHistory()
         clearCounterMoves()
         if iterativeDeepeningEnabled then iterativeBestMove(state, depth, history)
+        else if lazySmpEnabled && parallelism > 1 then lazySmpBestMove(state, depth, history)
         else if parallelism > 1 then parallelBestMove(state, depth, history)
         else
           val bufs = new SearchBufs
           ZIO.succeed(syncBestMove(state, depth, history, bufs).map(MoveInt.decode))
     }
+
+  /** LazySMP root search: spawn `parallelism-1` helper fibers
+    * (each at depth +/- 1 alternating), then run the main search
+    * at the requested depth. All share the shared TT, so helpers'
+    * speculative deeper / faster shallower searches plant TT
+    * entries that improve main's ordering decisions mid-flight.
+    *
+    * The result is whatever the main fiber returns. Helpers are
+    * cancelled when main finishes (structured concurrency via
+    * `raceFirst` semantics on the ZIO fiber tree).
+    *
+    * vs YBWC: YBWC fans out one root move per fiber (max useful
+    * parallelism = #root moves - 1). LazySMP fans out one full-
+    * tree-search per fiber, so it scales past `#root moves` and
+    * benefits from arbitrary `parallelism` values. */
+  private def lazySmpBestMove(
+      state: GameState,
+      depth: Int,
+      history: Set[Long],
+  ): UIO[Option[Move]] =
+    // The main worker: runs sync search at the requested depth
+    // and is the one whose result we return.
+    val mainWorker: UIO[Option[Move]] =
+      ZIO.succeed {
+        val bufs = new SearchBufs
+        syncBestMove(state, depth, history, bufs).map(MoveInt.decode)
+      }
+    if parallelism <= 1 then mainWorker
+    else
+      // Helpers: depth +/- 1 alternating so we get both deeper
+      // (cross-pollinate exploration) and shallower (warm TT
+      // ordering fast) variants. Helper results are discarded —
+      // we only want their TT side-effects.
+      val helperEffects = (1 until parallelism).map { idx =>
+        val helperDepth = math.max(1, depth + (if idx % 2 == 0 then 1 else -1))
+        ZIO.succeed {
+          val bufs = new SearchBufs
+          syncBestMove(state, helperDepth, history, bufs)
+        }.forkDaemon
+      }
+      // Fire-and-forget the helpers — they share the TT and run
+      // in parallel until they finish or main completes. main's
+      // return value is what bestMove sees.
+      ZIO
+        .foreach(helperEffects)(identity)
+        .flatMap { helperFibers =>
+          mainWorker.ensuring(
+            ZIO.foreach(helperFibers)(_.interrupt.unit).unit
+          )
+        }
 
   /** Time-budgeted ID: runs depths 1..MaxIterations, after each
     * iteration checks whether the predicted next-iteration cost

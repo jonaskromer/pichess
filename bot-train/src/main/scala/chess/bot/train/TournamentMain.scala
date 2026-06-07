@@ -47,7 +47,7 @@ object TournamentMain extends ZIOAppDefault:
                         cfg.challengerSee, cfg.challengerId, cfg.challengerNmp,
                         cfg.challengerLmpFut, cfg.challengerSeed, cfg.challengerContHist,
                         cfg.challengerAsp, cfg.challengerNnue, cfg.challengerSe,
-                        cfg.challengerNnueEns,
+                        cfg.challengerNnueEns, cfg.challengerLazySmp,
                       ).flatMap(maybeWrapSyzygy(_, cfg.challengerSyzygy, cfg))
         champion   <- loadOpponent(cfg)
                         .flatMap(maybeWrapSyzygy(_, cfg.championSyzygy, cfg))
@@ -119,6 +119,8 @@ object TournamentMain extends ZIOAppDefault:
       championSe:         Boolean,
       challengerNnueEns:  Boolean,
       championNnueEns:    Boolean,
+      challengerLazySmp:  Boolean,
+      championLazySmp:    Boolean,
   )
 
   private def readConfig: UIO[Config] =
@@ -216,6 +218,10 @@ object TournamentMain extends ZIOAppDefault:
                                .exists(_.equalsIgnoreCase("true")),
         championNnueEns    = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_NNUE_ENS")
                                .exists(_.equalsIgnoreCase("true")),
+        challengerLazySmp  = sys.env.get("PICHESS_TOURNAMENT_CHALLENGER_SMP")
+                               .exists(_.equalsIgnoreCase("true")),
+        championLazySmp    = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_SMP")
+                               .exists(_.equalsIgnoreCase("true")),
       )
     }
 
@@ -259,7 +265,7 @@ object TournamentMain extends ZIOAppDefault:
       cfg.champion, cfg.championCmh, cfg.championQ, cfg.championSee,
       cfg.championId, cfg.championNmp, cfg.championLmpFut, cfg.championSeed,
       cfg.championContHist, cfg.championAsp, cfg.championNnue, cfg.championSe,
-      cfg.championNnueEns,
+      cfg.championNnueEns, cfg.championLazySmp,
     )
 
   /** Build a [[Search]] for the given weights-version JSON
@@ -281,6 +287,7 @@ object TournamentMain extends ZIOAppDefault:
       nnueEnabled: Boolean,
       singularExtensionsEnabled: Boolean,
       nnueEnsembleEnabled: Boolean,
+      lazySmpEnabled: Boolean,
   ): ZIO[Any, Throwable, Search] =
     WeightsLoader.load(version).map { snapshot =>
       val eval: chess.bot.engine.Evaluator =
@@ -312,5 +319,6 @@ object TournamentMain extends ZIOAppDefault:
         continuationHistoryEnabled = continuationHistoryEnabled,
         aspirationWindowsEnabled   = aspirationWindowsEnabled,
         singularExtensionsEnabled  = singularExtensionsEnabled,
+        lazySmpEnabled             = lazySmpEnabled,
       )
     }
