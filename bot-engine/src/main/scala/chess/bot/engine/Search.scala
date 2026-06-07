@@ -49,6 +49,22 @@ trait Search:
   ): UIO[List[(Move, Int)]] =
     bestMove(state, depth, history).map(_.toList.map(m => m -> 0))
 
+  /** Time-budgeted search. Runs iterative deepening until the
+    * deeper iteration is predicted to overflow `budgetMillis`, then
+    * returns the deepest completed iteration's best move.
+    *
+    * Default falls through to `bestMove(state, fallbackDepth)` so
+    * implementations without time management still compile;
+    * production callers should target the override on
+    * `AlphaBetaSearch`. */
+  def bestMoveWithBudget(
+      state: GameState,
+      budgetMillis: Long,
+      history: Set[Long] = Set.empty,
+      fallbackDepth: Int = 6,
+  ): UIO[Option[Move]] =
+    bestMove(state, fallbackDepth, history)
+
 object Search:
 
   /** Sentinel score for "the position is mate, lost from this side's

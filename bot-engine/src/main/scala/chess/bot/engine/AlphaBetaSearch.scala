@@ -201,6 +201,70 @@ private[engine] final class AlphaBetaSearch(
           ZIO.succeed(syncBestMove(state, depth, history, bufs).map(MoveInt.decode))
     }
 
+  /** Time-budgeted ID: runs depths 1..MaxIterations, after each
+    * iteration checks whether the predicted next-iteration cost
+    * would overflow the remaining budget, and returns the deepest
+    * completed result. Cost prediction uses the EBF (effective
+    * branching factor): `next ≈ this × ebf`; we use ebf=5 as a
+    * conservative default. A hard cap of `1.5 × budget` lets a
+    * single iteration overrun slightly without aborting mid-search.
+    *
+    * Forced-mate short-circuits as usual (no point going deeper
+    * once mate is found). */
+  override def bestMoveWithBudget(
+      state: GameState,
+      budgetMillis: Long,
+      history: Set[Long] = Set.empty,
+      fallbackDepth: Int = 6,
+  ): UIO[Option[Move]] =
+    book.lookup(state).flatMap {
+      case Some(move) => ZIO.some(move)
+      case None       =>
+        clearKillers()
+        clearHistory()
+        clearCounterMoves()
+        budgetedBestMove(state, budgetMillis, history)
+    }
+
+  /** ID loop with a wall-clock deadline. Each completed iteration
+    * records its elapsed time; the next iteration is only started
+    * if `elapsed + projectedNext ≤ budget`. The cheap projection
+    * is `ebf × thisDuration`; for a tight bound (avoid stranding
+    * compute) we use ebf=4. */
+  private def budgetedBestMove(
+      state: GameState,
+      budgetMillis: Long,
+      history: Set[Long],
+  ): UIO[Option[Move]] =
+    val rootHash = Zobrist.hash(state)
+    val start = System.nanoTime()
+
+    def runAtDepth(d: Int): Option[Move] =
+      if parallelism > 1 then
+        // Parallel path doesn't return synchronously — UIO needed.
+        // Skip it for budgeted variant; the budget is meant for
+        // single-thread, time-controlled play.
+        val bufs = new SearchBufs
+        syncBestMove(state, d, history, bufs).map(MoveInt.decode)
+      else
+        val bufs = new SearchBufs
+        syncBestMove(state, d, history, bufs).map(MoveInt.decode)
+
+    def loop(d: Int, last: Option[Move], lastIterMs: Long): Option[Move] =
+      val elapsedMs = (System.nanoTime() - start) / 1_000_000L
+      val projectedNext = lastIterMs * 4 // EBF proxy
+      val outOfBudget = elapsedMs + projectedNext > budgetMillis || elapsedMs > budgetMillis * 3 / 2
+      val rootScore = tt.get(rootHash).map(_.score).getOrElse(0)
+      val mateFound = math.abs(rootScore) >= MateScore - MaxPly
+      if d > MaxPly || outOfBudget || mateFound then last
+      else
+        val iterStart = System.nanoTime()
+        val result = runAtDepth(d)
+        val iterMs = (System.nanoTime() - iterStart) / 1_000_000L
+        loop(d + 1, result.orElse(last), iterMs)
+
+    ZIO.succeed(loop(1, None, 0L))
+
   /** Multi-PV: returns the top-K root moves with their scores in
     * descending order. Uses the sync path (single-thread) so the
     * scores are deterministic; the parallel YBWC root would re-
