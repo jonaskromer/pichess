@@ -47,6 +47,7 @@ object TournamentMain extends ZIOAppDefault:
                         cfg.challengerSee, cfg.challengerId, cfg.challengerNmp,
                         cfg.challengerLmpFut, cfg.challengerSeed, cfg.challengerContHist,
                         cfg.challengerAsp, cfg.challengerNnue, cfg.challengerSe,
+                        cfg.challengerNnueEns,
                       ).flatMap(maybeWrapSyzygy(_, cfg.challengerSyzygy, cfg))
         champion   <- loadOpponent(cfg)
                         .flatMap(maybeWrapSyzygy(_, cfg.championSyzygy, cfg))
@@ -116,6 +117,8 @@ object TournamentMain extends ZIOAppDefault:
       championNnue:       Boolean,
       challengerSe:       Boolean,
       championSe:         Boolean,
+      challengerNnueEns:  Boolean,
+      championNnueEns:    Boolean,
   )
 
   private def readConfig: UIO[Config] =
@@ -209,6 +212,10 @@ object TournamentMain extends ZIOAppDefault:
                                .exists(_.equalsIgnoreCase("true")),
         championSe         = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_SE")
                                .exists(_.equalsIgnoreCase("true")),
+        challengerNnueEns  = sys.env.get("PICHESS_TOURNAMENT_CHALLENGER_NNUE_ENS")
+                               .exists(_.equalsIgnoreCase("true")),
+        championNnueEns    = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_NNUE_ENS")
+                               .exists(_.equalsIgnoreCase("true")),
       )
     }
 
@@ -252,6 +259,7 @@ object TournamentMain extends ZIOAppDefault:
       cfg.champion, cfg.championCmh, cfg.championQ, cfg.championSee,
       cfg.championId, cfg.championNmp, cfg.championLmpFut, cfg.championSeed,
       cfg.championContHist, cfg.championAsp, cfg.championNnue, cfg.championSe,
+      cfg.championNnueEns,
     )
 
   /** Build a [[Search]] for the given weights-version JSON
@@ -272,10 +280,19 @@ object TournamentMain extends ZIOAppDefault:
       aspirationWindowsEnabled: Boolean,
       nnueEnabled: Boolean,
       singularExtensionsEnabled: Boolean,
+      nnueEnsembleEnabled: Boolean,
   ): ZIO[Any, Throwable, Search] =
     WeightsLoader.load(version).map { snapshot =>
       val eval: chess.bot.engine.Evaluator =
-        if nnueEnabled then
+        if nnueEnsembleEnabled then
+          chess.bot.engine.nnue.NnueEnsemble
+            .loadBaked(k = 3)
+            .getOrElse(
+              throw new IllegalStateException(
+                "NNUE ensemble resources /nnue-ens-v1-s{1..3}.bin not packaged"
+              )
+            )
+        else if nnueEnabled then
           chess.bot.engine.nnue.NnueEvaluator
             .loadResource("/nnue-v1.bin")
             .getOrElse(
