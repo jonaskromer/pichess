@@ -195,6 +195,83 @@ private[engine] final class AlphaBetaSearch(
           ZIO.succeed(syncBestMove(state, depth, history, bufs).map(MoveInt.decode))
     }
 
+  /** Multi-PV: returns the top-K root moves with their scores in
+    * descending order. Uses the sync path (single-thread) so the
+    * scores are deterministic; the parallel YBWC root would re-
+    * order ties non-deterministically.
+    *
+    * Run cost: a fresh full-window root search that tracks every
+    * move's score instead of cutting off as soon as it falls
+    * below α. ~the same cost as `bestMove` because root has
+    * α = -Infinity anyway (no cutoffs there). Used for analysis,
+    * MCTS bootstrap, training-data labelling — not the hot tournament
+    * path. */
+  override def bestMoves(
+      state: GameState,
+      depth: Int,
+      k: Int,
+      history: Set[Long] = Set.empty,
+  ): UIO[List[(Move, Int)]] =
+    book.lookup(state).flatMap {
+      case Some(move) => ZIO.succeed(List(move -> 0))
+      case None       =>
+        clearKillers()
+        clearHistory()
+        clearCounterMoves()
+        val bufs = new SearchBufs
+        ZIO.succeed(syncMultiPv(state, depth, history, bufs, k))
+    }
+
+  /** Sync root search variant that records `(move, score)` for
+    * every root move and returns the top-K. Mirrors the structure
+    * of [[syncBestMove]] but doesn't take α/β narrowing — every
+    * move is searched at the full window so we get its real
+    * score, not "≤ α / ≥ β" bound info. */
+  private def syncMultiPv(
+      state: GameState,
+      depth: Int,
+      history: Set[Long],
+      bufs: SearchBufs,
+      k: Int,
+  ): List[(Move, Int)] =
+    val capBuf   = bufs.captures(0)
+    val quietBuf = bufs.quiets(0)
+    val (capCount, quietCount) = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf)
+    if capCount == 0 && quietCount == 0 then Nil
+    else
+      val rootHash = Zobrist.hash(state)
+      val rootHistory = history + rootHash
+      val results = scala.collection.mutable.ArrayBuffer.empty[(Int, Int)]
+      // Captures
+      if capCount > 0 then
+        val scored = bufs.scored(0)
+        orderMovesInto(capBuf, capCount, scored, state, rootHash, ply = 0, prevMove = NoKiller)
+        var i = capCount - 1
+        while i >= 0 do
+          val move = MoveInt.fromPacked(scored(i))
+          RulesAdapter.applyMoveInt(state, move).foreach { next =>
+            val score = -negamax(next, depth - 1, -Infinity, Infinity, ply = 1, rootHistory, bufs, prevMove = move)
+            results += (move -> score)
+          }
+          i -= 1
+      // Quiets
+      if quietCount > 0 then
+        val scored = bufs.scored(0)
+        orderMovesInto(quietBuf, quietCount, scored, state, rootHash, ply = 0, prevMove = NoKiller)
+        var i = quietCount - 1
+        while i >= 0 do
+          val move = MoveInt.fromPacked(scored(i))
+          RulesAdapter.applyMoveInt(state, move).foreach { next =>
+            val score = -negamax(next, depth - 1, -Infinity, Infinity, ply = 1, rootHistory, bufs, prevMove = move)
+            results += (move -> score)
+          }
+          i -= 1
+      results
+        .sortBy(-_._2)
+        .take(k.max(1))
+        .toList
+        .map { case (move, score) => MoveInt.decode(move) -> score }
+
   /** Iterative-deepening wrapper: runs the search at depth 1, 2, …,
     * target, sharing the TT across iterations. Each iteration's
     * `bestMove` for every visited node is left in the TT, so the

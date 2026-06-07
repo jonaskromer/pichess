@@ -33,6 +33,22 @@ trait Search:
       history: Set[Long] = Set.empty,
   ): UIO[Option[Move]]
 
+  /** Optional multi-PV: returns the top-K root moves sorted by
+    * score descending. Implementations that don't track multi-PV
+    * may return a singleton list wrapping `bestMove`'s result; for
+    * analysis use cases (UI, training-data dumps, MCTS bootstrap)
+    * the search-side override returns the real top-K.
+    *
+    * Default behaviour falls through to `bestMove` so existing
+    * impls still compile. */
+  def bestMoves(
+      state: GameState,
+      depth: Int,
+      k: Int,
+      history: Set[Long] = Set.empty,
+  ): UIO[List[(Move, Int)]] =
+    bestMove(state, depth, history).map(_.toList.map(m => m -> 0))
+
 object Search:
 
   /** Sentinel score for "the position is mate, lost from this side's
