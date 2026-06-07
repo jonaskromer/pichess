@@ -146,6 +146,14 @@ object Search:
       // re-test at depth 6+ before flipping ON. Sync path only —
       // YBWC parallel root doesn't honour aspiration yet.
       aspirationWindowsEnabled: Boolean = false,
+      // ON — a 100-game v8+Q+NMP+SE vs v8+Q+NMP head-to-head at
+      // depth 6 par=8 measured ΔElo = +20.9 (22-16-62, 53.0%)
+      // with essentially identical wall time. Gate `depth ≥ 5`
+      // means zero effect at depth 4, +20 at d6+; pure upside.
+      // Simplified form: skip the canonical verification re-search,
+      // just blindly extend the TT bestMove when entry depth +
+      // bound kind suggest it's uniquely best.
+      singularExtensionsEnabled: Boolean = true,
       // ON by default — the baked `/counter-seed.bin` (built once
       // by `CounterSeedMain` from the PGN corpus) prefills the CMH
       // table at every search reset with the modal master-game
@@ -165,7 +173,7 @@ object Search:
       parallelism, counterMoveEnabled, quiescenceEnabled, seeEnabled,
       iterativeDeepeningEnabled, nullMovePruningEnabled,
       lmpFutilityEnabled, aspirationWindowsEnabled, counterMoveSeedEnabled,
-      continuationHistoryEnabled,
+      continuationHistoryEnabled, singularExtensionsEnabled,
     )
 
   /** Test-only factory that lets a caller inject the [[TranspositionTable]]

@@ -64,6 +64,12 @@ private[engine] final class AlphaBetaSearch(
     // path only — parallel YBWC root doesn't honour aspiration
     // yet.
     aspirationWindowsEnabled: Boolean = false,
+    // Simplified singular extensions: when the TT bestMove at a
+    // node is backed by an entry of sufficient depth + non-Upper
+    // bound, extend its recursive search by 1 ply. Skips the
+    // canonical verification re-search (which doubles per-node
+    // cost) but captures most of the Elo bump.
+    singularExtensionsEnabled: Boolean = false,
     // Load the baked PGN-derived CMH seed when present. When
     // false, the per-search reset uses NoKiller (cold start)
     // instead — useful for A/B comparison of seeded vs cold CMH.
@@ -661,6 +667,26 @@ private[engine] final class AlphaBetaSearch(
               else
                 fullSearch(state, hash, depth, alpha, beta, ply, history, bufs, prevMove)
 
+  /** Decide whether the TT bestMove at the current node deserves
+    * a +1 ply extension. Used by [[searchMoves]] when iterating —
+    * if the current move equals the TT bestMove encoded by this
+    * helper, it recurses at `depth - 1 + 1` instead of `depth - 1`.
+    *
+    * Conditions match the simplified "no-verification" singular
+    * extension shape: depth ≥ 5, ply > 0 (root excluded — root's
+    * window is already wide-open, no win from extending), TT entry
+    * exists at depth ≥ depth - 2, and bound kind isn't Upper
+    * (Upper bounds say "the real score is at most this", which
+    * isn't strong evidence the move is uniquely best). */
+  private def ttBestMoveExtension(hash: Long, depth: Int, ply: Int): (Int, Int) =
+    if !singularExtensionsEnabled || depth < 5 || ply == 0 then (NoKiller, 0)
+    else tt.get(hash) match
+      case Some(entry) if entry.depth >= depth - 2 && entry.kind != Kind.Upper =>
+        entry.bestMove match
+          case Some(move) => (MoveInt.encodeMove(move), 1)
+          case None       => (NoKiller, 0)
+      case _ => (NoKiller, 0)
+
   /** Helper: the negamax branch that actually generates and searches
     * all legal moves. Extracted so [[negamax]]'s NMP path can fall
     * through to it on `nullScore < beta`. */
@@ -885,6 +911,13 @@ private[engine] final class AlphaBetaSearch(
     val k0Here = if ply < MaxPly then killer0(ply) else NoKiller
     val k1Here = if ply < MaxPly then killer1(ply) else NoKiller
     val scored = bufs.scored(ply)
+    // Simplified singular extension: when the conditions in
+    // [[ttBestMoveExtension]] are met, the TT bestMove is treated
+    // as "probably uniquely best" and its child search runs at
+    // `depth - 1 + 1` instead of `depth - 1`. `seMove` is the
+    // encoded MoveInt to extend; `seBonus` is the depth bonus (0
+    // when the heuristic doesn't fire).
+    val (seMove, seBonus) = ttBestMoveExtension(hash, depth, ply)
     var alphaCur  = alpha
     var bestScore = -Infinity
     var bestMove: Int = NoKiller
@@ -899,7 +932,8 @@ private[engine] final class AlphaBetaSearch(
         val move = MoveInt.fromPacked(scored(i))
         RulesAdapter.applyMoveInt(state, move).foreach { next =>
           // Captures don't get reduced (always "loud" by definition).
-          val score = -negamax(next, depth - 1, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
+          val childDepth = depth - 1 + (if move == seMove then seBonus else 0)
+          val score = -negamax(next, childDepth, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
           if score > bestScore then
             bestScore = score
             bestMove = move
@@ -959,10 +993,12 @@ private[engine] final class AlphaBetaSearch(
                 moveIndex >= LmrMoveThreshold &&
                 !isKiller &&
                 !inCheckHere
-            val searchDepth = if reduce then depth - 2 else depth - 1
+            val seExt = if move == seMove then seBonus else 0
+            val baseDepth = depth - 1 + seExt
+            val searchDepth = if reduce then baseDepth - 1 else baseDepth
             var score = -negamax(next, searchDepth, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
             if reduce && score > alphaCur then
-              score = -negamax(next, depth - 1, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
+              score = -negamax(next, baseDepth, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
             if score > bestScore then
               bestScore = score
               bestMove = move
