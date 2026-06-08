@@ -110,50 +110,14 @@ private[engine] object RulesAdapter:
       capturesOut: Array[Int],
       quietsOut:   Array[Int],
   ): (Int, Int) =
-    // Skip the intermediate `Map[Position, List[Position]]` that
-    // `legalDestinationsIndexSync` would build — we'd just iterate
-    // it back into our Int buffers anyway. Walk the active-piece
-    // bitboard directly, call `legalMovesFromSync` per source,
-    // and stream-encode into the buffers in one pass. Saves the
-    // Map.newBuilder + builder.result + collectSources's
-    // ListBuffer + toList per move-gen call. Profile-confirmed
-    // hot spot.
-    val activeBb =
-      if state.activeColor == chess.model.piece.Color.White then
-        state.board.whitePieces.raw
-      else state.board.blackPieces.raw
-    var nc = 0
-    var nq = 0
-    var rem = activeBb
-    while rem != 0L do
-      val srcIdx = java.lang.Long.numberOfTrailingZeros(rem)
-      rem &= rem - 1L
-      val from = chess.model.board.Position(
-        ('a' + (srcIdx % 8)).toChar,
-        srcIdx / 8 + 1,
-      )
-      val piece = state.board.get(from)
-      val isPawn = piece.exists(_.pieceType == PieceType.Pawn)
-      val destinations = MoveValidator.legalMovesFromSync(state, from)
-      if destinations.nonEmpty then
-        val destIt = destinations.iterator
-        while destIt.hasNext do
-          val to = destIt.next()
-          val toIdx = to.squareIdx
-          val isCapture =
-            state.board.contains(to) ||
-              (isPawn && state.enPassantTarget.contains(to))
-          val promo =
-            if isPawn && (to.row == 1 || to.row == 8) then MoveInt.PromoQueen
-            else MoveInt.NoPromotion
-          val encoded = MoveInt.encode(srcIdx, toIdx, promo)
-          if isCapture then
-            capturesOut(nc) = encoded
-            nc += 1
-          else
-            quietsOut(nq) = encoded
-            nq += 1
-    (nc, nq)
+    // Delegate to the bitboard-driven generator. It walks the
+    // active-piece bitboards directly (knight / bishop / rook /
+    // queen / king via `BitboardAttacks`; pawns + castling via
+    // hand-rolled bit ops) and stream-encodes packed MoveInts
+    // into the output buffers without allocating the
+    // `List[Move]` + `Map[Position, List[Position]]` chain the
+    // old path went through. See `BitboardMoveGen` for details.
+    BitboardMoveGen.fillCapturesAndQuiets(state, capturesOut, quietsOut)
 
   /** Iterate one of the sub-indices from [[legalCapturesAndQuiets]]
     * (or [[legalDestinationsIndex]]) and pack each (from, to) pair
