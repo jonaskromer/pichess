@@ -1234,7 +1234,16 @@ private[engine] final class AlphaBetaSearch(
   private inline val CorrHistSize  = 16384
   private inline val CorrHistMask  = 16383
   private inline val CorrHistScale = 256
-  private inline val CorrHistMax   = 16384 * CorrHistScale
+  // Cap the applied correction at ±MaxCorrectionCp centipawns. The
+  // table stores `delta * scale` EMAs; `correction = table / scale`,
+  // so clamping the table to ±(MaxCorrectionCp * scale) bounds the
+  // correction to ±MaxCorrectionCp cp. The original ±16384-cp bound
+  // let a single near-mate node (delta ≈ 30000*scale) poison a slot
+  // with a ±163-pawn correction that swamped the real eval — a
+  // measured ΔElo of -168 at parallelism=1. ~1.5 pawns is plenty of
+  // correction range for a slow-changing pawn-structure signal.
+  private inline val MaxCorrectionCp = 150
+  private inline val CorrHistMax     = MaxCorrectionCp * CorrHistScale
 
   private val pawnCorrHist: ThreadLocal[Array[Int]] =
     ThreadLocal.withInitial(() => new Array[Int](CorrHistSize))
@@ -1252,10 +1261,17 @@ private[engine] final class AlphaBetaSearch(
     corr
 
   private def updateCorrhist(state: GameState, staticEval: Int, searchScore: Int, depth: Int): Unit =
-    val delta = (searchScore - staticEval) * CorrHistScale
-    val weight = math.min(depth + 1, 16)
-    if pawnCorrHistEnabled then updateOne(pawnCorrHist.get(), Zobrist.pawnHash(state), delta, weight)
-    if materialCorrHistEnabled then updateOne(materialCorrHist.get(), Zobrist.materialKey(state), delta, weight)
+    // Never train on mate scores — the (searchScore - staticEval)
+    // delta is enormous (~30000 cp) and would slam the slot to the
+    // clamp, corrupting the eval for every position sharing this
+    // pawn/material key. Corrhist is a quiet-eval refinement, not a
+    // mate detector.
+    if math.abs(searchScore) >= MateScore - MaxPly then ()
+    else
+      val delta = (searchScore - staticEval) * CorrHistScale
+      val weight = math.min(depth + 1, 16)
+      if pawnCorrHistEnabled then updateOne(pawnCorrHist.get(), Zobrist.pawnHash(state), delta, weight)
+      if materialCorrHistEnabled then updateOne(materialCorrHist.get(), Zobrist.materialKey(state), delta, weight)
 
   private inline def updateOne(table: Array[Int], key: Long, delta: Int, weight: Int): Unit =
     val idx = corrSlot(key)
