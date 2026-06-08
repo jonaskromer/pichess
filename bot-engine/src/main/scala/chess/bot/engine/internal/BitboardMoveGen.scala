@@ -36,6 +36,7 @@ object BitboardMoveGen:
       state: GameState,
       capBuf: Array[Int],
       quietBuf: Array[Int],
+      underPromotion: Boolean = false,
   ): (Int, Int) =
     val board = state.board
     val white = state.activeColor == Color.White
@@ -215,6 +216,30 @@ object BitboardMoveGen:
           quietBuf(nq) = encoded
           nq += 1
 
+    /** Emit pawn promotions to all four target piece types when
+      * [[underPromotion]] is on, otherwise just queen. Queen-only
+      * preserves the historical move-count contract (1 move per
+      * back-rank pawn push / capture); under-promotion adds three
+      * extra moves per promotion square for the rare cases where
+      * knight (mate-in-N forks) or rook / bishop (avoid stalemate)
+      * matter. */
+    inline def emitPromotions(
+        from: Int,
+        to: Int,
+        capture: Boolean,
+        isEpCapture: Boolean,
+        underPromotion: Boolean,
+    ): Unit =
+      tryEmit(from, to, MoveInt.PromoQueen,
+              capture, isKing = false, isEpCapture, isCastling = false)
+      if underPromotion then
+        tryEmit(from, to, MoveInt.PromoKnight,
+                capture, isKing = false, isEpCapture, isCastling = false)
+        tryEmit(from, to, MoveInt.PromoRook,
+                capture, isKing = false, isEpCapture, isCastling = false)
+        tryEmit(from, to, MoveInt.PromoBishop,
+                capture, isKing = false, isEpCapture, isCastling = false)
+
     // ── Pawn moves ────────────────────────────────────────────
     val pushStep   = if white then 8 else -8
     val startRank  = if white then 1 else 6
@@ -227,8 +252,7 @@ object BitboardMoveGen:
       if pushTo >= 0 && pushTo < 64 && (occ & (1L << pushTo)) == 0L then
         val pushRank = pushTo >>> 3
         if pushRank == promoRank then
-          tryEmit(from, pushTo, MoveInt.PromoQueen,
-                  capture = false, isKing = false, isEpCapture = false, isCastling = false)
+          emitPromotions(from, pushTo, capture = false, isEpCapture = false, underPromotion)
         else
           tryEmit(from, pushTo, MoveInt.NoPromotion,
                   capture = false, isKing = false, isEpCapture = false, isCastling = false)
@@ -247,8 +271,7 @@ object BitboardMoveGen:
         val toRank   = to >>> 3
         val isEp     = (epMask & (1L << to)) != 0L
         if toRank == promoRank then
-          tryEmit(from, to, MoveInt.PromoQueen,
-                  capture = true, isKing = false, isEpCapture = isEp, isCastling = false)
+          emitPromotions(from, to, capture = true, isEpCapture = isEp, underPromotion)
         else
           tryEmit(from, to, MoveInt.NoPromotion,
                   capture = true, isKing = false, isEpCapture = isEp, isCastling = false)

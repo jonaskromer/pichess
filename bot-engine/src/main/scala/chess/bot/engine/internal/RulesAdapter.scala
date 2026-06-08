@@ -109,6 +109,7 @@ private[engine] object RulesAdapter:
       state: GameState,
       capturesOut: Array[Int],
       quietsOut:   Array[Int],
+      underPromotion: Boolean = false,
   ): (Int, Int) =
     // Delegate to the bitboard-driven generator. It walks the
     // active-piece bitboards directly (knight / bishop / rook /
@@ -117,7 +118,7 @@ private[engine] object RulesAdapter:
     // into the output buffers without allocating the
     // `List[Move]` + `Map[Position, List[Position]]` chain the
     // old path went through. See `BitboardMoveGen` for details.
-    BitboardMoveGen.fillCapturesAndQuiets(state, capturesOut, quietsOut)
+    BitboardMoveGen.fillCapturesAndQuiets(state, capturesOut, quietsOut, underPromotion)
 
   /** Iterate one of the sub-indices from [[legalCapturesAndQuiets]]
     * (or [[legalDestinationsIndex]]) and pack each (from, to) pair

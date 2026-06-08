@@ -66,6 +66,7 @@ object EngineBundle:
       ensembleSize: Int = 3,
       tablebaseOracle: Option[Search] = None,
       tablebasePieceLimit: Int = 5,
+      endgameHeuristicsEnabled: Boolean = false,
   ): IO[Throwable, EngineBundle] =
     for
       weights <- WeightsLoader.load(weightsVersion)
@@ -78,21 +79,25 @@ object EngineBundle:
       // cheaper per call — the Map[String, Int] feature path was the
       // dominant allocator (~121 MB/op at depth 4).
       hce      = ArrayTaperedEvaluator(weights.weights)
-      eval     = wrapEval(hce, evalSource, evalCacheEnabled, evalCacheEntries, ensembleSize)
+      eval     = wrapEval(
+                   hce, evalSource, evalCacheEnabled, evalCacheEntries,
+                   ensembleSize, endgameHeuristicsEnabled,
+                 )
       base     = Search.alphaBeta(eval, book, maxTtEntries)
       search   = tablebaseOracle match
                    case Some(tb) => new TbAugmentedSearch(base, tb, tablebasePieceLimit)
                    case None     => base
     yield EngineBundle(weights, book, search)
 
-  /** Pick the requested evaluator with NNUE fallbacks, then optionally
-    * wrap in a Zobrist-keyed eval cache. */
+  /** Pick the requested evaluator with NNUE fallbacks, then layer
+    * the optional endgame patch + Zobrist-keyed cache decorators. */
   private def wrapEval(
       hce: Evaluator,
       source: EvalSource,
       cacheEnabled: Boolean,
       cacheEntries: Int,
       ensembleSize: Int,
+      endgameHeuristics: Boolean,
   ): Evaluator =
     val chosen = source match
       case EvalSource.Hce => hce
@@ -103,7 +108,9 @@ object EngineBundle:
           .map(_.asInstanceOf[Evaluator])
           .orElse(NnueEvaluator.loadResource("/nnue-v1.bin"))
           .getOrElse(hce)
-    if cacheEnabled then CachedEvaluator.of(chosen, cacheEntries) else chosen
+    val withEndgame =
+      if endgameHeuristics then new EndgameAwareEvaluator(chosen) else chosen
+    if cacheEnabled then CachedEvaluator.of(withEndgame, cacheEntries) else withEndgame
 
   /** Same as [[fromResources]] but on any failure, falls back to the
     * material-only evaluator + empty opening book. Returns the bundle
@@ -116,10 +123,12 @@ object EngineBundle:
       evalCacheEnabled: Boolean = false,
       evalCacheEntries: Int = 1_000_000,
       ensembleSize: Int = 3,
+      endgameHeuristicsEnabled: Boolean = false,
   ): UIO[(EngineBundle, Option[Throwable])] =
     fromResources(
       weightsVersion, maxBookPly, maxTtEntries,
       evalSource, evalCacheEnabled, evalCacheEntries, ensembleSize,
+      endgameHeuristicsEnabled = endgameHeuristicsEnabled,
     )
       .map(b => (b, None))
       .catchAll { err =>
@@ -135,7 +144,8 @@ object EngineBundle:
               search      = Search.alphaBeta(
                 wrapEval(
                   ArrayTaperedEvaluator(fallbackSnapshot.weights),
-                  evalSource, evalCacheEnabled, evalCacheEntries, ensembleSize,
+                  evalSource, evalCacheEnabled, evalCacheEntries,
+                  ensembleSize, endgameHeuristicsEnabled,
                 ),
                 OpeningBook.Empty,
                 maxTtEntries,

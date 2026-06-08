@@ -161,6 +161,20 @@ private[engine] final class AlphaBetaSearch(
     // that scored different game positions — their depth is
     // irrelevant to the current root.
     ttAgingEnabled: Boolean = false,
+    // Multi-ply continuation history: in addition to the 1-ply
+    // counter table (opponent's move → our refutation), also
+    // maintain a 2-ply table keyed by OUR own move 2 plies ago.
+    // Both signals contribute to move ordering. Stockfish-style;
+    // ~10-20 Elo on top of the existing 1-ply continuation.
+    multiPlyContinuationEnabled: Boolean = false,
+    // Under-promotion in move generation: emit all four promotion
+    // targets (Queen, Knight, Rook, Bishop) at the back rank
+    // instead of Queen-only. Knight under-promotion is the only
+    // one that ever matters in practice — mate / fork patterns
+    // a queen can't reach. Search tree grows ~4× at the affected
+    // nodes, so the Elo gain is only visible on tactical fixtures
+    // where under-promotion is the winning move.
+    underPromotionEnabled: Boolean = false,
     // Time-management upgrades for budgeted search:
     //   * extend time when the root best-move changes between
     //     iterations (signal that the search hasn't converged)
@@ -229,6 +243,14 @@ private[engine] final class AlphaBetaSearch(
   // shares the same best reply.
   private val continuationTable: Array[Int] = Array.fill(6 * 64)(NoKiller)
 
+  // Multi-ply continuation table: keyed by (piece-type-on-our-prev2-to,
+  // our-prev2-to). "prev2" = the move WE played two plies ago. Same
+  // shape and write/read pattern as `continuationTable` but with the
+  // older context. Both tables coexist when [[multiPlyContinuationEnabled]]
+  // is on — the 1-ply lookup feeds the existing `counter` ordering
+  // bucket, and the 2-ply lookup feeds the new `counter2` bucket.
+  private val continuationTable2: Array[Int] = Array.fill(6 * 64)(NoKiller)
+
   // LMR thresholds. See doc-comments on `searchMoves` for tuning.
   private inline val LmrMoveThreshold = 3
   private inline val LmrMinDepth      = 3
@@ -274,6 +296,11 @@ private[engine] final class AlphaBetaSearch(
     // value — mate scores cap at ~ ±32000). Cleared lazily — each
     // ply's slot is overwritten before it's read.
     val staticEval: Array[Int]       = Array.fill(MaxPly + 1)(Int.MinValue)
+    // Per-ply "move just searched" cache for the multi-ply
+    // continuation history. Set in searchMoves immediately before
+    // each recursive negamax call so deeper plies can look up the
+    // move played 2 plies ago via `recursionMove(ply - 2)`.
+    val recursionMove: Array[Int]    = Array.fill(MaxPly + 1)(NoKiller)
 
   /** Thread-local pool for `SearchBufs`. Each OS thread gets one
     * instance (~166 KB) which is reused across every search that
@@ -556,7 +583,7 @@ private[engine] final class AlphaBetaSearch(
   ): List[(Move, Int)] =
     val capBuf   = bufs.captures(0)
     val quietBuf = bufs.quiets(0)
-    val (capCount, quietCount) = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf)
+    val (capCount, quietCount) = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
     if capCount == 0 && quietCount == 0 then Nil
     else
       val rootHash = Zobrist.hash(state)
@@ -707,7 +734,7 @@ private[engine] final class AlphaBetaSearch(
     val rootBufs = acquireBufs()
     val capBuf   = rootBufs.captures(0)
     val quietBuf = rootBufs.quiets(0)
-    val (capCount, quietCount) = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf)
+    val (capCount, quietCount) = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
     if capCount == 0 && quietCount == 0 then ZIO.none
     else
       val rootHash    = Zobrist.hash(state)
@@ -817,6 +844,7 @@ private[engine] final class AlphaBetaSearch(
       System.arraycopy(counterMoveSeed, from * 64, counterMoveTable(from), 0, 64)
       from += 1
     java.util.Arrays.fill(continuationTable, NoKiller)
+    java.util.Arrays.fill(continuationTable2, NoKiller)
 
   /** Pick the move at the root that maximises the negamax score for
     * the side to move. Returns the chosen move's [[MoveInt]]
@@ -843,7 +871,7 @@ private[engine] final class AlphaBetaSearch(
   ): Option[Int] =
     val capBuf   = bufs.captures(0)
     val quietBuf = bufs.quiets(0)
-    val (capCount, quietCount) = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf)
+    val (capCount, quietCount) = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
     if capCount == 0 && quietCount == 0 then None
     else
       val rootHash = Zobrist.hash(state)
@@ -1110,7 +1138,7 @@ private[engine] final class AlphaBetaSearch(
     val capBuf   = bufs.captures(ply)
     val quietBuf = bufs.quiets(ply)
     val (capCount, quietCount) =
-      RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf)
+      RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
     if capCount == 0 && quietCount == 0 then terminalScore(state, ply)
     else
       searchMoves(
@@ -1302,7 +1330,7 @@ private[engine] final class AlphaBetaSearch(
       val capBuf   = bufs.captures(ply)
       val quietBuf = bufs.quiets(ply)
       val (capCount, quietCount) =
-        RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf)
+        RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
 
       if capCount == 0 && quietCount == 0 then
         // No legal moves: mate if in check, stalemate (draw) otherwise.
@@ -1482,18 +1510,26 @@ private[engine] final class AlphaBetaSearch(
         cutoff = true
         bestScore = beta
 
+    // 2-ply continuation lookup: the move WE played 2 plies back.
+    // Cached in [[SearchBufs.recursionMove]] one frame at a time by
+    // each recursive negamax call below; bounded by ply ≥ 2.
+    val prev2Move =
+      if multiPlyContinuationEnabled && ply >= 2 then bufs.recursionMove(ply - 2)
+      else NoKiller
+
     // ── Stage 1: captures ───────────────────────────────────────
     if !cutoff && capCount > 0 then
       // Stage 1 always reorders. With multi-cut active above, the
       // current `scored` slot already holds the ordered captures —
       // re-ordering is a no-op cost but keeps the code branch-free.
-      orderMovesInto(capBuf, capCount, scored, state, hash, ply, prevMove)
+      orderMovesInto(capBuf, capCount, scored, state, hash, ply, prevMove, prev2Move)
       var i = capCount - 1
       while i >= 0 && !cutoff do
         val move = MoveInt.fromPacked(scored(i))
         RulesAdapter.applyMoveInt(state, move).foreach { next =>
           // Captures don't get reduced (always "loud" by definition).
           val childDepth = depth - 1 + (if move == seMove then seBonus else 0)
+          bufs.recursionMove(ply) = move
           val score = -negamax(next, childDepth, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
           if score > bestScore then
             bestScore = score
@@ -1506,7 +1542,7 @@ private[engine] final class AlphaBetaSearch(
 
     // ── Stage 2: quiet moves (only if Stage 1 didn't cut off) ──
     if !cutoff && quietCount > 0 then
-      orderMovesInto(quietBuf, quietCount, scored, state, hash, ply, prevMove)
+      orderMovesInto(quietBuf, quietCount, scored, state, hash, ply, prevMove, prev2Move)
       // Conservative tuning after the first attempt (`4 + depth*2`
       // LMP + 100/300/500 futility w/ bare leafEval) lost -195 Elo.
       // Failure modes:
@@ -1579,6 +1615,7 @@ private[engine] final class AlphaBetaSearch(
             val seExt = if move == seMove then seBonus else 0
             val baseDepth = depth - 1 + seExt
             val searchDepth = if reduce then baseDepth - 1 else baseDepth
+            bufs.recursionMove(ply) = move
             var score = -negamax(next, searchDepth, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
             if reduce && score > alphaCur then
               score = -negamax(next, baseDepth, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
@@ -1608,6 +1645,16 @@ private[engine] final class AlphaBetaSearch(
                   }
                 else if counterMoveEnabled then
                   counterMoveTable(MoveInt.fromIdx(prevMove))(MoveInt.toIdx(prevMove)) = move
+              // Multi-ply continuation: write our 2-ply-ago context
+              // → this refutation. The piece sitting on prev2's
+              // to-square (our piece, since we played it) is the
+              // key. Independent of the 1-ply table — both can be
+              // active simultaneously.
+              if multiPlyContinuationEnabled && prev2Move != NoKiller then
+                val prev2To = MoveInt.toIdx(prev2Move)
+                state.board.get(positionAt(prev2To)).foreach { p =>
+                  continuationTable2(p.pieceType.ordinal * 64 + prev2To) = move
+                }
           }
         moveIndex += 1
         i -= 1
@@ -1649,6 +1696,7 @@ private[engine] final class AlphaBetaSearch(
       hash: Long,
       ply: Int,
       prevMove: Int,
+      prev2Move: Int = NoKiller,
   ): Unit =
     val ttBest = tt.get(hash).flatMap(_.bestMove).fold(NoKiller)(MoveInt.encodeMove)
     val k0 = if ply < MaxPly then killer0(ply) else NoKiller
@@ -1666,10 +1714,21 @@ private[engine] final class AlphaBetaSearch(
       else if counterMoveEnabled then
         counterMoveTable(MoveInt.fromIdx(prevMove))(MoveInt.toIdx(prevMove))
       else NoKiller
+    val counter2 =
+      if multiPlyContinuationEnabled && prev2Move != NoKiller then
+        // 2-ply key: the piece sitting on prev2's to-square is the
+        // piece WE moved 2 plies ago (still on that square unless
+        // captured between then and now — in which case lookup just
+        // misses and returns NoKiller, no correctness issue).
+        val prev2To = MoveInt.toIdx(prev2Move)
+        state.board.get(positionAt(prev2To)) match
+          case Some(p) => continuationTable2(p.pieceType.ordinal * 64 + prev2To)
+          case None    => NoKiller
+      else NoKiller
     var i = 0
     while i < count do
       val m = moveBuf(i)
-      val score = scoreMove(state, m, ttBest, k0, k1, counter)
+      val score = scoreMove(state, m, ttBest, k0, k1, counter, counter2)
       scoredOut(i) = MoveInt.pack(score, insertionIdx = i, move = m)
       i += 1
     java.util.Arrays.sort(scoredOut, 0, count)
@@ -1697,6 +1756,7 @@ private[engine] final class AlphaBetaSearch(
       k0: Int,
       k1: Int,
       counter: Int,
+      counter2: Int = NoKiller,
   ): Int =
     if move == ttBest then 1_000_000
     else
@@ -1720,6 +1780,12 @@ private[engine] final class AlphaBetaSearch(
           if move == k0 then 90_000
           else if move == k1 then 80_000
           else if move == counter then 70_000
+          // 2-ply continuation refutation. Slightly below the 1-ply
+          // counter because the 1-ply signal is more directly tied
+          // to the current opponent move; the 2-ply signal is a
+          // pattern recall ("we played X two plies back, this often
+          // follows").
+          else if move == counter2 then 65_000
           else
             math.min(historyTable(MoveInt.fromIdx(move))(MoveInt.toIdx(move)), 69_999)
 
