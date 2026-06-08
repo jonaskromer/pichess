@@ -34,14 +34,21 @@ final case class BoardState(
   import BoardState.bitboardFor
 
   // ── Cached aggregates ────────────────────────────────────────────────
-  // Computed once per BoardState instance. Hot path for MoveValidator
-  // ("can this ray reach the square without hitting any occupant?") so
-  // worth memoising.
-  lazy val whitePieces: Bitboard =
+  // Computed once per BoardState instance. `val` (not `lazy val`) —
+  // every BoardState in our hot search path has at least one of
+  // these accessed almost immediately (MoveValidator queries
+  // occupancy on every move-gen call, FullFeatures queries
+  // whitePieces/blackPieces in eval). Scala's lazy-val wrapper
+  // pays a synchronization check per *access*, not just per init,
+  // so plain `val` wins as long as we pay >= 1 access per
+  // instance — which we always do. Profile-confirmed:
+  // `BoardState.occupancy$lzyINIT1` shows up as a measurable hot
+  // spot under the old `lazy val`.
+  val whitePieces: Bitboard =
     pawnsW | knightsW | bishopsW | rooksW | queensW | kingW
-  lazy val blackPieces: Bitboard =
+  val blackPieces: Bitboard =
     pawnsB | knightsB | bishopsB | rooksB | queensB | kingB
-  lazy val occupancy: Bitboard = whitePieces | blackPieces
+  val occupancy: Bitboard = whitePieces | blackPieces
 
   // ── Map-style API ────────────────────────────────────────────────────
 

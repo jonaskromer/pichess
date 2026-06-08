@@ -110,32 +110,49 @@ private[engine] object RulesAdapter:
       capturesOut: Array[Int],
       quietsOut:   Array[Int],
   ): (Int, Int) =
-    val index = MoveValidator.legalDestinationsIndexSync(state)
+    // Skip the intermediate `Map[Position, List[Position]]` that
+    // `legalDestinationsIndexSync` would build — we'd just iterate
+    // it back into our Int buffers anyway. Walk the active-piece
+    // bitboard directly, call `legalMovesFromSync` per source,
+    // and stream-encode into the buffers in one pass. Saves the
+    // Map.newBuilder + builder.result + collectSources's
+    // ListBuffer + toList per move-gen call. Profile-confirmed
+    // hot spot.
+    val activeBb =
+      if state.activeColor == chess.model.piece.Color.White then
+        state.board.whitePieces.raw
+      else state.board.blackPieces.raw
     var nc = 0
     var nq = 0
-    val it = index.iterator
-    while it.hasNext do
-      val (from, destinations) = it.next()
+    var rem = activeBb
+    while rem != 0L do
+      val srcIdx = java.lang.Long.numberOfTrailingZeros(rem)
+      rem &= rem - 1L
+      val from = chess.model.board.Position(
+        ('a' + (srcIdx % 8)).toChar,
+        srcIdx / 8 + 1,
+      )
       val piece = state.board.get(from)
       val isPawn = piece.exists(_.pieceType == PieceType.Pawn)
-      val fromIdx = from.squareIdx
-      val destIt = destinations.iterator
-      while destIt.hasNext do
-        val to = destIt.next()
-        val toIdx = to.squareIdx
-        val isCapture =
-          state.board.contains(to) ||
-            (isPawn && state.enPassantTarget.contains(to))
-        val promo =
-          if isPawn && (to.row == 1 || to.row == 8) then MoveInt.PromoQueen
-          else MoveInt.NoPromotion
-        val encoded = MoveInt.encode(fromIdx, toIdx, promo)
-        if isCapture then
-          capturesOut(nc) = encoded
-          nc += 1
-        else
-          quietsOut(nq) = encoded
-          nq += 1
+      val destinations = MoveValidator.legalMovesFromSync(state, from)
+      if destinations.nonEmpty then
+        val destIt = destinations.iterator
+        while destIt.hasNext do
+          val to = destIt.next()
+          val toIdx = to.squareIdx
+          val isCapture =
+            state.board.contains(to) ||
+              (isPawn && state.enPassantTarget.contains(to))
+          val promo =
+            if isPawn && (to.row == 1 || to.row == 8) then MoveInt.PromoQueen
+            else MoveInt.NoPromotion
+          val encoded = MoveInt.encode(srcIdx, toIdx, promo)
+          if isCapture then
+            capturesOut(nc) = encoded
+            nc += 1
+          else
+            quietsOut(nq) = encoded
+            nq += 1
     (nc, nq)
 
   /** Iterate one of the sub-indices from [[legalCapturesAndQuiets]]
