@@ -476,18 +476,26 @@ object FeatureExtractor:
     private def addRookActivity(sink: FeatureSink, b: chess.model.board.BoardState): Unit =
       val wPawns = b.pawnsW.raw
       val bPawns = b.pawnsB.raw
-      val (wOpen, wSemi) = rookFileBonuses(b.rooksW.raw, wPawns, bPawns)
-      val (bOpen, bSemi) = rookFileBonuses(b.rooksB.raw, bPawns, wPawns)
+      val wPack = rookFileBonuses(b.rooksW.raw, wPawns, bPawns)
+      val bPack = rookFileBonuses(b.rooksB.raw, bPawns, wPawns)
+      val wOpen = (wPack >>> 32).toInt
+      val wSemi = wPack.toInt
+      val bOpen = (bPack >>> 32).toInt
+      val bSemi = bPack.toInt
       sink.add(FeatureIndex.RookOpenFile,      wOpen - bOpen)
       sink.add(FeatureIndex.RookSemiOpenFile, wSemi - bSemi)
 
     /** Per rook, count whether its file is open (no pawns of either
-      * side) or semi-open (no own pawns; enemy pawns ok). */
+      * side) or semi-open (no own pawns; enemy pawns ok). Returns
+      * the two counts packed into a Long (top 32 bits = open count,
+      * bottom 32 bits = semi-open count) so the call site doesn't
+      * pay a Tuple2[Integer, Integer] allocation per eval —
+      * profile-confirmed 28 boxToInteger samples here. */
     private def rookFileBonuses(
         rooks: Long,
         ownPawns: Long,
         enemyPawns: Long,
-    ): (Int, Int) =
+    ): Long =
       var open     = 0
       var semiOpen = 0
       var rem = rooks
@@ -499,7 +507,7 @@ object FeatureExtractor:
         val enemyOnFile = (fileM & enemyPawns) != 0L
         if !ownOnFile && !enemyOnFile then open += 1
         else if !ownOnFile then semiOpen += 1
-      (open, semiOpen)
+      (open.toLong << 32) | (semiOpen.toLong & 0xffffffffL)
 
     // ── Knight outpost ───────────────────────────────────────────
     //
