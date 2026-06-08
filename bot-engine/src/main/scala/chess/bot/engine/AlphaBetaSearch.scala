@@ -89,6 +89,32 @@ private[engine] final class AlphaBetaSearch(
     // squares often shares the same refutation). When ON,
     // overrides the CMH lookup at the 70_000 ordering bucket.
     continuationHistoryEnabled: Boolean = false,
+    // Check extension: when the side to move is in check at the
+    // node entry, search one extra ply. Standard textbook feature
+    // — finds mate-in-N at one less initial depth, avoids the
+    // horizon-effect blunder where a forced sequence ending in
+    // a recapture gets cut at the worst possible moment. Default
+    // OFF for clean A/B with the no-extension baseline.
+    checkExtensionEnabled: Boolean = false,
+    // NMP verification re-search: when the null-move reduced
+    // search fails high (≥ β), normally we'd prune. With
+    // verification ON, we instead re-search the SAME node at the
+    // current depth without null-move pruning enabled — a
+    // zugzwang-aware safety net. Cheap (one re-search at the
+    // already-passed depth), catches the rare positions where
+    // NMP returns a wrong fail-high.
+    nmpVerificationEnabled: Boolean = false,
+    // Pawn-hash correction history (Caissa/SF18 style): records
+    // the (search score − static eval) delta keyed by pawn-only
+    // Zobrist hash, then applies it as a correction to the static
+    // eval on subsequent visits. Sits between eval and pruning —
+    // no eval re-tuning required. Per-thread to avoid races.
+    pawnCorrHistEnabled: Boolean = false,
+    // Material-hash correction history. Same shape as the pawn
+    // variant but keyed by piece-count signature. Captures the
+    // "this material balance plays X cp differently than the
+    // tuned eval expects" pattern. Layers on top of pawn corrhist.
+    materialCorrHistEnabled: Boolean = false,
 ) extends Search:
 
   import Search.{Infinity, MateScore}
@@ -822,6 +848,14 @@ private[engine] final class AlphaBetaSearch(
             if depth <= 0 then leafScore(state, alpha, beta, ply, bufs)
             else if ply >= MaxPly then leafEval(state)
             else
+              // Check extension: search one extra ply when the side
+              // to move is in check. Keep the side-effect of the
+              // computation (the boolean) for later NMP/extension
+              // decisions so we don't compute `isInCheck` twice.
+              val inCheckHere = RulesAdapter.isInCheck(state)
+              val effDepth =
+                if checkExtensionEnabled && inCheckHere then depth + 1
+                else depth
               // Null-move pruning. Standard gates:
               //   * not in check (a null move while in check leaves
               //     the king en-prise, an illegal position)
@@ -839,22 +873,29 @@ private[engine] final class AlphaBetaSearch(
               val canNullMove =
                 nullMovePruningEnabled
                   && nullAllowed
-                  && depth >= 3
-                  && !RulesAdapter.isInCheck(state)
+                  && effDepth >= 3
+                  && !inCheckHere
                   && hasNonPawnMaterial(state)
                   && (beta - alpha) > 1
               if canNullMove then
-                val r = if depth >= 6 then 3 else 2
+                val r = if effDepth >= 6 then 3 else 2
                 val nullState = nullMoveState(state)
                 val nullScore = -negamax(
-                  nullState, depth - 1 - r, -beta, -beta + 1,
+                  nullState, effDepth - 1 - r, -beta, -beta + 1,
                   ply + 1, history + hash, bufs, prevMove = NoKiller,
                   nullAllowed = false,
                 )
-                if nullScore >= beta then beta
-                else fullSearch(state, hash, depth, alpha, beta, ply, history, bufs, prevMove)
+                if nullScore >= beta then
+                  // Verification re-search: re-run the same node at
+                  // effDepth without NMP enabled. Cheap insurance
+                  // against zugzwang positions where the null move
+                  // returns a misleading fail-high.
+                  if nmpVerificationEnabled then
+                    fullSearch(state, hash, effDepth, alpha, beta, ply, history, bufs, prevMove)
+                  else beta
+                else fullSearch(state, hash, effDepth, alpha, beta, ply, history, bufs, prevMove)
               else
-                fullSearch(state, hash, depth, alpha, beta, ply, history, bufs, prevMove)
+                fullSearch(state, hash, effDepth, alpha, beta, ply, history, bufs, prevMove)
 
   /** Decide whether the TT bestMove at the current node deserves
     * a +1 ply extension. Used by [[searchMoves]] when iterating —
@@ -926,11 +967,67 @@ private[engine] final class AlphaBetaSearch(
       inCheck         = false,
     )
 
-  /** Static evaluation at a leaf node, normalised to side-to-move POV.
-    * The Evaluator hands back white-POV centipawns; flip on black. */
-  private def leafEval(state: GameState): Int =
+  // ── Correction history (pawn + material) ────────────────────────
+  //
+  // Two parallel tables — one keyed by [[Zobrist.pawnHash]], one by
+  // [[Zobrist.materialKey]] — accumulate the running delta between
+  // the search score and the static eval. When enabled, [[leafEval]]
+  // adds the table's correction to the raw eval before returning.
+  // [[searchMoves]] writes back deltas at search completion (Exact
+  // bounds only — Upper/Lower are unreliable for training).
+  //
+  // The table is per-thread because the EMA update isn't race-safe
+  // and we want clean signals; cross-thread sharing isn't worth the
+  // atomic dance.
+  private inline val CorrHistSize  = 16384
+  private inline val CorrHistMask  = 16383
+  private inline val CorrHistScale = 256
+  private inline val CorrHistMax   = 16384 * CorrHistScale
+
+  private val pawnCorrHist: ThreadLocal[Array[Int]] =
+    ThreadLocal.withInitial(() => new Array[Int](CorrHistSize))
+  private val materialCorrHist: ThreadLocal[Array[Int]] =
+    ThreadLocal.withInitial(() => new Array[Int](CorrHistSize))
+
+  private inline def corrSlot(key: Long): Int = (key & CorrHistMask).toInt
+
+  private inline def corrhistCorrection(state: GameState): Int =
+    var corr = 0
+    if pawnCorrHistEnabled then
+      corr += pawnCorrHist.get()(corrSlot(Zobrist.pawnHash(state))) / CorrHistScale
+    if materialCorrHistEnabled then
+      corr += materialCorrHist.get()(corrSlot(Zobrist.materialKey(state))) / CorrHistScale
+    corr
+
+  private def updateCorrhist(state: GameState, staticEval: Int, searchScore: Int, depth: Int): Unit =
+    val delta = (searchScore - staticEval) * CorrHistScale
+    val weight = math.min(depth + 1, 16)
+    if pawnCorrHistEnabled then updateOne(pawnCorrHist.get(), Zobrist.pawnHash(state), delta, weight)
+    if materialCorrHistEnabled then updateOne(materialCorrHist.get(), Zobrist.materialKey(state), delta, weight)
+
+  private inline def updateOne(table: Array[Int], key: Long, delta: Int, weight: Int): Unit =
+    val idx = corrSlot(key)
+    val cur = table(idx)
+    val blended = (cur * (16 - weight) + delta * weight) / 16
+    table(idx) =
+      if blended >  CorrHistMax then  CorrHistMax
+      else if blended < -CorrHistMax then -CorrHistMax
+      else blended
+
+  /** Raw STM-perspective evaluation, no corrhist correction applied.
+    * The corrhist update path reads this directly so the recorded
+    * delta is `search - rawEval`, not `search - (rawEval + correction)`
+    * (which would converge to half the desired correction). */
+  private inline def leafEvalRaw(state: GameState): Int =
     val raw = eval.evaluate(state)
     if state.activeColor == Color.White then raw else -raw
+
+  /** Static evaluation at a leaf node, normalised to side-to-move POV
+    * and corrected by the active correction-history tables. The
+    * Evaluator hands back white-POV centipawns; flip on black. */
+  private def leafEval(state: GameState): Int =
+    val stm = leafEvalRaw(state)
+    if pawnCorrHistEnabled || materialCorrHistEnabled then stm + corrhistCorrection(state) else stm
 
   /** Leaf entry point: routes to either bare static eval or the
     * quiescence search depending on [[quiescenceEnabled]]. Keeping
@@ -1224,6 +1321,13 @@ private[engine] final class AlphaBetaSearch(
       else Kind.Exact
     val bestMoveOpt = if bestMove == NoKiller then None else Some(MoveInt.decode(bestMove))
     tt.put(hash, Entry(depth, bestScore, kind, bestMoveOpt))
+    // Train correction history on reliable signals only — Exact-bound
+    // results where the search saw all moves. Cutoffs (Lower) and
+    // all-moves-failed-low (Upper) misrepresent the position's true
+    // value. Skip while in check too — the eval is meaningless when
+    // a king is exposed.
+    if (pawnCorrHistEnabled || materialCorrHistEnabled) && kind == Kind.Exact && !inCheckHere then
+      updateCorrhist(state, leafEvalRaw(state), bestScore, depth)
     bestScore
 
   /** Move ordering. Writes (score, move) pairs into `scoredOut` as

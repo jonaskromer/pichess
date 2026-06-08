@@ -113,6 +113,51 @@ object Zobrist:
       if state.activeColor == Color.Black then blackToMove else 0L
     boardHash ^ castlingHash ^ epHash ^ colorHash
 
+  /** Pawn-structure-only Zobrist key. XOR of the pawn random
+    * draws — sensitive only to where pawns sit (color-aware via
+    * the two separate sub-tables), not to anything else. Used as
+    * the index key for the correction-history table: pawn skeletons
+    * change slowly, so the same key recurs across many positions in
+    * one search subtree, giving the corrhist signal enough
+    * accumulations to converge.
+    */
+  def pawnHash(state: GameState): Long =
+    val bs = state.board
+    hashBits(bs.pawnsW.raw, pieces(5)) ^ hashBits(bs.pawnsB.raw, pieces(11))
+
+  /** Material-signature key: piece counts per (color, type), packed
+    * so distinct compositions hash distinctly. The exact mixing isn't
+    * important — what matters is that the same material balance
+    * always returns the same Long, and different balances are very
+    * unlikely to collide. Used as the second correction-history
+    * index alongside [[pawnHash]]. */
+  def materialKey(state: GameState): Long =
+    val bs = state.board
+    // 8 piece counts (skip kings — always 1 each) × 5 bits each = 40 bits.
+    // Bishops sometimes exceed 4 (under-promotion), allow 5 bits to be safe.
+    val pW = bs.pawnsW.popCount.toLong   & 0x1f
+    val nW = bs.knightsW.popCount.toLong & 0x1f
+    val bW = bs.bishopsW.popCount.toLong & 0x1f
+    val rW = bs.rooksW.popCount.toLong   & 0x1f
+    val qW = bs.queensW.popCount.toLong  & 0x1f
+    val pB = bs.pawnsB.popCount.toLong   & 0x1f
+    val nB = bs.knightsB.popCount.toLong & 0x1f
+    val bB = bs.bishopsB.popCount.toLong & 0x1f
+    val rB = bs.rooksB.popCount.toLong   & 0x1f
+    val qB = bs.queensB.popCount.toLong  & 0x1f
+    val packed =
+      pW | (nW << 5) | (bW << 10) | (rW << 15) | (qW << 20) |
+        (pB << 25) | (nB << 30) | (bB << 35) | (rB << 40) | (qB << 45)
+    // Splitmix-style avalanche so neighbouring material balances
+    // map to distant slots rather than clustering.
+    var x = packed
+    x ^= x >>> 30
+    x *= 0xBF58476D1CE4E5B9L
+    x ^= x >>> 27
+    x *= 0x94D049BB133111EBL
+    x ^= x >>> 31
+    x
+
   private inline def hashBits(bits: Long, table: Array[Long]): Long =
     var b = bits
     var h = 0L
