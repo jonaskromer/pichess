@@ -93,12 +93,22 @@ object SelfPlayTrainMain extends ZIOAppDefault:
       allRows = botRows ++ sfRows
       _    <- ZIO.logInfo(s"Collected ${allRows.size} labelled positions across " +
                 s"${cfg.botOpponents.size} bot opponents + ${cfg.sfSkills.size} SF levels")
-      // 3) Texel-tune from the hero's weights.
+      // 3) Texel-tune. Seed the initial vector with EVERY feature
+      //    name the extractor can emit (threats at 0 when absent from
+      //    the hero's older snapshot) so the tuner can learn weights
+      //    for features the seed version predates — e.g. the
+      //    threat_by_* terms added after v8 was tuned. Keys only in
+      //    `initial` are adjustable; missing ones stay frozen at 0.
+      tunerInitial = TaperedFeatureExtractor.allFeatureNames
+                       .map(k => k -> heroWeights.getOrElse(k, 0)).toMap
+      newKeys = tunerInitial.size - heroWeights.size
+      _    <- ZIO.logInfo(s"Tuner seed: ${tunerInitial.size} keys " +
+                s"($newKeys new since v${cfg.heroVersion})")
       samples = allRows.flatMap(r => CorpusTrainer.toSample(r, extractor))
       _    <- ZIO.when(samples.isEmpty)(
                 ZIO.fail(new RuntimeException("No usable samples generated")))
-      lossBefore = TexelTuner.totalLoss(samples.iterator, heroWeights, 0.4)
-      tuned = TexelTuner.tune(samples.iterator, heroWeights, K = 0.4,
+      lossBefore = TexelTuner.totalLoss(samples.iterator, tunerInitial, 0.4)
+      tuned = TexelTuner.tune(samples.iterator, tunerInitial, K = 0.4,
                 maxIterations = cfg.maxIterations, initialStep = cfg.initialStep)
       snapshot = WeightSnapshot(version = cfg.nextVersion, weights = tuned.weights)
       _    <- WeightsLoader.writeFile(snapshot, Paths.get(cfg.outPath))
