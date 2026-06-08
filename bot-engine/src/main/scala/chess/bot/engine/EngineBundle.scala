@@ -2,6 +2,8 @@ package chess.bot.engine
 
 import zio.*
 
+import chess.bot.engine.nnue.{NnueEnsemble, NnueEvaluator}
+
 /** All-in-one engine bootstrap.
   *
   * The bot's runtime is two pieces of data — weights + opening book —
@@ -30,14 +32,38 @@ final case class EngineBundle(
 
 object EngineBundle:
 
+  /** Which evaluator to use under the search. The HCE path stays the
+    * historical default so existing call sites + benches see no
+    * behaviour change. NNUE variants opt in. */
+  enum EvalSource:
+    /** Hand-crafted eval — the array-backed tapered evaluator over
+      * the tuned `weights/v{n}.json` snapshot. Same evaluator that
+      * has been running in tournaments to date. */
+    case Hce
+    /** Single NNUE network loaded from `/nnue-v1.bin`. Falls back to
+      * HCE if the resource is missing. */
+    case Nnue
+    /** NNUE ensemble — `/nnue-ens-v1-s{1..k}.bin`. K members average
+      * their evals (variance reduction). Falls back to single NNUE
+      * then HCE if any member is missing. */
+    case NnueEns
+
   /** Default bundle: load `weights/v1.json` + `openings/main-lines.pgn`
     * from the classpath, assemble [[Search]] over those. Fails fast
     * if either resource is missing or malformed — bot startup
-    * shouldn't silently continue with a half-loaded engine. */
+    * shouldn't silently continue with a half-loaded engine.
+    *
+    * Eval-source choice + eval cache are opt-in: defaults match the
+    * historical HCE-no-cache behaviour so existing benches stay
+    * apples-to-apples until callers explicitly switch. */
   def fromResources(
       weightsVersion: Int = 1,
       maxBookPly: Int = 24,
       maxTtEntries: Int = 1_000_000,
+      evalSource: EvalSource = EvalSource.Hce,
+      evalCacheEnabled: Boolean = false,
+      evalCacheEntries: Int = 1_000_000,
+      ensembleSize: Int = 3,
   ): IO[Throwable, EngineBundle] =
     for
       weights <- WeightsLoader.load(weightsVersion)
@@ -49,9 +75,30 @@ object EngineBundle:
       // scoring as [[TaperedEvaluator]] (pinned by spec) but ~10×
       // cheaper per call — the Map[String, Int] feature path was the
       // dominant allocator (~121 MB/op at depth 4).
-      eval     = ArrayTaperedEvaluator(weights.weights)
+      hce      = ArrayTaperedEvaluator(weights.weights)
+      eval     = wrapEval(hce, evalSource, evalCacheEnabled, evalCacheEntries, ensembleSize)
       search   = Search.alphaBeta(eval, book, maxTtEntries)
     yield EngineBundle(weights, book, search)
+
+  /** Pick the requested evaluator with NNUE fallbacks, then optionally
+    * wrap in a Zobrist-keyed eval cache. */
+  private def wrapEval(
+      hce: Evaluator,
+      source: EvalSource,
+      cacheEnabled: Boolean,
+      cacheEntries: Int,
+      ensembleSize: Int,
+  ): Evaluator =
+    val chosen = source match
+      case EvalSource.Hce => hce
+      case EvalSource.Nnue =>
+        NnueEvaluator.loadResource("/nnue-v1.bin").getOrElse(hce)
+      case EvalSource.NnueEns =>
+        NnueEnsemble.loadBaked(ensembleSize)
+          .map(_.asInstanceOf[Evaluator])
+          .orElse(NnueEvaluator.loadResource("/nnue-v1.bin"))
+          .getOrElse(hce)
+    if cacheEnabled then CachedEvaluator.of(chosen, cacheEntries) else chosen
 
   /** Same as [[fromResources]] but on any failure, falls back to the
     * material-only evaluator + empty opening book. Returns the bundle
@@ -60,8 +107,15 @@ object EngineBundle:
       weightsVersion: Int = 1,
       maxBookPly: Int = 24,
       maxTtEntries: Int = 1_000_000,
+      evalSource: EvalSource = EvalSource.Hce,
+      evalCacheEnabled: Boolean = false,
+      evalCacheEntries: Int = 1_000_000,
+      ensembleSize: Int = 3,
   ): UIO[(EngineBundle, Option[Throwable])] =
-    fromResources(weightsVersion, maxBookPly, maxTtEntries)
+    fromResources(
+      weightsVersion, maxBookPly, maxTtEntries,
+      evalSource, evalCacheEnabled, evalCacheEntries, ensembleSize,
+    )
       .map(b => (b, None))
       .catchAll { err =>
         ZIO.succeed(
@@ -74,7 +128,10 @@ object EngineBundle:
               // weights if a live WeightsRepo later attaches a tuned
               // snapshot with `_mg` / `_eg` keys.
               search      = Search.alphaBeta(
-                ArrayTaperedEvaluator(fallbackSnapshot.weights),
+                wrapEval(
+                  ArrayTaperedEvaluator(fallbackSnapshot.weights),
+                  evalSource, evalCacheEnabled, evalCacheEntries, ensembleSize,
+                ),
                 OpeningBook.Empty,
                 maxTtEntries,
               ),

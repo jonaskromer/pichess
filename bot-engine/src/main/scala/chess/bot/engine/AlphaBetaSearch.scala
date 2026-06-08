@@ -115,6 +115,52 @@ private[engine] final class AlphaBetaSearch(
     // "this material balance plays X cp differently than the
     // tuned eval expects" pattern. Layers on top of pawn corrhist.
     materialCorrHistEnabled: Boolean = false,
+    // Internal Iterative Reductions: when no TT-best-move exists
+    // at a sufficient-depth node, reduce depth by 1 before
+    // searching. Reasoning — without a TT-seeded ordering, the
+    // search will waste effort exploring bad moves first; shrinking
+    // depth bounds the wasted work. Stockfish-derived; ~5-15 Elo.
+    iirEnabled: Boolean = false,
+    // Reverse Futility Pruning / Static Null-Move Pruning. At low
+    // depth and non-PV, if `staticEval − margin*depth >= beta`,
+    // return beta immediately — we're already so far above β that
+    // any reasonable move keeps us there. Pairs with the
+    // `improving` flag (smaller margin when improving). ~10-20 Elo.
+    rfpEnabled: Boolean = false,
+    // Razoring. At low depth, if `staticEval + margin < alpha`,
+    // drop straight to qsearch. If qsearch still fails low, return
+    // that score. Cheap downside check. ~5-10 Elo.
+    razoringEnabled: Boolean = false,
+    // Delta pruning in quiescence search: skip captures whose
+    // material gain + safety margin can't lift the side-to-move
+    // above alpha. Tightens the qsearch tree without losing
+    // tactics. ~5-10 Elo.
+    deltaPruningEnabled: Boolean = false,
+    // History gravity: soft-clamp history table bonuses via
+    // `bonus -= history * |bonus| / max` so the table doesn't
+    // saturate at extreme values. Keeps the move-ordering signal
+    // fresh through long searches. ~5 Elo.
+    historyGravityEnabled: Boolean = false,
+    // Move-count-based pruning (more aggressive than LMP): at
+    // shallow depth and late move index past a generous threshold,
+    // skip the remaining quiet moves entirely. Pairs with the
+    // improving flag (later threshold when improving). ~5-10 Elo.
+    moveCountPruningEnabled: Boolean = false,
+    // Double extensions in singular-extension hot moves: when the
+    // singular margin (TT score − beta_singular) is very high,
+    // extend by 2 instead of 1. Stockfish refinement; ~5-10 Elo.
+    doubleExtensionEnabled: Boolean = false,
+    // Multi-cut pruning: at a cut-node, if ≥ M of the first N
+    // moves at reduced depth (R = 2) already produce a fail-high,
+    // assume the whole node fails high and prune the rest. ~5-15
+    // Elo classical, less in modern NMP+LMR engines.
+    multiCutEnabled: Boolean = false,
+    // TT aging: bump a generation counter per top-level search and
+    // prefer fresh-generation entries over stale ones on collision
+    // (regardless of depth). Stale entries are from prior searches
+    // that scored different game positions — their depth is
+    // irrelevant to the current root.
+    ttAgingEnabled: Boolean = false,
 ) extends Search:
 
   import Search.{Infinity, MateScore}
@@ -213,6 +259,11 @@ private[engine] final class AlphaBetaSearch(
     val captures: Array[Array[Int]]  = Array.fill(MaxPly + 1)(new Array[Int](MaxMovesPerNode))
     val quiets:   Array[Array[Int]]  = Array.fill(MaxPly + 1)(new Array[Int](MaxMovesPerNode))
     val scored:   Array[Array[Long]] = Array.fill(MaxPly + 1)(new Array[Long](MaxMovesPerNode))
+    // Per-ply static eval cache. `Int.MinValue` is the sentinel for
+    // "not computed at this ply yet" (legal evals never reach that
+    // value — mate scores cap at ~ ±32000). Cleared lazily — each
+    // ply's slot is overwritten before it's read.
+    val staticEval: Array[Int]       = Array.fill(MaxPly + 1)(Int.MinValue)
 
   /** Thread-local pool for `SearchBufs`. Each OS thread gets one
     * instance (~166 KB) which is reused across every search that
@@ -294,6 +345,9 @@ private[engine] final class AlphaBetaSearch(
         clearKillers()
         clearHistory()
         clearCounterMoves()
+        if ttAgingEnabled then
+          tt.setAgingEnabled(true)
+          tt.bumpGeneration()
         if iterativeDeepeningEnabled then iterativeBestMove(state, depth, history)
         else if lazySmpEnabled && parallelism > 1 then lazySmpBestMove(state, depth, history)
         else if parallelism > 1 then parallelBestMove(state, depth, history)
@@ -374,6 +428,9 @@ private[engine] final class AlphaBetaSearch(
         clearKillers()
         clearHistory()
         clearCounterMoves()
+        if ttAgingEnabled then
+          tt.setAgingEnabled(true)
+          tt.bumpGeneration()
         budgetedBestMove(state, budgetMillis, history)
     }
 
@@ -439,6 +496,9 @@ private[engine] final class AlphaBetaSearch(
         clearKillers()
         clearHistory()
         clearCounterMoves()
+        if ttAgingEnabled then
+          tt.setAgingEnabled(true)
+          tt.bumpGeneration()
         val bufs = acquireBufs()
         ZIO.succeed(syncMultiPv(state, depth, history, bufs, k))
     }
@@ -856,6 +916,51 @@ private[engine] final class AlphaBetaSearch(
               val effDepth =
                 if checkExtensionEnabled && inCheckHere then depth + 1
                 else depth
+
+              // Static eval cache: compute lazily, but only when one of
+              // the eval-driven gates (RFP, razoring, improving margin)
+              // is active. Stored on the per-ply slot so an `improving`
+              // check from `ply+2` can see this node's value.
+              val needsStaticEval =
+                (rfpEnabled || razoringEnabled || moveCountPruningEnabled) && !inCheckHere
+              val staticEvalHere =
+                if needsStaticEval then leafEvalRaw(state) else Int.MinValue
+              if needsStaticEval then bufs.staticEval(ply) = staticEvalHere
+              val isImprovingHere: Boolean =
+                if !needsStaticEval || ply < 2 then true
+                else
+                  val prev = bufs.staticEval(ply - 2)
+                  prev == Int.MinValue || staticEvalHere > prev
+
+              // RFP / Static null-move: at non-PV low-depth nodes that
+              // aren't in check, if the static eval already towers
+              // over β by a depth-scaled margin, return β. Margin is
+              // smaller when `isImproving` (we trust the eval more
+              // when our position is on the up).
+              val canRfp =
+                rfpEnabled && !inCheckHere && (beta - alpha) == 1 &&
+                  effDepth <= RfpMaxDepth && staticEvalHere != Int.MinValue &&
+                  math.abs(beta) < MateScore - MaxPly
+              val rfpFire =
+                canRfp && {
+                  val margin =
+                    if isImprovingHere then RfpMarginImproving * effDepth
+                    else                     RfpMarginNotImproving * effDepth
+                  staticEvalHere - margin >= beta
+                }
+
+              // Razoring: same gates, opposite direction. If the
+              // static eval + a depth-scaled margin still can't
+              // reach α, drop straight to qsearch. If qsearch also
+              // fails low, return that.
+              val canRazor =
+                razoringEnabled && !inCheckHere && (beta - alpha) == 1 &&
+                  effDepth <= RazorMaxDepth && staticEvalHere != Int.MinValue
+              val razorScore =
+                if canRazor && staticEvalHere + RazorMargin * effDepth < alpha then
+                  leafScore(state, alpha, beta, ply, bufs)
+                else Int.MinValue
+
               // Null-move pruning. Standard gates:
               //   * not in check (a null move while in check leaves
               //     the king en-prise, an illegal position)
@@ -877,25 +982,35 @@ private[engine] final class AlphaBetaSearch(
                   && !inCheckHere
                   && hasNonPawnMaterial(state)
                   && (beta - alpha) > 1
-              if canNullMove then
-                val r = if effDepth >= 6 then 3 else 2
+              // IIR: when no TT-best-move at sufficient depth, ordering
+              // will be poor — shrink depth by 1 to bound the wasted
+              // search. Applied AFTER check extension and BEFORE null
+              // move so NMP still respects the reduced depth.
+              val iirDepth =
+                if iirEnabled && effDepth >= 4 && tt.get(hash).flatMap(_.bestMove).isEmpty
+                then effDepth - 1
+                else effDepth
+              if rfpFire then beta
+              else if razorScore != Int.MinValue && razorScore < alpha then razorScore
+              else if canNullMove then
+                val r = if iirDepth >= 6 then 3 else 2
                 val nullState = nullMoveState(state)
                 val nullScore = -negamax(
-                  nullState, effDepth - 1 - r, -beta, -beta + 1,
+                  nullState, iirDepth - 1 - r, -beta, -beta + 1,
                   ply + 1, history + hash, bufs, prevMove = NoKiller,
                   nullAllowed = false,
                 )
                 if nullScore >= beta then
                   // Verification re-search: re-run the same node at
-                  // effDepth without NMP enabled. Cheap insurance
+                  // iirDepth without NMP enabled. Cheap insurance
                   // against zugzwang positions where the null move
                   // returns a misleading fail-high.
                   if nmpVerificationEnabled then
-                    fullSearch(state, hash, effDepth, alpha, beta, ply, history, bufs, prevMove)
+                    fullSearch(state, hash, iirDepth, alpha, beta, ply, history, bufs, prevMove)
                   else beta
-                else fullSearch(state, hash, effDepth, alpha, beta, ply, history, bufs, prevMove)
+                else fullSearch(state, hash, iirDepth, alpha, beta, ply, history, bufs, prevMove)
               else
-                fullSearch(state, hash, effDepth, alpha, beta, ply, history, bufs, prevMove)
+                fullSearch(state, hash, iirDepth, alpha, beta, ply, history, bufs, prevMove)
 
   /** Decide whether the TT bestMove at the current node deserves
     * a +1 ply extension. Used by [[searchMoves]] when iterating —
@@ -966,6 +1081,40 @@ private[engine] final class AlphaBetaSearch(
                         else state.fullmoveNumber,
       inCheck         = false,
     )
+
+  // RFP (Reverse Futility / Static Null-Move) constants. Standard
+  // Stockfish-style depth-scaled margin; smaller when the side to
+  // move's position is `improving` (eval rising vs ply-2), bigger
+  // otherwise.
+  private inline val RfpMaxDepth            = 6
+  private inline val RfpMarginImproving     = 75
+  private inline val RfpMarginNotImproving  = 125
+
+  // Razoring constants. Depth cap + per-ply margin. If
+  // `staticEval + Razor*depth < alpha`, drop to qsearch.
+  private inline val RazorMaxDepth = 3
+  private inline val RazorMargin   = 200
+
+  // Delta-pruning constants. Promo bonus = queen value - pawn value
+  // (the upgrade gained on promotion). Safety margin ≈ 1 piece, to
+  // not prune captures that could lead to favourable trades a step
+  // later (queen sac for two pieces, etc).
+  private inline val DeltaPromoBonus    = 900 - 100
+  private inline val DeltaSafetyMargin  = 200
+
+  // History update with optional gravity. Standard Stockfish-style
+  // formula: `new = old + bonus - old * |bonus| / Max`. Asymptotic
+  // to `±Max`, keeps signals fresh without the unbounded growth of
+  // raw `+=`. With gravity OFF, falls back to the historical `+=`
+  // accumulation so A/B comparisons stay clean.
+  private inline val HistoryMax = 16384
+
+  private inline def updateHistory(from: Int, to: Int, bonus: Int): Unit =
+    val cur = historyTable(from)(to)
+    if historyGravityEnabled then
+      historyTable(from)(to) = cur + bonus - cur * math.abs(bonus) / HistoryMax
+    else
+      historyTable(from)(to) = cur + bonus
 
   // ── Correction history (pawn + material) ────────────────────────
   //
@@ -1100,15 +1249,31 @@ private[engine] final class AlphaBetaSearch(
         if !cutoff && capCount > 0 then
           val scored = bufs.scored(ply)
           orderCapturesMvvLva(capBuf, capCount, scored, state)
+          // Delta pruning baseline = standPat. We skip captures
+          // whose max possible material gain + safety can't reach α.
+          // Disabled while in check (no stand-pat is available, and
+          // every move is a forced reply we shouldn't prune).
+          val deltaActive = deltaPruningEnabled && !inCheck
+          val deltaBase   = if deltaActive then bestScore else 0
           var i = capCount - 1
           while i >= 0 && !cutoff do
             val move = MoveInt.fromPacked(scored(i))
-            RulesAdapter.applyMoveInt(state, move).foreach { next =>
-              val score = -qSearch(next, -beta, -alphaCur, ply + 1, bufs)
-              if score > bestScore then bestScore = score
-              if score > alphaCur then alphaCur = score
-              if alphaCur >= beta then cutoff = true
-            }
+            val to   = MoveInt.toIdx(move)
+            val skipByDelta =
+              if !deltaActive then false
+              else
+                val victimVal = state.board.get(positionAt(to))
+                  .map(p => pieceValue(p.pieceType)).getOrElse(0)
+                val isPromo = MoveInt.promo(move) != MoveInt.NoPromotion
+                val promoBonus = if isPromo then DeltaPromoBonus else 0
+                deltaBase + victimVal + promoBonus + DeltaSafetyMargin < alphaCur
+            if !skipByDelta then
+              RulesAdapter.applyMoveInt(state, move).foreach { next =>
+                val score = -qSearch(next, -beta, -alphaCur, ply + 1, bufs)
+                if score > bestScore then bestScore = score
+                if score > alphaCur then alphaCur = score
+                if alphaCur >= beta then cutoff = true
+              }
             i -= 1
 
         // Under check we also need quiet escapes — blocking the
@@ -1292,7 +1457,7 @@ private[engine] final class AlphaBetaSearch(
             if alphaCur >= beta then
               cutoff = true
               recordKiller(ply, move)
-              historyTable(MoveInt.fromIdx(move))(MoveInt.toIdx(move)) += depth * depth
+              updateHistory(MoveInt.fromIdx(move), MoveInt.toIdx(move), depth * depth)
               // Counter-move heuristic: when a quiet move refutes
               // `prevMove`, remember it as the canonical reply to
               // that opponent move. Skipped at the root and inside

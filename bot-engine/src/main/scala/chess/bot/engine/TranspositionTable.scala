@@ -29,6 +29,17 @@ trait TranspositionTable:
   def put(hash: Long, entry: TranspositionTable.Entry): Unit
   def size: Int
   def clear(): Unit
+  /** Advance the aging-generation counter. Called once per
+    * top-level search so subsequent `put`s carry the new
+    * generation and can preferentially overwrite stale entries
+    * from prior searches. Default no-op for table implementations
+    * that don't age. */
+  def bumpGeneration(): Unit = ()
+  /** Enable or disable generation-preferred replacement. When ON,
+    * a fresh-generation entry beats a stale higher-depth entry on
+    * collisions — search at the new root reuses the table cheaply.
+    * Default OFF preserves the historical depth-only policy. */
+  def setAgingEnabled(enabled: Boolean): Unit = ()
 
 object TranspositionTable:
 
@@ -43,12 +54,19 @@ object TranspositionTable:
     * lower bound on the true value). `bestMove` is the move that
     * produced the stored score — used by the search for move ordering
     * (try the TT move first → bigger β-cutoffs → smaller node count).
+    *
+    * `generation` tags the entry with the search that produced it.
+    * When aging is enabled, a stored entry from an older generation
+    * loses to a fresh-generation put even at higher depth — the old
+    * entry's score is from a different game position, while the
+    * fresh entry is "live" for the current search.
     */
   final case class Entry(
       depth: Int,
       score: Int,
       kind: Kind,
       bestMove: Option[Move],
+      generation: Int = 0,
   )
 
   /** Default [[ConcurrentHashMap]]-backed table.
@@ -66,6 +84,8 @@ object TranspositionTable:
       extends TranspositionTable:
     private val table = new ConcurrentHashMap[Long, Entry](maxEntries * 2)
     @volatile private var evictParity: Long = 0L
+    @volatile private var generation: Int = 0
+    @volatile private var agingEnabled: Boolean = false
 
     def get(hash: Long): Option[Entry] =
       Option(table.get(hash))
@@ -79,10 +99,26 @@ object TranspositionTable:
       // ended up colder than running at depth N directly. Allowing
       // equal-depth replacement keeps the freshest score when the
       // same position is revisited at the same depth.
+      //
+      // With aging ON: a fresh-generation entry always wins over a
+      // stale-generation one, regardless of depth. Stale entries
+      // are from prior searches that scored a different game
+      // position; their depth is irrelevant for the current root.
+      val tagged = if entry.generation == 0 then entry.copy(generation = generation) else entry
       val existing = table.get(hash)
-      if existing == null || entry.depth >= existing.depth then
-        table.put(hash, entry)
+      val accept =
+        if existing == null then true
+        else if agingEnabled && tagged.generation != existing.generation then true
+        else tagged.depth >= existing.depth
+      if accept then
+        table.put(hash, tagged)
         if table.size > maxEntries then evict()
+
+    override def bumpGeneration(): Unit =
+      generation = (generation + 1) & 0xff
+
+    override def setAgingEnabled(enabled: Boolean): Unit =
+      agingEnabled = enabled
 
     def size: Int = table.size
 
