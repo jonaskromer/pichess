@@ -352,19 +352,53 @@ object FeatureExtractor:
     private def addPawnStructure(sink: FeatureSink, b: chess.model.board.BoardState): Unit =
       val wPawns = b.pawnsW.raw
       val bPawns = b.pawnsB.raw
-      addPassedPawns(sink, wPawns, bPawns, white = true)
-      addPassedPawns(sink, bPawns, wPawns, white = false)
-      sink.add(FeatureIndex.IsolatedPawn,  isolatedCount(wPawns) - isolatedCount(bPawns))
-      sink.add(FeatureIndex.DoubledPawn,   doubledCount(wPawns)  - doubledCount(bPawns))
-      sink.add(FeatureIndex.ConnectedPawn, connectedCount(wPawns) - connectedCount(bPawns))
+      val cache = PawnStructureCache.local.get()
+      val slot = PawnStructureCache.slot(wPawns, bPawns)
+      val base = slot * PawnStructureCache.EntrySize
+      if cache.keyW(slot) == wPawns && cache.keyB(slot) == bPawns then
+        replay(sink, cache.data, base)
+      else
+        computePawnContribs(wPawns, bPawns, cache.data, base)
+        cache.keyW(slot) = wPawns
+        cache.keyB(slot) = bPawns
+        replay(sink, cache.data, base)
 
-    private def addPassedPawns(
-        sink: FeatureSink,
-        ownPawns: Long,
-        enemyPawns: Long,
-        white: Boolean,
+    private def replay(sink: FeatureSink, data: Array[Int], base: Int): Unit =
+      var r = 0
+      while r < 6 do
+        sink.add(FeatureIndex.PassedRankBase + r, data(base + r))
+        r += 1
+      sink.add(FeatureIndex.IsolatedPawn,  data(base + 6))
+      sink.add(FeatureIndex.DoubledPawn,   data(base + 7))
+      sink.add(FeatureIndex.ConnectedPawn, data(base + 8))
+
+    /** Compute the 9 pawn-structure feature contributions (6 passed-
+      * rank bonuses, isolated, doubled, connected diffs) for the
+      * given pawn bitboards. Writes into `data[base..base+8]`.
+      * Mirrors what [[addPawnStructure]] used to call inline; the
+      * cache-miss path runs this and stores the result. */
+    private def computePawnContribs(
+        wPawns: Long, bPawns: Long, data: Array[Int], base: Int,
+    ): Unit =
+      var i = 0
+      while i < 9 do
+        data(base + i) = 0
+        i += 1
+      passedContribs(wPawns, bPawns, white = true,  data, base)
+      passedContribs(bPawns, wPawns, white = false, data, base)
+      data(base + 6) = isolatedCount(wPawns) - isolatedCount(bPawns)
+      data(base + 7) = doubledCount(wPawns)  - doubledCount(bPawns)
+      data(base + 8) = connectedCount(wPawns) - connectedCount(bPawns)
+
+    /** Adapted from the old [[addPassedPawns]] body — accumulates
+      * each passed pawn into `data(base + (rank-2))` instead of
+      * directly into the sink, so the result can be cached. */
+    private def passedContribs(
+        ownPawns: Long, enemyPawns: Long, white: Boolean,
+        data: Array[Int], base: Int,
     ): Unit =
       var rem = ownPawns
+      val sign = if white then 1 else -1
       while rem != 0L do
         val sq = java.lang.Long.numberOfTrailingZeros(rem)
         rem &= rem - 1L
@@ -372,14 +406,11 @@ object FeatureExtractor:
           if white then PawnMasks.passedPawnMaskWhite(sq)
           else          PawnMasks.passedPawnMaskBlack(sq)
         if (enemyPawns & mask) == 0L then
-          // White rank from 0 (rank 1) to 7 (rank 8); black mirrors.
           val whiteEquivRank =
             if white then (sq / 8) + 1
             else            (mirror(sq) / 8) + 1
-          val sign = if white then 1 else -1
-          // Passed pawn ranks land in 2..7 (rank 1 = source, rank 8 = promoted).
           if whiteEquivRank >= 2 && whiteEquivRank <= 7 then
-            sink.add(FeatureIndex.PassedRankBase + (whiteEquivRank - 2), sign)
+            data(base + (whiteEquivRank - 2)) += sign
 
     private def isolatedCount(pawns: Long): Int =
       var total = 0
@@ -553,3 +584,45 @@ object FeatureExtractor:
             else          (BitboardAttacks.whitePawnAttackersOf(sq) & enemyPawns) != 0L
           if defendedByPawn && !attackedByEnemyPawn then total += 1
       total
+
+    // ── Pawn-structure cache ──────────────────────────────────────
+    //
+    // The 9 pawn-structure feature contributions (6 passed-rank
+    // bonuses + isolated/doubled/connected diffs) depend purely on
+    // `(wPawns, bPawns)`. Pawns move slowly in a search subtree —
+    // most positions encountered during one negamax recursion share
+    // the same pawn skeleton — so caching the 9 ints by pawn
+    // bitboard pair gives a high hit rate (~90%+ in practice).
+    //
+    // ThreadLocal storage avoids contention between parallel YBWC
+    // fibers and avoids the bookkeeping of a thread-safe scheme
+    // (atomic key+value writes are needed to prevent torn reads
+    // under races). Each thread carries ~210 KB of cache state —
+    // well within the working set we already allocate per thread
+    // (SearchBufs is 166 KB).
+    //
+    // The slot index uses a simple multiplicative mix of the two
+    // bitboards. Collisions just cause cache misses (correctness
+    // is preserved because we verify both bitboards on hit).
+    private[FullFeatures] object PawnStructureCache:
+      inline val SizeBits  = 12
+      inline val Size      = 1 << SizeBits
+      inline val Mask      = Size - 1
+      inline val EntrySize = 9
+
+      // Pawn bitboards have bits set only on ranks 2..7 (bits 8..55).
+      // `-1L` (all bits set) therefore cannot appear as a real
+      // pawn bitboard and makes a safe "empty slot" sentinel.
+      private inline val EmptyKey = -1L
+
+      final class ThreadCache:
+        val keyW: Array[Long] = Array.fill(Size)(EmptyKey)
+        val keyB: Array[Long] = Array.fill(Size)(EmptyKey)
+        val data: Array[Int]  = new Array[Int](Size * EntrySize)
+
+      val local: ThreadLocal[ThreadCache] =
+        ThreadLocal.withInitial(() => new ThreadCache())
+
+      inline def slot(w: Long, b: Long): Int =
+        val mix = w * 0x9E3779B97F4A7C15L + b * 0xBF58476D1CE4E5B9L
+        (((mix ^ (mix >>> 32)) & Mask).toInt)
