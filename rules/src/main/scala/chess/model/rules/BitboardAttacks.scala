@@ -37,6 +37,24 @@ object BitboardAttacks:
   /** Symmetric to [[whitePawnAttackersOf]] for BLACK pawn attackers. */
   val blackPawnAttackersOf: Array[Long] = buildBlackPawnAttackersOf()
 
+  // ── Pawn attack maps ────────────────────────────────────────────────
+  //
+  // Given a bitboard of pawns of one color, return the bitboard of every
+  // square those pawns collectively attack. The classic two-shift trick
+  // — NE/NW for white, SE/SW for black — masks out the file that would
+  // wrap to the opposite side. Pure ALU, no table lookups, < 5 ns/call.
+
+  private val FileA: Long = 0x0101010101010101L
+  private val FileH: Long = 0x8080808080808080L
+
+  /** Bitboard of every square attacked by the given white-pawn set. */
+  inline def whitePawnAttacksFrom(pawns: Long): Long =
+    ((pawns & ~FileH) << 9) | ((pawns & ~FileA) << 7)
+
+  /** Bitboard of every square attacked by the given black-pawn set. */
+  inline def blackPawnAttacksFrom(pawns: Long): Long =
+    ((pawns & ~FileA) >>> 9) | ((pawns & ~FileH) >>> 7)
+
   // ── Sliding attacks (magic bitboards) ────────────────────────────────
 
   /** All squares a BISHOP at `sq` attacks given `occupancy`. Hashes

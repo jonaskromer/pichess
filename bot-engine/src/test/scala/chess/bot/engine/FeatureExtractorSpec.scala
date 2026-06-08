@@ -124,8 +124,8 @@ object FeatureExtractorSpec extends ZIOSpecDefault:
     test("allFeatureNames covers material + PST + scalar features uniquely") {
       val names = FeatureExtractor.allFeatureNames.toList
       assertTrue(
-        // 5 material + 320 PST + 20 scalar = 345 total
-        names.size == 345,
+        // 5 material + 320 PST + 23 scalar = 348 total
+        names.size == 348,
         names.distinct.size == names.size,
         // Spot checks across categories
         names.contains("pawn"),

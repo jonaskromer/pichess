@@ -86,6 +86,9 @@ object FeatureExtractor:
         "rook_semi_open_file",
         "knight_outpost",
         "tempo",
+        "threat_by_pawn",
+        "threat_by_minor",
+        "threat_by_rook",
       )
 
   /** Generate every PST feature key in canonical order. Useful when
@@ -153,7 +156,15 @@ object FeatureExtractor:
     inline val KnightOutpost  = 343
     inline val Tempo          = 344
 
-    inline val Count          = 345
+    // Tactical threat features. Sign convention: a higher value
+    // favours WHITE, so the diff is (black-pieces-threatened) minus
+    // (white-pieces-threatened) — the tuner usually learns a
+    // positive weight on each.
+    inline val ThreatByPawn   = 345  // enemy pawn attacks own knight/bishop/rook/queen
+    inline val ThreatByMinor  = 346  // enemy knight/bishop attacks own rook/queen
+    inline val ThreatByRook   = 347  // enemy rook attacks own queen
+
+    inline val Count          = 348
 
     /** Reverse lookup: idx → canonical key name. Built once from
       * [[allFeatureNames]]. Used by the [[MapSink]] to convert
@@ -234,6 +245,7 @@ object FeatureExtractor:
       addKingSafety(sink, b)
       addRookActivity(sink, b)
       addKnightOutpost(sink, b)
+      addThreats(sink, b)
       sink.add(FeatureIndex.Tempo, if state.activeColor == Color.White then 1 else -1)
 
     // ── Material + PST + bishop pair (existing features) ──────────
@@ -584,6 +596,66 @@ object FeatureExtractor:
             else          (BitboardAttacks.whitePawnAttackersOf(sq) & enemyPawns) != 0L
           if defendedByPawn && !attackedByEnemyPawn then total += 1
       total
+
+    // ── Tactical threats ──────────────────────────────────────────
+    //
+    // Counts our pieces under attack by lower-valued enemy pieces —
+    // the classic "loose piece" pattern. Three buckets by attacker
+    // type. Diff is `bAttacked - wAttacked` so a positive feature
+    // value means BLACK has more pieces in danger (favours white).
+    private def addThreats(sink: FeatureSink, b: chess.model.board.BoardState): Unit =
+      val occ = b.occupancy.raw
+      val wPawnAttacks = BitboardAttacks.whitePawnAttacksFrom(b.pawnsW.raw)
+      val bPawnAttacks = BitboardAttacks.blackPawnAttacksFrom(b.pawnsB.raw)
+
+      // (1) ThreatByPawn — enemy pawn attacks own knight/bishop/rook/queen.
+      val wMinorMajor = b.knightsW.raw | b.bishopsW.raw | b.rooksW.raw | b.queensW.raw
+      val bMinorMajor = b.knightsB.raw | b.bishopsB.raw | b.rooksB.raw | b.queensB.raw
+      val wAttackedByPawn = java.lang.Long.bitCount(bPawnAttacks & wMinorMajor)
+      val bAttackedByPawn = java.lang.Long.bitCount(wPawnAttacks & bMinorMajor)
+      sink.add(FeatureIndex.ThreatByPawn, bAttackedByPawn - wAttackedByPawn)
+
+      // (2) ThreatByMinor — enemy knight/bishop attacks own rook/queen.
+      val wMinorAttacks = minorAttacks(b.knightsW.raw, b.bishopsW.raw, occ)
+      val bMinorAttacks = minorAttacks(b.knightsB.raw, b.bishopsB.raw, occ)
+      val wRookQueen = b.rooksW.raw | b.queensW.raw
+      val bRookQueen = b.rooksB.raw | b.queensB.raw
+      val wAttackedByMinor = java.lang.Long.bitCount(bMinorAttacks & wRookQueen)
+      val bAttackedByMinor = java.lang.Long.bitCount(wMinorAttacks & bRookQueen)
+      sink.add(FeatureIndex.ThreatByMinor, bAttackedByMinor - wAttackedByMinor)
+
+      // (3) ThreatByRook — enemy rook attacks own queen.
+      val wRookAttacks = rookAttacksUnion(b.rooksW.raw, occ)
+      val bRookAttacks = rookAttacksUnion(b.rooksB.raw, occ)
+      val wAttackedByRook = java.lang.Long.bitCount(bRookAttacks & b.queensW.raw)
+      val bAttackedByRook = java.lang.Long.bitCount(wRookAttacks & b.queensB.raw)
+      sink.add(FeatureIndex.ThreatByRook, bAttackedByRook - wAttackedByRook)
+
+    /** Bitboard of all squares attacked by the given knights + bishops
+      * (given total occupancy for the sliding bishop walk). */
+    private def minorAttacks(knights: Long, bishops: Long, occ: Long): Long =
+      var attacks = 0L
+      var rem = knights
+      while rem != 0L do
+        val sq = java.lang.Long.numberOfTrailingZeros(rem)
+        rem &= rem - 1L
+        attacks |= BitboardAttacks.knightAttacks(sq)
+      rem = bishops
+      while rem != 0L do
+        val sq = java.lang.Long.numberOfTrailingZeros(rem)
+        rem &= rem - 1L
+        attacks |= BitboardAttacks.bishopAttacks(sq, occ)
+      attacks
+
+    /** Bitboard of all squares attacked by the given rooks. */
+    private def rookAttacksUnion(rooks: Long, occ: Long): Long =
+      var attacks = 0L
+      var rem = rooks
+      while rem != 0L do
+        val sq = java.lang.Long.numberOfTrailingZeros(rem)
+        rem &= rem - 1L
+        attacks |= BitboardAttacks.rookAttacks(sq, occ)
+      attacks
 
     // ── Pawn-structure cache ──────────────────────────────────────
     //

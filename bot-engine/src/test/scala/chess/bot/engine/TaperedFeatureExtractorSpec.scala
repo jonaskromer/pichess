@@ -87,8 +87,8 @@ object TaperedFeatureExtractorSpec extends ZIOSpecDefault:
     test("allFeatureNames covers every full extractor key with both suffixes") {
       val names = TaperedFeatureExtractor.allFeatureNames.toList
       assertTrue(
-        // Original full extractor has 345 keys → tapered has 690.
-        names.size == 690,
+        // Original full extractor has 348 keys → tapered has 696.
+        names.size == 696,
         names.distinct.size == names.size,
         names.contains("pawn_mg"),
         names.contains("pawn_eg"),
