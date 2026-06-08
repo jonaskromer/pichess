@@ -72,6 +72,12 @@ object NnueDataGen extends ZIOAppDefault:
       // game, so any YBWC fan-out inside each search would just
       // fight other games for cores.
       search  <- buildSearch(cfg.weightsVersion, searchParallelism = 1)
+      sfOpp   <- cfg.sfOpponentSkill match
+                   case Some(skill) =>
+                     StockfishSearch
+                       .spawn(skillLevel = Some(skill), label = s"sf-skill$skill")
+                       .map(Some(_))
+                   case None => ZIO.succeed(None)
       // Round-robin through the opening pool so the dataset
       // covers a variety of pawn structures, not 1000 games of
       // the same line.
@@ -83,7 +89,7 @@ object NnueDataGen extends ZIOAppDefault:
       // per game.
       _       <- ZIO.scoped {
                    openWriter(Paths.get(cfg.outputPath)).flatMap { writer =>
-                     playAll(search, openings, cfg, writer)
+                     playAll(search, sfOpp, openings, cfg, writer)
                    }
                  }
       _       <- ZIO.logInfo(s"Wrote ${cfg.outputPath}")
@@ -93,10 +99,14 @@ object NnueDataGen extends ZIOAppDefault:
       games:           Int,
       depth:           Int,
       scoringDepth:    Int,
+      multiPvK:        Int,
+      scoreClipCp:     Int,
       maxPlies:        Int,
+      noisePlies:      Int,
       outputPath:      String,
       weightsVersion:  Int,
       parallelism:     Int,
+      sfOpponentSkill: Option[Int],
   )
 
   private def readConfig: UIO[Config] = ZIO.succeed {
@@ -109,10 +119,29 @@ object NnueDataGen extends ZIOAppDefault:
       // labelling pass doesn't dominate runtime (~50 ms/row at
       // depth 4 vs ~hundreds of ms at depth 6+).
       scoringDepth   = intEnv("PICHESS_NNUE_SCORING_DEPTH", 4),
+      // Multi-PV K — top-K moves with their scores per row. K=3
+      // is the standard policy-net training shape; K=1 reduces
+      // back to single-best (cheaper labelling).
+      multiPvK       = intEnv("PICHESS_NNUE_MULTIPV", 3),
+      // Score clip in centipawns. Mate scores (~99936+) and very
+      // sharp positions otherwise dominate the loss; clipping to
+      // ±2000 cp keeps the regression target inside a reasonable
+      // sigmoid range.
+      scoreClipCp    = intEnv("PICHESS_NNUE_SCORE_CLIP", 2000),
       maxPlies       = intEnv("PICHESS_NNUE_MAX_PLIES", 200),
+      // Random-noise plies: apply N random legal moves to the
+      // opening FEN before play starts. Diversifies the
+      // distribution of post-opening positions seen — without it
+      // each opening produces the same self-play line every time.
+      noisePlies     = intEnv("PICHESS_NNUE_NOISE_PLIES", 2),
       outputPath     = sys.env.getOrElse("PICHESS_NNUE_OUT", defaultOut),
       weightsVersion = intEnv("PICHESS_NNUE_VERSION", 8),
       parallelism    = intEnv("PICHESS_NNUE_PARALLELISM", 4),
+      // Optional Stockfish opponent skill level (0-20). When set,
+      // odd-indexed games play against Stockfish instead of self-
+      // play, diversifying training data with non-pichess style.
+      // Unset → pure self-play (current behavior).
+      sfOpponentSkill = sys.env.get("PICHESS_NNUE_SF_SKILL").flatMap(_.toIntOption),
     )
   }
 
@@ -140,18 +169,35 @@ object NnueDataGen extends ZIOAppDefault:
 
   private def playAll(
       search: Search,
+      sfOpp: Option[Search],
       openings: Vector[GameState],
       cfg: Config,
       writer: BufferedWriter,
   ): UIO[Unit] =
     val counter = java.util.concurrent.atomic.AtomicInteger(0)
+    // Per-fiber RNG seeded by game index for reproducibility +
+    // diversity. The same FEN seed across runs reproduces the same
+    // noise; different game indices in the same run get different
+    // noise.
     ZIO
       .foreachPar(0 until cfg.games) { i =>
-        val opening = openings((i / 2) % openings.size)
+        val openingBase = openings((i / 2) % openings.size)
+        val rng = new scala.util.Random(0xC0FFEEL ^ i.toLong)
+        val openingStart =
+          if cfg.noisePlies > 0 then applyNoise(openingBase, cfg.noisePlies, rng)
+          else openingBase
+        // Pair each game with either the self-play opponent or the
+        // Stockfish opponent on odd-indexed games. The single SF
+        // subprocess serializes via its lock — half the games
+        // become serial, the other half stay parallel.
+        val opponent = sfOpp match
+          case Some(sf) if i % 2 == 1 => sf
+          case _                       => search
         SelfPlay
-          .playGame(search, search, cfg.depth, cfg.maxPlies, opening)
+          .playGame(search, opponent, cfg.depth, cfg.maxPlies, openingStart)
           .flatMap { result =>
-            writeGame(writer, search, cfg.scoringDepth, opening, result)
+            writeGame(writer, search, cfg.scoringDepth, cfg.multiPvK,
+                      cfg.scoreClipCp, openingStart, result)
           }
           .tap { _ =>
             val done = counter.incrementAndGet()
@@ -162,25 +208,52 @@ object NnueDataGen extends ZIOAppDefault:
       .withParallelism(cfg.parallelism)
       .unit
 
+  /** Apply `n` random legal moves to `state` for opening
+    * diversification. The chosen move per ply is uniformly random
+    * over the legal-move list (no eval bias) so we explore wider
+    * positions than self-play tends to. Returns the diversified
+    * start state. Falls back to `state` if a noise step produces
+    * no legal moves (we hit a terminal sequence). */
+  private def applyNoise(state: GameState, n: Int, rng: scala.util.Random): GameState =
+    if n <= 0 then state
+    else
+      // Enumerate legal moves via the public MoveValidator
+      // destinations index (sync, no ZIO), pick one uniformly at
+      // random, apply via the synchronous core. RulesAdapter is
+      // `private[engine]` so we can't reach it from bot-train.
+      val destinations =
+        chess.model.rules.MoveValidator.legalDestinationsIndexSync(state)
+      val moves = destinations.toVector.flatMap { case (from, tos) =>
+        tos.map(to => chess.model.board.Move(from, to, promotion = None))
+      }
+      if moves.isEmpty then state
+      else
+        val choice = moves(rng.nextInt(moves.size))
+        chess.model.rules.Game.applyMoveCoreSync(state, choice) match
+          case Some(next) => applyNoise(next, n - 1, rng)
+          case None       => state
+
   /** Walk the played-out game; for every quiet position, score it
     * with a fresh search and emit a Bullet `.plain` row.
     *
-    * The score per row comes from `Search.evaluate(pre, depth)` —
-    * one shallow search per emitted position. Cost is roughly
-    * `quietRows × searchTime`; for ~30 quiets/game at depth 4
-    * (~50ms each) that's ~1.5s of extra work per game. The
-    * resulting training target is dramatically better than the
-    * material-only placeholder: it captures piece coordination,
-    * king safety, tempo, and the rest of the eval's signal.
+    * Row format (extended): `fen | score | wdl | m1:s1,m2:s2,...`
+    * where the comma-separated trailing column is the top-K moves
+    * with their white-POV centipawn scores, ordered best-first.
+    * The "score" column equals the first move's score (so Bullet
+    * still parses cleanly — its text loader ignores the 4th
+    * column). The multi-PV trail enables future policy-net
+    * training without re-generating the data.
     *
-    * `scoringDepth` is usually lower than the gameplay depth —
-    * we want each row labelled fast, not deeply analysed. Depth
-    * 4 gives reasonable eval at ~50ms; depth 6 doubles the cost
-    * for a slightly stronger label. */
+    * Score clipping: every score is clamped to `±scoreClipCp`
+    * before write. Mate ladder scores (~99936+) and very sharp
+    * positions otherwise dominate the regression target; ±2000 cp
+    * keeps everything inside a useful sigmoid range. */
   private def writeGame(
       writer: BufferedWriter,
       search: Search,
       scoringDepth: Int,
+      multiPvK: Int,
+      scoreClipCp: Int,
       initial: GameState,
       result: SelfPlay.GameResult,
   ): UIO[Unit] =
@@ -192,36 +265,46 @@ object NnueDataGen extends ZIOAppDefault:
     // Walk pre-states first to collect every quiet position; then
     // score them all in one ZIO traversal so the per-row blocking
     // I/O happens once at the end, after every search has run.
-    val builder = scala.collection.mutable.ArrayBuffer.empty[(GameState, chess.model.board.Move)]
+    val builder = scala.collection.mutable.ArrayBuffer.empty[GameState]
     var pre = initial
     result.history.foreach { case (move, post) =>
       val isCapture = pre.board.contains(move.to) || isEnPassant(pre, move)
       val isCheck   = pre.inCheck || post.inCheck
-      if !isCapture && !isCheck then builder += ((pre, move))
+      if !isCapture && !isCheck then builder += pre
       pre = post
     }
     val quietRows = builder.toVector
-    // Search each pre-state at `scoringDepth`; the returned score
-    // is from the side-to-move's POV, so we flip on black to get
-    // a white-relative score (Bullet expects white-relative).
+
+    inline def toWhitePov(stmScore: Int, state: GameState): Int =
+      val raw =
+        if state.activeColor == chess.model.piece.Color.White then stmScore
+        else -stmScore
+      math.max(-scoreClipCp, math.min(scoreClipCp, raw))
+
+    // For each pre-state, get top-K (move, score) pairs at
+    // `scoringDepth`. The returned scores are STM-POV; we flip +
+    // clip to white-POV here so the writer side just formats text.
     ZIO
-      .foreach(quietRows) { case (preState, move) =>
-        search.evaluate(preState, scoringDepth).map { stmScore =>
-          val whiteScore =
-            if preState.activeColor == chess.model.piece.Color.White then stmScore
-            else -stmScore
-          (FenSerializer.serialize(preState), whiteScore, move)
+      .foreach(quietRows) { preState =>
+        search.bestMoves(preState, scoringDepth, multiPvK).map { topK =>
+          val whitePov = topK.map { case (m, s) => (m, toWhitePov(s, preState)) }
+          FenSerializer.serialize(preState) -> whitePov
         }
       }
       .flatMap { scored =>
         ZIO.attemptBlocking {
           writer.synchronized {
-            scored.foreach { case (fen, whiteScore, move) =>
-              writer.write(fen); writer.write(" | ")
-              writer.write(whiteScore.toString); writer.write(" | ")
-              writer.write(formatDouble(wdlWhite)); writer.write(" | ")
-              writer.write(toUci(move))
-              writer.newLine()
+            scored.foreach { case (fen, topK) =>
+              if topK.nonEmpty then
+                val headScore = topK.head._2
+                val mpvStr = topK
+                  .map { case (m, s) => s"${toUci(m)}:$s" }
+                  .mkString(",")
+                writer.write(fen); writer.write(" | ")
+                writer.write(headScore.toString); writer.write(" | ")
+                writer.write(formatDouble(wdlWhite)); writer.write(" | ")
+                writer.write(mpvStr)
+                writer.newLine()
             }
             writer.flush()
           }
