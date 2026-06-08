@@ -224,11 +224,23 @@ object Search:
       // worker. Replaces YBWC when both `lazySmpEnabled` and
       // `parallelism > 1`.
       lazySmpEnabled: Boolean = false,
-      // ── Newer search heuristics (all default OFF, pending A/B). ──
+      // ── Newer search heuristics. ──
       // Exposed here so EngineBundle / TournamentMain can flip them
       // without reaching past this factory. See the matching doc
       // comments on AlphaBetaSearch's constructor for semantics.
-      checkExtensionEnabled: Boolean = false,
+      //
+      // ON — check extension is the one post-v8 search flag that
+      // measured a clear, repeatable win at parallelism=1 (the only
+      // trustworthy tournament mode): +64 Elo over 80 games and
+      // +61.4 over 200 games (58.8%, 58-23-119) in v8+checkext vs v8
+      // head-to-heads at depth 4 with the production Q+SEE+NMP+SE
+      // base. Extends the search by one ply when the side to move is
+      // in check; tactics matter even at shallow depth, so unlike the
+      // pruning heuristics (RFP/razoring/IIR/etc, all ~neutral at
+      // depth 4) this pays immediately. NOTE: p>1 tournament results
+      // are unreliable — the same flag measured -424 Elo at p=8 from
+      // shared-TT concurrency noise.
+      checkExtensionEnabled: Boolean = true,
       nmpVerificationEnabled: Boolean = false,
       pawnCorrHistEnabled: Boolean = false,
       materialCorrHistEnabled: Boolean = false,
