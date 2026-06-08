@@ -1529,7 +1529,7 @@ private[engine] final class AlphaBetaSearch(
         RulesAdapter.applyMoveInt(state, move).foreach { next =>
           // Captures don't get reduced (always "loud" by definition).
           val childDepth = depth - 1 + (if move == seMove then seBonus else 0)
-          bufs.recursionMove(ply) = move
+          if multiPlyContinuationEnabled then bufs.recursionMove(ply) = move
           val score = -negamax(next, childDepth, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
           if score > bestScore then
             bestScore = score
@@ -1615,7 +1615,7 @@ private[engine] final class AlphaBetaSearch(
             val seExt = if move == seMove then seBonus else 0
             val baseDepth = depth - 1 + seExt
             val searchDepth = if reduce then baseDepth - 1 else baseDepth
-            bufs.recursionMove(ply) = move
+            if multiPlyContinuationEnabled then bufs.recursionMove(ply) = move
             var score = -negamax(next, searchDepth, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
             if reduce && score > alphaCur then
               score = -negamax(next, baseDepth, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
@@ -1728,7 +1728,13 @@ private[engine] final class AlphaBetaSearch(
     var i = 0
     while i < count do
       val m = moveBuf(i)
-      val score = scoreMove(state, m, ttBest, k0, k1, counter, counter2)
+      // Inline-cheap path: scoreMove is small enough to JIT-inline
+      // when the call site doesn't add extra params. Apply the 2-ply
+      // continuation boost post-scoring instead of inside scoreMove
+      // so the hot method stays at its pre-multi-ply bytecode size.
+      var score = scoreMove(state, m, ttBest, k0, k1, counter)
+      if counter2 != NoKiller && m == counter2 && score < 65_000 then
+        score = 65_000
       scoredOut(i) = MoveInt.pack(score, insertionIdx = i, move = m)
       i += 1
     java.util.Arrays.sort(scoredOut, 0, count)
@@ -1756,7 +1762,6 @@ private[engine] final class AlphaBetaSearch(
       k0: Int,
       k1: Int,
       counter: Int,
-      counter2: Int = NoKiller,
   ): Int =
     if move == ttBest then 1_000_000
     else
@@ -1780,12 +1785,6 @@ private[engine] final class AlphaBetaSearch(
           if move == k0 then 90_000
           else if move == k1 then 80_000
           else if move == counter then 70_000
-          // 2-ply continuation refutation. Slightly below the 1-ply
-          // counter because the 1-ply signal is more directly tied
-          // to the current opponent move; the 2-ply signal is a
-          // pattern recall ("we played X two plies back, this often
-          // follows").
-          else if move == counter2 then 65_000
           else
             math.min(historyTable(MoveInt.fromIdx(move))(MoveInt.toIdx(move)), 69_999)
 
