@@ -51,7 +51,7 @@ object TournamentMain extends ZIOAppDefault:
                         cfg.challengerLmpFut, cfg.challengerSeed, cfg.challengerContHist,
                         cfg.challengerAsp, cfg.challengerNnue, cfg.challengerSe,
                         cfg.challengerNnueEns, cfg.challengerLazySmp,
-                        cfg.challengerEvalCache,
+                        cfg.challengerEvalCache, cfg.challengerFlags,
                       ).flatMap(maybeWrapSyzygy(_, cfg.challengerSyzygy, cfg))
         champion   <- loadOpponent(cfg)
                         .flatMap(maybeWrapSyzygy(_, cfg.championSyzygy, cfg))
@@ -83,8 +83,12 @@ object TournamentMain extends ZIOAppDefault:
       // path; ignore the user setting.
       if cfg.vsStockfish then "1 (forced — single Stockfish subprocess)"
       else cfg.parallelism.toString
+    val flagNote =
+      val ch = if cfg.challengerFlags.isEmpty then "none" else cfg.challengerFlags.toList.sorted.mkString("+")
+      val cm = if cfg.championFlags.isEmpty then "none" else cfg.championFlags.toList.sorted.mkString("+")
+      s" [challenger flags: $ch | champion flags: $cm]"
     s"Tournament: v${cfg.challenger} (challenger) vs $opponent (champion), " +
-      s"${cfg.games} games at depth ${cfg.depth}, parallelism $parNote"
+      s"${cfg.games} games at depth ${cfg.depth}, parallelism $parNote" + flagNote
 
   private final case class Config(
       challenger: Int,
@@ -127,6 +131,13 @@ object TournamentMain extends ZIOAppDefault:
       championLazySmp:    Boolean,
       challengerEvalCache: Boolean,
       championEvalCache:   Boolean,
+      // Comma-separated set of newer search-heuristic flag names to
+      // enable for each side (e.g. "checkExt,rfp,iir"). Lets a
+      // single env var A/B any of the post-v8 flags without a
+      // dedicated env var per flag. Recognised names are listed in
+      // [[applyNewFlags]].
+      challengerFlags:     Set[String],
+      championFlags:       Set[String],
   )
 
   private def readConfig: UIO[Config] =
@@ -232,11 +243,20 @@ object TournamentMain extends ZIOAppDefault:
                                 .exists(_.equalsIgnoreCase("true")),
         championEvalCache   = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_EVCACHE")
                                 .exists(_.equalsIgnoreCase("true")),
+        challengerFlags     = flagsEnv("PICHESS_TOURNAMENT_CHALLENGER_FLAGS"),
+        championFlags       = flagsEnv("PICHESS_TOURNAMENT_CHAMPION_FLAGS"),
       )
     }
 
   private def intEnv(name: String, default: Int): Int =
     sys.env.get(name).flatMap(_.toIntOption).getOrElse(default)
+
+  /** Parse a comma-separated flag-name list from an env var into a
+    * lowercased set. Blank / unset → empty set. */
+  private def flagsEnv(name: String): Set[String] =
+    sys.env.get(name)
+      .map(_.split(",").iterator.map(_.trim.toLowerCase).filter(_.nonEmpty).toSet)
+      .getOrElse(Set.empty)
 
   /** Optionally wrap a search in a TB-augmentation layer that
     * delegates low-piece positions (≤ `syzygyPieceLimit`) to a
@@ -276,6 +296,7 @@ object TournamentMain extends ZIOAppDefault:
       cfg.championId, cfg.championNmp, cfg.championLmpFut, cfg.championSeed,
       cfg.championContHist, cfg.championAsp, cfg.championNnue, cfg.championSe,
       cfg.championNnueEns, cfg.championLazySmp, cfg.championEvalCache,
+      cfg.championFlags,
     )
 
   /** Build a [[Search]] for the given weights-version JSON
@@ -299,6 +320,7 @@ object TournamentMain extends ZIOAppDefault:
       nnueEnsembleEnabled: Boolean,
       lazySmpEnabled: Boolean,
       evalCacheEnabled: Boolean,
+      newFlags: Set[String],
   ): ZIO[Any, Throwable, Search] =
     WeightsLoader.load(version).map { snapshot =>
       val rawEval: chess.bot.engine.Evaluator =
@@ -320,19 +342,54 @@ object TournamentMain extends ZIOAppDefault:
       val eval: chess.bot.engine.Evaluator =
         if evalCacheEnabled then chess.bot.engine.CachedEvaluator.of(rawEval)
         else rawEval
+      // Validate the requested new-flag names up front — a typo in an
+      // A/B config should fail loud, not silently test nothing.
+      val unknown = newFlags -- RecognisedNewFlags
+      if unknown.nonEmpty then
+        throw new IllegalArgumentException(
+          s"Unknown tournament flag(s): ${unknown.mkString(", ")}. " +
+            s"Recognised: ${RecognisedNewFlags.toList.sorted.mkString(", ")}"
+        )
+      def on(name: String): Boolean = newFlags.contains(name)
       Search.alphaBeta(
-        eval                       = eval,
-        book                       = OpeningBook.Empty,
-        counterMoveEnabled         = counterMoveEnabled,
-        quiescenceEnabled          = quiescenceEnabled,
-        seeEnabled                 = seeEnabled,
-        iterativeDeepeningEnabled  = iterativeDeepeningEnabled,
-        nullMovePruningEnabled     = nullMovePruningEnabled,
-        lmpFutilityEnabled         = lmpFutilityEnabled,
-        counterMoveSeedEnabled     = counterMoveSeedEnabled,
-        continuationHistoryEnabled = continuationHistoryEnabled,
-        aspirationWindowsEnabled   = aspirationWindowsEnabled,
-        singularExtensionsEnabled  = singularExtensionsEnabled,
-        lazySmpEnabled             = lazySmpEnabled,
+        eval                         = eval,
+        book                         = OpeningBook.Empty,
+        counterMoveEnabled           = counterMoveEnabled,
+        quiescenceEnabled            = quiescenceEnabled,
+        seeEnabled                   = seeEnabled,
+        iterativeDeepeningEnabled    = iterativeDeepeningEnabled,
+        nullMovePruningEnabled       = nullMovePruningEnabled,
+        lmpFutilityEnabled           = lmpFutilityEnabled,
+        counterMoveSeedEnabled       = counterMoveSeedEnabled,
+        continuationHistoryEnabled   = continuationHistoryEnabled,
+        aspirationWindowsEnabled     = aspirationWindowsEnabled,
+        singularExtensionsEnabled    = singularExtensionsEnabled,
+        lazySmpEnabled               = lazySmpEnabled,
+        // Newer flags driven by the comma-separated set so a single
+        // env var A/Bs any of them on top of the same base config.
+        checkExtensionEnabled        = on("checkext"),
+        nmpVerificationEnabled       = on("nmpverify"),
+        pawnCorrHistEnabled          = on("pawncorr"),
+        materialCorrHistEnabled      = on("matcorr"),
+        iirEnabled                   = on("iir"),
+        rfpEnabled                   = on("rfp"),
+        razoringEnabled              = on("razoring"),
+        deltaPruningEnabled          = on("deltaprune"),
+        historyGravityEnabled        = on("histgravity"),
+        moveCountPruningEnabled      = on("movecount"),
+        doubleExtensionEnabled       = on("doubleext"),
+        multiCutEnabled              = on("multicut"),
+        ttAgingEnabled               = on("ttaging"),
+        multiPlyContinuationEnabled  = on("multiply"),
+        underPromotionEnabled        = on("underpromo"),
+        timeManagementUpgradeEnabled = on("timemgmt"),
       )
     }
+
+  /** Recognised names for the comma-separated CHALLENGER_FLAGS /
+    * CHAMPION_FLAGS env vars. Each maps to a post-v8 search flag. */
+  private val RecognisedNewFlags: Set[String] = Set(
+    "checkext", "nmpverify", "pawncorr", "matcorr", "iir", "rfp",
+    "razoring", "deltaprune", "histgravity", "movecount", "doubleext",
+    "multicut", "ttaging", "multiply", "underpromo", "timemgmt",
+  )

@@ -224,14 +224,64 @@ object Search:
       // worker. Replaces YBWC when both `lazySmpEnabled` and
       // `parallelism > 1`.
       lazySmpEnabled: Boolean = false,
+      // ── Newer search heuristics (all default OFF, pending A/B). ──
+      // Exposed here so EngineBundle / TournamentMain can flip them
+      // without reaching past this factory. See the matching doc
+      // comments on AlphaBetaSearch's constructor for semantics.
+      checkExtensionEnabled: Boolean = false,
+      nmpVerificationEnabled: Boolean = false,
+      pawnCorrHistEnabled: Boolean = false,
+      materialCorrHistEnabled: Boolean = false,
+      iirEnabled: Boolean = false,
+      rfpEnabled: Boolean = false,
+      razoringEnabled: Boolean = false,
+      deltaPruningEnabled: Boolean = false,
+      historyGravityEnabled: Boolean = false,
+      moveCountPruningEnabled: Boolean = false,
+      doubleExtensionEnabled: Boolean = false,
+      multiCutEnabled: Boolean = false,
+      ttAgingEnabled: Boolean = false,
+      multiPlyContinuationEnabled: Boolean = false,
+      underPromotionEnabled: Boolean = false,
+      timeManagementUpgradeEnabled: Boolean = false,
   ): Search =
+    // NAMED arguments — the constructor parameter order is not the
+    // same as this factory's, so positional passing silently
+    // misroutes flags (it previously swapped SE/lazySmp with
+    // seed/continuation; masked only because their defaults
+    // coincided). Named args make that class of bug impossible.
     new AlphaBetaSearch(
-      eval, TranspositionTable.inMemory(maxTtEntries), book,
-      parallelism, counterMoveEnabled, quiescenceEnabled, seeEnabled,
-      iterativeDeepeningEnabled, nullMovePruningEnabled,
-      lmpFutilityEnabled, aspirationWindowsEnabled, counterMoveSeedEnabled,
-      continuationHistoryEnabled, singularExtensionsEnabled,
-      lazySmpEnabled,
+      eval = eval,
+      tt = TranspositionTable.inMemory(maxTtEntries),
+      book = book,
+      parallelism = parallelism,
+      counterMoveEnabled = counterMoveEnabled,
+      quiescenceEnabled = quiescenceEnabled,
+      seeEnabled = seeEnabled,
+      iterativeDeepeningEnabled = iterativeDeepeningEnabled,
+      nullMovePruningEnabled = nullMovePruningEnabled,
+      lmpFutilityEnabled = lmpFutilityEnabled,
+      aspirationWindowsEnabled = aspirationWindowsEnabled,
+      singularExtensionsEnabled = singularExtensionsEnabled,
+      lazySmpEnabled = lazySmpEnabled,
+      counterMoveSeedEnabled = counterMoveSeedEnabled,
+      continuationHistoryEnabled = continuationHistoryEnabled,
+      checkExtensionEnabled = checkExtensionEnabled,
+      nmpVerificationEnabled = nmpVerificationEnabled,
+      pawnCorrHistEnabled = pawnCorrHistEnabled,
+      materialCorrHistEnabled = materialCorrHistEnabled,
+      iirEnabled = iirEnabled,
+      rfpEnabled = rfpEnabled,
+      razoringEnabled = razoringEnabled,
+      deltaPruningEnabled = deltaPruningEnabled,
+      historyGravityEnabled = historyGravityEnabled,
+      moveCountPruningEnabled = moveCountPruningEnabled,
+      doubleExtensionEnabled = doubleExtensionEnabled,
+      multiCutEnabled = multiCutEnabled,
+      ttAgingEnabled = ttAgingEnabled,
+      multiPlyContinuationEnabled = multiPlyContinuationEnabled,
+      underPromotionEnabled = underPromotionEnabled,
+      timeManagementUpgradeEnabled = timeManagementUpgradeEnabled,
     )
 
   /** Test-only factory that lets a caller inject the [[TranspositionTable]]
