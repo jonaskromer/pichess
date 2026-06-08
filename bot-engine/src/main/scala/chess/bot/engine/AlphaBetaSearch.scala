@@ -947,14 +947,17 @@ private[engine] final class AlphaBetaSearch(
             if depth <= 0 then leafScore(state, alpha, beta, ply, bufs)
             else if ply >= MaxPly then leafEval(state)
             else
-              // Check extension: search one extra ply when the side
-              // to move is in check. Keep the side-effect of the
-              // computation (the boolean) for later NMP/extension
-              // decisions so we don't compute `isInCheck` twice.
-              val inCheckHere = RulesAdapter.isInCheck(state)
+              // Only pay the `isInCheck` cost upfront when one of the
+              // new check-driven gates needs it. With everything OFF
+              // we fall straight through to canNullMove which keeps
+              // the original short-circuited check.
+              val needsCheckUpfront =
+                checkExtensionEnabled || rfpEnabled || razoringEnabled ||
+                  moveCountPruningEnabled
+              val inCheckHere =
+                if needsCheckUpfront then RulesAdapter.isInCheck(state) else false
               val effDepth =
-                if checkExtensionEnabled && inCheckHere then depth + 1
-                else depth
+                if checkExtensionEnabled && inCheckHere then depth + 1 else depth
 
               // Static eval cache: compute lazily, but only when one of
               // the eval-driven gates (RFP, razoring, improving margin)
@@ -1018,7 +1021,12 @@ private[engine] final class AlphaBetaSearch(
                 nullMovePruningEnabled
                   && nullAllowed
                   && effDepth >= 3
-                  && !inCheckHere
+                  // Reuse the upfront `inCheckHere` when we computed
+                  // it for one of the new gates; otherwise call
+                  // [[isInCheck]] directly to preserve the original
+                  // short-circuit (depth-gated NMP only).
+                  && (if needsCheckUpfront then !inCheckHere
+                      else !RulesAdapter.isInCheck(state))
                   && hasNonPawnMaterial(state)
                   && (beta - alpha) > 1
               // IIR: when no TT-best-move at sufficient depth, ordering

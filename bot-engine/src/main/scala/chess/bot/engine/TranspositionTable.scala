@@ -104,7 +104,12 @@ object TranspositionTable:
       // stale-generation one, regardless of depth. Stale entries
       // are from prior searches that scored a different game
       // position; their depth is irrelevant for the current root.
-      val tagged = if entry.generation == 0 then entry.copy(generation = generation) else entry
+      // Only pay the `.copy()` allocation when aging is on and the
+      // caller didn't pre-tag the entry. The aging-off path stays
+      // identical to the historical zero-allocation put.
+      val tagged =
+        if agingEnabled && entry.generation == 0 then entry.copy(generation = generation)
+        else entry
       val existing = table.get(hash)
       val accept =
         if existing == null then true
