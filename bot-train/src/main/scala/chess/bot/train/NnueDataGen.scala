@@ -92,6 +92,7 @@ object NnueDataGen extends ZIOAppDefault:
   private final case class Config(
       games:           Int,
       depth:           Int,
+      scoringDepth:    Int,
       maxPlies:        Int,
       outputPath:      String,
       weightsVersion:  Int,
@@ -104,6 +105,10 @@ object NnueDataGen extends ZIOAppDefault:
     Config(
       games          = intEnv("PICHESS_NNUE_GAMES", 1000),
       depth          = intEnv("PICHESS_NNUE_DEPTH", 8),
+      // Per-row scoring depth. Lower than gameplay depth so the
+      // labelling pass doesn't dominate runtime (~50 ms/row at
+      // depth 4 vs ~hundreds of ms at depth 6+).
+      scoringDepth   = intEnv("PICHESS_NNUE_SCORING_DEPTH", 4),
       maxPlies       = intEnv("PICHESS_NNUE_MAX_PLIES", 200),
       outputPath     = sys.env.getOrElse("PICHESS_NNUE_OUT", defaultOut),
       weightsVersion = intEnv("PICHESS_NNUE_VERSION", 8),
@@ -146,8 +151,7 @@ object NnueDataGen extends ZIOAppDefault:
         SelfPlay
           .playGame(search, search, cfg.depth, cfg.maxPlies, opening)
           .flatMap { result =>
-            ZIO.attemptBlocking(writeGame(writer, opening, result))
-              .orDie
+            writeGame(writer, search, cfg.scoringDepth, opening, result)
           }
           .tap { _ =>
             val done = counter.incrementAndGet()
@@ -158,66 +162,76 @@ object NnueDataGen extends ZIOAppDefault:
       .withParallelism(cfg.parallelism)
       .unit
 
-  /** Walk the played-out game; for every quiet position, emit one
-    * `.plain` row keyed by the white-POV WDL outcome. The "score"
-    * we emit is the *material count* for a v0 placeholder — a
-    * real run should replace this with a per-position search eval
-    * (cheap to add: one [[Search.bestMove]] call per emitted row,
-    * read the score back from the TT) once the loop's correctness
-    * is verified end-to-end. */
+  /** Walk the played-out game; for every quiet position, score it
+    * with a fresh search and emit a Bullet `.plain` row.
+    *
+    * The score per row comes from `Search.evaluate(pre, depth)` —
+    * one shallow search per emitted position. Cost is roughly
+    * `quietRows × searchTime`; for ~30 quiets/game at depth 4
+    * (~50ms each) that's ~1.5s of extra work per game. The
+    * resulting training target is dramatically better than the
+    * material-only placeholder: it captures piece coordination,
+    * king safety, tempo, and the rest of the eval's signal.
+    *
+    * `scoringDepth` is usually lower than the gameplay depth —
+    * we want each row labelled fast, not deeply analysed. Depth
+    * 4 gives reasonable eval at ~50ms; depth 6 doubles the cost
+    * for a slightly stronger label. */
   private def writeGame(
       writer: BufferedWriter,
+      search: Search,
+      scoringDepth: Int,
       initial: GameState,
       result: SelfPlay.GameResult,
-  ): Unit =
+  ): UIO[Unit] =
     val wdlWhite = result.outcome match
       case SelfPlay.Outcome.WhiteWins       => 1.0
       case SelfPlay.Outcome.BlackWins       => 0.0
       case SelfPlay.Outcome.Draw            => 0.5
       case SelfPlay.Outcome.MaxMovesReached => 0.5
-    // Walk pre-states: every (move, postState) tells us about the
-    // *pre*-state that move applied to. The first pre-state is
-    // `initial`; subsequent ones are the previous `postState`.
+    // Walk pre-states first to collect every quiet position; then
+    // score them all in one ZIO traversal so the per-row blocking
+    // I/O happens once at the end, after every search has run.
+    val builder = scala.collection.mutable.ArrayBuffer.empty[(GameState, chess.model.board.Move)]
     var pre = initial
-    val it  = result.history.iterator
-    writer.synchronized {
-      while it.hasNext do
-        val (move, post) = it.next()
-        val isCapture =
-          pre.board.contains(move.to) || isEnPassant(pre, move)
-        val isCheck = pre.inCheck || post.inCheck
-        if !isCapture && !isCheck then
-          val fen   = FenSerializer.serialize(pre)
-          val score = materialScoreWhitePov(pre)
-          // Bullet's .plain format: `fen | score | result | best`
-          writer.write(fen); writer.write(" | ")
-          writer.write(score.toString); writer.write(" | ")
-          writer.write(formatDouble(wdlWhite)); writer.write(" | ")
-          writer.write(toUci(move))
-          writer.newLine()
-        pre = post
-      writer.flush()
+    result.history.foreach { case (move, post) =>
+      val isCapture = pre.board.contains(move.to) || isEnPassant(pre, move)
+      val isCheck   = pre.inCheck || post.inCheck
+      if !isCapture && !isCheck then builder += ((pre, move))
+      pre = post
     }
+    val quietRows = builder.toVector
+    // Search each pre-state at `scoringDepth`; the returned score
+    // is from the side-to-move's POV, so we flip on black to get
+    // a white-relative score (Bullet expects white-relative).
+    ZIO
+      .foreach(quietRows) { case (preState, move) =>
+        search.evaluate(preState, scoringDepth).map { stmScore =>
+          val whiteScore =
+            if preState.activeColor == chess.model.piece.Color.White then stmScore
+            else -stmScore
+          (FenSerializer.serialize(preState), whiteScore, move)
+        }
+      }
+      .flatMap { scored =>
+        ZIO.attemptBlocking {
+          writer.synchronized {
+            scored.foreach { case (fen, whiteScore, move) =>
+              writer.write(fen); writer.write(" | ")
+              writer.write(whiteScore.toString); writer.write(" | ")
+              writer.write(formatDouble(wdlWhite)); writer.write(" | ")
+              writer.write(toUci(move))
+              writer.newLine()
+            }
+            writer.flush()
+          }
+        }.orDie
+      }
 
   private def isEnPassant(state: GameState, move: chess.model.board.Move): Boolean =
     state.enPassantTarget.contains(move.to) && {
       state.board.get(move.from).exists(_.pieceType == chess.model.piece.PieceType.Pawn)
     }
-
-  private def materialScoreWhitePov(state: GameState): Int =
-    // Placeholder: simple material-only delta. The training loss
-    // mostly comes from the WDL term anyway; the score is a
-    // secondary regression target that benefits from a real
-    // search but a material delta keeps the rows non-zero so
-    // Bullet's loss curves stay meaningful.
-    val b = state.board
-    val w = b.pawnsW.popCount * 100 + b.knightsW.popCount * 320 +
-            b.bishopsW.popCount * 330 + b.rooksW.popCount * 500 +
-            b.queensW.popCount * 900
-    val bl = b.pawnsB.popCount * 100 + b.knightsB.popCount * 320 +
-             b.bishopsB.popCount * 330 + b.rooksB.popCount * 500 +
-             b.queensB.popCount * 900
-    w - bl
 
   private def toUci(m: chess.model.board.Move): String =
     val from = s"${m.from.col}${m.from.row}"

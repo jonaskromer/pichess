@@ -65,6 +65,23 @@ trait Search:
   ): UIO[Option[Move]] =
     bestMove(state, fallbackDepth, history)
 
+  /** Search-derived eval of `state` at the given depth, from the
+    * **side-to-move's** POV (matches what `negamax` returns at the
+    * root and what we put into TT entries). Used for labelling
+    * NNUE training data with real eval targets (task #92 in the
+    * NNUE roadmap) and for analysis tooling.
+    *
+    * Default implementation calls `bestMove` and returns 0 — fine
+    * for non-α-β implementations that don't track scores. The
+    * `AlphaBetaSearch` override returns the TT-cached score after
+    * the search completes. */
+  def evaluate(
+      state: GameState,
+      depth: Int,
+      history: Set[Long] = Set.empty,
+  ): UIO[Int] =
+    bestMove(state, depth, history).as(0)
+
 object Search:
 
   /** Sentinel score for "the position is mate, lost from this side's

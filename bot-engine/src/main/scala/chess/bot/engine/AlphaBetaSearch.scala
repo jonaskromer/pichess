@@ -188,6 +188,22 @@ private[engine] final class AlphaBetaSearch(
     val quiets:   Array[Array[Int]]  = Array.fill(MaxPly + 1)(new Array[Int](MaxMovesPerNode))
     val scored:   Array[Array[Long]] = Array.fill(MaxPly + 1)(new Array[Long](MaxMovesPerNode))
 
+  override def evaluate(
+      state: GameState,
+      depth: Int,
+      history: Set[Long] = Set.empty,
+  ): UIO[Int] =
+    bestMove(state, depth, history).as {
+      // After the search, the root position's TT entry carries the
+      // resolved side-to-move score. `syncBestMove` writes the root
+      // entry explicitly (added with aspiration windows); the YBWC
+      // root path doesn't, but its child nodes do, so the same
+      // hash also has an entry one ply down. Fall back to 0 only
+      // when nothing matched (root position with zero legal moves,
+      // already filtered upstream).
+      tt.get(Zobrist.hash(state)).map(_.score).getOrElse(0)
+    }
+
   def bestMove(
       state: GameState,
       depth: Int,
