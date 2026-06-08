@@ -195,6 +195,18 @@ object BitboardMoveGen:
           else if squareAttacked(landSq, occNoKing) then false
           else true
 
+    // Buffer-write half of move emission, no legality check. Kept
+    // tiny + inline so it can be reused by both `tryEmit` and the
+    // promotion path without inlining the heavy `isLegal` machinery
+    // more than once per call site.
+    inline def pushMove(encoded: Int, capture: Boolean): Unit =
+      if capture then
+        capBuf(nc) = encoded
+        nc += 1
+      else
+        quietBuf(nq) = encoded
+        nq += 1
+
     inline def tryEmit(
         from: Int,
         to: Int,
@@ -207,22 +219,17 @@ object BitboardMoveGen:
       val legal =
         if isCastling then isCastlingLegal(from, to)
         else isLegal(from, to, isKing, isEpCapture)
-      if legal then
-        val encoded = MoveInt.encode(from, to, promo)
-        if capture then
-          capBuf(nc) = encoded
-          nc += 1
-        else
-          quietBuf(nq) = encoded
-          nq += 1
+      if legal then pushMove(MoveInt.encode(from, to, promo), capture)
 
-    /** Emit pawn promotions to all four target piece types when
-      * [[underPromotion]] is on, otherwise just queen. Queen-only
-      * preserves the historical move-count contract (1 move per
-      * back-rank pawn push / capture); under-promotion adds three
-      * extra moves per promotion square for the rare cases where
-      * knight (mate-in-N forks) or rook / bishop (avoid stalemate)
-      * matter. */
+    /** Emit pawn promotions. The promotion target (Q/N/R/B) does not
+      * affect move legality — the pawn leaves `from` and arrives at
+      * `to` identically for all four — so we run the legality check
+      * ONCE and then emit the encoded moves directly. This keeps the
+      * hot `fillCapturesAndQuiets` method from inlining `isLegal` four
+      * times per promotion square, which previously bloated it past
+      * HotSpot's huge-method compile threshold (→ interpreter → ~9×
+      * search slowdown). Queen-only when [[underPromotion]] is off,
+      * preserving the historical move-count contract. */
     inline def emitPromotions(
         from: Int,
         to: Int,
@@ -230,15 +237,12 @@ object BitboardMoveGen:
         isEpCapture: Boolean,
         underPromotion: Boolean,
     ): Unit =
-      tryEmit(from, to, MoveInt.PromoQueen,
-              capture, isKing = false, isEpCapture, isCastling = false)
-      if underPromotion then
-        tryEmit(from, to, MoveInt.PromoKnight,
-                capture, isKing = false, isEpCapture, isCastling = false)
-        tryEmit(from, to, MoveInt.PromoRook,
-                capture, isKing = false, isEpCapture, isCastling = false)
-        tryEmit(from, to, MoveInt.PromoBishop,
-                capture, isKing = false, isEpCapture, isCastling = false)
+      if isLegal(from, to, isKing = false, isEpCapture) then
+        pushMove(MoveInt.encode(from, to, MoveInt.PromoQueen), capture)
+        if underPromotion then
+          pushMove(MoveInt.encode(from, to, MoveInt.PromoKnight), capture)
+          pushMove(MoveInt.encode(from, to, MoveInt.PromoRook), capture)
+          pushMove(MoveInt.encode(from, to, MoveInt.PromoBishop), capture)
 
     // ── Pawn moves ────────────────────────────────────────────
     val pushStep   = if white then 8 else -8
