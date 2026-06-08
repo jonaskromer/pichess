@@ -1,22 +1,17 @@
-package chess.bot.train
+package chess.bot.engine
 
 import zio.*
 
-import chess.bot.engine.Search
 import chess.model.board.{GameState, Move}
 
-/** Search wrapper that delegates low-piece positions to a Syzygy-
-  * backed oracle (Stockfish-with-`SyzygyPath`-set), and falls back
-  * to the supplied `inner` search at high-piece counts.
+/** Search wrapper that delegates low-piece positions to an external
+  * tablebase-backed oracle (typically Stockfish-with-`SyzygyPath`),
+  * and falls back to the supplied `inner` search at high-piece
+  * counts.
   *
   * Conceptually: every move the bot makes is "pichess at depth N
   * unless the current position is in Syzygy range, in which case
   * it's a TB-perfect answer."
-  *
-  * Why Stockfish-with-Syzygy and not a custom probe: writing a
-  * pure-Scala Syzygy probe is a multi-day project (compression +
-  * indexing tables); Stockfish ships TB support out of the box,
-  * and we already speak UCI to it via [[StockfishSearch]].
   *
   * Tradeoffs vs ideal in-search TB use:
   *   - We only probe at the *root* of [[bestMove]], not inside the
@@ -30,7 +25,10 @@ import chess.model.board.{GameState, Move}
   *
   * Despite both caveats, this captures the practical effect for
   * "playing endgames perfectly once you reach them" — which is the
-  * usual reason you'd ship Syzygy in the first place. */
+  * usual reason you'd ship Syzygy in the first place. Originally
+  * implemented in bot-train for tournament play; moved to bot-engine
+  * so production / Lichess deployments can also benefit when a
+  * Syzygy-backed UCI oracle is available at runtime. */
 final class TbAugmentedSearch(
     inner: Search,
     tb: Search,
@@ -43,12 +41,6 @@ final class TbAugmentedSearch(
   ): UIO[Option[Move]] =
     val pieces = state.board.occupancy.popCount
     if pieces <= pieceLimit then
-      // At depth 1 Stockfish-with-SyzygyPath returns the TB answer
-      // immediately on probe hits (no real search needed). On a
-      // probe miss (entry not in the bundled 3-4-5 set, e.g. a
-      // promotion landing at piece-count 6 mid-search), Stockfish
-      // falls back to its own depth-1 search — still a reasonable
-      // root move. Either way, faster than pichess at depth `depth`.
       tb.bestMove(state, depth = 1, history).flatMap {
         case Some(m) => ZIO.some(m)
         case None    => inner.bestMove(state, depth, history)

@@ -161,6 +161,16 @@ private[engine] final class AlphaBetaSearch(
     // that scored different game positions — their depth is
     // irrelevant to the current root.
     ttAgingEnabled: Boolean = false,
+    // Time-management upgrades for budgeted search:
+    //   * extend time when the root best-move changes between
+    //     iterations (signal that the search hasn't converged)
+    //   * extend time when the score drops sharply (signal that
+    //     the previous evaluation was over-optimistic)
+    //   * stop earlier when the best-move + score have both been
+    //     stable for ≥ 2 iterations
+    // Applies only to the budgeted path; fixed-depth searches are
+    // unaffected.
+    timeManagementUpgradeEnabled: Boolean = false,
 ) extends Search:
 
   import Search.{Infinity, MateScore}
@@ -458,20 +468,49 @@ private[engine] final class AlphaBetaSearch(
         val bufs = acquireBufs()
         syncBestMove(state, d, history, bufs).map(MoveInt.decode)
 
-    def loop(d: Int, last: Option[Move], lastIterMs: Long): Option[Move] =
+    // `stableSoFar` counts how many consecutive iterations have
+    // produced the same best move with a small score swing. Used
+    // by the time-management upgrade path to allow an early stop
+    // when the search has clearly converged.
+    def loop(
+        d: Int,
+        last: Option[Move],
+        lastIterMs: Long,
+        lastScore: Int,
+        stableSoFar: Int,
+    ): Option[Move] =
       val elapsedMs = (System.nanoTime() - start) / 1_000_000L
       val projectedNext = lastIterMs * 4 // EBF proxy
-      val outOfBudget = elapsedMs + projectedNext > budgetMillis || elapsedMs > budgetMillis * 3 / 2
-      val rootScore = tt.get(rootHash).map(_.score).getOrElse(0)
+      val rootScore = tt.get(rootHash).map(_.score).getOrElse(lastScore)
       val mateFound = math.abs(rootScore) >= MateScore - MaxPly
+
+      val outOfBudget =
+        if !timeManagementUpgradeEnabled then
+          elapsedMs + projectedNext > budgetMillis || elapsedMs > budgetMillis * 3 / 2
+        else
+          // Upgrade: scale the budget by stability (stable 2+ → 0.7×)
+          // and by score swing (drop > 30cp → 1.5×). The hard cap stays
+          // 1.5× of the unscaled budget so we don't blow past it.
+          val swing = math.abs(rootScore - lastScore)
+          val budgetScale: Double =
+            if stableSoFar >= 2 && swing < 30 then 0.7
+            else if swing > 30 then 1.5
+            else 1.0
+          val scaledBudget = (budgetMillis * budgetScale).toLong
+          elapsedMs + projectedNext > scaledBudget || elapsedMs > budgetMillis * 3 / 2
+
       if d > MaxPly || outOfBudget || mateFound then last
       else
         val iterStart = System.nanoTime()
         val result = runAtDepth(d)
         val iterMs = (System.nanoTime() - iterStart) / 1_000_000L
-        loop(d + 1, result.orElse(last), iterMs)
+        val nextStable =
+          if result.isDefined && result == last && math.abs(rootScore - lastScore) < 30
+          then stableSoFar + 1
+          else 0
+        loop(d + 1, result.orElse(last), iterMs, rootScore, nextStable)
 
-    ZIO.succeed(loop(1, None, 0L))
+    ZIO.succeed(loop(1, None, 0L, 0, 0))
 
   /** Multi-PV: returns the top-K root moves with their scores in
     * descending order. Uses the sync path (single-thread) so the
@@ -1028,7 +1067,21 @@ private[engine] final class AlphaBetaSearch(
     else tt.get(hash) match
       case Some(entry) if entry.depth >= depth - 2 && entry.kind != Kind.Upper =>
         entry.bestMove match
-          case Some(move) => (MoveInt.encodeMove(move), 1)
+          case Some(move) =>
+            // Double-extension upgrade: the higher the TT score
+            // (vs the current node's window), the more "uniquely
+            // best" the move looks. When the gap is very large
+            // and depth is reasonable, extend by 2 plies instead
+            // of 1. Caps the chain via the existing depth gate so
+            // a sequence of double-extensions can't blow up the
+            // search tree.
+            val bonus =
+              if doubleExtensionEnabled && depth >= 7 &&
+                 math.abs(entry.score) < MateScore - MaxPly &&
+                 entry.score >= DoubleExtensionScoreCutoff
+              then 2
+              else 1
+            (MoveInt.encodeMove(move), bonus)
           case None       => (NoKiller, 0)
       case _ => (NoKiller, 0)
 
@@ -1081,6 +1134,20 @@ private[engine] final class AlphaBetaSearch(
                         else state.fullmoveNumber,
       inCheck         = false,
     )
+
+  // Multi-cut pruning constants. Test the top-C captures at
+  // depth-1-R; require M cutoffs to short-circuit. Conservative
+  // defaults — multi-cut is at its highest Elo in classical engines
+  // without modern NMP/LMR; in our setup it's a smaller win.
+  private inline val MultiCutC = 6
+  private inline val MultiCutM = 3
+  private inline val MultiCutR = 2
+
+  // Double-extension singular bonus fires when the TT score is at
+  // least this many cp above zero — the move is so much stronger
+  // than alternatives at high depth that we want to follow it
+  // deeper than a single +1 ply.
+  private inline val DoubleExtensionScoreCutoff = 300
 
   // RFP (Reverse Futility / Static Null-Move) constants. Standard
   // Stockfish-style depth-scaled margin; smaller when the side to
@@ -1375,8 +1442,43 @@ private[engine] final class AlphaBetaSearch(
     var cutoff = false
     var moveIndex = 0
 
+    // Multi-cut pre-test: at non-PV, non-check, depth ≥ 8 cut-nodes
+    // with capCount > 0, try the top-K captures at reduced depth
+    // and beta-window. If ≥ M of them already produce a fail-high
+    // at depth-1-R, assume the whole node fails high and short-
+    // circuit to β. Operates on the same `scored` slot the Stage 1
+    // capture loop is about to read, so ordering work isn't
+    // duplicated — Stage 1 just sees a slot already in priority
+    // order.
+    val canMultiCut =
+      multiCutEnabled && depth >= 8 && (beta - alpha) == 1 &&
+        !inCheckHere && capCount >= MultiCutC
+    if canMultiCut then
+      orderMovesInto(capBuf, capCount, scored, state, hash, ply, prevMove)
+      var cutsFound = 0
+      var tested = 0
+      var j = capCount - 1
+      while j >= 0 && tested < MultiCutC && cutsFound < MultiCutM && !cutoff do
+        val move = MoveInt.fromPacked(scored(j))
+        RulesAdapter.applyMoveInt(state, move).foreach { next =>
+          val score = -negamax(
+            next, depth - 1 - MultiCutR, -beta, -beta + 1,
+            ply + 1, historyWithThis, bufs, move,
+          )
+          if score >= beta then cutsFound += 1
+        }
+        tested += 1
+        j -= 1
+      if cutsFound >= MultiCutM then
+        // Short-circuit: skip the full move loop entirely.
+        cutoff = true
+        bestScore = beta
+
     // ── Stage 1: captures ───────────────────────────────────────
-    if capCount > 0 then
+    if !cutoff && capCount > 0 then
+      // Stage 1 always reorders. With multi-cut active above, the
+      // current `scored` slot already holds the ordered captures —
+      // re-ordering is a no-op cost but keeps the code branch-free.
       orderMovesInto(capBuf, capCount, scored, state, hash, ply, prevMove)
       var i = capCount - 1
       while i >= 0 && !cutoff do
@@ -1422,6 +1524,24 @@ private[engine] final class AlphaBetaSearch(
       val futilityCanPrune =
         futilityActive && (staticEvalForFutility + futilityMargin <= alphaCur)
       val lmpQuietLimit = 3 + depth * depth
+
+      // Improving-aware move-count pruning. Extends LMP to depth
+      // 4-7 with an improving-flag-scaled threshold. Reads the
+      // static eval cache populated by negamax (Int.MinValue if
+      // not active or in check, which makes us assume improving=
+      // true → larger threshold, more conservative pruning).
+      val mcpActive = moveCountPruningEnabled && !inCheckHere && depth >= 2 && depth <= 7
+      val mcpImproving: Boolean =
+        if !mcpActive || ply < 2 then true
+        else
+          val cur  = bufs.staticEval(ply)
+          val prev = bufs.staticEval(ply - 2)
+          cur == Int.MinValue || prev == Int.MinValue || cur > prev
+      val mcpLimit =
+        if !mcpActive then Int.MaxValue
+        else if mcpImproving then 5 + depth * depth
+        else                       3 + depth * depth / 2
+
       var lmpPrune = false
       var i = quietCount - 1
       while i >= 0 && !cutoff && !lmpPrune do
@@ -1431,6 +1551,10 @@ private[engine] final class AlphaBetaSearch(
         // searched (limit = 3+d²), drop the rest. Killers / in-
         // check escape the prune.
         if lmpActive && moveIndex >= lmpQuietLimit && !isKiller then
+          lmpPrune = true
+        // Move-count pruning: complements LMP at depth 4-7 with an
+        // improving-aware threshold. Larger limit when improving.
+        else if mcpActive && moveIndex >= mcpLimit && !isKiller then
           lmpPrune = true
         // Futility: depth 1 only. Skip individual quiets whose
         // qsearched-baseline + margin can't even reach α.

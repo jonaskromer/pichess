@@ -2,7 +2,10 @@ package chess.bot.train
 
 import zio.*
 
-import chess.bot.engine.{ArrayTaperedEvaluator, Evaluator, OpeningBook, Search, WeightsLoader}
+import chess.bot.engine.{
+  ArrayTaperedEvaluator, Evaluator, OpeningBook, Search,
+  TbAugmentedSearch, WeightsLoader,
+}
 
 /** Standalone CLI for running a head-to-head tournament between
   * two weight snapshots (or vs a Stockfish baseline) and reporting

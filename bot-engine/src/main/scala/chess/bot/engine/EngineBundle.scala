@@ -64,6 +64,8 @@ object EngineBundle:
       evalCacheEnabled: Boolean = false,
       evalCacheEntries: Int = 1_000_000,
       ensembleSize: Int = 3,
+      tablebaseOracle: Option[Search] = None,
+      tablebasePieceLimit: Int = 5,
   ): IO[Throwable, EngineBundle] =
     for
       weights <- WeightsLoader.load(weightsVersion)
@@ -77,7 +79,10 @@ object EngineBundle:
       // dominant allocator (~121 MB/op at depth 4).
       hce      = ArrayTaperedEvaluator(weights.weights)
       eval     = wrapEval(hce, evalSource, evalCacheEnabled, evalCacheEntries, ensembleSize)
-      search   = Search.alphaBeta(eval, book, maxTtEntries)
+      base     = Search.alphaBeta(eval, book, maxTtEntries)
+      search   = tablebaseOracle match
+                   case Some(tb) => new TbAugmentedSearch(base, tb, tablebasePieceLimit)
+                   case None     => base
     yield EngineBundle(weights, book, search)
 
   /** Pick the requested evaluator with NNUE fallbacks, then optionally
