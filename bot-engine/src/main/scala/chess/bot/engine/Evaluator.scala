@@ -18,6 +18,18 @@ import chess.model.board.GameState
 trait Evaluator:
   def evaluate(state: GameState): Int
 
+  /** Component breakdown of the eval — returns named contributions
+    * (e.g., material / mobility / king-safety) so training data
+    * can emit each component alongside the total. Used by
+    * NnueDataGen for the per-row `comps` column, which enables
+    * future bucketed / multi-head NNUE training.
+    *
+    * Default implementation returns just the total under key
+    * `"total"`. Decomposed evaluators (e.g., the tapered HCE)
+    * override with finer-grained breakdowns. */
+  def evaluateComponents(state: GameState): Map[String, Int] =
+    Map("total" -> evaluate(state))
+
 object Evaluator:
 
   /** Material-only evaluator. Standard centipawn values:

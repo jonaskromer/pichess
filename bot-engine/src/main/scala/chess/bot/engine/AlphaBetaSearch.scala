@@ -204,6 +204,40 @@ private[engine] final class AlphaBetaSearch(
       tt.get(Zobrist.hash(state)).map(_.score).getOrElse(0)
     }
 
+  /** Principal variation walk: after a search, follow the TT
+    * bestMove chain from `state`, applying each move along the
+    * way, until we run out of TT entries with a bestMove, hit a
+    * repetition, fail to apply (illegal — shouldn't happen but
+    * defended against), or hit `maxLength`.
+    *
+    * The chain is naturally bounded by the deepest search that
+    * has run before this call — TT entries beyond that depth
+    * don't exist. Typical PV at depth 4 yields 4-8 plies. */
+  override def principalVariation(
+      state: GameState,
+      depth: Int,
+      maxLength: Int = 8,
+      history: Set[Long] = Set.empty,
+  ): UIO[List[Move]] =
+    bestMove(state, depth, history).as(walkPv(state, history, maxLength))
+
+  private def walkPv(
+      state: GameState,
+      history: Set[Long],
+      remaining: Int,
+  ): List[Move] =
+    if remaining <= 0 then Nil
+    else
+      val hash = Zobrist.hash(state)
+      if history.contains(hash) then Nil
+      else
+        tt.get(hash).flatMap(_.bestMove) match
+          case Some(move) =>
+            RulesAdapter.applyMove(state, move) match
+              case Some(next) => move :: walkPv(next, history + hash, remaining - 1)
+              case None       => Nil
+          case None => Nil
+
   def bestMove(
       state: GameState,
       depth: Int,

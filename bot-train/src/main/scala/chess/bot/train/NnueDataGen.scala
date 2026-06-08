@@ -71,7 +71,9 @@ object NnueDataGen extends ZIOAppDefault:
       // `ZIO.foreachPar` saturates the CPU with one fiber per
       // game, so any YBWC fan-out inside each search would just
       // fight other games for cores.
-      search  <- buildSearch(cfg.weightsVersion, searchParallelism = 1)
+      built   <- buildSearch(cfg.weightsVersion, searchParallelism = 1)
+      search  = built._1
+      rawEval = built._2
       sfOpp   <- cfg.sfOpponentSkill match
                    case Some(skill) =>
                      StockfishSearch
@@ -89,7 +91,7 @@ object NnueDataGen extends ZIOAppDefault:
       // per game.
       _       <- ZIO.scoped {
                    openWriter(Paths.get(cfg.outputPath)).flatMap { writer =>
-                     playAll(search, sfOpp, openings, cfg, writer)
+                     playAll(search, rawEval, sfOpp, openings, cfg, writer)
                    }
                  }
       _       <- ZIO.logInfo(s"Wrote ${cfg.outputPath}")
@@ -100,6 +102,10 @@ object NnueDataGen extends ZIOAppDefault:
       depth:           Int,
       scoringDepth:    Int,
       multiPvK:        Int,
+      pvLength:        Int,
+      multiDepthSpan:  Int,
+      tacticalThresh:  Int,
+      engineTag:       String,
       scoreClipCp:     Int,
       maxPlies:        Int,
       noisePlies:      Int,
@@ -123,6 +129,29 @@ object NnueDataGen extends ZIOAppDefault:
       // is the standard policy-net training shape; K=1 reduces
       // back to single-best (cheaper labelling).
       multiPvK       = intEnv("PICHESS_NNUE_MULTIPV", 3),
+      // PV-continuation length: extract up to N plies of the best
+      // line from the TT after the scoring search. The head move
+      // is the first entry; the continuation is what the engine
+      // expects each side to play after that. Used for MCTS
+      // policy-net / planning-net training. 0 = no continuation.
+      pvLength       = intEnv("PICHESS_NNUE_PV_LENGTH", 6),
+      // Multi-depth span: emit scores at depths
+      // `scoringDepth-N..scoringDepth+N` so the trainer has a
+      // depth-stability signal. 1 means 3 scores (d-1, d, d+1).
+      // Each extra depth costs one more search per row.
+      multiDepthSpan = intEnv("PICHESS_NNUE_MULTI_DEPTH_SPAN", 1),
+      // Tactical-alarm threshold in centipawns: if any pair of
+      // adjacent multi-depth scores differs by more than this
+      // amount, the position is flagged tactical (bit `1`).
+      tacticalThresh = intEnv("PICHESS_NNUE_TACTICAL_CP", 100),
+      // Engine identity tag emitted in the `eng` column. Default
+      // names the weights snapshot version (e.g., `pichess-v8`);
+      // override to mark Stockfish games when running with
+      // PICHESS_NNUE_SF_SKILL.
+      engineTag      = sys.env.getOrElse(
+                         "PICHESS_NNUE_ENGINE_TAG",
+                         s"pichess-v${intEnv("PICHESS_NNUE_VERSION", 8)}",
+                       ),
       // Score clip in centipawns. Mate scores (~99936+) and very
       // sharp positions otherwise dominate the loss; clipping to
       // ±2000 cp keeps the regression target inside a reasonable
@@ -145,13 +174,22 @@ object NnueDataGen extends ZIOAppDefault:
     )
   }
 
-  private def buildSearch(version: Int, searchParallelism: Int): ZIO[Any, Throwable, Search] =
+  /** Builds the search AND exposes the underlying evaluator
+    * separately. The evaluator is used directly for
+    * `evaluateComponents` (the search wraps it but doesn't expose
+    * it back through the Search trait). */
+  private def buildSearch(
+      version: Int,
+      searchParallelism: Int,
+  ): ZIO[Any, Throwable, (Search, chess.bot.engine.Evaluator)] =
     WeightsLoader.load(version).map { snapshot =>
-      Search.alphaBeta(
-        eval        = ArrayTaperedEvaluator(snapshot.weights),
+      val eval = ArrayTaperedEvaluator(snapshot.weights)
+      val search = Search.alphaBeta(
+        eval        = eval,
         book        = OpeningBook.Empty,
         parallelism = searchParallelism,
       )
+      (search, eval)
     }
 
   private def openWriter(path: Path): ZIO[Scope, Throwable, BufferedWriter] =
@@ -169,6 +207,7 @@ object NnueDataGen extends ZIOAppDefault:
 
   private def playAll(
       search: Search,
+      rawEval: chess.bot.engine.Evaluator,
       sfOpp: Option[Search],
       openings: Vector[GameState],
       cfg: Config,
@@ -190,14 +229,25 @@ object NnueDataGen extends ZIOAppDefault:
         // Stockfish opponent on odd-indexed games. The single SF
         // subprocess serializes via its lock — half the games
         // become serial, the other half stay parallel.
+        val isSfGame = sfOpp.isDefined && i % 2 == 1
         val opponent = sfOpp match
-          case Some(sf) if i % 2 == 1 => sf
-          case _                       => search
+          case Some(sf) if isSfGame => sf
+          case _                    => search
+        // The engine that *played* this row's quiet positions is
+        // the challenger (self), regardless of opponent identity.
+        // We mark the row with the opponent identity so training
+        // can stratify or weight by opponent later.
+        val gameTag =
+          if isSfGame then s"${cfg.engineTag}-vs-sf${cfg.sfOpponentSkill.getOrElse(0)}"
+          else cfg.engineTag
         SelfPlay
           .playGame(search, opponent, cfg.depth, cfg.maxPlies, openingStart)
           .flatMap { result =>
-            writeGame(writer, search, cfg.scoringDepth, cfg.multiPvK,
-                      cfg.scoreClipCp, openingStart, result)
+            writeGame(
+              writer, search, rawEval, cfg.scoringDepth, cfg.multiPvK,
+              cfg.pvLength, cfg.multiDepthSpan, cfg.tacticalThresh,
+              cfg.scoreClipCp, gameTag, openingStart, result,
+            )
           }
           .tap { _ =>
             val done = counter.incrementAndGet()
@@ -234,26 +284,47 @@ object NnueDataGen extends ZIOAppDefault:
           case None       => state
 
   /** Walk the played-out game; for every quiet position, score it
-    * with a fresh search and emit a Bullet `.plain` row.
+    * with a multi-depth search and emit an extended 9-column row.
     *
-    * Row format (extended): `fen | score | wdl | m1:s1,m2:s2,...`
-    * where the comma-separated trailing column is the top-K moves
-    * with their white-POV centipawn scores, ordered best-first.
-    * The "score" column equals the first move's score (so Bullet
-    * still parses cleanly — its text loader ignores the 4th
-    * column). The multi-PV trail enables future policy-net
-    * training without re-generating the data.
+    * Row format (pipe-separated):
+    * {{{
+    *   fen | score | wdl | mpv | mds | comps | tms | tact | eng
+    * }}}
     *
-    * Score clipping: every score is clamped to `±scoreClipCp`
-    * before write. Mate ladder scores (~99936+) and very sharp
-    * positions otherwise dominate the regression target; ±2000 cp
-    * keeps everything inside a useful sigmoid range. */
+    *   * `fen`   — full FEN of the pre-move state
+    *   * `score` — head-move's white-POV centipawn score (clipped).
+    *               Kept as column 2 so Bullet's text parser (which
+    *               only reads first 3 columns) is unchanged.
+    *   * `wdl`   — game outcome from white POV (1.0 / 0.5 / 0.0)
+    *   * `mpv`   — multi-PV with PV continuation on head:
+    *               `m1:s1/cont:c1c2c3...,m2:s2,m3:s3`
+    *   * `mds`   — multi-depth scores spanning `±multiDepthSpan`:
+    *               `d3:s3,d4:s4,d5:s5`
+    *   * `comps` — eval-component breakdown:
+    *               `mat:X,pst:Y,mob:Z,ps:W,ks:V,rook:U,misc:T`
+    *               (sum = the eval's total)
+    *   * `tms`   — wall-clock milliseconds for this row's deepest
+    *               scoring search + multi-PV + PV walk
+    *   * `tact`  — tactical-alarm bit (`1` if any adjacent pair
+    *               of multi-depth scores differs by more than
+    *               `tacticalThresh` cp)
+    *   * `eng`   — engine identity tag for this row
+    *
+    * Cost: `(2 × multiDepthSpan + 1)` searches per row plus a
+    * cheap multi-PV + PV walk. Default span=1 gives 3 searches
+    * per quiet row vs the prior 1, ~3× the labelling time.
+    */
   private def writeGame(
       writer: BufferedWriter,
       search: Search,
+      rawEval: chess.bot.engine.Evaluator,
       scoringDepth: Int,
       multiPvK: Int,
+      pvLength: Int,
+      multiDepthSpan: Int,
+      tacticalThresh: Int,
       scoreClipCp: Int,
+      engineTag: String,
       initial: GameState,
       result: SelfPlay.GameResult,
   ): UIO[Unit] =
@@ -262,9 +333,6 @@ object NnueDataGen extends ZIOAppDefault:
       case SelfPlay.Outcome.BlackWins       => 0.0
       case SelfPlay.Outcome.Draw            => 0.5
       case SelfPlay.Outcome.MaxMovesReached => 0.5
-    // Walk pre-states first to collect every quiet position; then
-    // score them all in one ZIO traversal so the per-row blocking
-    // I/O happens once at the end, after every search has run.
     val builder = scala.collection.mutable.ArrayBuffer.empty[GameState]
     var pre = initial
     result.history.foreach { case (move, post) =>
@@ -281,35 +349,103 @@ object NnueDataGen extends ZIOAppDefault:
         else -stmScore
       math.max(-scoreClipCp, math.min(scoreClipCp, raw))
 
-    // For each pre-state, get top-K (move, score) pairs at
-    // `scoringDepth`. The returned scores are STM-POV; we flip +
-    // clip to white-POV here so the writer side just formats text.
+    val depths =
+      ((scoringDepth - multiDepthSpan).max(1) to (scoringDepth + multiDepthSpan)).toVector
+
     ZIO
       .foreach(quietRows) { preState =>
-        search.bestMoves(preState, scoringDepth, multiPvK).map { topK =>
-          val whitePov = topK.map { case (m, s) => (m, toWhitePov(s, preState)) }
-          FenSerializer.serialize(preState) -> whitePov
-        }
+        for
+          // Multi-depth scores. Cheapest to deepest so the TT is
+          // warm by the time the deepest search runs.
+          mds <- ZIO.foreach(depths) { d =>
+                   search.evaluate(preState, d).map(s => d -> s)
+                 }
+          startNs = java.lang.System.nanoTime()
+          // Deepest search for multi-PV + PV walk. Reuses TT entries
+          // from the multi-depth pass so it's essentially free.
+          topK <- search.bestMoves(preState, scoringDepth, multiPvK)
+          pv   <- search.principalVariation(preState, scoringDepth, pvLength)
+          tms = (java.lang.System.nanoTime() - startNs) / 1_000_000L
+        yield
+          val whiteTopK = topK.map { case (m, s) => (m, toWhitePov(s, preState)) }
+          val whiteMds  = mds.map { case (d, s) => (d, toWhitePov(s, preState)) }
+          val tact = isTactical(whiteMds.map(_._2), tacticalThresh)
+          val comps = rawEval.evaluateComponents(preState)
+          RowData(
+            fen   = FenSerializer.serialize(preState),
+            topK  = whiteTopK,
+            pv    = pv,
+            mds   = whiteMds,
+            comps = comps,
+            tms   = tms,
+            tact  = tact,
+            eng   = engineTag,
+          )
       }
-      .flatMap { scored =>
+      .flatMap { rows =>
         ZIO.attemptBlocking {
           writer.synchronized {
-            scored.foreach { case (fen, topK) =>
-              if topK.nonEmpty then
-                val headScore = topK.head._2
-                val mpvStr = topK
-                  .map { case (m, s) => s"${toUci(m)}:$s" }
-                  .mkString(",")
-                writer.write(fen); writer.write(" | ")
-                writer.write(headScore.toString); writer.write(" | ")
-                writer.write(formatDouble(wdlWhite)); writer.write(" | ")
-                writer.write(mpvStr)
-                writer.newLine()
-            }
+            rows.foreach(writeRow(writer, wdlWhite, _))
             writer.flush()
           }
         }.orDie
       }
+
+  private final case class RowData(
+      fen: String,
+      topK: List[(chess.model.board.Move, Int)],
+      pv: List[chess.model.board.Move],
+      mds: Vector[(Int, Int)],
+      comps: Map[String, Int],
+      tms: Long,
+      tact: Int,
+      eng: String,
+  )
+
+  private def writeRow(
+      writer: BufferedWriter,
+      wdlWhite: Double,
+      row: RowData,
+  ): Unit =
+    if row.topK.isEmpty then ()
+    else
+      val headScore = row.topK.head._2
+      val pvCont = row.pv.drop(1) // continuation = PV beyond the head move
+      val mpvStr =
+        val parts = row.topK.zipWithIndex.map { case ((m, s), idx) =>
+          val cont =
+            if idx == 0 && pvCont.nonEmpty then
+              "/cont:" + pvCont.map(toUci).mkString("")
+            else ""
+          s"${toUci(m)}:$s$cont"
+        }
+        parts.mkString(",")
+      val mdsStr   = row.mds.map { case (d, s) => s"d$d:$s" }.mkString(",")
+      val compOrder = Seq("mat", "pst", "mob", "ps", "ks", "rook", "misc", "total")
+      val compsStr  = compOrder
+        .flatMap(k => row.comps.get(k).map(v => s"$k:$v"))
+        .mkString(",")
+      writer.write(row.fen);            writer.write(" | ")
+      writer.write(headScore.toString); writer.write(" | ")
+      writer.write(formatDouble(wdlWhite)); writer.write(" | ")
+      writer.write(mpvStr);              writer.write(" | ")
+      writer.write(mdsStr);              writer.write(" | ")
+      writer.write(compsStr);            writer.write(" | ")
+      writer.write(row.tms.toString);    writer.write(" | ")
+      writer.write(row.tact.toString);   writer.write(" | ")
+      writer.write(row.eng)
+      writer.newLine()
+
+  /** Tactical alarm: any adjacent pair of multi-depth scores
+    * differing by more than `threshold` cp signals a position
+    * where the eval is volatile to search depth. */
+  private def isTactical(scores: Vector[Int], threshold: Int): Int =
+    if scores.size < 2 then 0
+    else
+      val flipped = scores.sliding(2).exists { pair =>
+        math.abs(pair(0) - pair(1)) > threshold
+      }
+      if flipped then 1 else 0
 
   private def isEnPassant(state: GameState, move: chess.model.board.Move): Boolean =
     state.enPassantTarget.contains(move.to) && {

@@ -82,6 +82,25 @@ trait Search:
   ): UIO[Int] =
     bestMove(state, depth, history).as(0)
 
+  /** Principal variation: the engine's expected line of play from
+    * `state` at the given depth, up to `maxLength` plies. Each
+    * move is what the engine expects each side to play given the
+    * TT-cached deepest analysis.
+    *
+    * Used by NNUE training-data emission (the PV-continuation
+    * column unblocks policy-net / planning-net training without a
+    * re-gen) and by analysis tooling.
+    *
+    * Default falls through to `bestMove` and returns a one-move
+    * PV. AlphaBetaSearch overrides with a TT walker. */
+  def principalVariation(
+      state: GameState,
+      depth: Int,
+      maxLength: Int = 8,
+      history: Set[Long] = Set.empty,
+  ): UIO[List[Move]] =
+    bestMove(state, depth, history).map(_.toList)
+
 object Search:
 
   /** Sentinel score for "the position is mate, lost from this side's

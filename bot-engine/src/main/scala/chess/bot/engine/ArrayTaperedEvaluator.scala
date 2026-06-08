@@ -52,6 +52,58 @@ final class ArrayTaperedEvaluator private (
       i += 1
     math.round(phase * mgSum + (1.0 - phase) * egSum).toInt
 
+  /** Decomposed eval per feature group. Same blend formula as
+    * `evaluate`, but the mg/eg sums are bucketed by which slice
+    * of the feature vector contributed. Used by NnueDataGen to
+    * emit a `comps:` column so future NNUE training can have a
+    * component-bucketed multi-head output (Stockfish-style).
+    *
+    * Groups:
+    *   material   — piece-count features (Pawn..Queen)
+    *   pst        — piece-square-table features (5 × 64 slots)
+    *   mobility   — knight/bishop/rook/queen mobility
+    *   pawn_struct — passed / isolated / doubled / connected
+    *   king_safety — pawn shield + attackers
+    *   rook       — open / semi-open file bonuses
+    *   misc       — bishop pair, knight outpost, tempo
+    *
+    * Sum of all component values equals the total `evaluate(state)`. */
+  override def evaluateComponents(state: GameState): Map[String, Int] =
+    FullFeatures.fillArray(state, featureBuf)
+    val phase = GamePhase.compute(state.board)
+
+    val materialIdxs = (FeatureIndex.Pawn to FeatureIndex.Queen)
+    val pstIdxs = FeatureIndex.PstPawnBase until (FeatureIndex.PstQueenBase + 64)
+    val mobilityIdxs = FeatureIndex.KnightMob to FeatureIndex.QueenMob
+    val pawnStructIdxs =
+      (FeatureIndex.PassedRankBase until FeatureIndex.PassedRankBase + 6) ++
+        Seq(FeatureIndex.IsolatedPawn, FeatureIndex.DoubledPawn, FeatureIndex.ConnectedPawn)
+    val kingSafetyIdxs = Seq(FeatureIndex.PawnShield, FeatureIndex.KingAttackers)
+    val rookIdxs = Seq(FeatureIndex.RookOpenFile, FeatureIndex.RookSemiOpenFile)
+    val miscIdxs =
+      Seq(FeatureIndex.BishopPair, FeatureIndex.KnightOutpost, FeatureIndex.Tempo)
+
+    def sumBlend(idxs: Seq[Int]): Int =
+      var mg = 0
+      var eg = 0
+      idxs.foreach { i =>
+        val v = featureBuf(i)
+        if v != 0 then
+          mg += v * mgWeights(i)
+          eg += v * egWeights(i)
+      }
+      math.round(phase * mg + (1.0 - phase) * eg).toInt
+
+    Map(
+      "mat"  -> sumBlend(materialIdxs),
+      "pst"  -> sumBlend(pstIdxs),
+      "mob"  -> sumBlend(mobilityIdxs),
+      "ps"   -> sumBlend(pawnStructIdxs),
+      "ks"   -> sumBlend(kingSafetyIdxs),
+      "rook" -> sumBlend(rookIdxs),
+      "misc" -> sumBlend(miscIdxs),
+    )
+
 object ArrayTaperedEvaluator:
 
   /** Project a `Map[String, Int]` weights snapshot into the two
