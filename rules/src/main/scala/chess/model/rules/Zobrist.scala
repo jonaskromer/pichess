@@ -78,9 +78,29 @@ object Zobrist:
     * [[chess.codec.FenSerializer.positionKey]].
     */
   def hash(state: GameState): Long =
-    val boardHash = state.board.foldLeft(0L) { case (acc, (pos, piece)) =>
-      acc ^ pieces(pieceIndex(piece))(squareIndex(pos))
-    }
+    // Walk each of the 12 piece bitboards via primitive bit-iteration
+    // instead of `state.board.foldLeft { case (acc, (pos, piece)) => … }`.
+    // The foldLeft version constructed a Tuple3 + boxed Long
+    // accumulator at every set square — profile showed ~12 boxToLong
+    // samples here. Bit-iteration uses `numberOfTrailingZeros` + bit
+    // clear, fully primitive, no allocations.
+    val bs = state.board
+    // Index mapping follows `pieceIndex = color.ordinal*6 + pieceType.ordinal`
+    // with PieceType enum order King, Queen, Rook, Bishop, Knight, Pawn (see
+    // PieceType.scala). So White starts at idx 0 (king) and Black starts at 6.
+    val boardHash =
+      hashBits(bs.kingW.raw,    pieces(0)) ^
+        hashBits(bs.queensW.raw,  pieces(1)) ^
+        hashBits(bs.rooksW.raw,   pieces(2)) ^
+        hashBits(bs.bishopsW.raw, pieces(3)) ^
+        hashBits(bs.knightsW.raw, pieces(4)) ^
+        hashBits(bs.pawnsW.raw,   pieces(5)) ^
+        hashBits(bs.kingB.raw,    pieces(6)) ^
+        hashBits(bs.queensB.raw,  pieces(7)) ^
+        hashBits(bs.rooksB.raw,   pieces(8)) ^
+        hashBits(bs.bishopsB.raw, pieces(9)) ^
+        hashBits(bs.knightsB.raw, pieces(10)) ^
+        hashBits(bs.pawnsB.raw,   pieces(11))
     val cr = state.castlingRights
     val castlingHash =
       (if cr.whiteKingSide then castling(0) else 0L) ^
@@ -92,3 +112,12 @@ object Zobrist:
     val colorHash =
       if state.activeColor == Color.Black then blackToMove else 0L
     boardHash ^ castlingHash ^ epHash ^ colorHash
+
+  private inline def hashBits(bits: Long, table: Array[Long]): Long =
+    var b = bits
+    var h = 0L
+    while b != 0L do
+      val sq = java.lang.Long.numberOfTrailingZeros(b)
+      h ^= table(sq)
+      b &= b - 1L
+    h

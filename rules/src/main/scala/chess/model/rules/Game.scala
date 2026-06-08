@@ -261,26 +261,40 @@ object Game:
   ): CastlingRights =
     val piece = state.board(move.from)
     val cr = state.castlingRights
+    val fromCol = move.from.col
+    val fromRow = move.from.row
+    val toCol = move.to.col
+    val toRow = move.to.row
+    val color = piece.color
 
-    // Revoke rights based on the piece that moved
+    // Revoke rights based on the piece that moved. Plain if-chain
+    // instead of tuple pattern-match — the latter allocates a
+    // Tuple3[Char, Int, Color] per call with boxed Char/Int, a
+    // measurable hot-path cost in the bot search loop.
     val afterMove = piece.pieceType match
-      case PieceType.King if piece.color == Color.White =>
+      case PieceType.King if color == Color.White =>
         cr.copy(whiteKingSide = false, whiteQueenSide = false)
-      case PieceType.King if piece.color == Color.Black =>
+      case PieceType.King if color == Color.Black =>
         cr.copy(blackKingSide = false, blackQueenSide = false)
       case PieceType.Rook =>
-        (move.from.col, move.from.row, piece.color) match
-          case ('h', 1, Color.White) => cr.copy(whiteKingSide = false)
-          case ('a', 1, Color.White) => cr.copy(whiteQueenSide = false)
-          case ('h', 8, Color.Black) => cr.copy(blackKingSide = false)
-          case ('a', 8, Color.Black) => cr.copy(blackQueenSide = false)
-          case _                     => cr
+        if fromRow == 1 && color == Color.White then
+          if fromCol == 'h' then cr.copy(whiteKingSide = false)
+          else if fromCol == 'a' then cr.copy(whiteQueenSide = false)
+          else cr
+        else if fromRow == 8 && color == Color.Black then
+          if fromCol == 'h' then cr.copy(blackKingSide = false)
+          else if fromCol == 'a' then cr.copy(blackQueenSide = false)
+          else cr
+        else cr
       case _ => cr
 
-    // Revoke rights when a rook is captured on its starting square
-    (move.to.col, move.to.row) match
-      case ('h', 1) => afterMove.copy(whiteKingSide = false)
-      case ('a', 1) => afterMove.copy(whiteQueenSide = false)
-      case ('h', 8) => afterMove.copy(blackKingSide = false)
-      case ('a', 8) => afterMove.copy(blackQueenSide = false)
-      case _        => afterMove
+    // Revoke rights when a rook is captured on its starting square.
+    if toRow == 1 then
+      if toCol == 'h' then afterMove.copy(whiteKingSide = false)
+      else if toCol == 'a' then afterMove.copy(whiteQueenSide = false)
+      else afterMove
+    else if toRow == 8 then
+      if toCol == 'h' then afterMove.copy(blackKingSide = false)
+      else if toCol == 'a' then afterMove.copy(blackQueenSide = false)
+      else afterMove
+    else afterMove

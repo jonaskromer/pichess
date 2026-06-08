@@ -188,6 +188,22 @@ private[engine] final class AlphaBetaSearch(
     val quiets:   Array[Array[Int]]  = Array.fill(MaxPly + 1)(new Array[Int](MaxMovesPerNode))
     val scored:   Array[Array[Long]] = Array.fill(MaxPly + 1)(new Array[Long](MaxMovesPerNode))
 
+  /** Thread-local pool for `SearchBufs`. Each OS thread gets one
+    * instance (~166 KB) which is reused across every search that
+    * thread executes — eliminates the per-search `_platform_bzero`
+    * cost the profiler flagged at ~130 samples in the depth-6
+    * benchmark. ZIO fibers don't yield mid-`syncBestMove` (the
+    * body of `ZIO.succeed { syncBestMove(...) }` runs to
+    * completion on the calling thread), so two concurrent fibers
+    * never share a `SearchBufs` even though they may both touch
+    * this `ThreadLocal`. Contents are always overwritten before
+    * read inside the search loop, so no per-acquire clear is
+    * needed. */
+  private val pooledBufs: ThreadLocal[SearchBufs] =
+    ThreadLocal.withInitial(() => new SearchBufs())
+
+  private inline def acquireBufs(): SearchBufs = pooledBufs.get()
+
   override def evaluate(
       state: GameState,
       depth: Int,
@@ -256,7 +272,7 @@ private[engine] final class AlphaBetaSearch(
         else if lazySmpEnabled && parallelism > 1 then lazySmpBestMove(state, depth, history)
         else if parallelism > 1 then parallelBestMove(state, depth, history)
         else
-          val bufs = new SearchBufs
+          val bufs = acquireBufs()
           ZIO.succeed(syncBestMove(state, depth, history, bufs).map(MoveInt.decode))
     }
 
@@ -283,7 +299,7 @@ private[engine] final class AlphaBetaSearch(
     // and is the one whose result we return.
     val mainWorker: UIO[Option[Move]] =
       ZIO.succeed {
-        val bufs = new SearchBufs
+        val bufs = acquireBufs()
         syncBestMove(state, depth, history, bufs).map(MoveInt.decode)
       }
     if parallelism <= 1 then mainWorker
@@ -295,7 +311,7 @@ private[engine] final class AlphaBetaSearch(
       val helperEffects = (1 until parallelism).map { idx =>
         val helperDepth = math.max(1, depth + (if idx % 2 == 0 then 1 else -1))
         ZIO.succeed {
-          val bufs = new SearchBufs
+          val bufs = acquireBufs()
           syncBestMove(state, helperDepth, history, bufs)
         }.forkDaemon
       }
@@ -353,10 +369,10 @@ private[engine] final class AlphaBetaSearch(
         // Parallel path doesn't return synchronously — UIO needed.
         // Skip it for budgeted variant; the budget is meant for
         // single-thread, time-controlled play.
-        val bufs = new SearchBufs
+        val bufs = acquireBufs()
         syncBestMove(state, d, history, bufs).map(MoveInt.decode)
       else
-        val bufs = new SearchBufs
+        val bufs = acquireBufs()
         syncBestMove(state, d, history, bufs).map(MoveInt.decode)
 
     def loop(d: Int, last: Option[Move], lastIterMs: Long): Option[Move] =
@@ -397,7 +413,7 @@ private[engine] final class AlphaBetaSearch(
         clearKillers()
         clearHistory()
         clearCounterMoves()
-        val bufs = new SearchBufs
+        val bufs = acquireBufs()
         ZIO.succeed(syncMultiPv(state, depth, history, bufs, k))
     }
 
@@ -490,7 +506,7 @@ private[engine] final class AlphaBetaSearch(
     def runAtDepth(d: Int, alphaInit: Int, betaInit: Int): UIO[Option[Move]] =
       if parallelism > 1 then parallelBestMove(state, d, history)
       else
-        val bufs = new SearchBufs
+        val bufs = acquireBufs()
         ZIO.succeed(
           syncBestMove(state, d, history, bufs, alphaInit, betaInit).map(MoveInt.decode)
         )
@@ -563,7 +579,7 @@ private[engine] final class AlphaBetaSearch(
       depth: Int,
       history: Set[Long],
   ): UIO[Option[Move]] =
-    val rootBufs = new SearchBufs
+    val rootBufs = acquireBufs()
     val capBuf   = rootBufs.captures(0)
     val quietBuf = rootBufs.quiets(0)
     val (capCount, quietCount) = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf)
@@ -613,7 +629,7 @@ private[engine] final class AlphaBetaSearch(
           .foreachPar(1 until total) { idx =>
             ZIO.succeed {
               val move = moves(idx)
-              val bufs = new SearchBufs
+              val bufs = acquireBufs()
               val score: Int =
                 RulesAdapter.applyMoveInt(state, move) match
                   case Some(next) =>

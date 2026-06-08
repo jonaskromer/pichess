@@ -4,10 +4,10 @@ package chess.model.rules
   * bitboard-native predicates in [[MoveValidator]] (Phase 2 of the
   * bitboard migration). The leaper tables are computed once at class
   * load (~2 KB total) and read O(1) per lookup; sliding-piece attacks
-  * are computed on demand from a (square, occupancy) pair — naive
-  * direction walks via bit ops, no magic bitboards yet (plenty fast
-  * for our workload, far simpler code than the magic-mask + index
-  * variant).
+  * now use magic bitboards (hash `(occupancy & relevantMask) * magic
+  * >>> shift` into a per-square attack table), which collapsed the
+  * 157-sample slidingAttacks loop to a 2-instruction lookup in
+  * profile.
   *
   * All indices are LERF (see [[chess.model.board.Position.squareIdx]]).
   *
@@ -37,17 +37,19 @@ object BitboardAttacks:
   /** Symmetric to [[whitePawnAttackersOf]] for BLACK pawn attackers. */
   val blackPawnAttackersOf: Array[Long] = buildBlackPawnAttackersOf()
 
-  // ── Sliding attacks (computed on demand) ─────────────────────────────
+  // ── Sliding attacks (magic bitboards) ────────────────────────────────
 
-  /** All squares a BISHOP at `sq` attacks given `occupancy`. Walks each
-    * of 4 diagonal directions, stopping at the first occupied square
-    * (which is included — it's a potential capture target). */
+  /** All squares a BISHOP at `sq` attacks given `occupancy`. Hashes
+    * the relevant blockers into a per-square attack table — O(1) with
+    * a couple of arithmetic ops + one array load. */
   def bishopAttacks(sq: Int, occupancy: Long): Long =
-    slidingAttacks(sq, occupancy, BishopDeltaCol, BishopDeltaRow)
+    val idx = (((occupancy & BishopMask(sq)) * BishopMagic(sq)) >>> BishopShift(sq)).toInt
+    BishopAttackTable(sq)(idx)
 
   /** Same for a ROOK on the 4 orthogonal directions. */
   def rookAttacks(sq: Int, occupancy: Long): Long =
-    slidingAttacks(sq, occupancy, RookDeltaCol, RookDeltaRow)
+    val idx = (((occupancy & RookMask(sq)) * RookMagic(sq)) >>> RookShift(sq)).toInt
+    RookAttackTable(sq)(idx)
 
   // (Queen attacks aren't a separate function — `attackerBitboard` in
   // MoveValidator folds queens into both the bishop and rook intersections
@@ -144,3 +146,149 @@ object BitboardAttacks:
       arr(target) = bb
       target += 1
     arr
+
+  // ── Magic-bitboard tables (computed once at class load) ──────────────
+  //
+  // For each square 0..63:
+  //   - `*Mask(sq)`         : relevant blocker squares (ray bits minus
+  //                            the edge squares — edge bits don't change
+  //                            the attack set, so we leave them out to
+  //                            shrink the index space).
+  //   - `*Shift(sq)`        : `64 - popcount(mask)`, the right-shift
+  //                            that lifts the magic hash into the table
+  //                            index.
+  //   - `*Magic(sq)`        : a 64-bit constant chosen so that for every
+  //                            blocker subset of `*Mask(sq)`, the hash
+  //                            `(subset * magic) >>> shift` lands in a
+  //                            unique slot of the per-square attack
+  //                            table.
+  //   - `*AttackTable(sq)`  : array of `1 << popcount(mask)` Longs;
+  //                            entry `i` = the attack bitboard for the
+  //                            blocker configuration that hashes to `i`.
+  //
+  // Magic constants are searched at init by trial — sparse random Longs
+  // until one yields a collision-free hash. Search converges in well
+  // under a second per square; total init cost ≈ 100 ms on the bench
+  // machine, paid once at JVM start.
+  private val BishopMask: Array[Long] = buildBlockerMask(BishopDeltaCol, BishopDeltaRow)
+  private val RookMask:   Array[Long] = buildBlockerMask(RookDeltaCol,   RookDeltaRow)
+  private val BishopShift: Array[Int]  = new Array[Int](64)
+  private val RookShift:   Array[Int]  = new Array[Int](64)
+  private val BishopMagic: Array[Long] = new Array[Long](64)
+  private val RookMagic:   Array[Long] = new Array[Long](64)
+  private val BishopAttackTable: Array[Array[Long]] = new Array[Array[Long]](64)
+  private val RookAttackTable:   Array[Array[Long]] = new Array[Array[Long]](64)
+
+  initMagics()
+
+  private def initMagics(): Unit =
+    val rng = new java.util.Random(0x6f48dba6c8f2L)
+    var sq = 0
+    while sq < 64 do
+      installMagic(sq, BishopMask(sq), BishopDeltaCol, BishopDeltaRow,
+                   BishopShift, BishopMagic, BishopAttackTable, rng)
+      installMagic(sq, RookMask(sq), RookDeltaCol, RookDeltaRow,
+                   RookShift, RookMagic, RookAttackTable, rng)
+      sq += 1
+
+  private def installMagic(
+      sq: Int,
+      mask: Long,
+      deltaCol: Array[Int],
+      deltaRow: Array[Int],
+      shifts: Array[Int],
+      magics: Array[Long],
+      tables: Array[Array[Long]],
+      rng: java.util.Random,
+  ): Unit =
+    val bits = java.lang.Long.bitCount(mask)
+    val shift = 64 - bits
+    val n = 1 << bits
+    // Enumerate every blocker subset of `mask` once, compute its
+    // canonical attack bitboard via the naive walk, and keep both
+    // around for the magic search.
+    val occupancies = new Array[Long](n)
+    val attacks = new Array[Long](n)
+    var i = 0
+    while i < n do
+      occupancies(i) = indexToOccupancy(i, bits, mask)
+      attacks(i) = slidingAttacks(sq, occupancies(i), deltaCol, deltaRow)
+      i += 1
+    val table = new Array[Long](n)
+    // `used` marks slots that have been claimed by some attack value,
+    // including 0L (empty attack set, which CAN occur for sliders when
+    // every ray is blocked at distance 1 — e.g. a rook in a corner
+    // ringed by its own pieces). Using a separate flag instead of
+    // `table(idx) == 0L` avoids treating those legitimate empty-attack
+    // slots as "free" and silently overwriting them with a different
+    // attack later.
+    val used = new Array[Boolean](n)
+    var found = false
+    var magic = 0L
+    var attempts = 0
+    while !found do
+      magic = sparseLong(rng)
+      java.util.Arrays.fill(table, 0L)
+      java.util.Arrays.fill(used, false)
+      var collision = false
+      var k = 0
+      while !collision && k < n do
+        val idx = ((occupancies(k) * magic) >>> shift).toInt
+        if !used(idx) then
+          table(idx) = attacks(k)
+          used(idx) = true
+        else if table(idx) != attacks(k) then collision = true
+        k += 1
+      if !collision then found = true
+      attempts += 1
+      if attempts > 5000000 then
+        throw new RuntimeException(s"Magic search failed at sq=$sq after $attempts attempts")
+    shifts(sq) = shift
+    magics(sq) = magic
+    tables(sq) = table
+
+  /** Build the per-square relevant-blocker mask for a slider whose ray
+    * directions are given by `(deltaCol(i), deltaRow(i))`. Walks each
+    * direction from `sq` and includes every square along the ray
+    * except (a) `sq` itself and (b) edge squares (where the edge bit
+    * can't influence what the slider sees on the inner squares). */
+  private def buildBlockerMask(deltaCol: Array[Int], deltaRow: Array[Int]): Array[Long] =
+    val arr = new Array[Long](64)
+    var sq = 0
+    while sq < 64 do
+      val col0 = sq % 8
+      val row0 = sq / 8
+      var bb = 0L
+      var d = 0
+      while d < deltaCol.length do
+        val dc = deltaCol(d)
+        val dr = deltaRow(d)
+        var nc = col0 + dc
+        var nr = row0 + dr
+        // Stop one step BEFORE the edge in each direction.
+        while nc + dc >= 0 && nc + dc < 8 && nr + dr >= 0 && nr + dr < 8 do
+          bb |= 1L << (nr * 8 + nc)
+          nc += dc
+          nr += dr
+        d += 1
+      arr(sq) = bb
+      sq += 1
+    arr
+
+  /** Project the bottom `bits` bits of `idx` onto the set positions of
+    * `mask` to produce one of the `1 << bits` blocker subsets. */
+  private def indexToOccupancy(idx: Int, bits: Int, mask: Long): Long =
+    var result = 0L
+    var remaining = mask
+    var i = 0
+    while i < bits do
+      val sq = java.lang.Long.numberOfTrailingZeros(remaining)
+      remaining &= remaining - 1L
+      if ((idx >> i) & 1) != 0 then result |= 1L << sq
+      i += 1
+    result
+
+  /** Random Long with sparse bit set — the magic-search converges far
+    * faster on these because dense candidates collide constantly. */
+  private def sparseLong(rng: java.util.Random): Long =
+    rng.nextLong() & rng.nextLong() & rng.nextLong()
