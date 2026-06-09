@@ -57,3 +57,4 @@ metals.sbt
 
 # Claude Code session state — local scheduling locks, etc.
 /.claude/
+.venv-nnue/
