@@ -119,9 +119,14 @@ object StockfishSearch:
       // has ≤ this many pieces. Default 5 matches the 3-4-5 TB set
       // we ship; raise to 7 if 6-7-piece tables are mirrored too.
       syzygyProbeLimit: Int = 5,
+      // Calibrated strength via `UCI_LimitStrength` + `UCI_Elo`. When
+      // set, this is preferred over Skill Level for ABSOLUTE Elo
+      // anchoring — SF caps its own play to (roughly) this Elo, so
+      // the SF-Elo at which we score 50% estimates our absolute Elo.
+      uciElo: Option[Int] = None,
   ): ZIO[Scope, Throwable, StockfishSearch] =
     ZIO.acquireRelease(
-      start(binary, skillLevel, threads, hashMb, label, syzygyPath, syzygyProbeLimit)
+      start(binary, skillLevel, threads, hashMb, label, syzygyPath, syzygyProbeLimit, uciElo)
     )(s => ZIO.attemptBlocking(s.shutdown()).orDie)
 
   /** Internal — spawn + handshake without resource management. */
@@ -133,6 +138,7 @@ object StockfishSearch:
       label: String,
       syzygyPath: Option[String],
       syzygyProbeLimit: Int,
+      uciElo: Option[Int],
   ): ZIO[Any, Throwable, StockfishSearch] =
     ZIO.attemptBlocking {
       val pb = new ProcessBuilder(binary)
@@ -149,6 +155,10 @@ object StockfishSearch:
       // wait for the next "readyok" to know they took effect.
       skillLevel.foreach { lvl =>
         in.write(s"setoption name Skill Level value $lvl"); in.newLine()
+      }
+      uciElo.foreach { elo =>
+        in.write("setoption name UCI_LimitStrength value true"); in.newLine()
+        in.write(s"setoption name UCI_Elo value $elo"); in.newLine()
       }
       in.write(s"setoption name Threads value $threads"); in.newLine()
       in.write(s"setoption name Hash value $hashMb"); in.newLine()

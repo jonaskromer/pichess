@@ -23,6 +23,7 @@ Usage:
       --shards 4 --rows-per-shard 6000000 --batch 16384 --lr 0.003 --wd 5e-5
 """
 import argparse, os, shutil, time
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import torch
 import torch.nn as nn
@@ -99,15 +100,27 @@ def main():
     opt = torch.optim.Adam(net.parameters(), lr=a.lr, weight_decay=a.wd)
     lossf = nn.MSELoss()
 
-    for si in range(min(a.shards, NSHARDS)):
+    nshards = min(a.shards, NSHARDS)
+
+    def dl(si):
+        """Download shard si into its own dir; return the parquet path."""
+        d = f"{a.dldir}-{si}"
+        shutil.rmtree(d, ignore_errors=True)
         fn = f"data/train-{si:05d}-of-{NSHARDS:05d}.parquet"
         t0 = time.time()
-        print(f"[shard {si}] downloading {fn} ...", flush=True)
-        # local_dir mode -> a real file we can delete; nuke the dir after.
-        if os.path.exists(a.dldir):
-            shutil.rmtree(a.dldir, ignore_errors=True)
-        path = hf_hub_download(REPO, fn, repo_type="dataset", local_dir=a.dldir)
-        print(f"[shard {si}] downloaded in {time.time()-t0:.0f}s; streaming...", flush=True)
+        p = hf_hub_download(REPO, fn, repo_type="dataset", local_dir=d)
+        print(f"[shard {si}] downloaded in {time.time()-t0:.0f}s", flush=True)
+        return p
+
+    # Prefetch: keep the NEXT shard downloading in a background thread
+    # while the current one trains (peak disk = 2 shards ~5 GB).
+    pool = ThreadPoolExecutor(max_workers=1)
+    fut = pool.submit(dl, 0)
+    for si in range(nshards):
+        path = fut.result()                       # current shard ready
+        if si + 1 < nshards:
+            fut = pool.submit(dl, si + 1)          # kick off next download
+        print(f"[shard {si}] streaming...", flush=True)
         pf = pq.ParquetFile(path)
         seen = 0; prev_fen = None; tloss = 0.0; tnb = 0; trained = 0
         ts = time.time()
@@ -121,9 +134,10 @@ def main():
                 break
         print(f"[shard {si}] trained on {trained} positions "
               f"(loss={tloss/max(tnb,1):.5f}, {time.time()-ts:.0f}s)", flush=True)
-        shutil.rmtree(a.dldir, ignore_errors=True)   # free disk
-        export_bin(net, a.out)                        # checkpoint each shard
+        shutil.rmtree(f"{a.dldir}-{si}", ignore_errors=True)  # free this shard
+        export_bin(net, a.out)                                # checkpoint each shard
         print(f"[shard {si}] checkpoint -> {a.out}", flush=True)
+    pool.shutdown(wait=False)
 
 
 if __name__ == '__main__':

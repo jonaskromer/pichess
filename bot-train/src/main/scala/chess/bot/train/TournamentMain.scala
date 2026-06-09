@@ -80,7 +80,7 @@ object TournamentMain extends ZIOAppDefault:
 
   private def matchupLabel(cfg: Config): String =
     val opponent =
-      if cfg.vsStockfish then s"Stockfish (Skill Level ${cfg.stockfishSkill})"
+      if cfg.vsStockfish then cfg.stockfishElo.fold(s"Stockfish (Skill Level ${cfg.stockfishSkill})")(e => s"Stockfish (UCI_Elo $e)")
       else s"v${cfg.champion}"
     val parNote =
       // Stockfish runs as a single subprocess — only ONE concurrent
@@ -103,6 +103,7 @@ object TournamentMain extends ZIOAppDefault:
       parallelism: Int,
       vsStockfish: Boolean,
       stockfishSkill: Int,
+      stockfishElo:   Option[Int],
       useOpenings: Boolean,
       challengerCmh: Boolean,
       championCmh:   Boolean,
@@ -166,6 +167,9 @@ object TournamentMain extends ZIOAppDefault:
                          else intEnv("PICHESS_TOURNAMENT_PARALLELISM", 4),
         vsStockfish    = vsSf,
         stockfishSkill = intEnv("PICHESS_TOURNAMENT_STOCKFISH_SKILL", 5),
+        // Calibrated SF strength for absolute Elo anchoring. When set,
+        // overrides Skill Level (UCI_LimitStrength + UCI_Elo).
+        stockfishElo   = sys.env.get("PICHESS_TOURNAMENT_STOCKFISH_ELO").flatMap(_.toIntOption),
         // Default ON — similar bots draw 90%+ of games from
         // startpos, so the diversified opening pool is needed to
         // get any decisive signal at all. Opt out with
@@ -304,9 +308,11 @@ object TournamentMain extends ZIOAppDefault:
     * Scope close. */
   private def loadOpponent(cfg: Config): ZIO[Scope, Throwable, () => Search] =
     if cfg.vsStockfish then
+      // UCI_Elo (calibrated) takes precedence over Skill Level when set.
       StockfishSearch.spawn(
-        skillLevel = Some(cfg.stockfishSkill),
-        label      = s"stockfish-skill${cfg.stockfishSkill}",
+        skillLevel = if cfg.stockfishElo.isDefined then None else Some(cfg.stockfishSkill),
+        uciElo     = cfg.stockfishElo,
+        label      = cfg.stockfishElo.fold(s"stockfish-skill${cfg.stockfishSkill}")(e => s"stockfish-elo$e"),
       ).map(sf => () => sf)
     else loadSearch(
       cfg.champion, cfg.championCmh, cfg.championQ, cfg.championSee,
