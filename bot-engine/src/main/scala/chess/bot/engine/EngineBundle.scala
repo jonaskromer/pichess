@@ -32,9 +32,10 @@ final case class EngineBundle(
 
 object EngineBundle:
 
-  /** Which evaluator to use under the search. The HCE path stays the
-    * historical default so existing call sites + benches see no
-    * behaviour change. NNUE variants opt in. */
+  /** Which evaluator to use under the search. [[Hybrid]] is the
+    * default (it measured +74 Elo vs pure HCE); the other variants
+    * opt in. All non-HCE variants fall back to pure HCE when their
+    * NNUE resource is missing, so the bundle always loads. */
   enum EvalSource:
     /** Hand-crafted eval — the array-backed tapered evaluator over
       * the tuned `weights/v{n}.json` snapshot. Same evaluator that
@@ -47,6 +48,14 @@ object EngineBundle:
       * their evals (variance reduction). Falls back to single NNUE
       * then HCE if any member is missing. */
     case NnueEns
+    /** HCE + single-NNUE blend (see [[HybridEvaluator]]), mixed at
+      * `hybridAlpha`. Counter-intuitively the strongest option in
+      * head-to-head testing: even though our NNUE *alone* is ~−55
+      * Elo vs the HCE, a ~50/50 blend beats pure HCE by ~+74 Elo at
+      * depth 4 (the NNUE adds decorrelated positional signal while
+      * the HCE smooths its occasional blunders). Falls back to pure
+      * HCE if the NNUE resource is missing. */
+    case Hybrid
 
   /** Default bundle: load `weights/v1.json` + `openings/main-lines.pgn`
     * from the classpath, assemble [[Search]] over those. Fails fast
@@ -60,13 +69,17 @@ object EngineBundle:
       weightsVersion: Int = 1,
       maxBookPly: Int = 24,
       maxTtEntries: Int = 1_000_000,
-      evalSource: EvalSource = EvalSource.Hce,
+      evalSource: EvalSource = EvalSource.Hybrid,
       evalCacheEnabled: Boolean = false,
       evalCacheEntries: Int = 1_000_000,
       ensembleSize: Int = 3,
       tablebaseOracle: Option[Search] = None,
       tablebasePieceLimit: Int = 5,
       endgameHeuristicsEnabled: Boolean = false,
+      // Mixing weight on the NNUE when `evalSource = Hybrid`. 0.5 is
+      // the empirical optimum (depth-4 A/B: +74 Elo vs pure HCE,
+      // broad plateau over 0.3–0.5).
+      hybridAlpha: Double = 0.5,
   ): IO[Throwable, EngineBundle] =
     for
       weights <- WeightsLoader.load(weightsVersion)
@@ -81,7 +94,7 @@ object EngineBundle:
       hce      = ArrayTaperedEvaluator(weights.weights)
       eval     = wrapEval(
                    hce, evalSource, evalCacheEnabled, evalCacheEntries,
-                   ensembleSize, endgameHeuristicsEnabled,
+                   ensembleSize, endgameHeuristicsEnabled, hybridAlpha,
                  )
       base     = Search.alphaBeta(eval, book, maxTtEntries)
       search   = tablebaseOracle match
@@ -98,6 +111,7 @@ object EngineBundle:
       cacheEntries: Int,
       ensembleSize: Int,
       endgameHeuristics: Boolean,
+      hybridAlpha: Double,
   ): Evaluator =
     val chosen = source match
       case EvalSource.Hce => hce
@@ -107,6 +121,12 @@ object EngineBundle:
         NnueEnsemble.loadBaked(ensembleSize)
           .map(_.asInstanceOf[Evaluator])
           .orElse(NnueEvaluator.loadResource("/nnue-v1.bin"))
+          .getOrElse(hce)
+      case EvalSource.Hybrid =>
+        // HCE + NNUE blend. Falls back to pure HCE when the NNUE
+        // resource is absent (no blend partner → nothing to mix).
+        NnueEvaluator.loadResource("/nnue-v1.bin")
+          .map(nnue => new HybridEvaluator(hce, nnue, hybridAlpha))
           .getOrElse(hce)
     val withEndgame =
       if endgameHeuristics then new EndgameAwareEvaluator(chosen) else chosen
@@ -119,16 +139,18 @@ object EngineBundle:
       weightsVersion: Int = 1,
       maxBookPly: Int = 24,
       maxTtEntries: Int = 1_000_000,
-      evalSource: EvalSource = EvalSource.Hce,
+      evalSource: EvalSource = EvalSource.Hybrid,
       evalCacheEnabled: Boolean = false,
       evalCacheEntries: Int = 1_000_000,
       ensembleSize: Int = 3,
       endgameHeuristicsEnabled: Boolean = false,
+      hybridAlpha: Double = 0.5,
   ): UIO[(EngineBundle, Option[Throwable])] =
     fromResources(
       weightsVersion, maxBookPly, maxTtEntries,
       evalSource, evalCacheEnabled, evalCacheEntries, ensembleSize,
       endgameHeuristicsEnabled = endgameHeuristicsEnabled,
+      hybridAlpha = hybridAlpha,
     )
       .map(b => (b, None))
       .catchAll { err =>
@@ -145,7 +167,7 @@ object EngineBundle:
                 wrapEval(
                   ArrayTaperedEvaluator(fallbackSnapshot.weights),
                   evalSource, evalCacheEnabled, evalCacheEntries,
-                  ensembleSize, endgameHeuristicsEnabled,
+                  ensembleSize, endgameHeuristicsEnabled, hybridAlpha,
                 ),
                 OpeningBook.Empty,
                 maxTtEntries,

@@ -52,6 +52,7 @@ object TournamentMain extends ZIOAppDefault:
                         cfg.challengerAsp, cfg.challengerNnue, cfg.challengerSe,
                         cfg.challengerNnueEns, cfg.challengerLazySmp,
                         cfg.challengerEvalCache, cfg.challengerFlags,
+                        cfg.challengerHybridAlpha,
                       ).flatMap(maybeWrapSyzygy(_, cfg.challengerSyzygy, cfg))
         championF   <- loadOpponent(cfg)
                         .flatMap(maybeWrapSyzygy(_, cfg.championSyzygy, cfg))
@@ -142,6 +143,12 @@ object TournamentMain extends ZIOAppDefault:
       // [[applyNewFlags]].
       challengerFlags:     Set[String],
       championFlags:       Set[String],
+      // When set, that side uses a HybridEvaluator blending its HCE
+      // weights with the single NNUE: score = (1-α)·HCE + α·NNUE.
+      // 0.0 = pure HCE, 1.0 = pure NNUE. Lets us A/B whether a
+      // HCE-weighted NNUE blend beats pure HCE.
+      challengerHybridAlpha: Option[Double],
+      championHybridAlpha:   Option[Double],
   )
 
   private def readConfig: UIO[Config] =
@@ -249,6 +256,8 @@ object TournamentMain extends ZIOAppDefault:
                                 .exists(_.equalsIgnoreCase("true")),
         challengerFlags     = flagsEnv("PICHESS_TOURNAMENT_CHALLENGER_FLAGS"),
         championFlags       = flagsEnv("PICHESS_TOURNAMENT_CHAMPION_FLAGS"),
+        challengerHybridAlpha = sys.env.get("PICHESS_TOURNAMENT_CHALLENGER_HYBRID_ALPHA").flatMap(_.toDoubleOption),
+        championHybridAlpha   = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_HYBRID_ALPHA").flatMap(_.toDoubleOption),
       )
     }
 
@@ -304,7 +313,7 @@ object TournamentMain extends ZIOAppDefault:
       cfg.championId, cfg.championNmp, cfg.championLmpFut, cfg.championSeed,
       cfg.championContHist, cfg.championAsp, cfg.championNnue, cfg.championSe,
       cfg.championNnueEns, cfg.championLazySmp, cfg.championEvalCache,
-      cfg.championFlags,
+      cfg.championFlags, cfg.championHybridAlpha,
     )
 
   /** Build a [[Search]] for the given weights-version JSON
@@ -329,6 +338,7 @@ object TournamentMain extends ZIOAppDefault:
       lazySmpEnabled: Boolean,
       evalCacheEnabled: Boolean,
       newFlags: Set[String],
+      hybridAlpha: Option[Double] = None,
   ): ZIO[Any, Throwable, () => Search] =
     WeightsLoader.load(version).map { snapshot =>
       // NNUE evaluators are stateless (they allocate fresh
@@ -346,7 +356,7 @@ object TournamentMain extends ZIOAppDefault:
             .loadBaked(k = 3)
             .getOrElse(throw new IllegalStateException(
               "NNUE ensemble resources /nnue-ens-v1-s{1..3}.bin not packaged")))
-        else if nnueEnabled then
+        else if nnueEnabled || hybridAlpha.isDefined then
           Some(chess.bot.engine.nnue.NnueEvaluator
             .loadResource("/nnue-v1.bin")
             .getOrElse(throw new IllegalStateException(
@@ -370,7 +380,15 @@ object TournamentMain extends ZIOAppDefault:
       // we may hold ~2×parallelism of these live.
       () => {
       val rawEval: chess.bot.engine.Evaluator =
-        sharedNnue.getOrElse(ArrayTaperedEvaluator(snapshot.weights))
+        hybridAlpha match
+          // Hybrid: per-game HCE (fresh feature buffer) blended with
+          // the shared stateless NNUE. sharedNnue is guaranteed Some
+          // here (loaded above when hybridAlpha is defined).
+          case Some(alpha) =>
+            new chess.bot.engine.HybridEvaluator(
+              ArrayTaperedEvaluator(snapshot.weights), sharedNnue.get, alpha)
+          case None =>
+            sharedNnue.getOrElse(ArrayTaperedEvaluator(snapshot.weights))
       val eval: chess.bot.engine.Evaluator =
         if evalCacheEnabled then chess.bot.engine.CachedEvaluator.of(rawEval)
         else rawEval
