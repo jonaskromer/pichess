@@ -33,9 +33,10 @@ final case class EngineBundle(
 object EngineBundle:
 
   /** Which evaluator to use under the search. [[Hybrid]] is the
-    * default (it measured +74 Elo vs pure HCE); the other variants
-    * opt in. All non-HCE variants fall back to pure HCE when their
-    * NNUE resource is missing, so the bundle always loads. */
+    * default (it measured +424 Elo vs pure HCE with the Stockfish-
+    * distilled net); the other variants opt in. All non-HCE variants
+    * fall back to pure HCE when their NNUE resource is missing, so
+    * the bundle always loads. */
   enum EvalSource:
     /** Hand-crafted eval — the array-backed tapered evaluator over
       * the tuned `weights/v{n}.json` snapshot. Same evaluator that
@@ -49,12 +50,11 @@ object EngineBundle:
       * then HCE if any member is missing. */
     case NnueEns
     /** HCE + single-NNUE blend (see [[HybridEvaluator]]), mixed at
-      * `hybridAlpha`. Counter-intuitively the strongest option in
-      * head-to-head testing: even though our NNUE *alone* is ~−55
-      * Elo vs the HCE, a ~50/50 blend beats pure HCE by ~+74 Elo at
-      * depth 4 (the NNUE adds decorrelated positional signal while
-      * the HCE smooths its occasional blunders). Falls back to pure
-      * HCE if the NNUE resource is missing. */
+      * `hybridAlpha` (≈0.3). The strongest option: the Stockfish-
+      * distilled NNUE is +17 Elo vs HCE standalone, and a 0.3 blend
+      * (HCE backbone + NNUE correction) beats pure HCE by ~+424 Elo
+      * at depth 4. Falls back to pure HCE if the NNUE resource is
+      * missing. */
     case Hybrid
 
   /** Default bundle: load `weights/v1.json` + `openings/main-lines.pgn`
@@ -76,10 +76,12 @@ object EngineBundle:
       tablebaseOracle: Option[Search] = None,
       tablebasePieceLimit: Int = 5,
       endgameHeuristicsEnabled: Boolean = false,
-      // Mixing weight on the NNUE when `evalSource = Hybrid`. 0.5 is
-      // the empirical optimum (depth-4 A/B: +74 Elo vs pure HCE,
-      // broad plateau over 0.3–0.5).
-      hybridAlpha: Double = 0.5,
+      // Mixing weight on the NNUE when `evalSource = Hybrid`. With the
+      // Stockfish-distilled net (commit c6849ec) the depth-4 A/B
+      // optimum is α≈0.3 (+424 Elo vs pure HCE; broad strong plateau
+      // 0.3–0.5). A smaller NNUE correction on the HCE backbone beats
+      // a heavier blend even though the NNUE is now strong standalone.
+      hybridAlpha: Double = 0.3,
   ): IO[Throwable, EngineBundle] =
     for
       weights <- WeightsLoader.load(weightsVersion)
@@ -144,7 +146,7 @@ object EngineBundle:
       evalCacheEntries: Int = 1_000_000,
       ensembleSize: Int = 3,
       endgameHeuristicsEnabled: Boolean = false,
-      hybridAlpha: Double = 0.5,
+      hybridAlpha: Double = 0.3,
   ): UIO[(EngineBundle, Option[Throwable])] =
     fromResources(
       weightsVersion, maxBookPly, maxTtEntries,
