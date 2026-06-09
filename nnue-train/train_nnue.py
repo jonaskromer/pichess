@@ -138,6 +138,8 @@ def main():
     ap.add_argument('--lr', type=float, default=1e-2)
     ap.add_argument('--clip', type=float, default=2000)
     ap.add_argument('--lam', type=float, default=0.5)
+    ap.add_argument('--wd', type=float, default=0.0, help='Adam weight decay (L2 reg)')
+    ap.add_argument('--val', type=float, default=0.0, help='fraction held out for val loss')
     a = ap.parse_args()
 
     dev = 'mps' if torch.backends.mps.is_available() else 'cpu'
@@ -149,13 +151,19 @@ def main():
     S = torch.from_numpy(S).to(dev); Nt = torch.from_numpy(Nt).to(dev)
     T = torch.from_numpy(T).to(dev)
 
+    # Optional held-out validation split to watch for overfitting.
+    nval = int(N * a.val)
+    idx = torch.randperm(N, device=dev)
+    vidx, tidx = idx[:nval], idx[nval:]
+    Ntr = len(tidx)
+
     net = Net().to(dev)
-    opt = torch.optim.Adam(net.parameters(), lr=a.lr)
+    opt = torch.optim.Adam(net.parameters(), lr=a.lr, weight_decay=a.wd)
     lossf = nn.MSELoss()
     for ep in range(a.epochs):
-        perm = torch.randperm(N, device=dev)
+        perm = tidx[torch.randperm(Ntr, device=dev)]
         tot = 0.0; nb = 0; t0 = time.time()
-        for i in range(0, N, a.batch):
+        for i in range(0, Ntr, a.batch):
             r = perm[i:i + a.batch]
             pred = net(S[r], Nt[r])
             loss = lossf(torch.sigmoid(pred), T[r])
@@ -163,7 +171,12 @@ def main():
             with torch.no_grad():
                 net.ft.weight[PAD].zero_()
             tot += loss.item(); nb += 1
-        print(f"epoch {ep+1}/{a.epochs} loss={tot/nb:.5f} ({time.time()-t0:.1f}s)", flush=True)
+        vmsg = ""
+        if nval:
+            with torch.no_grad():
+                vp = torch.sigmoid(net(S[vidx], Nt[vidx]))
+                vmsg = f" val={lossf(vp, T[vidx]).item():.5f}"
+        print(f"epoch {ep+1}/{a.epochs} loss={tot/nb:.5f}{vmsg} ({time.time()-t0:.1f}s)", flush=True)
     export_bin(net, a.out)
     # White-POV cp eval for a few FENs — cross-check vs the Scala
     # NnueEvaluator on the same .bin to confirm feature indexing matches.
