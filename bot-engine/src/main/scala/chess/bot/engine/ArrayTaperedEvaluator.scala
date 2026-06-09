@@ -34,10 +34,18 @@ final class ArrayTaperedEvaluator private (
     egWeights: Array[Int],
 ) extends Evaluator:
 
-  // Reused feature buffer. Cleared at the start of every fill.
-  private val featureBuf: Array[Int] = new Array[Int](FeatureIndex.Count)
+  // Reused feature buffer, one per thread. Cleared at the start of
+  // every fill. ThreadLocal so the evaluator is safe to SHARE across
+  // concurrently-evaluating threads (parallel data-gen / tournaments)
+  // — a single shared buffer would be raced (corrupt features →
+  // garbage evals). The production search is single-threaded, so the
+  // per-call `ThreadLocal.get()` is the cheap same-thread fast path
+  // (~1 ns), negligible against a full search.
+  private val featureBuf: ThreadLocal[Array[Int]] =
+    ThreadLocal.withInitial(() => new Array[Int](FeatureIndex.Count))
 
   def evaluate(state: GameState): Int =
+    val featureBuf = this.featureBuf.get()
     FullFeatures.fillArray(state, featureBuf)
     val phase = GamePhase.compute(state.board)
     var mgSum = 0
@@ -69,6 +77,7 @@ final class ArrayTaperedEvaluator private (
     *
     * Sum of all component values equals the total `evaluate(state)`. */
   override def evaluateComponents(state: GameState): Map[String, Int] =
+    val featureBuf = this.featureBuf.get()
     FullFeatures.fillArray(state, featureBuf)
     val phase = GamePhase.compute(state.board)
 
