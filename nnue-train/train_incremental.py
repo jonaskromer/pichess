@@ -90,6 +90,8 @@ def main():
     ap.add_argument('--read-batch', type=int, default=500_000)
     ap.add_argument('--batch', type=int, default=16384)
     ap.add_argument('--lr', type=float, default=3e-3)
+    ap.add_argument('--lr-decay', type=float, default=1.0,
+                    help='multiply LR by this after each shard (e.g. 0.9 for a long run)')
     ap.add_argument('--wd', type=float, default=5e-5)
     ap.add_argument('--dldir', default='/tmp/lichess-shard')
     a = ap.parse_args()
@@ -137,6 +139,10 @@ def main():
         shutil.rmtree(f"{a.dldir}-{si}", ignore_errors=True)  # free this shard
         export_bin(net, a.out)                                # checkpoint each shard
         print(f"[shard {si}] checkpoint -> {a.out}", flush=True)
+        if a.lr_decay != 1.0:                                 # decay LR per shard
+            for g in opt.param_groups:
+                g['lr'] *= a.lr_decay
+            print(f"[shard {si}] lr -> {opt.param_groups[0]['lr']:.2e}", flush=True)
     pool.shutdown(wait=False)
 
 
