@@ -102,10 +102,43 @@ object SelfPlay:
       parallelism: Int = 1,
       openingStates: Vector[GameState] = Vector.empty,
   ): UIO[RoundResult] =
+    // Shared-instance behaviour (constant factories) — kept for
+    // back-compat. At parallelism > 1 this races the shared search
+    // state across games; use [[roundIsolated]] for clean
+    // measurement. See its doc for why.
+    roundIsolated(() => champion, () => challenger, games, depth,
+      maxPlies, parallelism, openingStates)
+
+  /** Like [[round]] but mints a FRESH [[Search]] per game from the
+    * supplied factories, so concurrent games never share mutable
+    * search state (transposition table, killer / history / corrhist
+    * tables). This is what makes `parallelism > 1` valid for Elo
+    * *measurement*: with shared instances, the per-Search tables are
+    * probed + mutated concurrently across the `foreachPar` games,
+    * which destroys the color-swap mirror cancellation and makes
+    * even identical-engine self-play swing ±200 Elo (the same flag
+    * measured −424 at p=8 but +61 at p=1). Per-game instances make
+    * each game independent, so identical engines score ~50% at any
+    * parallelism.
+    *
+    * For a search backed by a shared external resource that cannot
+    * be duplicated (e.g. a single Stockfish subprocess), have the
+    * factory return that one instance — those games then serialise
+    * on the resource's own lock instead of running truly parallel,
+    * which is correct (just not faster). */
+  def roundIsolated(
+      championFactory: () => Search,
+      challengerFactory: () => Search,
+      games: Int,
+      depth: Int,
+      maxPlies: Int = 200,
+      parallelism: Int = 1,
+      openingStates: Vector[GameState] = Vector.empty,
+  ): UIO[RoundResult] =
     if parallelism > 1 then
-      parallelRound(champion, challenger, games, depth, maxPlies, parallelism, openingStates)
+      parallelRound(championFactory, challengerFactory, games, depth, maxPlies, parallelism, openingStates)
     else
-      sequentialRound(champion, challenger, games, depth, maxPlies, openingStates)
+      sequentialRound(championFactory, challengerFactory, games, depth, maxPlies, openingStates)
 
   /** Pick the opening for the i-th game. Empty pool → start from
     * the standard initial position (back-compat default). Otherwise
@@ -119,8 +152,8 @@ object SelfPlay:
   /** Sequential round — original behaviour. Kept as the default so
     * existing callers see no semantic change. */
   private def sequentialRound(
-      champion: Search,
-      challenger: Search,
+      championFactory: () => Search,
+      challengerFactory: () => Search,
       games: Int,
       depth: Int,
       maxPlies: Int,
@@ -128,7 +161,7 @@ object SelfPlay:
   ): UIO[RoundResult] =
     ZIO.foldLeft(0 until games)(emptyRound) { (acc, i) =>
       val (whitePlayer, blackPlayer, challengerIsWhite) =
-        gamePairing(i, champion, challenger)
+        gamePairing(i, championFactory, challengerFactory)
       playGame(
         whitePlayer, blackPlayer, depth, maxPlies,
         initialState = openingFor(i, openingStates),
@@ -144,8 +177,8 @@ object SelfPlay:
     * once at the end via a sequential fold (cheap; just counter
     * + vector-concat operations). */
   private def parallelRound(
-      champion: Search,
-      challenger: Search,
+      championFactory: () => Search,
+      challengerFactory: () => Search,
       games: Int,
       depth: Int,
       maxPlies: Int,
@@ -155,7 +188,7 @@ object SelfPlay:
     ZIO
       .foreachPar(0 until games) { i =>
         val (whitePlayer, blackPlayer, challengerIsWhite) =
-          gamePairing(i, champion, challenger)
+          gamePairing(i, championFactory, challengerFactory)
         playGame(
           whitePlayer, blackPlayer, depth, maxPlies,
           initialState = openingFor(i, openingStates),
@@ -172,12 +205,18 @@ object SelfPlay:
 
   /** Color-alternation helper — shared by sequential + parallel
     * paths so the pairing rule lives in one place. Even-indexed
-    * games put the challenger on white; odd ones swap. */
+    * games put the challenger on white; odd ones swap.
+    *
+    * Mints a fresh search per side per game via the factories (see
+    * [[roundIsolated]]). A constant factory (`() => sharedInstance`)
+    * recovers the old shared-state behaviour. */
   private def gamePairing(
       i: Int,
-      champion: Search,
-      challenger: Search,
+      championFactory: () => Search,
+      challengerFactory: () => Search,
   ): (Search, Search, Boolean) =
+    val champion   = championFactory()
+    val challenger = challengerFactory()
     if i % 2 == 0 then (challenger, champion, true)
     else (champion, challenger, false)
 

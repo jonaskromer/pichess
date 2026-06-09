@@ -45,7 +45,7 @@ object TournamentMain extends ZIOAppDefault:
       for
         cfg <- readConfig
         _   <- ZIO.logInfo(matchupLabel(cfg))
-        challenger <- loadSearch(
+        challengerF <- loadSearch(
                         cfg.challenger, cfg.challengerCmh, cfg.challengerQ,
                         cfg.challengerSee, cfg.challengerId, cfg.challengerNmp,
                         cfg.challengerLmpFut, cfg.challengerSeed, cfg.challengerContHist,
@@ -53,7 +53,7 @@ object TournamentMain extends ZIOAppDefault:
                         cfg.challengerNnueEns, cfg.challengerLazySmp,
                         cfg.challengerEvalCache, cfg.challengerFlags,
                       ).flatMap(maybeWrapSyzygy(_, cfg.challengerSyzygy, cfg))
-        champion   <- loadOpponent(cfg)
+        championF   <- loadOpponent(cfg)
                         .flatMap(maybeWrapSyzygy(_, cfg.championSyzygy, cfg))
         // Resolve the opening pool. Empty pool → all games start
         // from startpos (90%+ draws between similar bots). Non-
@@ -61,9 +61,13 @@ object TournamentMain extends ZIOAppDefault:
         openings <- ZIO.foreach(if cfg.useOpenings then OpeningPool.fens else Vector.empty)(
                       fen => chess.codec.FenParserRegex.parse(fen)
                     )
-        report <- Tournament.play(
-                    challenger = challenger,
-                    champion   = champion,
+        // Isolated: a fresh search per game (constant factory for the
+        // shared SF subprocess) so concurrent games don't contaminate
+        // each other's TT / heuristic tables. This is what makes a
+        // parallel Elo readout trustworthy.
+        report <- Tournament.playIsolated(
+                    challengerFactory = challengerF,
+                    championFactory   = championF,
                     games      = cfg.games,
                     depth      = cfg.depth,
                     parallelism = cfg.parallelism,
@@ -269,10 +273,10 @@ object TournamentMain extends ZIOAppDefault:
     * `inner` unchanged — the bot still plays, just without TB
     * augmentation. */
   private def maybeWrapSyzygy(
-      inner: Search,
+      inner: () => Search,
       enabled: Boolean,
       cfg: Config,
-  ): ZIO[Scope, Throwable, Search] =
+  ): ZIO[Scope, Throwable, () => Search] =
     if !enabled then ZIO.succeed(inner)
     else cfg.syzygyPath match
       case None       => ZIO.succeed(inner)
@@ -280,17 +284,21 @@ object TournamentMain extends ZIOAppDefault:
         StockfishSearch
           .spawn(syzygyPath = Some(path), syzygyProbeLimit = cfg.syzygyPieceLimit,
                  label = "syzygy-oracle")
-          .map(oracle => new TbAugmentedSearch(inner, oracle, cfg.syzygyPieceLimit))
+          // One shared TB oracle (single subprocess) wrapping a fresh
+          // inner search per game.
+          .map(oracle => () => new TbAugmentedSearch(inner(), oracle, cfg.syzygyPieceLimit))
 
-  /** Pick the opponent based on config — either Stockfish or
-    * another pichess weights snapshot. The Stockfish path is
-    * scoped (its subprocess is released on Scope close). */
-  private def loadOpponent(cfg: Config): ZIO[Scope, Throwable, Search] =
+  /** Factory for the opponent — either a single shared Stockfish
+    * subprocess (returned by a constant factory; SF can't be
+    * duplicated, so those games serialise on its lock) or a per-game
+    * pichess search. Scoped so the SF subprocess is released on
+    * Scope close. */
+  private def loadOpponent(cfg: Config): ZIO[Scope, Throwable, () => Search] =
     if cfg.vsStockfish then
       StockfishSearch.spawn(
         skillLevel = Some(cfg.stockfishSkill),
         label      = s"stockfish-skill${cfg.stockfishSkill}",
-      )
+      ).map(sf => () => sf)
     else loadSearch(
       cfg.champion, cfg.championCmh, cfg.championQ, cfg.championSee,
       cfg.championId, cfg.championNmp, cfg.championLmpFut, cfg.championSeed,
@@ -321,27 +329,29 @@ object TournamentMain extends ZIOAppDefault:
       lazySmpEnabled: Boolean,
       evalCacheEnabled: Boolean,
       newFlags: Set[String],
-  ): ZIO[Any, Throwable, Search] =
+  ): ZIO[Any, Throwable, () => Search] =
     WeightsLoader.load(version).map { snapshot =>
-      val rawEval: chess.bot.engine.Evaluator =
+      // NNUE evaluators are stateless (they allocate fresh
+      // accumulators per evaluate() call), so build ONCE and share
+      // across all per-game searches — loading the .bin per game
+      // would be wasteful. The HCE ArrayTaperedEvaluator, in
+      // contrast, reuses an INTERNAL feature buffer across
+      // evaluate() calls, so a shared instance would be raced by
+      // concurrent games (corrupt features → non-deterministic
+      // evals → garbage Elo). It must be per-game, so it's built
+      // inside the factory below.
+      val sharedNnue: Option[chess.bot.engine.Evaluator] =
         if nnueEnsembleEnabled then
-          chess.bot.engine.nnue.NnueEnsemble
+          Some(chess.bot.engine.nnue.NnueEnsemble
             .loadBaked(k = 3)
-            .getOrElse(
-              throw new IllegalStateException(
-                "NNUE ensemble resources /nnue-ens-v1-s{1..3}.bin not packaged"
-              )
-            )
+            .getOrElse(throw new IllegalStateException(
+              "NNUE ensemble resources /nnue-ens-v1-s{1..3}.bin not packaged")))
         else if nnueEnabled then
-          chess.bot.engine.nnue.NnueEvaluator
+          Some(chess.bot.engine.nnue.NnueEvaluator
             .loadResource("/nnue-v1.bin")
-            .getOrElse(
-              throw new IllegalStateException("NNUE resource /nnue-v1.bin not packaged")
-            )
-        else ArrayTaperedEvaluator(snapshot.weights)
-      val eval: chess.bot.engine.Evaluator =
-        if evalCacheEnabled then chess.bot.engine.CachedEvaluator.of(rawEval)
-        else rawEval
+            .getOrElse(throw new IllegalStateException(
+              "NNUE resource /nnue-v1.bin not packaged")))
+        else None
       // Validate the requested new-flag names up front — a typo in an
       // A/B config should fail loud, not silently test nothing.
       val unknown = newFlags -- RecognisedNewFlags
@@ -351,9 +361,23 @@ object TournamentMain extends ZIOAppDefault:
             s"Recognised: ${RecognisedNewFlags.toList.sorted.mkString(", ")}"
         )
       def on(name: String): Boolean = newFlags.contains(name)
+      // Per-game search factory: fresh evaluator (HCE only) + fresh
+      // TT + tables each call so concurrent tournament games never
+      // share mutable state. The eval cache (when enabled) is ALSO
+      // per-game — a shared cache would re-introduce cross-game
+      // leakage through the eval. TT is capped well below the
+      // production 1M since depth-4 games visit far fewer nodes and
+      // we may hold ~2×parallelism of these live.
+      () => {
+      val rawEval: chess.bot.engine.Evaluator =
+        sharedNnue.getOrElse(ArrayTaperedEvaluator(snapshot.weights))
+      val eval: chess.bot.engine.Evaluator =
+        if evalCacheEnabled then chess.bot.engine.CachedEvaluator.of(rawEval)
+        else rawEval
       Search.alphaBeta(
         eval                         = eval,
         book                         = OpeningBook.Empty,
+        maxTtEntries                 = 1 << 18,
         counterMoveEnabled           = counterMoveEnabled,
         quiescenceEnabled            = quiescenceEnabled,
         seeEnabled                   = seeEnabled,
@@ -384,6 +408,7 @@ object TournamentMain extends ZIOAppDefault:
         underPromotionEnabled        = on("underpromo"),
         timeManagementUpgradeEnabled = on("timemgmt"),
       )
+      }
     }
 
   /** Recognised names for the comma-separated CHALLENGER_FLAGS /

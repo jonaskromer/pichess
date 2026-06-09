@@ -88,8 +88,26 @@ object Tournament:
       parallelism: Int = 1,
       openingStates: Vector[GameState] = Vector.empty,
   ): UIO[Report] =
+    playIsolated(() => challenger, () => champion, games, depth,
+      maxPlies, parallelism, openingStates)
+
+  /** Like [[play]] but mints a fresh [[Search]] per game from the
+    * factories, so concurrent games don't share mutable search
+    * state. REQUIRED for a valid Elo readout at `parallelism > 1` —
+    * shared-instance parallel tournaments are dominated by cross-
+    * game contamination noise (identical engines swing ±200 Elo).
+    * See [[SelfPlay.roundIsolated]]. */
+  def playIsolated(
+      challengerFactory: () => Search,
+      championFactory:   () => Search,
+      games:      Int,
+      depth:      Int,
+      maxPlies:   Int = 200,
+      parallelism: Int = 1,
+      openingStates: Vector[GameState] = Vector.empty,
+  ): UIO[Report] =
     SelfPlay
-      .round(champion, challenger, games, depth, maxPlies, parallelism, openingStates)
+      .roundIsolated(championFactory, challengerFactory, games, depth, maxPlies, parallelism, openingStates)
       .map { round =>
         val score = challengerScoreOf(round)
         Report(
