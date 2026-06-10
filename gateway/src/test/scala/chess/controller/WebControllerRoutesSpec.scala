@@ -55,7 +55,8 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
   private val testSession: String = "session-test-aaa"
 
   private def runWith[A](
-      stackInfo: chess.controller.StackInfo = chess.controller.StackInfo.Default
+      stackInfo: chess.controller.StackInfo = chess.controller.StackInfo.Default,
+      lichessToken: Option[String] = None
   )(
       body: Routes[Client & Tracing & ContextStorage, Response] => ZIO[
         Scope & Client & Tracing & ContextStorage,
@@ -85,7 +86,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
                                cache,
                                "http://lobby-service:8092",
                                stackInfo,
-                               lichessToken = None
+                               lichessToken = lichessToken
                              )
                  result   <- body(routes)
                // The routes now require Client (lobby-proxy outbound) plus
@@ -120,6 +121,18 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
     yield id
 
   def spec = suite("WebController routes")(
+    test("wires the Lichess spectate route when a token is configured") {
+      // lichessToken = Some(_) hits WebController's Some branch →
+      // LichessSpectate.routes; we only need the routes to BUILD (no external
+      // Lichess call) and a normal endpoint to keep working.
+      runWith(lichessToken = Some("dummy-token")) { routes =>
+        for
+          response <- routes.runZIO(
+                        withSession(Request.post(url"/api/games", Body.fromString("""{}""")))
+                      )
+        yield assertTrue(response.status == Status.Ok)
+      }
+    },
     test("POST /api/games returns a new game id and initial state") {
       runWith() { routes =>
         for

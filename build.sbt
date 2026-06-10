@@ -245,6 +245,10 @@ lazy val botLichess = project
   .settings(commonSettings)
   .settings(
     name := "pichess-bot-lichess",
+    // LichessBotMain: runnable entry point (sbt runMain) — orchestration over
+    // already-tested pieces (EngineBundle, Bridge, TimeManager, the tablebase
+    // oracle); excluded from coverage like the other *Main entrypoints.
+    coverageExcludedFiles := ".*LichessBotMain.*",
     libraryDependencies ++= Seq(
       "com.softwaremill.sttp.client3" %% "zio"      % "3.11.0",
       "dev.zio"                       %% "zio-json" % zioJsonVersion,
@@ -292,12 +296,13 @@ lazy val botTrain = project
   .settings(commonSettings)
   .settings(
     name := "pichess-bot-train",
-    // TrainMain + TournamentMain: orchestration entry points (sbt
-    // runMain), only meaningful when run with a real PGN corpus or
-    // a Stockfish subprocess. StockfishSearch: external subprocess
-    // adapter, integration-tested in StockfishSearchSpec when the
-    // binary is on PATH (skipped otherwise).
-    coverageExcludedFiles := ".*(TrainMain|TournamentMain|StockfishSearch).*",
+    // TrainMain + TournamentMain + SfDistillMain + PolicyPriorMain:
+    // orchestration entry points (sbt runMain), meaningful only with a
+    // real PGN corpus / shared TSV. Their tested logic lives in pure
+    // helpers (targetOutcome/sampleWeight/parseLine/accumulate/normalize).
+    // StockfishSearch: external subprocess adapter, integration-tested in
+    // StockfishSearchSpec when the binary is on PATH (skipped otherwise).
+    coverageExcludedFiles := ".*(TrainMain|TournamentMain|StockfishSearch|SfDistillMain|PolicyPriorMain).*",
     Compile / run / fork := true,
     Compile / run := (Compile / run)
       .dependsOn(botEngine / Compile / copyResources)
@@ -733,7 +738,11 @@ lazy val gateway = project
     dockerExposedPorts   := Seq(8090),
     dockerUpdateLatest   := true,
     Docker / dockerGroupLayers := pichessLayerGrouping,
-    coverageExcludedFiles := ".*GatewayMain.*",
+    // GatewayMain: runnable entry point. LichessSpectate: external-I/O bridge
+    // (Lichess HTTP API + game-service gRPC + a follower fiber) — integration
+    // glue, not meaningfully unit-testable without a live Lichess + game
+    // service, like the other external adapters (StockfishSearch).
+    coverageExcludedFiles := ".*(GatewayMain|LichessSpectate).*",
     // Copy the Scala.js output of web-ui into gateway's managed resources at
     // web/main.js so WebController can serve it from the classpath.
     Compile / resourceGenerators += Def.task {
