@@ -74,6 +74,9 @@ object GatewayMain extends ZIOAppDefault:
         cache        <- AnnotationCache.make
         lobbyBaseUrl <- LobbyProxy.baseUrlFromEnv
         stackInfo    <- StackInfo.fromEnv
+        // Optional: enables the Lichess spectate bridge (POST /lichess/games)
+        // when a bot token is present. Absent → the route is simply not added.
+        lichessToken <- zio.System.env("LICHESS_BOT_TOKEN").map(_.filter(_.nonEmpty))
         metricsPort  <- MetricsHttpServer.portFromEnv(defaultMetricsPort)
         _            <- Console.printLine(
                           s"pichess-gateway HTTP listening on 0.0.0.0:$httpPort " +
@@ -92,7 +95,8 @@ object GatewayMain extends ZIOAppDefault:
                             registry,
                             cache,
                             lobbyBaseUrl,
-                            stackInfo
+                            stackInfo,
+                            lichessToken
                           ) @@ TracingMiddleware.serverSpan
                         )
         // Run forever; the gateway is no longer killable from a network

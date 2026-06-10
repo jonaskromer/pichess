@@ -84,7 +84,8 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
                                registry,
                                cache,
                                "http://lobby-service:8092",
-                               stackInfo
+                               stackInfo,
+                               lichessToken = None
                              )
                  result   <- body(routes)
                // The routes now require Client (lobby-proxy outbound) plus

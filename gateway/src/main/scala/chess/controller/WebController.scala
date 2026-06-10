@@ -50,11 +50,17 @@ object WebController:
       registry: SessionRegistry,
       cache: AnnotationCache,
       lobbyBaseUrl: String,
-      stackInfo: StackInfo
+      stackInfo: StackInfo,
+      lichessToken: Option[String]
   ): Routes[Client & Tracing & ContextStorage, Response] =
+    val lichessRoutes =
+      lichessToken match
+        case Some(token) => LichessSpectate.routes(client, token)
+        case None        => Routes.empty
     tapirRoutes(client, registry, cache, stackInfo) ++
       rawRoutes(client, stackInfo) ++
-      LobbyProxy.routes(lobbyBaseUrl)
+      LobbyProxy.routes(lobbyBaseUrl) ++
+      lichessRoutes
 
   // --------------------------------------------------------------------------
   // Tapir-backed JSON API

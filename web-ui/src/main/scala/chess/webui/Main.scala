@@ -155,31 +155,13 @@ object Main:
     case Join
     case Lobby(inviteCode: String)
     case Game(gameId: String)
+    // Read-only spectator view of a mirrored game (Lichess bot-game or a
+    // lobby game watched as a non-player). Same board, no input.
+    case Watch(gameId: String)
     case Settings
     case Help
-    // Dev surface, gated by PICHESS_DEV (see `devMode` below). Routes
-    // exist regardless of devMode (parseHash always recognises them) so
-    // a deep-link still works; the dev pages themselves render a
-    // "not enabled" message when devMode is false.
-    case Dev
-    case DevTest
-    case DevCoverage
-    case DevPerformance
 
   private val currentScreenVar: Var[Screen] = Var(Screen.Start)
-
-  /** Whether the gateway exposes its dev surface (routes under /dev/…).
-    * Set from the `<meta name="pichess-dev">` tag the gateway injects
-    * per `PICHESS_DEV`. Read once at App mount; the Dev link on the
-    * start screen is conditional on this flag. */
-  private val devMode: Boolean =
-    Option(
-      dom.document
-        .querySelector("meta[name='pichess-dev']")
-        .asInstanceOf[dom.html.Meta]
-    )
-      .map(_.content.trim.toLowerCase)
-      .contains("true")
 
   /** Translate `dom.window.location.hash` into a `Screen`. Anything we
     * don't recognise falls back to Start.
@@ -192,11 +174,8 @@ object Main:
       case "join"               => Screen.Join
       case "settings"           => Screen.Settings
       case "help"               => Screen.Help
-      case "dev"                => Screen.Dev
-      case "dev/test"           => Screen.DevTest
-      case "dev/test/coverage"  => Screen.DevCoverage
-      case "dev/test/performance" => Screen.DevPerformance
       case s"lobby/$c"          => Screen.Lobby(c)
+      case s"watch/$id"         => Screen.Watch(id)
       case s"game/$id"          => Screen.Game(id)
       case _                    => Screen.Start
 
@@ -206,12 +185,9 @@ object Main:
     case Screen.Join           => "#join"
     case Screen.Lobby(code)    => s"#lobby/$code"
     case Screen.Game(id)       => s"#game/$id"
+    case Screen.Watch(id)      => s"#watch/$id"
     case Screen.Settings       => "#settings"
     case Screen.Help           => "#help"
-    case Screen.Dev            => "#dev"
-    case Screen.DevTest        => "#dev/test"
-    case Screen.DevCoverage    => "#dev/test/coverage"
-    case Screen.DevPerformance => "#dev/test/performance"
 
   /** Navigate to a different screen by mutating the URL hash. The
     * `hashchange` listener picks it up and updates `currentScreenVar`,
@@ -235,7 +211,6 @@ object Main:
   // string matching `chess.bot.engine.Difficulty` enum values — the
   // server validates. `allowUndo` is a hint to the client to grey out
   // the undo/redo controls; the server doesn't enforce it.
-  private val vsBotOpenVar: Var[Boolean]      = Var(false)
   private val vsBotPlayerSideVar: Var[String] = Var("white")
   private val vsBotDifficultyVar: Var[String] = Var("Medium")
   private val vsBotAllowUndoVar: Var[Boolean] = Var(true)
@@ -328,8 +303,11 @@ object Main:
         // Whenever we arrive on a Game screen, make sure the game state
         // is loaded for that id — refresh state + (re)open SSE for it.
         currentScreenVar.signal.distinct.foreach {
-          case Screen.Game(id) => enterGame(id)
-          case _               => ()
+          // Both Game and Watch open the SSE feed for an id; Watch just
+          // renders it read-only. `enterGame` is idempotent + reusable.
+          case Screen.Game(id)  => enterGame(id)
+          case Screen.Watch(id) => enterGame(id)
+          case _                => ()
         }(using ctx.owner)
         // Phase 3: any state change (move, undo, redo, SSE push) clears
         // the per-click preview and triggers a fresh /threats fetch
@@ -409,7 +387,6 @@ object Main:
           ModalRegistry.register("load",    loadOpenVar.signal)
           ModalRegistry.register("confirm", confirmVar.signal.map(_.isDefined))
           ModalRegistry.register("export",  exportVar.signal.map(_.isDefined))
-          ModalRegistry.register("vsbot",   vsBotOpenVar.signal)
         }
         // Fetch the active stack identity once at boot. Used by the
         // Dev page's stack chip. Silent on failure — the chip just
@@ -443,12 +420,9 @@ object Main:
     case Screen.Join            => joinScreen()
     case Screen.Lobby(code)     => lobbyScreen(code)
     case Screen.Game(_)         => mainUi()
+    case Screen.Watch(_)        => spectatorUi()
     case Screen.Settings        => settingsScreen()
     case Screen.Help            => helpScreen()
-    case Screen.Dev             => devIndexScreen()
-    case Screen.DevTest         => devTestScreen()
-    case Screen.DevCoverage     => devCoverageScreen()
-    case Screen.DevPerformance  => devPerformanceScreen()
 
   /** Side-effect when entering a Game screen: ensure gameIdVar is set,
     * pull current state, (re)connect SSE for that id. Idempotent — a
@@ -471,7 +445,6 @@ object Main:
       gameBody(),
       promotionOverlay(),
       loadModal(),
-      vsBotModal(),
       exportModal(),
       confirmModal(),
       // Floating clone of the dragged piece. Mounted ONCE — the inner
@@ -625,6 +598,70 @@ object Main:
     )
 
   // --------------------------------------------------------------------------
+  // Spectator (read-only) view — reused by the Lichess watch screen AND by
+  // lobby spectators. Same board, fed by the same SSE feed, but with no
+  // input handlers and none of the post-it action buttons.
+  // --------------------------------------------------------------------------
+
+  private def spectatorUi(): HtmlElement =
+    div(
+      className := "app-shell",
+      header(),
+      spectatorBody()
+    )
+
+  private def spectatorBody(): HtmlElement =
+    div(
+      className := "app",
+      spectatorBoardArea(),
+      // Move log only — no game-state post-it (New / Load / Draw / Forfeit).
+      div(
+        className := "sidebar",
+        moveLogContainer()
+      )
+    )
+
+  /** Board area without the board post-it: the paper sheet, the status
+    * banner, the read-only board and captured pile — nothing actionable. */
+  private def spectatorBoardArea(): HtmlElement =
+    div(
+      className := "board-area",
+      div(
+        className := "board-paper",
+        paperLayer(crumpled = true),
+        statusIndicator(),
+        div(
+          className := "board-row",
+          div(
+            className := "board-wrapper",
+            rankLabels(),
+            board(readOnly = true),
+            fileLabels()
+          ),
+          capturedPile()
+        )
+      )
+    )
+
+  /** Kick off a live Lichess bot-game on the server, then navigate to the
+    * read-only spectator view of its mirror game. */
+  private def startLichessWatch(): Unit =
+    toastVar.set(Some("Starting a Lichess bot-game…"))
+    fetchJson("POST", "/lichess/games", None).onComplete {
+      case scala.util.Success(raw) =>
+        try
+          val obj      = js.JSON.parse(raw).asInstanceOf[js.Dynamic]
+          val mirrorId = obj.mirrorId.asInstanceOf[String]
+          toastVar.set(None)
+          navigate(Screen.Watch(mirrorId))
+        catch
+          case _: Throwable =>
+            toastVar.set(Some("Couldn't start a game (bad response)."))
+      case scala.util.Failure(err) =>
+        toastVar.set(Some(s"Couldn't start a game: ${err.getMessage}"))
+    }
+
+  // --------------------------------------------------------------------------
   // Header
   // --------------------------------------------------------------------------
 
@@ -667,13 +704,6 @@ object Main:
       className := "header-link",
       href := "#help",
       "Help"
-    ),
-    a(
-      className := "header-link",
-      href := "/docs",
-      target := "_blank",
-      rel := "noopener noreferrer",
-      "Docs ↗"
     )
   )
 
@@ -759,7 +789,6 @@ object Main:
       div(
         className := "post-it-card cyan",
         actionButton("new",     "New Game", "action-new",     () => askConfirm(confirmNewGame)),
-        actionButton("vsbot",   "Vs Bot",   "action-vsbot",   () => vsBotOpenVar.set(true)),
         actionButton("load",    "Load",     "action-load",    () => loadOpenVar.set(true)),
         actionButton("draw",    "Draw",     "action-draw",    () => askConfirm(confirmDraw)),
         actionButton("forfeit", "Forfeit",  "action-forfeit", () => askConfirm(confirmForfeit))
@@ -846,20 +875,21 @@ object Main:
       }
     )
 
-  private def board(): HtmlElement =
+  private def board(readOnly: Boolean = false): HtmlElement =
     div(
       className := "board",
       children <-- stateVar.signal.combineWith(flippedVar.signal).map {
         case (None, _) => List.empty
         case (Some(s), flipped) =>
           val squares = if flipped then s.squares.reverse else s.squares
-          squares.map(renderSquare(s, _))
+          squares.map(renderSquare(s, _, readOnly))
       }
     )
 
   private def renderSquare(
       state: BoardStateDto,
-      sq: SquareDto
+      sq: SquareDto,
+      readOnly: Boolean
   ): HtmlElement =
     val isChecked = state.checkedKingPos.contains(sq.pos)
     val squareClasses =
@@ -883,7 +913,8 @@ object Main:
       cls("is-attacker") <-- attackersVar.signal
         .map(_.contains(sq.pos))
         .distinct,
-      onClick --> { _ => onSquareClick(sq) },
+      // Spectator boards are read-only: no click-to-move, no drag.
+      if readOnly then emptyMod else onClick --> { _ => onSquareClick(sq) },
       sq.piece.map { name =>
         span(
           className := s"piece ${sq.pieceColor.getOrElse("")}-piece",
@@ -907,9 +938,11 @@ object Main:
           // piece-level handler). Document-level listeners fire
           // regardless of cursor position and check `dragVar.now()` to
           // decide whether they're dealing with an in-flight drag.
-          onPointerDown --> { e =>
-            handlePointerDown(sq.pos, name, sq.pieceColor.getOrElse(""), e)
-          },
+          if readOnly then emptyMod
+          else
+            onPointerDown --> { e =>
+              handlePointerDown(sq.pos, name, sq.pieceColor.getOrElse(""), e)
+            },
           pieceSvg(name),
         )
       },
@@ -1286,115 +1319,6 @@ object Main:
       )
     )
 
-  /** New-game-vs-bot dialog. Asks the user which side they want, the
-    * bot's difficulty level, and whether undo/redo should be enabled.
-    * On submit, POSTs to /api/games with the `vsBot` body field
-    * populated; the server validates the strings and routes the game
-    * through the vs-bot orchestrator. */
-  private def vsBotModal(): HtmlElement =
-    div(
-      className <-- vsBotOpenVar.signal.map(o =>
-        if o then "modal visible" else "modal"
-      ),
-      onClick --> { _ => vsBotOpenVar.set(false) },
-      div(
-        className := "modal-dialog vsbot-dialog",
-        onClick.stopPropagation --> { _ => () },
-        paperLayer(),
-        h2("New Game vs Bot"),
-        p("Pick your colour, the bot's difficulty, and whether you want take-backs."),
-
-        // Player-side radio buttons. White moves first, so picking
-        // "Black" means the bot opens.
-        div(
-          className := "vsbot-field",
-          span(className := "vsbot-label", "I'll play as:"),
-          label(
-            className := "vsbot-radio",
-            input(
-              typ := "radio",
-              nameAttr := "player-side",
-              value := "white",
-              controlled(
-                checked <-- vsBotPlayerSideVar.signal.map(_ == "white"),
-                onChange.mapToChecked.filter(identity).mapTo("white") --> vsBotPlayerSideVar,
-              ),
-            ),
-            "White",
-          ),
-          label(
-            className := "vsbot-radio",
-            input(
-              typ := "radio",
-              nameAttr := "player-side",
-              value := "black",
-              controlled(
-                checked <-- vsBotPlayerSideVar.signal.map(_ == "black"),
-                onChange.mapToChecked.filter(identity).mapTo("black") --> vsBotPlayerSideVar,
-              ),
-            ),
-            "Black",
-          ),
-        ),
-
-        // Difficulty dropdown. Values match `chess.bot.engine.Difficulty`
-        // enum names — server-side parsing is case-insensitive but we
-        // submit the canonical-case strings here to keep logs clean.
-        div(
-          className := "vsbot-field",
-          label(
-            className := "vsbot-label",
-            "Difficulty:",
-            select(
-              className := "vsbot-select",
-              controlled(
-                value <-- vsBotDifficultyVar.signal,
-                onChange.mapToValue --> vsBotDifficultyVar,
-              ),
-              option(value := "Beginner", "Beginner (depth 1)"),
-              option(value := "Easy",     "Easy (depth 2)"),
-              option(value := "Medium",   "Medium (depth 3)"),
-              option(value := "Hard",     "Hard (depth 4)"),
-              option(value := "Expert",   "Expert (depth 5)"),
-            ),
-          ),
-        ),
-
-        // Allow-undo toggle.
-        div(
-          className := "vsbot-field",
-          label(
-            className := "vsbot-checkbox",
-            input(
-              typ := "checkbox",
-              controlled(
-                checked <-- vsBotAllowUndoVar.signal,
-                onChange.mapToChecked --> vsBotAllowUndoVar,
-              ),
-            ),
-            "Allow undo / redo",
-          ),
-        ),
-
-        div(
-          className := "modal-actions flex flex-row gap-3 justify-end",
-          Components.ctaButton("Start") { _ =>
-            // Player picks their side; the bot takes the opposite.
-            val playerWhite = vsBotPlayerSideVar.now() == "white"
-            val botSide     = if playerWhite then "black" else "white"
-            val settings = VsBotSettings(
-              botSide    = botSide,
-              difficulty = vsBotDifficultyVar.now(),
-              allowUndo  = vsBotAllowUndoVar.now(),
-            )
-            bootstrapGame(load = None, vsBot = Some(settings))
-            vsBotOpenVar.set(false)
-          },
-          Components.secondaryButton("Cancel") { _ => vsBotOpenVar.set(false) },
-        ),
-      ),
-    )
-
   private def confirmModal(): HtmlElement =
     div(
       className <-- confirmVar.signal.map(c =>
@@ -1560,9 +1484,8 @@ object Main:
     */
   private def bootstrapGame(
       load: Option[String] = None,
-      vsBot: Option[VsBotSettings] = None,
   ): Unit =
-    postCreateGameClient((sessionId, CreateGameRequest(load, vsBot))).foreach {
+    postCreateGameClient((sessionId, CreateGameRequest(load))).foreach {
       case Right(snapshot) =>
         gameIdVar.set(Some(snapshot.id))
         stateVar.set(Some(snapshot.state))
@@ -2002,23 +1925,10 @@ object Main:
           Components.linkButton("Settings") { _ => navigate(Screen.Settings) }
         ),
         Components.sidePostIt(
-          // /docs is the Tapir-generated Swagger UI served by the gateway;
-          // open it in its own tab rather than wrapping the iframe in our
-          // own styled page (the wrapper read as visually broken — Swagger
-          // styles fight the notebook look).
-          a(
-            className := "btn-link",
-            href := "/docs",
-            target := "_blank",
-            rel := "noopener noreferrer",
-            "Docs"
-          ),
-          Components.linkAnchor("Help", "#help"),
-          // Dev surface only shows when the gateway was launched with
-          // PICHESS_DEV=true. Operator-only entry point — regular users
-          // never see it.
-          if devMode then Components.linkAnchor("Dev", "#dev")
-          else emptyNode
+          // Kick off a live Lichess bot-game (our bot vs a random online
+          // bot) and spectate it on our own board, read-only.
+          Components.linkButton("Watch a bot game") { _ => startLichessWatch() },
+          Components.linkAnchor("Help", "#help")
         )
       ),
       pieceShelf()
@@ -2123,176 +2033,6 @@ object Main:
       HelpView.render()
     )
 
-  // -- Dev section ----------------------------------------------------------
-
-  /** Stack-identity chip — small handwritten badge naming the active
-    * backend + any projection extras. Driven by `stackInfoVar`, which
-    * is populated once at App mount from `/api/stack-info`. Shown only
-    * when the fetch succeeded. */
-  private def stackChip(): HtmlElement =
-    div(
-      className := "stack-chip flex flex-row items-center gap-2",
-      child <-- stackInfoVar.signal.map {
-        case None       => span(className := "stack-chip-empty", "")
-        case Some(info) =>
-          val extrasSuffix =
-            if info.extras.isEmpty then ""
-            else s" + ${info.extras.mkString(", ")}"
-          span(
-            className := "stack-chip-text",
-            "Active stack: ",
-            strong(className := "font-press", info.backend),
-            extrasSuffix
-          )
-      }
-    )
-
-  /** "Dev mode isn't enabled" placeholder. Shown on any /dev/...
-    * screen when the gateway didn't ship `PICHESS_DEV=true` — better
-    * than a 404 since the URL still routes (the operator can tell
-    * they got here, just that the surface is off). */
-  private def devDisabledNotice(): HtmlElement =
-    Components.contentCard(
-      p(
-        className := "settings-hint",
-        "Dev tools are not enabled in this deployment. Restart the gateway with ",
-        code(className := "font-press", "PICHESS_DEV=true"),
-        " to surface the coverage / performance / docs pages."
-      )
-    )
-
-  private def devIndexScreen(): HtmlElement =
-    Components.screenLayout("dev")(
-      Components.titleCard(
-        Components.backLink(() => navigate(Screen.Start)),
-        Components.screenHeading("Dev")
-      ),
-      if !devMode then devDisabledNotice()
-      else
-        Components.contentCard(
-          stackChip(),
-          p(
-            className := "settings-hint",
-            "Switch stacks from the terminal: ",
-            code(className := "font-press", "make stack-postgres"),
-            ", ",
-            code(className := "font-press", "make stack-mongo"),
-            ", etc."
-          ),
-          div(
-            className := "flex flex-col gap-2 items-stretch",
-            a(
-              className := "btn-link",
-              href := "/docs",
-              target := "_blank",
-              rel := "noopener noreferrer",
-              "API docs (Swagger) ↗"
-            ),
-            Components.linkAnchor("Tests + reports",   "#dev/test")
-          )
-        )
-    )
-
-  private def devTestScreen(): HtmlElement =
-    Components.screenLayout("dev-test")(
-      Components.titleCard(
-        Components.backLink(() => navigate(Screen.Dev)),
-        Components.screenHeading("Tests")
-      ),
-      if !devMode then devDisabledNotice()
-      else
-        Components.contentCard(
-          stackChip(),
-          div(
-            className := "flex flex-col gap-2 items-stretch",
-            Components.linkAnchor("Coverage report",    "#dev/test/coverage"),
-            Components.linkAnchor("Performance report", "#dev/test/performance")
-          )
-        )
-    )
-
-  private def devCoverageScreen(): HtmlElement =
-    Components.screenLayout("dev-coverage")(
-      Components.titleCard(
-        Components.backLink(() => navigate(Screen.DevTest)),
-        Components.screenHeading("Coverage")
-      ),
-      if !devMode then devDisabledNotice()
-      else
-        Components.contentCard(
-          p(
-            className := "settings-hint",
-            "Baked into the gateway image by ",
-            code(className := "font-press", "make coverage-build"),
-            ". Re-run that target + ",
-            code(className := "font-press", "make dev-gateway"),
-            " to refresh."
-          ),
-          iframe(
-            src := "/dev/coverage/report/",
-            className := "docs-iframe w-full h-[80vh] border border-hairline"
-          )
-        )
-    )
-
-  private def devPerformanceScreen(): HtmlElement =
-    Components.screenLayout("dev-performance")(
-      Components.titleCard(
-        Components.backLink(() => navigate(Screen.DevTest)),
-        Components.screenHeading("Performance")
-      ),
-      if !devMode then devDisabledNotice()
-      else
-        Components.contentCard(
-          // --- Live observability dashboards -------------------------------
-          //
-          // Each link points at a docker-compose service that's only up
-          // when the `obs` profile is active. When obs is down, the link
-          // is a dead end — that's fine; the dev page is a launcher, not
-          // a status board. (A future iteration could probe and grey out
-          // the unavailable ones.)
-          p(
-            className := "settings-hint",
-            "Live observability — needs ",
-            code(className := "font-press", "EXTRA=obs"),
-            " on the active stack."
-          ),
-          div(
-            className := "flex flex-row gap-2 items-stretch flex-wrap",
-            Components.linkAnchor("Grafana ↗",    "http://localhost:3000/"),
-            Components.linkAnchor("Prometheus ↗", "http://localhost:9090/"),
-            Components.linkAnchor("Jaeger ↗",     "http://localhost:16686/"),
-          ),
-          // --- How to reproduce --------------------------------------------
-          p(
-            className := "settings-hint",
-            "Reproduce a backend-comparison run:"
-          ),
-          pre(
-            className := "font-press text-xs whitespace-pre-wrap " +
-              "border border-hairline p-2",
-            "BACKENDS=postgres,mongo,redis,cassandra,inmemory \\\n" +
-              "MODE=Stress OBS=true \\\n" +
-              "make perf"
-          ),
-          // --- Latest Gatling report (the workhorse) -----------------------
-          p(
-            className := "settings-hint",
-            "Latest report — baked by ",
-            code(className := "font-press", "make perf-bake"),
-            " (or the legacy ",
-            code(className := "font-press", "make gatling-build"),
-            ") into ",
-            code(className := "font-press", "/dev/performance/report/"),
-            "."
-          ),
-          iframe(
-            src := "/dev/performance/report/",
-            className := "docs-iframe w-full h-[80vh] border border-hairline"
-          )
-        )
-    )
-
   // -- New-game menu --------------------------------------------------------
 
   // -- New-game screen ------------------------------------------------------
@@ -2323,7 +2063,7 @@ object Main:
           Seq(
             (NewGameMode.Local, "Local",  true),
             (NewGameMode.Host,  "Host",   true),
-            (NewGameMode.Bot,   "Vs Bot", false)
+            (NewGameMode.Bot,   "Vs Bot", true)
           )
         ),
         child <-- newGameModeVar.signal.distinct.map(modeDetails)
@@ -2351,8 +2091,34 @@ object Main:
       className := "mode-details flex flex-col gap-4 items-stretch",
       p(
         className := "mode-blurb",
-        "Coming soon — engine integration is on the roadmap."
-      )
+        "Play the built-in engine — a hand-crafted + NNUE hybrid eval " +
+          "with alpha-beta search. Pick your colour and how hard it plays."
+      ),
+      div(
+        className := "host-form flex flex-col gap-3",
+        Components.formRow("I play as")(
+          Components.selectInput(
+            vsBotPlayerSideVar,
+            Seq("white" -> "White", "black" -> "Black")
+          )
+        ),
+        // Values match `chess.bot.engine.Difficulty` enum names; the
+        // server parses them case-insensitively and maps to search depth.
+        Components.formRow("Difficulty")(
+          Components.selectInput(
+            vsBotDifficultyVar,
+            Seq(
+              "Beginner" -> "Beginner (depth 1)",
+              "Easy"     -> "Easy (depth 2)",
+              "Medium"   -> "Medium (depth 3)",
+              "Hard"     -> "Hard (depth 4)",
+              "Expert"   -> "Expert (depth 5)"
+            )
+          )
+        ),
+        Components.checkboxRow(vsBotAllowUndoVar, "Allow undo")
+      ),
+      Components.linkButton("Start game vs bot") { _ => createBotGame() }
     )
 
   private def hostModeDetails(): HtmlElement =
@@ -2400,6 +2166,26 @@ object Main:
 
   private def createLocalGame(): Unit =
     postCreateGameClient((sessionId, CreateGameRequest(None))).foreach {
+      case Right(snapshot) =>
+        gameIdVar.set(Some(snapshot.id))
+        stateVar.set(Some(snapshot.state))
+        navigate(Screen.Game(snapshot.id))
+      case Left(err) => showToast(err.error)
+    }
+
+  /** Mint a vs-bot game from the new-game menu. The player picks their
+    * own colour; the bot takes the opposite. If the bot is white the
+    * gateway plays its opening before replying, so the returned snapshot
+    * already carries that move. Navigation to the game screen wires SSE
+    * (via `enterGame`) for the bot's subsequent replies. */
+  private def createBotGame(): Unit =
+    val playerWhite = vsBotPlayerSideVar.now() == "white"
+    val settings = VsBotSettings(
+      botSide    = if playerWhite then "black" else "white",
+      difficulty = vsBotDifficultyVar.now(),
+      allowUndo  = vsBotAllowUndoVar.now(),
+    )
+    postCreateGameClient((sessionId, CreateGameRequest(None, Some(settings)))).foreach {
       case Right(snapshot) =>
         gameIdVar.set(Some(snapshot.id))
         stateVar.set(Some(snapshot.state))
@@ -2556,9 +2342,16 @@ object Main:
       if l.hostSessionId == sessionId && l.status == "Full" then
         Components.ctaButton("Start game") { _ => startHostedGame(l) }
       else span(),
-      // Once the host has started the game, both sides show a link to the board.
+      // Once the host has started the game: players go to the interactive
+      // board; everyone else (spectators) gets the read-only watch view.
       if l.status == "Started" && l.gameId.isDefined then
-        Components.linkAnchor("Game started — go to board", s"#game/${l.gameId.get}")
+        val gid      = l.gameId.get
+        val isPlayer = l.hostSessionId == sessionId ||
+          l.guestSessionId.toOption.contains(sessionId)
+        if isPlayer then
+          Components.linkAnchor("Game started — go to board", s"#game/$gid")
+        else
+          Components.linkAnchor("Game started — spectate", s"#watch/$gid")
       else span()
     )
 
