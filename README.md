@@ -1,5 +1,21 @@
 # <img src="gateway/src/main/resources/web/peach.svg" alt="🍑" width="32" /> piChess
 
+[![test](https://github.com/jonaskromer/pichess/actions/workflows/test.yml/badge.svg)](https://github.com/jonaskromer/pichess/actions/workflows/test.yml)
+[![release](https://github.com/jonaskromer/pichess/actions/workflows/release.yml/badge.svg)](https://github.com/jonaskromer/pichess/actions/workflows/release.yml)
+[![latest release](https://img.shields.io/github/v/release/jonaskromer/pichess?label=latest%20release&sort=semver&color=ff9bb3&logo=github)](https://github.com/jonaskromer/pichess/releases)
+![coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
+
+![Scala](https://img.shields.io/badge/Scala-3.8-DC322F?logo=scala&logoColor=white)
+![ZIO](https://img.shields.io/badge/ZIO-throughout-7B2FBE)
+![gRPC](https://img.shields.io/badge/gRPC-inter--service-244c5a?logo=grpc&logoColor=white)
+![Kafka](https://img.shields.io/badge/Kafka-event%20log-231F20?logo=apachekafka)
+![Docker](https://img.shields.io/badge/images-multi--arch-2496ED?logo=docker&logoColor=white)
+![k3s](https://img.shields.io/badge/deploy-k3s-326CE5?logo=kubernetes&logoColor=white)
+
+[![lichess blitz](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Flichess.org%2Fapi%2Fuser%2Fpichess-htwg&query=%24.perfs.blitz.rating&label=lichess%20blitz&logo=lichess&color=brightgreen)](https://lichess.org/@/pichess-htwg)
+![lines of code](https://tokei.rs/b1/github/jonaskromer/pichess?category=code)
+![last commit](https://img.shields.io/github/last-commit/jonaskromer/pichess?color=ff9bb3)
+
 Welcome to **πChess** (pronounced like *peaches* in German)!
 
 πChess is a chess game written in **Scala 3** using **ZIO** throughout — from domain validation to HTTP serving. The architecture is a four-container microservice setup (gateway, game-service, repository, kafka) with **gRPC** between services, **Kafka** as the event log, and a Laminar/Scala.js web UI served from the gateway.

@@ -1,0 +1,50 @@
+name: test
+
+# Coverage gate + full test suite. Deliberately separate from releasing:
+# every push to main and every PR is verified here, but NO images are built.
+# release.yml reuses this workflow (workflow_call) to gate a tagged build, so
+# the test logic lives in exactly one place.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_call: {}
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # JDK 23 matches the eclipse-temurin:23-jre runtime base. `cache: sbt`
+      # caches Coursier/Ivy/sbt keyed on the build files — the single biggest
+      # win for Scala CI wall-clock.
+      - name: Set up JDK 23 + sbt cache
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "23"
+          cache: sbt
+      - uses: sbt/setup-sbt@v1
+
+      # The project enforces 100% statement coverage
+      # (coverageMinimumStmtTotal := 100, coverageFailOnMinimum := true), so
+      # this one command is the whole gate: any test failure OR any coverage
+      # gap returns non-zero and stops the pipeline. Fail-fast by construction.
+      #
+      # NOTE: the suite includes Testcontainers-backed persistence tests
+      # (postgres/mongo/redis/cassandra/clickhouse/neo4j). ubuntu-latest ships
+      # a Docker daemon, so they run — but first-run image pulls add minutes.
+      - name: Coverage + tests
+        run: sbt clean coverage test coverageReport coverageAggregate
+
+      # When the gate fails, print exactly which statements are uncovered so
+      # the failure is actionable from the log alone.
+      - name: Report uncovered lines (on failure)
+        if: failure()
+        run: python3 scripts/check-coverage.py || true
