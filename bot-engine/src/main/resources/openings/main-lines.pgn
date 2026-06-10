@@ -147,3 +147,248 @@
 [Result "*"]
 
 1. d4 f5 2. c4 Nf6 3. Nc3 e6 4. Nf3 d5 5. Bg5 Be7 *
+
+[Event "Main Lines: Sicilian Classical (Richter-Rauzer)"]
+[Result "*"]
+
+1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 Nc6 6. Bg5 e6 7. Qd2 a6 *
+
+[Event "Main Lines: Sicilian Scheveningen"]
+[Result "*"]
+
+1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 e6 6. Be2 Be7 7. O-O O-O *
+
+[Event "Main Lines: Sicilian Kan"]
+[Result "*"]
+
+1. e4 c5 2. Nf3 e6 3. d4 cxd4 4. Nxd4 a6 5. Bd3 Nf6 6. O-O Qc7 *
+
+[Event "Main Lines: Sicilian Accelerated Dragon"]
+[Result "*"]
+
+1. e4 c5 2. Nf3 Nc6 3. d4 cxd4 4. Nxd4 g6 5. Nc3 Bg7 6. Be3 Nf6 7. Bc4 O-O *
+
+[Event "Main Lines: Sicilian Rossolimo"]
+[Result "*"]
+
+1. e4 c5 2. Nf3 Nc6 3. Bb5 g6 4. Bxc6 dxc6 5. d3 Bg7 6. h3 Nf6 *
+
+[Event "Main Lines: Sicilian Moscow"]
+[Result "*"]
+
+1. e4 c5 2. Nf3 d6 3. Bb5+ Bd7 4. Bxd7+ Qxd7 5. O-O Nc6 6. c3 Nf6 *
+
+[Event "Main Lines: Sicilian Alapin"]
+[Result "*"]
+
+1. e4 c5 2. c3 Nf6 3. e5 Nd5 4. d4 cxd4 5. Nf3 Nc6 6. cxd4 d6 *
+
+[Event "Main Lines: Sicilian Closed"]
+[Result "*"]
+
+1. e4 c5 2. Nc3 Nc6 3. g3 g6 4. Bg2 Bg7 5. d3 d6 6. f4 e6 *
+
+[Event "Main Lines: Sicilian Grand Prix Attack"]
+[Result "*"]
+
+1. e4 c5 2. Nc3 Nc6 3. f4 g6 4. Nf3 Bg7 5. Bc4 e6 *
+
+[Event "Main Lines: Ruy Lopez (Berlin Defense)"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 Nf6 4. O-O Nxe4 5. d4 Nd6 6. Bxc6 dxc6 7. dxe5 Nf5 *
+
+[Event "Main Lines: Ruy Lopez (Open)"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Nxe4 6. d4 b5 7. Bb3 d5 *
+
+[Event "Main Lines: Ruy Lopez (Marshall Attack)"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 O-O 8. c3 d5 *
+
+[Event "Main Lines: Ruy Lopez (Exchange)"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Bxc6 dxc6 5. O-O f6 6. d4 exd4 *
+
+[Event "Main Lines: Scotch Game"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 Nc6 3. d4 exd4 4. Nxd4 Nf6 5. Nc3 Bb4 6. Nxc6 bxc6 *
+
+[Event "Main Lines: Four Knights"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 Nc6 3. Nc3 Nf6 4. Bb5 Bb4 5. O-O O-O 6. d3 d6 *
+
+[Event "Main Lines: Two Knights Defense"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 Nf6 4. Ng5 d5 5. exd5 Na5 6. Bb5+ c6 7. dxc6 bxc6 *
+
+[Event "Main Lines: Evans Gambit"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. b4 Bxb4 5. c3 Ba5 6. d4 exd4 *
+
+[Event "Main Lines: King's Gambit"]
+[Result "*"]
+
+1. e4 e5 2. f4 exf4 3. Nf3 g5 4. h4 g4 5. Ne5 Nf6 *
+
+[Event "Main Lines: Vienna Game"]
+[Result "*"]
+
+1. e4 e5 2. Nc3 Nf6 3. f4 d5 4. fxe5 Nxe4 5. Nf3 Be7 *
+
+[Event "Main Lines: Philidor Defense"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 d6 3. d4 exd4 4. Nxd4 Nf6 5. Nc3 Be7 *
+
+[Event "Main Lines: French Advance"]
+[Result "*"]
+
+1. e4 e6 2. d4 d5 3. e5 c5 4. c3 Nc6 5. Nf3 Qb6 6. a3 *
+
+[Event "Main Lines: French Classical"]
+[Result "*"]
+
+1. e4 e6 2. d4 d5 3. Nc3 Nf6 4. Bg5 Be7 5. e5 Nfd7 6. Bxe7 Qxe7 *
+
+[Event "Main Lines: French Rubinstein"]
+[Result "*"]
+
+1. e4 e6 2. d4 d5 3. Nc3 dxe4 4. Nxe4 Nd7 5. Nf3 Ngf6 *
+
+[Event "Main Lines: French Exchange"]
+[Result "*"]
+
+1. e4 e6 2. d4 d5 3. exd5 exd5 4. Nf3 Bd6 5. Bd3 Nf6 *
+
+[Event "Main Lines: Caro-Kann Classical"]
+[Result "*"]
+
+1. e4 c6 2. d4 d5 3. Nc3 dxe4 4. Nxe4 Bf5 5. Ng3 Bg6 6. h4 h6 *
+
+[Event "Main Lines: Caro-Kann Exchange"]
+[Result "*"]
+
+1. e4 c6 2. d4 d5 3. exd5 cxd5 4. Bd3 Nc6 5. c3 Nf6 *
+
+[Event "Main Lines: Caro-Kann Panov-Botvinnik"]
+[Result "*"]
+
+1. e4 c6 2. d4 d5 3. exd5 cxd5 4. c4 Nf6 5. Nc3 e6 *
+
+[Event "Main Lines: Alekhine Defense"]
+[Result "*"]
+
+1. e4 Nf6 2. e5 Nd5 3. d4 d6 4. Nf3 Bg4 5. Be2 e6 *
+
+[Event "Main Lines: Modern Defense"]
+[Result "*"]
+
+1. e4 g6 2. d4 Bg7 3. Nc3 d6 4. Nf3 a6 *
+
+[Event "Main Lines: Queen's Gambit Declined (Exchange)"]
+[Result "*"]
+
+1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. cxd5 exd5 5. Bg5 Be7 6. e3 c6 *
+
+[Event "Main Lines: Queen's Gambit Declined (Tartakower)"]
+[Result "*"]
+
+1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. Bg5 Be7 5. e3 h6 6. Bh4 b6 *
+
+[Event "Main Lines: Tarrasch Defense"]
+[Result "*"]
+
+1. d4 d5 2. c4 e6 3. Nc3 c5 4. cxd5 exd5 5. Nf3 Nc6 *
+
+[Event "Main Lines: Chigorin Defense"]
+[Result "*"]
+
+1. d4 d5 2. c4 Nc6 3. Nf3 Bg4 4. cxd5 Bxf3 5. gxf3 Qxd5 *
+
+[Event "Main Lines: Nimzo-Indian (Classical)"]
+[Result "*"]
+
+1. d4 Nf6 2. c4 e6 3. Nc3 Bb4 4. Qc2 O-O 5. a3 Bxc3+ 6. Qxc3 *
+
+[Event "Main Lines: Nimzo-Indian (Samisch)"]
+[Result "*"]
+
+1. d4 Nf6 2. c4 e6 3. Nc3 Bb4 4. a3 Bxc3+ 5. bxc3 c5 *
+
+[Event "Main Lines: Bogo-Indian"]
+[Result "*"]
+
+1. d4 Nf6 2. c4 e6 3. Nf3 Bb4+ 4. Bd2 Qe7 5. g3 O-O *
+
+[Event "Main Lines: Modern Benoni"]
+[Result "*"]
+
+1. d4 Nf6 2. c4 c5 3. d5 e6 4. Nc3 exd5 5. cxd5 d6 6. e4 g6 *
+
+[Event "Main Lines: Benko Gambit"]
+[Result "*"]
+
+1. d4 Nf6 2. c4 c5 3. d5 b5 4. cxb5 a6 5. bxa6 Bxa6 *
+
+[Event "Main Lines: Grunfeld (Exchange)"]
+[Result "*"]
+
+1. d4 Nf6 2. c4 g6 3. Nc3 d5 4. cxd5 Nxd5 5. e4 Nxc3 6. bxc3 Bg7 *
+
+[Event "Main Lines: King's Indian (Samisch)"]
+[Result "*"]
+
+1. d4 Nf6 2. c4 g6 3. Nc3 Bg7 4. e4 d6 5. f3 O-O 6. Be3 e5 *
+
+[Event "Main Lines: Budapest Gambit"]
+[Result "*"]
+
+1. d4 Nf6 2. c4 e5 3. dxe5 Ng4 4. Bf4 Nc6 5. Nf3 Bb4+ *
+
+[Event "Main Lines: Dutch (Leningrad)"]
+[Result "*"]
+
+1. d4 f5 2. g3 Nf6 3. Bg2 g6 4. Nf3 Bg7 5. O-O O-O *
+
+[Event "Main Lines: Trompowsky Attack"]
+[Result "*"]
+
+1. d4 Nf6 2. Bg5 Ne4 3. Bf4 d5 4. e3 c5 *
+
+[Event "Main Lines: Torre Attack"]
+[Result "*"]
+
+1. d4 Nf6 2. Nf3 e6 3. Bg5 c5 4. e3 Be7 *
+
+[Event "Main Lines: Colle System"]
+[Result "*"]
+
+1. d4 d5 2. Nf3 Nf6 3. e3 e6 4. Bd3 c5 *
+
+[Event "Main Lines: English (Reversed Sicilian)"]
+[Result "*"]
+
+1. c4 e5 2. Nc3 Nf6 3. Nf3 Nc6 4. g3 d5 5. cxd5 Nxd5 *
+
+[Event "Main Lines: English (King's, Botvinnik)"]
+[Result "*"]
+
+1. c4 e5 2. Nc3 Nf6 3. g3 d5 4. cxd5 Nxd5 5. Bg2 Nb6 *
+
+[Event "Main Lines: Anglo-Indian"]
+[Result "*"]
+
+1. c4 Nf6 2. Nc3 e6 3. Nf3 Bb4 4. Qc2 O-O *
+
+[Event "Main Lines: King's Indian Attack"]
+[Result "*"]
+
+1. Nf3 d5 2. g3 Nf6 3. Bg2 e6 4. O-O Be7 5. d3 O-O *

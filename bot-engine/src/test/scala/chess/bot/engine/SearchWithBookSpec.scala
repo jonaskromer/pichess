@@ -23,7 +23,7 @@ object SearchWithBookSpec extends ZIOSpecDefault:
     test("returns the book move at a known position") {
       for
         state <- FenParserRegex.parse(startFen)
-        book   = OpeningBook.inMemory(Map(Zobrist.hash(state) -> bookMove))
+        book   = OpeningBook.inMemory(Map(Zobrist.hash(state) -> Vector(bookMove)))
         search = Search.alphaBeta(Evaluator.materialOnly, book)
         out   <- search.bestMove(state, depth = 3)
       yield assertTrue(out.contains(bookMove))
@@ -40,7 +40,7 @@ object SearchWithBookSpec extends ZIOSpecDefault:
         state <- FenParserRegex.parse(startFen)
         otherFen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
         otherState <- FenParserRegex.parse(otherFen)
-        book = OpeningBook.inMemory(Map(Zobrist.hash(otherState) -> bookMove))
+        book = OpeningBook.inMemory(Map(Zobrist.hash(otherState) -> Vector(bookMove)))
         search = Search.alphaBeta(Evaluator.materialOnly, book)
         out   <- search.bestMove(state, depth = 2)
       yield assertTrue(out.isDefined)

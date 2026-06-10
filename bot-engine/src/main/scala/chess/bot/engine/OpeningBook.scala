@@ -1,7 +1,6 @@
 package chess.bot.engine
 
-import zio.UIO
-import zio.ZIO
+import zio.{Random, UIO, ZIO}
 
 import chess.model.board.{GameState, Move}
 import chess.model.piece.Color
@@ -34,16 +33,28 @@ object OpeningBook:
     new OpeningBook:
       def lookup(state: GameState): UIO[Option[Move]] = ZIO.none
 
-  /** In-memory book keyed by Zobrist hash. Useful for tests and for
-    * small hand-curated opening repertoires; production runs use the
-    * DuckDB-backed adapter from `bot-data`. */
-  def inMemory(entries: Map[Long, Move], maxPly: Int = 24): OpeningBook =
+  /** In-memory book keyed by Zobrist hash. Each position maps to the curated
+    * book moves for it, with **one entry per line that played the move** — so a
+    * move appearing in more curated lines is proportionally more likely.
+    * [[lookup]] picks one at RANDOM (weighted by that frequency), giving the
+    * bot opening VARIETY across games instead of a single fixed reply, and
+    * sidestepping the old "whichever line came last in the file wins" for
+    * shared positions. Returning `None` (off-book or past `maxPly`) is always
+    * safe — the search just plays from scratch.
+    *
+    * Useful for tests and small hand-curated repertoires; large data-driven
+    * books use the DuckDB-backed adapter from `bot-data`. */
+  def inMemory(entries: Map[Long, Vector[Move]], maxPly: Int = 24): OpeningBook =
     new InMemoryBook(entries, maxPly)
 
   private final class InMemoryBook(
-      entries: Map[Long, Move],
+      entries: Map[Long, Vector[Move]],
       maxPly: Int,
   ) extends OpeningBook:
     def lookup(state: GameState): UIO[Option[Move]] =
       if ply(state) >= maxPly then ZIO.none
-      else ZIO.succeed(entries.get(chess.model.rules.Zobrist.hash(state)))
+      else
+        entries.get(chess.model.rules.Zobrist.hash(state)) match
+          case Some(moves) if moves.nonEmpty =>
+            Random.nextIntBounded(moves.size).map(i => Some(moves(i)))
+          case _ => ZIO.none

@@ -17,12 +17,13 @@ import chess.model.rules.Zobrist
   * move) pair to the in-memory book — so any position reachable via
   * a known main line gets a book reply.
   *
-  * When multiple games visit the same position with different next
-  * moves (e.g. Italian Game and Italian Pianissimo both reach
-  * 3.Bc4 Bc5), the LATER one in the file wins. This is intentional
-  * and predictable: we don't track aggregate statistics here (no
-  * weighting by frequency or Elo); the curator's ordering choice in
-  * the PGN file IS the policy.
+  * When multiple curated lines visit the same position with different
+  * next moves (e.g. a Ruy and an Italian both reach 1.e4 e5 2.Nf3
+  * Nc6), ALL of them are kept — one entry per line — so the book picks
+  * among them at random, weighted by how many lines play each. The bot
+  * thus varies its openings across games, and a move's popularity in
+  * the curated file is its weight (no Elo/frequency stats from external
+  * data; the curator's line choices ARE the policy).
   *
   * For data-driven books backed by millions of games + statistical
   * weighting, see `chess.bot.data.DuckDbOpeningBook` — the PGN
@@ -71,14 +72,25 @@ object OpeningBookLoader:
   private def buildEntries(
       path: String,
       pgn: String,
-  ): UIO[Map[Long, Move]] =
+  ): UIO[Map[Long, Vector[Move]]] =
     val games = splitGames(pgn)
-    ZIO.foldLeft(games)(Map.empty[Long, Move]) { (acc, gameText) =>
+    ZIO.foldLeft(games)(Map.empty[Long, Vector[Move]]) { (acc, gameText) =>
       PgnParser.parse(gameText).foldZIO(
         err =>
           ZIO.logWarning(s"$path: skipping unparseable game: ${err.message}").as(acc),
-        parsed => ZIO.succeed(acc ++ historyToEntries(parsed)),
+        parsed => ZIO.succeed(mergeEntries(acc, historyToEntries(parsed))),
       )
+    }
+
+  /** Merge per-game entries by CONCATENATING the move vectors, so a position
+    * reached by N curated lines accumulates all N moves (duplicates included →
+    * frequency weighting for the book's random pick). */
+  private def mergeEntries(
+      acc: Map[Long, Vector[Move]],
+      add: Map[Long, Vector[Move]],
+  ): Map[Long, Vector[Move]] =
+    add.foldLeft(acc) { case (m, (k, v)) =>
+      m.updatedWith(k)(existing => Some(existing.getOrElse(Vector.empty) ++ v))
     }
 
   /** Walk one game's (move, post-state) history, emitting one
@@ -87,11 +99,11 @@ object OpeningBookLoader:
     * post-state. */
   private[engine] def historyToEntries(
       game: PgnParser.PgnGame,
-  ): Map[Long, Move] =
-    val builder = Map.newBuilder[Long, Move]
+  ): Map[Long, Vector[Move]] =
+    val builder = Map.newBuilder[Long, Vector[Move]]
     var pre     = game.initialState
     game.history.foreach { case (move, post) =>
-      builder += Zobrist.hash(pre) -> move
+      builder += Zobrist.hash(pre) -> Vector(move)
       pre = post
     }
     builder.result()

@@ -49,6 +49,24 @@ object OpeningBookLoaderSpec extends ZIOSpecDefault:
           move  <- book.lookup(state)
         yield assertTrue(move.isEmpty)
       },
+      test("every committed main-line parses cleanly (no silently-skipped games)") {
+        // The loader tolerates unparseable games (logs + skips), so a typo'd
+        // line would vanish silently. This guards the committed book.
+        val pgn = scala.io.Source
+          .fromInputStream(
+            getClass.getClassLoader.getResourceAsStream("openings/main-lines.pgn"),
+            "UTF-8",
+          )
+          .mkString
+        val games = OpeningBookLoader.splitGames(pgn)
+        for
+          results <- ZIO.foreach(games)(g => chess.codec.PgnParser.parse(g).either.map(g -> _))
+          failures = results.collect { case (g, Left(err)) =>
+                       g.linesIterator.find(_.startsWith("[Event")).getOrElse("?") + " -> " + err.message
+                     }
+          _ <- ZIO.foreachDiscard(failures)(f => ZIO.logError(s"unparseable book line: $f"))
+        yield assertTrue(games.size >= 79, failures.isEmpty)
+      },
     ),
     suite("loadResource")(
       test("fails with MissingResource for a non-existent path") {

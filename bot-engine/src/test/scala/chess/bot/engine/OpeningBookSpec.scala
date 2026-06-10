@@ -44,9 +44,17 @@ object OpeningBookSpec extends ZIOSpecDefault:
       test("returns the configured move when the position is in the book") {
         for
           state <- FenParserRegex.parse(startFen)
-          book   = OpeningBook.inMemory(Map(Zobrist.hash(state) -> e4Move))
+          book   = OpeningBook.inMemory(Map(Zobrist.hash(state) -> Vector(e4Move)))
           out   <- book.lookup(state)
         yield assertTrue(out.contains(e4Move))
+      },
+      test("with several book moves for one position, returns one of them (variety)") {
+        val d4Move = Move(Position('d', 2), Position('d', 4), None)
+        for
+          state <- FenParserRegex.parse(startFen)
+          book   = OpeningBook.inMemory(Map(Zobrist.hash(state) -> Vector(e4Move, d4Move, e4Move)))
+          picks <- ZIO.foreach(1 to 20)(_ => book.lookup(state))
+        yield assertTrue(picks.forall(_.exists(m => m == e4Move || m == d4Move)))
       },
       test("returns None when the position is not in the book") {
         for
@@ -63,7 +71,7 @@ object OpeningBookSpec extends ZIOSpecDefault:
                      "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 30"
                    )
           book   = OpeningBook.inMemory(
-                     Map(Zobrist.hash(state) -> e4Move),
+                     Map(Zobrist.hash(state) -> Vector(e4Move)),
                      maxPly = 24,
                    )
           out   <- book.lookup(state)
