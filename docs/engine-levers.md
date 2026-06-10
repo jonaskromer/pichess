@@ -120,6 +120,14 @@ retrained net is exactly where they may turn positive.
 **Sequence:** run the pipeline first → train the best net/weights → *then* A/B on
 that foundation → re-tune `hybridAlpha` last.
 
+**Harness:** `make ab-sweep` (`scripts/ab-sweep.sh`) runs the flag sweep — each
+off-by-default flag vs the production baseline at the live budget — and prints a
+`keep / provisional-eval / provisional-depth` table (hours at the default 200
+games/flag). It covers the `CHALLENGER_FLAGS` set (the axed prunings/extensions).
+The session's perf levers (incremental NNUE, LazySMP, eval cache) aren't yet
+tournament-toggleable — each needs a small env wire in `TournamentMain` to be
+swept the same way.
+
 ---
 
 ## Measurement gotcha

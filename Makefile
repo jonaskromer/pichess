@@ -444,6 +444,10 @@ nnue-retrain: ## Retrain the NNUE from the shared TSV with depth-weighting → n
 		--tsv $(or $(TSV),nnue-train/data/lichess-eval.tsv.gz) \
 		--epochs $(or $(EPOCHS),3) --depth-norm $(or $(DEPTH_NORM),40)
 
+.PHONY: ab-sweep
+ab-sweep: ## Re-A/B off-by-default search flags at the live budget → tagged keep/provisional table (roadmap #4). HOURS at default GAMES. Vars: GAMES (200), BUDGET_MS (2000), FLAGS, WEIGHTS, ALPHA
+	scripts/ab-sweep.sh
+
 .PHONY: bench-persistence
 bench-persistence: ## Per-backend persistence benches (testcontainer-backed). Phase D stub today.
 	@mkdir -p $(PERF_REPORTS_DIR)
