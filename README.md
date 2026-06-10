@@ -13,7 +13,7 @@
 ![k3s](https://img.shields.io/badge/deploy-k3s-326CE5?logo=kubernetes&logoColor=white)
 
 [![lichess blitz](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Flichess.org%2Fapi%2Fuser%2Fpichess-htwg&query=%24.perfs.blitz.rating&label=lichess%20blitz&logo=lichess&color=brightgreen)](https://lichess.org/@/pichess-htwg)
-![lines of code](https://tokei.rs/b1/github/jonaskromer/pichess?category=code)
+![lines of code](https://img.shields.io/badge/lines%20of%20code-48k%20Scala-blueviolet)
 ![last commit](https://img.shields.io/github/last-commit/jonaskromer/pichess?color=ff9bb3)
 
 Welcome to **πChess** (pronounced like *peaches* in German)!
