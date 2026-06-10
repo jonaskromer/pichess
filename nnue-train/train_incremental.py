@@ -17,10 +17,22 @@ Each FEN appears once per multi-PV line; rows are best-move-first, so
 we keep the first row of each consecutive FEN group (= the position's
 own eval).
 
+Two input modes:
+  * raw shards (default) — download/stream/delete the 17 parquet shards.
+  * `--tsv <file>` (roadmap 6b) — train from the shared-pipeline TSV
+    (`extract_shards.py`): already deduplicated + depth-filtered, no
+    re-download, and **depth-weighted** (deep SF evals dominate the loss via
+    `--depth-norm`). This is the recommended path now the pipeline exists.
+
 Usage:
+  # raw shards
   .venv-nnue/bin/python nnue-train/train_incremental.py \
       --out bot-engine/src/main/resources/nnue-v1.bin \
       --shards 4 --rows-per-shard 6000000 --batch 16384 --lr 0.003 --wd 5e-5
+  # shared TSV (6b) — after `make nnue-data`
+  .venv-nnue/bin/python nnue-train/train_incremental.py \
+      --out bot-engine/src/main/resources/nnue-v1.bin \
+      --tsv nnue-train/data/lichess-eval.tsv.gz --epochs 3 --depth-norm 40
 """
 import argparse, os, shutil, time
 from concurrent.futures import ThreadPoolExecutor
@@ -81,6 +93,71 @@ def train_chunk(net, opt, lossf, dev, S, Nt, T, batch):
     return tot, nb
 
 
+def parse_tsv_chunk(lines, depth_norm, endgame_pieces=0, endgame_boost=1.0):
+    """Parse shared-pipeline TSV lines (fen\\tcp\\tmate\\tbest\\tdepth\\tknodes\\tmpv)
+    -> (S, Nt, T, W). The TSV is already deduplicated (one canonical row per
+    FEN), so no multi-PV skipping is needed. W is a depth-confidence weight in
+    (0, 1] (deep SF evals dominate the loss); see train_chunk_weighted.
+
+    Endgame emphasis (for strong LOCAL endgames without tablebases): positions
+    with <= endgame_pieces total pieces get their weight multiplied by
+    endgame_boost, so the net learns sparse-position eval — where its ordinary
+    training is thin — far better. The SF labels for <=7-piece positions are
+    already near-tablebase-perfect, so this distils most of that knowledge into
+    the committable ~193 KB net."""
+    S, Nt, T, W = [], [], [], []
+    for ln in lines:
+        f = ln.rstrip("\n").split("\t")
+        if len(f) < 6 or f[0] == "fen":
+            continue
+        fen, cp_s, mate_s, depth_s = f[0], f[1], f[2], f[4]
+        cp = None if cp_s == "\\N" else int(cp_s)
+        if cp is None:
+            mate = None if mate_s == "\\N" else int(mate_s)
+            if mate is None:
+                continue
+            cp = MATE_CP if mate > 0 else -MATE_CP
+        cp = max(-MATE_CP, min(MATE_CP, cp))
+        s_idx, n_idx, stm_white = fen_to_features(fen)
+        if not s_idx or len(s_idx) > MAXP:
+            continue
+        stm_cp = cp if stm_white else -cp
+        depth = int(depth_s) if depth_s.lstrip("-").isdigit() else 0
+        w = min(1.0, depth / depth_norm)                  # soft depth filter
+        if endgame_boost != 1.0:                          # up-weight sparse endgames
+            npieces = sum(c.isalpha() for c in fen.split(' ', 1)[0])
+            if npieces <= endgame_pieces:
+                w *= endgame_boost
+        T.append(1.0 / (1.0 + np.exp(-stm_cp / 400.0)))
+        W.append(w)
+        S.append(s_idx + [PAD] * (MAXP - len(s_idx)))
+        Nt.append(n_idx + [PAD] * (MAXP - len(n_idx)))
+    return (np.array(S, np.int64), np.array(Nt, np.int64),
+            np.array(T, np.float32), np.array(W, np.float32))
+
+
+def train_chunk_weighted(net, opt, lossf_none, dev, S, Nt, T, W, batch):
+    """Like train_chunk but with a per-sample loss weight (depth confidence):
+    loss = Σ w·(pred−target)² / Σ w."""
+    if len(T) == 0:
+        return 0.0, 0
+    S = torch.from_numpy(S).to(dev); Nt = torch.from_numpy(Nt).to(dev)
+    T = torch.from_numpy(T).to(dev); W = torch.from_numpy(W).to(dev)
+    n = len(T); perm = torch.randperm(n, device=dev)
+    tot = 0.0; nb = 0
+    for i in range(0, n, batch):
+        r = perm[i:i + batch]
+        pred = net(S[r], Nt[r])
+        per  = lossf_none(torch.sigmoid(pred), T[r])
+        wr   = W[r]
+        loss = (per * wr).sum() / wr.sum().clamp_min(1e-6)
+        opt.zero_grad(); loss.backward(); opt.step()
+        with torch.no_grad():
+            net.ft.weight[PAD].zero_()
+        tot += loss.item(); nb += 1
+    return tot, nb
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', required=True)
@@ -94,6 +171,17 @@ def main():
                     help='multiply LR by this after each shard (e.g. 0.9 for a long run)')
     ap.add_argument('--wd', type=float, default=5e-5)
     ap.add_argument('--dldir', default='/tmp/lichess-shard')
+    ap.add_argument('--tsv', default=None,
+                    help='train from the shared-pipeline TSV (extract_shards.py) with '
+                         'depth-weighting, instead of downloading raw shards (roadmap 6b)')
+    ap.add_argument('--epochs', type=int, default=1, help='passes over the TSV (--tsv mode)')
+    ap.add_argument('--depth-norm', type=float, default=40.0,
+                    help='search depth at which a sample reaches full loss weight (--tsv mode)')
+    ap.add_argument('--endgame-pieces', type=int, default=7,
+                    help='positions with <= this many pieces count as endgames (--tsv mode)')
+    ap.add_argument('--endgame-boost', type=float, default=1.0,
+                    help='loss-weight multiplier for endgame positions (1.0 = off; '
+                         'e.g. 6.0 to emphasise local endgame eval) (--tsv mode)')
     a = ap.parse_args()
 
     dev = 'mps' if torch.backends.mps.is_available() else 'cpu'
@@ -101,6 +189,34 @@ def main():
     net = Net().to(dev)
     opt = torch.optim.Adam(net.parameters(), lr=a.lr, weight_decay=a.wd)
     lossf = nn.MSELoss()
+
+    # ── 6b: train from the shared TSV with depth-weighting ──
+    if a.tsv:
+        import gzip
+        lossf_none = nn.MSELoss(reduction='none')
+        print(f"TSV mode: {a.tsv} (epochs={a.epochs}, depth_norm={a.depth_norm})", flush=True)
+        for ep in range(a.epochs):
+            ts = time.time(); chunk = []; trained = 0; tloss = 0.0; tnb = 0
+            with gzip.open(a.tsv, 'rt') as fh:
+                for ln in fh:
+                    chunk.append(ln)
+                    if len(chunk) >= a.read_batch:
+                        S, Nt, T, W = parse_tsv_chunk(chunk, a.depth_norm, a.endgame_pieces, a.endgame_boost); chunk = []
+                        l, nb = train_chunk_weighted(net, opt, lossf_none, dev, S, Nt, T, W, a.batch)
+                        tloss += l; tnb += nb; trained += len(T)
+                if chunk:
+                    S, Nt, T, W = parse_tsv_chunk(chunk, a.depth_norm, a.endgame_pieces, a.endgame_boost)
+                    l, nb = train_chunk_weighted(net, opt, lossf_none, dev, S, Nt, T, W, a.batch)
+                    tloss += l; tnb += nb; trained += len(T)
+            print(f"[epoch {ep}] trained on {trained} positions "
+                  f"(loss={tloss/max(tnb,1):.5f}, {time.time()-ts:.0f}s)", flush=True)
+            export_bin(net, a.out)
+            print(f"[epoch {ep}] checkpoint -> {a.out}", flush=True)
+            if a.lr_decay != 1.0:
+                for g in opt.param_groups:
+                    g['lr'] *= a.lr_decay
+                print(f"[epoch {ep}] lr -> {opt.param_groups[0]['lr']:.2e}", flush=True)
+        return
 
     nshards = min(a.shards, NSHARDS)
 

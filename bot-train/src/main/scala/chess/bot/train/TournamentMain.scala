@@ -56,6 +56,14 @@ object TournamentMain extends ZIOAppDefault:
                       ).flatMap(maybeWrapSyzygy(_, cfg.challengerSyzygy, cfg))
         championF   <- loadOpponent(cfg)
                         .flatMap(maybeWrapSyzygy(_, cfg.championSyzygy, cfg))
+        // Time-budget mode: wrap the challenger so every move is a
+        // `bestMoveWithBudget(ms)` instead of a fixed-depth search —
+        // the exact production search path (same `Search.budgeted`
+        // wrapper the live Lichess bot uses). Per-game wrap keeps each
+        // isolated game's search fresh.
+        challengerBudgeted = cfg.challengerBudgetMs match
+          case Some(ms) => () => Search.budgeted(challengerF(), ms)
+          case None     => challengerF
         // Resolve the opening pool. Empty pool → all games start
         // from startpos (90%+ draws between similar bots). Non-
         // empty pool → diversifies games for a decisive signal.
@@ -67,7 +75,7 @@ object TournamentMain extends ZIOAppDefault:
         // each other's TT / heuristic tables. This is what makes a
         // parallel Elo readout trustworthy.
         report <- Tournament.playIsolated(
-                    challengerFactory = challengerF,
+                    challengerFactory = challengerBudgeted,
                     championFactory   = championF,
                     games      = cfg.games,
                     depth      = cfg.depth,
@@ -92,8 +100,11 @@ object TournamentMain extends ZIOAppDefault:
       val ch = if cfg.challengerFlags.isEmpty then "none" else cfg.challengerFlags.toList.sorted.mkString("+")
       val cm = if cfg.championFlags.isEmpty then "none" else cfg.championFlags.toList.sorted.mkString("+")
       s" [challenger flags: $ch | champion flags: $cm]"
+    val searchNote =
+      cfg.challengerBudgetMs.fold(s"depth ${cfg.depth}")(ms =>
+        s"${ms}ms/move budget (fallback depth ${cfg.depth})")
     s"Tournament: v${cfg.challenger} (challenger) vs $opponent (champion), " +
-      s"${cfg.games} games at depth ${cfg.depth}, parallelism $parNote" + flagNote
+      s"${cfg.games} games at $searchNote, parallelism $parNote" + flagNote
 
   private final case class Config(
       challenger: Int,
@@ -150,6 +161,13 @@ object TournamentMain extends ZIOAppDefault:
       // HCE-weighted NNUE blend beats pure HCE.
       challengerHybridAlpha: Option[Double],
       championHybridAlpha:   Option[Double],
+      // When set, the challenger plays with a per-move TIME BUDGET
+      // (iterative deepening to N ms via `bestMoveWithBudget`) instead
+      // of the fixed `depth`. This reproduces the live Lichess bot's
+      // search exactly, so the harness can rate the real production
+      // config rather than a fixed-depth proxy. The opponent is
+      // unaffected (Stockfish stays UCI_Elo-anchored).
+      challengerBudgetMs:    Option[Long],
   )
 
   private def readConfig: UIO[Config] =
@@ -262,6 +280,7 @@ object TournamentMain extends ZIOAppDefault:
         championFlags       = flagsEnv("PICHESS_TOURNAMENT_CHAMPION_FLAGS"),
         challengerHybridAlpha = sys.env.get("PICHESS_TOURNAMENT_CHALLENGER_HYBRID_ALPHA").flatMap(_.toDoubleOption),
         championHybridAlpha   = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_HYBRID_ALPHA").flatMap(_.toDoubleOption),
+        challengerBudgetMs    = sys.env.get("PICHESS_TOURNAMENT_BUDGET_MS").flatMap(_.toLongOption),
       )
     }
 
@@ -431,6 +450,7 @@ object TournamentMain extends ZIOAppDefault:
         multiPlyContinuationEnabled  = on("multiply"),
         underPromotionEnabled        = on("underpromo"),
         timeManagementUpgradeEnabled = on("timemgmt"),
+        policyOrderingEnabled        = on("policy"),
       )
       }
     }
@@ -441,4 +461,5 @@ object TournamentMain extends ZIOAppDefault:
     "checkext", "nmpverify", "pawncorr", "matcorr", "iir", "rfp",
     "razoring", "deltaprune", "histgravity", "movecount", "doubleext",
     "multicut", "ttaging", "multiply", "underpromo", "timemgmt",
+    "policy",
   )

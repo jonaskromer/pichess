@@ -423,6 +423,27 @@ bench-bot: ## Bot benches — Search (α-β + TT) + TexelTuner training loop. Pu
 	sbt "bench/Jmh/run $(JMH_FLAGS) -rf json -rff $$out $(BENCH_BOT_CLASSES)"; \
 	echo "bot bench results → $$out"
 
+.PHONY: nnue-data
+nnue-data: ## Build the shared Lichess-eval dataset (download 17 shards once → one depth-filtered gzipped TSV that the NNUE/HCE/policy trainers all read). Vars: MIN_DEPTH (24), MULTIPV (4), OUT
+	@.venv-nnue/bin/python nnue-train/extract_shards.py \
+		--out $(or $(OUT),nnue-train/data/lichess-eval.tsv.gz) \
+		--min-depth $(or $(MIN_DEPTH),24) --multipv $(or $(MULTIPV),4)
+
+.PHONY: hce-distill
+hce-distill: ## Re-tune the HCE weights by distilling Stockfish evals from the shared dataset → weights/vN.json (roadmap 7b). Needs `make nnue-data` first. Vars: TSV, OUT
+	sbt "botTrain/runMain chess.bot.train.SfDistillMain $(or $(TSV),nnue-train/data/lichess-eval.tsv.gz) $(or $(OUT),bot-engine/src/main/resources/weights/v9.json)"
+
+.PHONY: policy-prior
+policy-prior: ## Build the SF-distilled move-ordering priors → /policy-prior.bin (roadmap 4b). Needs `make nnue-data` first. Vars: TSV
+	sbt "botTrain/runMain chess.bot.train.PolicyPriorMain $(or $(TSV),nnue-train/data/lichess-eval.tsv.gz)"
+
+.PHONY: nnue-retrain
+nnue-retrain: ## Retrain the NNUE from the shared TSV with depth-weighting → nnue-v1.bin (roadmap 6b). Needs `make nnue-data` first. Vars: TSV, OUT, EPOCHS, DEPTH_NORM
+	.venv-nnue/bin/python nnue-train/train_incremental.py \
+		--out $(or $(OUT),bot-engine/src/main/resources/nnue-v1.bin) \
+		--tsv $(or $(TSV),nnue-train/data/lichess-eval.tsv.gz) \
+		--epochs $(or $(EPOCHS),3) --depth-norm $(or $(DEPTH_NORM),40)
+
 .PHONY: bench-persistence
 bench-persistence: ## Per-backend persistence benches (testcontainer-backed). Phase D stub today.
 	@mkdir -p $(PERF_REPORTS_DIR)
