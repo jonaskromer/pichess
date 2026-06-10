@@ -28,10 +28,10 @@ object GameRunner:
   final case class State(ourColor: Color, initialFen: String)
 
   enum Action:
-    case None                              // nothing to do
-    case MoveFrom(state: GameState)        // our turn — search + POST
-    case GameOver                          // status != "started" or "created"
-    case MalformedEvent(reason: String)    // bad event payload
+    case None                                                       // nothing to do
+    case MoveFrom(state: GameState, ourTimeMs: Long, ourIncMs: Long) // our turn — search + POST
+    case GameOver                                                   // status != "started"/"created"
+    case MalformedEvent(reason: String)                             // bad event payload
 
   /** Drive one event. Returns the next [[State]] (may differ on
     * GameFull where we discover our color) and an [[Action]] that the
@@ -70,7 +70,8 @@ object GameRunner:
           case Right(_) if !isPlaying(event.state.status) =>
             (Some(runState), Action.GameOver)
           case Right(current) =>
-            (Some(runState), turnAction(current, ourColor))
+            val s = event.state
+            (Some(runState), turnAction(current, ourColor, s.wtime, s.btime, s.winc, s.binc))
 
   /** Process a per-move state update — same shape as the GameFull
     * substate, but on a stream that pre-supposes the GameFull arrived. */
@@ -84,7 +85,7 @@ object GameRunner:
       case Right(_) if !isPlaying(event.status) =>
         (Some(run), Action.GameOver)
       case Right(current) =>
-        (Some(run), turnAction(current, run.ourColor))
+        (Some(run), turnAction(current, run.ourColor, event.wtime, event.btime, event.winc, event.binc))
 
   /** Recompute the live `GameState` from initialFen + the cumulative
     * UCI move list Lichess includes on every state event. The
@@ -123,8 +124,18 @@ object GameRunner:
   /** Map the current GameState's active colour against our colour: if
     * they line up it's our turn → [[Action.MoveFrom]]; otherwise we
     * wait → [[Action.None]]. */
-  private def turnAction(current: GameState, ourColor: Color): Action =
-    if current.activeColor == ourColor then Action.MoveFrom(current)
+  private def turnAction(
+      current: GameState,
+      ourColor: Color,
+      wtime: Long,
+      btime: Long,
+      winc: Long,
+      binc: Long,
+  ): Action =
+    if current.activeColor == ourColor then
+      val (ourTime, ourInc) =
+        if ourColor == Color.White then (wtime, winc) else (btime, binc)
+      Action.MoveFrom(current, ourTime, ourInc)
     else Action.None
 
   /** Lichess' status string is "created" before first move or

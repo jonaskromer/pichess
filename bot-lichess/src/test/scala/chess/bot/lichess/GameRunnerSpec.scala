@@ -46,7 +46,7 @@ object GameRunnerSpec extends ZIOSpecDefault:
         assertTrue(
           next.exists(_.ourColor == Color.White),
           action match
-            case GameRunner.Action.MoveFrom(s) => s.activeColor == Color.White
+            case GameRunner.Action.MoveFrom(s, _, _) => s.activeColor == Color.White
             case _ => false,
         )
       },
@@ -63,7 +63,7 @@ object GameRunnerSpec extends ZIOSpecDefault:
         assertTrue(
           next.exists(_.ourColor == Color.Black),
           action match
-            case GameRunner.Action.MoveFrom(s) => s.activeColor == Color.Black
+            case GameRunner.Action.MoveFrom(s, _, _) => s.activeColor == Color.Black
             case _ => false,
         )
       },
@@ -94,7 +94,7 @@ object GameRunnerSpec extends ZIOSpecDefault:
         val (_, action) = GameRunner.decide(gameFullAsWhite(), "PICHESS", None)
         assertTrue(
           action match
-            case GameRunner.Action.MoveFrom(_) => true
+            case GameRunner.Action.MoveFrom(_, _, _) => true
             case _ => false,
         )
       },
@@ -111,7 +111,7 @@ object GameRunnerSpec extends ZIOSpecDefault:
         val (_, action) = GameRunner.decide(opponentMoved, "piChess", gameFullState)
         assertTrue(
           action match
-            case GameRunner.Action.MoveFrom(s) => s.activeColor == Color.White
+            case GameRunner.Action.MoveFrom(s, _, _) => s.activeColor == Color.White
             case _ => false,
         )
       },
@@ -199,7 +199,7 @@ object GameRunnerSpec extends ZIOSpecDefault:
         assertTrue(
           next.exists(_.ourColor == Color.Black),
           action match
-            case GameRunner.Action.MoveFrom(s) => s.activeColor == Color.Black
+            case GameRunner.Action.MoveFrom(s, _, _) => s.activeColor == Color.Black
             case _ => false,
         )
       },

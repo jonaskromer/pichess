@@ -38,12 +38,12 @@ object Bridge:
     * (iterative-deepening + time budget come in a later phase). */
   def run(
       botUsername: String,
-      search: Search,
+      searchFactory: () => Search,
       searchDepth: Int,
       api: BotApiClient,
   ): IO[Throwable, Unit] =
     api.streamEvents.runForeach { event =>
-      dispatchAccountEvent(event, botUsername, search, searchDepth, api)
+      dispatchAccountEvent(event, botUsername, searchFactory, searchDepth, api)
     }
 
   /** Account-level dispatch: accept compatible challenges, fork
@@ -52,7 +52,7 @@ object Bridge:
   private def dispatchAccountEvent(
       event: AccountEvent,
       botUsername: String,
-      search: Search,
+      searchFactory: () => Search,
       searchDepth: Int,
       api: BotApiClient,
   ): IO[Throwable, Unit] =
@@ -64,7 +64,7 @@ object Bridge:
             ZIO.logWarning(s"Failed to accept challenge ${c.id}: ${err.getMessage}")
           )
       case AccountEvent.GameStart(g) =>
-        runGame(g.id, botUsername, search, searchDepth, api).forkDaemon.unit
+        runGame(g.id, botUsername, searchFactory, searchDepth, api).forkDaemon.unit
       case _ =>
         ZIO.unit
 
@@ -75,10 +75,15 @@ object Bridge:
   private[lichess] def runGame(
       gameId: String,
       botUsername: String,
-      search: Search,
+      searchFactory: () => Search,
       searchDepth: Int,
       api: BotApiClient,
   ): UIO[Unit] =
+    // Fresh, ISOLATED search per game (its own TT + killer/history tables) —
+    // no per-search mutable state is shared across concurrent games; the only
+    // shared structure is the global LazySMP helper budget, which is
+    // thread-safe.
+    val search = searchFactory()
     api
       .streamGame(gameId)
       .runFoldZIO(Option.empty[GameRunner.State]) { (prev, event) =>
@@ -89,9 +94,17 @@ object Bridge:
       .catchAllCause(c => ZIO.logErrorCause(s"Game $gameId stream failed", c))
 
   /** Convert a [[GameRunner.Action]] into the Lichess HTTP call it
-    * implies. `MoveFrom` runs the search; if the search finds no move
-    * (terminal position the rules engine surprised us at) the bot
-    * resigns so the game ends cleanly instead of hanging on our timer. */
+    * implies. `MoveFrom` runs the search and POSTs the chosen move.
+    *
+    * We deliberately **never resign**. A competing bot should make the
+    * opponent prove the win — auto-resigning the moment the search comes
+    * back empty turned us into a "surrender-monkey" (every non-won game
+    * ended in resignation). When the search returns no move it means our
+    * reconstructed board has no legal move: either the game is genuinely
+    * over (the server has already ended it, so there's nothing to do) or
+    * it's a transient board hiccup (resigning would needlessly throw a
+    * live game). Either way we log and wait for the next event rather
+    * than concede. */
   private def handleAction(
       action: GameRunner.Action,
       gameId: String,
@@ -100,8 +113,12 @@ object Bridge:
       api: BotApiClient,
   ): IO[Throwable, Unit] =
     action match
-      case GameRunner.Action.MoveFrom(state) =>
-        search.bestMove(state, searchDepth).flatMap {
+      case GameRunner.Action.MoveFrom(state, ourTimeMs, ourIncMs) =>
+        // Clock-aware budget instead of a flat time/move — sizes the search to
+        // the time actually left, so we don't flag in fast controls (and use
+        // our time in slow ones). `searchDepth` is only a fallback floor.
+        val budgetMs = TimeManager.budgetMs(ourTimeMs, ourIncMs)
+        search.bestMoveWithBudget(state, budgetMs, fallbackDepth = searchDepth).flatMap {
           case Some(move) =>
             api
               .makeMove(gameId, UciCodec.serialize(move))
@@ -109,11 +126,9 @@ object Bridge:
                 ZIO.logWarning(s"Failed to POST move on $gameId: ${err.getMessage}")
               )
           case None =>
-            api
-              .resign(gameId)
-              .catchAll(err =>
-                ZIO.logWarning(s"Failed to resign $gameId: ${err.getMessage}")
-              )
+            ZIO.logWarning(
+              s"Search returned no move on $gameId — not resigning; awaiting next event.",
+            )
         }
       case GameRunner.Action.MalformedEvent(reason) =>
         ZIO.logWarning(s"Malformed event on $gameId: $reason")

@@ -90,14 +90,14 @@ object BridgeSpec extends ZIOSpecDefault:
       test("accepts a standard challenge via the API client") {
         for
           stub <- newStub(events = List(AccountEvent.Challenge(standardChallenge)))
-          _    <- Bridge.run(botName, realSearch, searchDepth = 2, stub)
+          _    <- Bridge.run(botName, () => realSearch, searchDepth = 2, stub)
           recorded <- stub.calls.get
         yield assertTrue(recorded.contains("accept:ch1"))
       },
       test("does not accept a chess960 challenge") {
         for
           stub <- newStub(events = List(AccountEvent.Challenge(chess960Challenge)))
-          _    <- Bridge.run(botName, realSearch, searchDepth = 2, stub)
+          _    <- Bridge.run(botName, () => realSearch, searchDepth = 2, stub)
           recorded <- stub.calls.get
         yield assertTrue(recorded.isEmpty)
       },
@@ -107,7 +107,7 @@ object BridgeSpec extends ZIOSpecDefault:
                     AccountEvent.ChallengeCanceled(standardChallenge),
                     AccountEvent.ChallengeDeclined(standardChallenge),
                   ))
-          _ <- Bridge.run(botName, realSearch, searchDepth = 2, stub)
+          _ <- Bridge.run(botName, () => realSearch, searchDepth = 2, stub)
           recorded <- stub.calls.get
         yield assertTrue(recorded.isEmpty)
       },
@@ -119,7 +119,7 @@ object BridgeSpec extends ZIOSpecDefault:
         val gameStart = AccountEvent.GameStart(GameRef("g-fork"))
         for
           stub <- newStub(events = List(gameStart), games = Map("g-fork" -> Nil))
-          _    <- Bridge.run(botName, realSearch, searchDepth = 2, stub)
+          _    <- Bridge.run(botName, () => realSearch, searchDepth = 2, stub)
         yield assertCompletes
       },
     ),
@@ -129,11 +129,11 @@ object BridgeSpec extends ZIOSpecDefault:
         val gameFull = GameEvent.GameFull(
           id = "g1", initialFen = "startpos",
           white = botPlayer, black = humanPlayer,
-          state = GameStateUpdate("", 60000, 60000, 0, 0, "started"),
+          state = GameStateUpdate("", 300, 300, 0, 0, "started"),
         )
         for
           stub <- newStub(games = Map("g1" -> List(gameFull)))
-          _    <- Bridge.runGame("g1", botName, realSearch, 2, stub)
+          _    <- Bridge.runGame("g1", botName, () => realSearch, 2, stub)
           recorded <- stub.calls.get
         yield assertTrue(
           recorded.exists(_.startsWith("move:g1:")),
@@ -145,11 +145,11 @@ object BridgeSpec extends ZIOSpecDefault:
         val gameFull = GameEvent.GameFull(
           id = "g1", initialFen = "startpos",
           white = humanPlayer, black = botPlayer,
-          state = GameStateUpdate("", 60000, 60000, 0, 0, "started"),
+          state = GameStateUpdate("", 300, 300, 0, 0, "started"),
         )
         for
           stub <- newStub(games = Map("g1" -> List(gameFull)))
-          _    <- Bridge.runGame("g1", botName, realSearch, 2, stub)
+          _    <- Bridge.runGame("g1", botName, () => realSearch, 2, stub)
           recorded <- stub.calls.get
         yield assertTrue(recorded.isEmpty)
       },
@@ -157,16 +157,16 @@ object BridgeSpec extends ZIOSpecDefault:
         val gameFull = GameEvent.GameFull(
           id = "g1", initialFen = "startpos",
           white = humanPlayer, black = botPlayer,
-          state = GameStateUpdate("", 60000, 60000, 0, 0, "started"),
+          state = GameStateUpdate("", 300, 300, 0, 0, "started"),
         )
         val opponentMoved = GameEvent.GameStateEvent(
           moves = "e2e4",
-          wtime = 60000, btime = 60000, winc = 0, binc = 0,
+          wtime = 300, btime = 300, winc = 0, binc = 0,
           status = "started",
         )
         for
           stub <- newStub(games = Map("g1" -> List(gameFull, opponentMoved)))
-          _    <- Bridge.runGame("g1", botName, realSearch, 2, stub)
+          _    <- Bridge.runGame("g1", botName, () => realSearch, 2, stub)
           recorded <- stub.calls.get
         yield assertTrue(
           recorded.exists(_.startsWith("move:g1:")),
@@ -177,11 +177,11 @@ object BridgeSpec extends ZIOSpecDefault:
         val gameFull = GameEvent.GameFull(
           id = "g1", initialFen = "startpos",
           white = botPlayer, black = humanPlayer,
-          state = GameStateUpdate("", 60000, 60000, 0, 0, "mate"),
+          state = GameStateUpdate("", 300, 300, 0, 0, "mate"),
         )
         for
           stub <- newStub(games = Map("g1" -> List(gameFull)))
-          _    <- Bridge.runGame("g1", botName, realSearch, 2, stub)
+          _    <- Bridge.runGame("g1", botName, () => realSearch, 2, stub)
           recorded <- stub.calls.get
         yield assertTrue(recorded.isEmpty)
       },
@@ -190,12 +190,12 @@ object BridgeSpec extends ZIOSpecDefault:
         // Action.MalformedEvent; Bridge logs and continues — no move
         // is posted, no resign happens.
         val orphan = GameEvent.GameStateEvent(
-          moves  = "", wtime = 60000, btime = 60000, winc = 0, binc = 0,
+          moves  = "", wtime = 300, btime = 300, winc = 0, binc = 0,
           status = "started",
         )
         for
           stub <- newStub(games = Map("g1" -> List(orphan)))
-          _    <- Bridge.runGame("g1", botName, realSearch, 2, stub)
+          _    <- Bridge.runGame("g1", botName, () => realSearch, 2, stub)
           recorded <- stub.calls.get
         yield assertTrue(recorded.isEmpty)
       },
@@ -207,10 +207,10 @@ object BridgeSpec extends ZIOSpecDefault:
         val gameFull = GameEvent.GameFull(
           id = "g1", initialFen = "startpos",
           white = botPlayer, black = humanPlayer,
-          state = GameStateUpdate("", 60000, 60000, 0, 0, "started"),
+          state = GameStateUpdate("", 300, 300, 0, 0, "started"),
         )
         val api = new FailingApi(Nil, Map("g1" -> List(gameFull)))
-        for _ <- Bridge.runGame("g1", botName, realSearch, 2, api)
+        for _ <- Bridge.runGame("g1", botName, () => realSearch, 2, api)
         yield assertCompletes
       },
       test("acceptChallenge failure is caught") {
@@ -218,7 +218,7 @@ object BridgeSpec extends ZIOSpecDefault:
           List(AccountEvent.Challenge(standardChallenge)),
           Map.empty,
         )
-        for _ <- Bridge.run(botName, realSearch, 2, api)
+        for _ <- Bridge.run(botName, () => realSearch, 2, api)
         yield assertCompletes
       },
       test("game-stream failure is caught by catchAllCause") {
@@ -231,28 +231,31 @@ object BridgeSpec extends ZIOSpecDefault:
           def acceptChallenge(id: String): IO[Throwable, Unit] = ZIO.unit
           def makeMove(g: String, u: String): IO[Throwable, Unit] = ZIO.unit
           def resign(g: String): IO[Throwable, Unit] = ZIO.unit
-        for _ <- Bridge.runGame("g-fail", botName, realSearch, 2, failingApi)
+        for _ <- Bridge.runGame("g-fail", botName, () => realSearch, 2, failingApi)
         yield assertCompletes
       },
-      test("resign failure is caught") {
-        // When the search returns None at a non-terminal position
-        // (shouldn't normally happen) the Bridge resigns; if the
-        // resign POST itself fails, the catchAll handles it. We can't
-        // easily force search→None from real positions, so this test
-        // re-uses the makeMove-failure path which exercises the same
-        // catchAll structure on the resign side via a stub that
-        // returns None for `bestMove`.
+      test("no-move search does not resign (plays on instead of surrendering)") {
+        // Regression: the Bridge used to resign the instant the search
+        // returned None, which made the bot concede every game it didn't
+        // outright win. It must now make NO resign call — just log and
+        // await the next event — so the opponent has to prove the win.
         val gameFull = GameEvent.GameFull(
           id = "g1", initialFen = "startpos",
           white = botPlayer, black = humanPlayer,
-          state = GameStateUpdate("", 60000, 60000, 0, 0, "started"),
+          state = GameStateUpdate("", 300, 300, 0, 0, "started"),
         )
         val noMoveSearch = new Search:
-          def bestMove(state: chess.model.board.GameState, depth: Int): UIO[Option[chess.model.board.Move]] =
+          def bestMove(
+              state: chess.model.board.GameState,
+              depth: Int,
+              history: Set[Long],
+          ): UIO[Option[chess.model.board.Move]] =
             ZIO.succeed(None)
-        val api = new FailingApi(Nil, Map("g1" -> List(gameFull)))
-        for _ <- Bridge.runGame("g1", botName, noMoveSearch, 2, api)
-        yield assertCompletes
+        for
+          stub     <- newStub(games = Map("g1" -> List(gameFull)))
+          _        <- Bridge.runGame("g1", botName, () => noMoveSearch, 2, stub)
+          recorded <- stub.calls.get
+        yield assertTrue(!recorded.exists(_.startsWith("resign:")))
       },
     ),
   )
