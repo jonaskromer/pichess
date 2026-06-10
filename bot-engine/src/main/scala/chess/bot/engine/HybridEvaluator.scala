@@ -1,5 +1,6 @@
 package chess.bot.engine
 
+import chess.bot.engine.nnue.{NnueAccumulator, NnueEvaluator}
 import chess.model.board.GameState
 
 /** Blends two evaluators into one score: `(1 − w)·base + w·other`.
@@ -32,7 +33,24 @@ final class HybridEvaluator(
   private val w  = math.max(0.0, math.min(1.0, nnueWeight))
   private val bw = 1.0 - w
 
+  // The NNUE half, when `other` is one — enables the incremental
+  // accumulator path. EngineBundle / loadSearch always pass an NNUE here;
+  // a non-NNUE `other` simply disables incremental (full eval instead).
+  private val net: Option[NnueEvaluator] = other match
+    case n: NnueEvaluator => Some(n)
+    case _                => None
+
   override def evaluate(state: GameState): Int =
     val b = base.evaluate(state)
     val o = other.evaluate(state)
     math.round(bw * b + w * o).toInt
+
+  // -- Incremental-eval capability (see [[Evaluator]]). The HCE half is
+  //    computed from `state`; the NNUE half reads the maintained acc. --
+  override def incrementalNet: Option[NnueEvaluator] = net
+  override def evaluateWith(acc: NnueAccumulator, state: GameState): Int =
+    net match
+      case Some(n) =>
+        math.round(bw * base.evaluate(state) + w * n.evaluateFrom(acc, state.activeColor)).toInt
+      case None =>
+        evaluate(state)

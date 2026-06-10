@@ -1,5 +1,6 @@
 package chess.bot.engine
 
+import chess.bot.engine.nnue.{NnueAccumulator, NnueEvaluator}
 import chess.model.board.GameState
 
 /** Static position evaluator.
@@ -29,6 +30,20 @@ trait Evaluator:
     * override with finer-grained breakdowns. */
   def evaluateComponents(state: GameState): Map[String, Int] =
     Map("total" -> evaluate(state))
+
+  /** The NNUE behind this evaluator, if any. When present, the search
+    * maintains an [[NnueAccumulator]] incrementally — refreshed at the
+    * root, then ±only the changed feature columns per move — and
+    * evaluates leaves via [[evaluateWith]], which is far cheaper than
+    * rebuilding the accumulator on every call. `None` ⇒ no accumulator
+    * path; the search falls back to [[evaluate]]. */
+  def incrementalNet: Option[NnueEvaluator] = None
+
+  /** Leaf eval that reads a search-maintained accumulator for the NNUE
+    * component. The default ignores `acc` and does a full [[evaluate]]
+    * (correct for evaluators without an NNUE half). */
+  def evaluateWith(acc: NnueAccumulator, state: GameState): Int =
+    evaluate(state)
 
 object Evaluator:
 

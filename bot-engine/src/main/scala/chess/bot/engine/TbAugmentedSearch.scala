@@ -46,3 +46,21 @@ final class TbAugmentedSearch(
         case None    => inner.bestMove(state, depth, history)
       }
     else inner.bestMove(state, depth, history)
+
+  /** Budgeted path (the live bot): same root-probe logic, but the fallback
+    * keeps the caller's TIME BUDGET (otherwise wrapping in TB would silently
+    * drop clock-aware time management down to a fixed-depth search). The TB
+    * probe itself is O(1) at the root, so it doesn't consume the budget. */
+  override def bestMoveWithBudget(
+      state: GameState,
+      budgetMillis: Long,
+      history: Set[Long] = Set.empty,
+      fallbackDepth: Int = 6,
+  ): UIO[Option[Move]] =
+    val pieces = state.board.occupancy.popCount
+    if pieces <= pieceLimit then
+      tb.bestMove(state, depth = 1, history).flatMap {
+        case Some(m) => ZIO.some(m)
+        case None    => inner.bestMoveWithBudget(state, budgetMillis, history, fallbackDepth)
+      }
+    else inner.bestMoveWithBudget(state, budgetMillis, history, fallbackDepth)

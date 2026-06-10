@@ -113,6 +113,18 @@ object Search:
   /** Default α and β bounds — anything outside this is a mate score. */
   inline val Infinity = 1_000_000
 
+  /** Wrap a search so each fixed-depth `bestMove(state, depth)` call
+    * instead runs a **time-budgeted** iterative-deepening search of
+    * `budgetMillis`, with `depth` used only as the single-iteration
+    * fallback. This lets a fixed-depth driver (the tournament game loop,
+    * or the Lichess `Bridge`) play a time-managed engine identical to
+    * production — so a fixed-depth harness can measure the exact config
+    * the live bot uses (a 2 s/move budget). */
+  def budgeted(underlying: Search, budgetMillis: Long): Search =
+    new Search:
+      def bestMove(state: GameState, depth: Int, history: Set[Long]): UIO[Option[Move]] =
+        underlying.bestMoveWithBudget(state, budgetMillis, history, fallbackDepth = depth)
+
   /** Negamax α-β with transposition-table lookups.
     *
     * Search proceeds as classical α-β: at each node, try every legal
@@ -256,6 +268,8 @@ object Search:
       multiPlyContinuationEnabled: Boolean = false,
       underPromotionEnabled: Boolean = false,
       timeManagementUpgradeEnabled: Boolean = false,
+      policyOrderingEnabled: Boolean = false,
+      budget: ParallelismBudget = ParallelismBudget.Single,
   ): Search =
     // NAMED arguments — the constructor parameter order is not the
     // same as this factory's, so positional passing silently
@@ -294,6 +308,8 @@ object Search:
       multiPlyContinuationEnabled = multiPlyContinuationEnabled,
       underPromotionEnabled = underPromotionEnabled,
       timeManagementUpgradeEnabled = timeManagementUpgradeEnabled,
+      policyOrderingEnabled = policyOrderingEnabled,
+      budget = budget,
     )
 
   /** Test-only factory that lets a caller inject the [[TranspositionTable]]

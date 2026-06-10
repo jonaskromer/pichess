@@ -2,6 +2,7 @@ package chess.bot.engine
 
 import java.util.concurrent.ConcurrentHashMap
 
+import chess.bot.engine.nnue.{NnueAccumulator, NnueEvaluator}
 import chess.model.board.GameState
 import chess.model.rules.Zobrist
 
@@ -39,11 +40,23 @@ final class CachedEvaluator private (
   @volatile private var evictParity: Long = 0L
 
   override def evaluate(state: GameState): Int =
-    val key = java.lang.Long.valueOf(Zobrist.hash(state))
+    cachedOr(state)(inner.evaluate(state))
+
+  // -- Incremental-eval pass-through: keep the inner net's accumulator path
+  //    alive (so wrapping in a cache does NOT disable incremental eval), and
+  //    cache the maintained-accumulator evals too. The eval for a position is
+  //    the same whichever path computes it, so both share one cache keyed by
+  //    Zobrist hash. --
+  override def incrementalNet: Option[NnueEvaluator] = inner.incrementalNet
+  override def evaluateWith(acc: NnueAccumulator, state: GameState): Int =
+    cachedOr(state)(inner.evaluateWith(acc, state))
+
+  private inline def cachedOr(state: GameState)(compute: => Int): Int =
+    val key    = java.lang.Long.valueOf(Zobrist.hash(state))
     val cached = cache.get(key)
     if cached != null then cached.intValue
     else
-      val score = inner.evaluate(state)
+      val score = compute
       cache.put(key, java.lang.Integer.valueOf(score))
       if cache.size > maxEntries then evict()
       score

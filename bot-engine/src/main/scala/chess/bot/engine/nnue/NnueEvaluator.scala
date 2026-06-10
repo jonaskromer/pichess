@@ -3,8 +3,8 @@ package chess.bot.engine.nnue
 import java.nio.{ByteBuffer, ByteOrder}
 
 import chess.bot.engine.Evaluator
-import chess.model.board.{Bitboard, GameState}
-import chess.model.piece.{Color, PieceType}
+import chess.model.board.{Bitboard, BoardState, GameState}
+import chess.model.piece.Color
 
 /** NNUE inference for pichess — perspective net
   * `(768 -> HiddenSize) x 2 -> 1`, int16 quantized.
@@ -19,18 +19,23 @@ import chess.model.piece.{Color, PieceType}
   *   3. output_weights  — `2 × HiddenSize` i16s, QB scale.
   *   4. output_bias     — one i16, `QA × QB` scale.
   *
-  * Evaluation:
-  *   * For each side's perspective, build a sparse-feature
-  *     accumulator: start at feature_bias, then add one column per
-  *     piece on the board (768 indices encode color × type × square,
-  *     mirrored vertically for the black perspective).
-  *   * Concatenate `(stm_acc, ntm_acc)` and compute
-  *     `sum( screlu(acc[i]) * outW[i] ) / QA + outBias`.
-  *   * Scale by 400 / (QA × QB) to get centipawns.
+  * ## Accumulators (efficiently updatable)
   *
-  * Returns the score from `state.activeColor`'s POV — flipped to
-  * white POV by the caller (`leafEval`) for the rest of the search
-  * which expects white-POV scores. */
+  * The two perspective accumulators are stored **per colour** — a
+  * White-perspective and a Black-perspective accumulator — which are
+  * **independent of whose turn it is**. Each is `feature_bias` plus one
+  * column per piece, indexed by [[whitePerspIdx]] / [[blackPerspIdx]].
+  * Because they're turn-independent they can be maintained
+  * *incrementally* across make/unmake: a move only changes a handful of
+  * features, so [[applyDiff]] adds/subtracts just those columns instead
+  * of rebuilding from scratch ([[refreshInto]]). At eval time
+  * [[evaluateFrom]] picks `stm = own-colour perspective, ntm = other`
+  * and runs the output layer.
+  *
+  * `evaluate(state)` (the [[Evaluator]] entry point) is the from-scratch
+  * path — `freshAccumulator → refreshInto → evaluateFrom` — kept for
+  * callers that don't thread an accumulator (and as the correctness
+  * oracle the incremental path is tested against). */
 final class NnueEvaluator private (
     private val featureWeights: Array[Short], // 768 × HiddenSize, column-major
     private val featureBias:    Array[Short], // HiddenSize
@@ -40,92 +45,135 @@ final class NnueEvaluator private (
 
   import NnueEvaluator.*
 
+  /** From-scratch eval — rebuilds the accumulator then runs the output
+    * layer. Identical result to the old implementation (this is just the
+    * accumulator path composed). */
   override def evaluate(state: GameState): Int =
-    val stmAcc = newAccumulator()
-    val ntmAcc = newAccumulator()
-    populate(state, stmAcc, ntmAcc)
-    // Output layer: SCReLU each hidden cell, multiply by the
-    // matching output weight, accumulate. STM cells take the first
-    // HiddenSize output weights, NTM cells take the next batch.
+    val acc = freshAccumulator()
+    refreshInto(acc, state.board)
+    evaluateFrom(acc, state.activeColor)
+
+  // -- Incremental-eval capability (see [[Evaluator]]) --
+  override def incrementalNet: Option[NnueEvaluator] = Some(this)
+  override def evaluateWith(acc: NnueAccumulator, state: GameState): Int =
+    evaluateFrom(acc, state.activeColor)
+
+  // ---------------------------------------------------------------------------
+  // Incremental accumulator API (the search hot path uses these)
+  // ---------------------------------------------------------------------------
+
+  /** A reusable accumulator, both perspectives initialised to the bias. */
+  def freshAccumulator(): NnueAccumulator =
+    new NnueAccumulator(biasArray(), biasArray())
+
+  /** Rebuild both per-colour accumulators from scratch for `board`. */
+  def refreshInto(acc: NnueAccumulator, board: BoardState): Unit =
+    resetToBias(acc.white)
+    resetToBias(acc.black)
+    var pc = 0
+    while pc < 12 do
+      val color = pc / 6 // 0 = white, 1 = black
+      val ord   = pc % 6 // 0=P 1=N 2=B 3=R 4=Q 5=K
+      var raw   = pieceBitboard(board, pc).raw
+      while raw != 0L do
+        val sq = java.lang.Long.numberOfTrailingZeros(raw)
+        addColumn(whitePerspIdx(color, ord, sq), acc.white)
+        addColumn(blackPerspIdx(color, ord, sq), acc.black)
+        raw &= raw - 1L
+      pc += 1
+
+  /** Transform `acc` from representing `fromBoard` into representing
+    * `toBoard` by ±only the changed feature columns. Symmetric, so the
+    * search calls `applyDiff(acc, parent, child)` to make a move and
+    * `applyDiff(acc, child, parent)` to unmake it. Robust for every move
+    * type (captures, castling, en passant, promotion) because it diffs
+    * the raw piece bitboards rather than interpreting the move. */
+  def applyDiff(acc: NnueAccumulator, fromBoard: BoardState, toBoard: BoardState): Unit =
+    var pc = 0
+    while pc < 12 do
+      val color  = pc / 6
+      val ord    = pc % 6
+      val fromBB = pieceBitboard(fromBoard, pc).raw
+      val toBB   = pieceBitboard(toBoard, pc).raw
+      // Removed: set in `from`, clear in `to` → subtract those columns.
+      var removed = fromBB & ~toBB
+      while removed != 0L do
+        val sq = java.lang.Long.numberOfTrailingZeros(removed)
+        subColumn(whitePerspIdx(color, ord, sq), acc.white)
+        subColumn(blackPerspIdx(color, ord, sq), acc.black)
+        removed &= removed - 1L
+      // Added: set in `to`, clear in `from` → add those columns.
+      var added = toBB & ~fromBB
+      while added != 0L do
+        val sq = java.lang.Long.numberOfTrailingZeros(added)
+        addColumn(whitePerspIdx(color, ord, sq), acc.white)
+        addColumn(blackPerspIdx(color, ord, sq), acc.black)
+        added &= added - 1L
+      pc += 1
+
+  /** Run the output layer over a maintained accumulator for the given
+    * side to move. Picks `stm`/`ntm` perspectives, SCReLUs, dots with
+    * the output weights, dequantizes to centipawns, and returns a
+    * **white-POV** score (every other [[Evaluator]] consumer expects
+    * white-relative). */
+  def evaluateFrom(acc: NnueAccumulator, sideToMove: Color): Int =
+    val whiteToMove = sideToMove == Color.White
+    val stm = if whiteToMove then acc.white else acc.black
+    val ntm = if whiteToMove then acc.black else acc.white
     var out: Long = 0L
     var i = 0
     while i < HiddenSize do
-      out += screlu(stmAcc(i)).toLong * outputWeights(i).toInt
+      out += screlu(stm(i)).toLong * outputWeights(i).toInt
       i += 1
     var j = 0
     while j < HiddenSize do
-      out += screlu(ntmAcc(j)).toLong * outputWeights(HiddenSize + j).toInt
+      out += screlu(ntm(j)).toLong * outputWeights(HiddenSize + j).toInt
       j += 1
-    // Dequantize: SCReLU produced QA² scale; we already multiplied
-    // by an output weight at QB scale. Divide once by QA to bring
-    // us back to QA × QB, then add the bias (already at QA × QB).
     val withBias = out / QA + outputBias.toInt
-    // Final scale to centipawns. Bullet's reference does
-    //   output = withBias × SCALE / (QA × QB)
-    val cp = (withBias * Scale) / (QA * QB)
-    // Convert from STM POV to white POV — every other consumer of
-    // [[Evaluator]] expects white-relative scores.
-    val whitePov = if state.activeColor == Color.White then cp else -cp
-    whitePov.toInt
+    val cp       = (withBias * Scale) / (QA * QB)
+    (if whiteToMove then cp else -cp).toInt
 
-  /** Allocate a fresh accumulator initialised to the bias. */
-  private def newAccumulator(): Array[Int] =
-    val arr = new Array[Int](HiddenSize)
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
+
+  private def biasArray(): Array[Int] =
+    val a = new Array[Int](HiddenSize)
+    resetToBias(a)
+    a
+
+  private inline def resetToBias(a: Array[Int]): Unit =
     var i = 0
     while i < HiddenSize do
-      arr(i) = featureBias(i).toInt
+      a(i) = featureBias(i).toInt
       i += 1
-    arr
 
-  /** Walk every piece on the board, add its feature column to both
-    * perspective accumulators. */
-  private def populate(state: GameState, stm: Array[Int], ntm: Array[Int]): Unit =
-    val board = state.board
-    val stmWhite = state.activeColor == Color.White
-    addBitboard(board.pawnsW, 0,         PieceType.Pawn,   stmWhite, stm, ntm)
-    addBitboard(board.knightsW, 0,       PieceType.Knight, stmWhite, stm, ntm)
-    addBitboard(board.bishopsW, 0,       PieceType.Bishop, stmWhite, stm, ntm)
-    addBitboard(board.rooksW, 0,         PieceType.Rook,   stmWhite, stm, ntm)
-    addBitboard(board.queensW, 0,        PieceType.Queen,  stmWhite, stm, ntm)
-    addBitboard(board.kingW, 0,          PieceType.King,   stmWhite, stm, ntm)
-    addBitboard(board.pawnsB, 1,         PieceType.Pawn,   stmWhite, stm, ntm)
-    addBitboard(board.knightsB, 1,       PieceType.Knight, stmWhite, stm, ntm)
-    addBitboard(board.bishopsB, 1,       PieceType.Bishop, stmWhite, stm, ntm)
-    addBitboard(board.rooksB, 1,         PieceType.Rook,   stmWhite, stm, ntm)
-    addBitboard(board.queensB, 1,        PieceType.Queen,  stmWhite, stm, ntm)
-    addBitboard(board.kingB, 1,          PieceType.King,   stmWhite, stm, ntm)
+  /** The 12 piece bitboards in (P,N,B,R,Q,K)×(white,black) order — the
+    * same order the feature index encodes (`color*384 + ord*64 + sq`). */
+  private inline def pieceBitboard(b: BoardState, pc: Int): Bitboard = pc match
+    case 0  => b.pawnsW
+    case 1  => b.knightsW
+    case 2  => b.bishopsW
+    case 3  => b.rooksW
+    case 4  => b.queensW
+    case 5  => b.kingW
+    case 6  => b.pawnsB
+    case 7  => b.knightsB
+    case 8  => b.bishopsB
+    case 9  => b.rooksB
+    case 10 => b.queensB
+    case _  => b.kingB
 
-  /** Add every set square in `bb` to the appropriate accumulators.
-    * `pieceColor` is 0 for white, 1 for black — used together with
-    * `pt` and the square index to compute the perspective-relative
-    * feature index. */
-  private inline def addBitboard(
-      bb: Bitboard,
-      pieceColor: Int,
-      pt: PieceType,
-      stmWhite: Boolean,
-      stm: Array[Int],
-      ntm: Array[Int],
-  ): Unit =
-    var raw = bb.raw
-    while raw != 0L do
-      val sq = java.lang.Long.numberOfTrailingZeros(raw)
-      val ptOrd = pieceTypeOrdinal(pt)
-      // STM index: from side-to-move's POV. Black-to-move mirrors
-      // vertically (sq ^ 56) and swaps colour halves.
-      val (stmIdx, ntmIdx) =
-        if stmWhite then
-          (pieceColor * 384 + ptOrd * 64 + sq,
-           (1 - pieceColor) * 384 + ptOrd * 64 + (sq ^ 56))
-        else
-          ((1 - pieceColor) * 384 + ptOrd * 64 + (sq ^ 56),
-           pieceColor * 384 + ptOrd * 64 + sq)
-      addColumn(stmIdx, stm)
-      addColumn(ntmIdx, ntm)
-      raw &= raw - 1L
+  /** White's perspective: own (white) pieces in the first 384, no
+    * vertical mirror. */
+  private inline def whitePerspIdx(color: Int, ord: Int, sq: Int): Int =
+    color * 384 + ord * 64 + sq
 
-  /** Add one feature column (one piece on one square from one
-    * perspective) to its accumulator. */
+  /** Black's perspective: own (black) pieces in the first 384, board
+    * mirrored vertically (`sq ^ 56`) and colour halves swapped. */
+  private inline def blackPerspIdx(color: Int, ord: Int, sq: Int): Int =
+    (1 - color) * 384 + ord * 64 + (sq ^ 56)
+
   private inline def addColumn(featureIdx: Int, acc: Array[Int]): Unit =
     val base = featureIdx * HiddenSize
     var i = 0
@@ -133,20 +181,24 @@ final class NnueEvaluator private (
       acc(i) += featureWeights(base + i).toInt
       i += 1
 
-  /** Square clipped ReLU — match Bullet's reference: clamp the
-    * QA-scale accumulator value to `[0, QA]`, then square. Output
-    * is at QA² scale. */
+  private inline def subColumn(featureIdx: Int, acc: Array[Int]): Unit =
+    val base = featureIdx * HiddenSize
+    var i = 0
+    while i < HiddenSize do
+      acc(i) -= featureWeights(base + i).toInt
+      i += 1
+
+  /** Square clipped ReLU — clamp the QA-scale value to `[0, QA]`, then
+    * square. Output is at QA² scale. */
   private inline def screlu(x: Int): Int =
     val y = if x < 0 then 0 else if x > QA then QA else x
     y * y
 
-  private inline def pieceTypeOrdinal(pt: PieceType): Int = pt match
-    case PieceType.Pawn   => 0
-    case PieceType.Knight => 1
-    case PieceType.Bishop => 2
-    case PieceType.Rook   => 3
-    case PieceType.Queen  => 4
-    case PieceType.King   => 5
+/** Two turn-independent perspective accumulators (White-POV + Black-POV),
+  * each `HiddenSize` ints. Maintained incrementally across make/unmake by
+  * [[NnueEvaluator.applyDiff]] and reused (allocate once per search
+  * thread, not per eval). */
+final class NnueAccumulator(val white: Array[Int], val black: Array[Int])
 
 object NnueEvaluator:
 

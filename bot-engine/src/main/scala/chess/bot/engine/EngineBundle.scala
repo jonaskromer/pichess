@@ -28,6 +28,10 @@ final case class EngineBundle(
     weights: WeightSnapshot,
     openingBook: OpeningBook,
     search: Search,
+    // The assembled evaluator (immutable, thread-safe to share) — lets callers
+    // build fresh, ISOLATED `Search` instances per game (own TT/tables) while
+    // reusing the one loaded net, e.g. for concurrent play + LazySMP.
+    eval: Evaluator,
 )
 
 object EngineBundle:
@@ -102,7 +106,7 @@ object EngineBundle:
       search   = tablebaseOracle match
                    case Some(tb) => new TbAugmentedSearch(base, tb, tablebasePieceLimit)
                    case None     => base
-    yield EngineBundle(weights, book, search)
+    yield EngineBundle(weights, book, search, eval)
 
   /** Pick the requested evaluator with NNUE fallbacks, then layer
     * the optional endgame patch + Zobrist-keyed cache decorators. */
@@ -156,24 +160,21 @@ object EngineBundle:
     )
       .map(b => (b, None))
       .catchAll { err =>
+        // Same array-backed tapered eval as the success path — the fallback
+        // bundle still benefits from tapered weights if a live WeightsRepo
+        // later attaches a tuned snapshot with `_mg` / `_eg` keys.
+        val fbEval = wrapEval(
+          ArrayTaperedEvaluator(fallbackSnapshot.weights),
+          evalSource, evalCacheEnabled, evalCacheEntries,
+          ensembleSize, endgameHeuristicsEnabled, hybridAlpha,
+        )
         ZIO.succeed(
           (
             EngineBundle(
               weights     = fallbackSnapshot,
               openingBook = OpeningBook.Empty,
-              // Same array-backed tapered eval as the success path —
-              // the fallback bundle still benefits from tapered
-              // weights if a live WeightsRepo later attaches a tuned
-              // snapshot with `_mg` / `_eg` keys.
-              search      = Search.alphaBeta(
-                wrapEval(
-                  ArrayTaperedEvaluator(fallbackSnapshot.weights),
-                  evalSource, evalCacheEnabled, evalCacheEntries,
-                  ensembleSize, endgameHeuristicsEnabled, hybridAlpha,
-                ),
-                OpeningBook.Empty,
-                maxTtEntries,
-              ),
+              search      = Search.alphaBeta(fbEval, OpeningBook.Empty, maxTtEntries),
+              eval        = fbEval,
             ),
             Some(err),
           )
