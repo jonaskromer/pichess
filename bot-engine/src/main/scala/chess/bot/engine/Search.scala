@@ -269,6 +269,7 @@ object Search:
       underPromotionEnabled: Boolean = false,
       timeManagementUpgradeEnabled: Boolean = false,
       policyOrderingEnabled: Boolean = false,
+      incrementalAccumulators: Boolean = true,
       budget: ParallelismBudget = ParallelismBudget.Single,
   ): Search =
     // NAMED arguments — the constructor parameter order is not the
@@ -309,6 +310,7 @@ object Search:
       underPromotionEnabled = underPromotionEnabled,
       timeManagementUpgradeEnabled = timeManagementUpgradeEnabled,
       policyOrderingEnabled = policyOrderingEnabled,
+      incrementalAccumulators = incrementalAccumulators,
       budget = budget,
     )
 

@@ -51,8 +51,8 @@ object TournamentMain extends ZIOAppDefault:
                         cfg.challengerLmpFut, cfg.challengerSeed, cfg.challengerContHist,
                         cfg.challengerAsp, cfg.challengerNnue, cfg.challengerSe,
                         cfg.challengerNnueEns, cfg.challengerLazySmp,
-                        cfg.challengerEvalCache, cfg.challengerFlags,
-                        cfg.challengerHybridAlpha,
+                        cfg.challengerEvalCache, cfg.challengerIncremental,
+                        cfg.challengerFlags, cfg.challengerHybridAlpha,
                       ).flatMap(maybeWrapSyzygy(_, cfg.challengerSyzygy, cfg))
         championF   <- loadOpponent(cfg)
                         .flatMap(maybeWrapSyzygy(_, cfg.championSyzygy, cfg))
@@ -148,6 +148,8 @@ object TournamentMain extends ZIOAppDefault:
       championLazySmp:    Boolean,
       challengerEvalCache: Boolean,
       championEvalCache:   Boolean,
+      challengerIncremental: Boolean,
+      championIncremental:   Boolean,
       // Comma-separated set of newer search-heuristic flag names to
       // enable for each side (e.g. "checkExt,rfp,iir"). Lets a
       // single env var A/B any of the post-v8 flags without a
@@ -276,6 +278,11 @@ object TournamentMain extends ZIOAppDefault:
                                 .exists(_.equalsIgnoreCase("true")),
         championEvalCache   = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_EVCACHE")
                                 .exists(_.equalsIgnoreCase("true")),
+        // Incremental NNUE defaults ON (production); set =false to A/B it off.
+        challengerIncremental = !sys.env.get("PICHESS_TOURNAMENT_CHALLENGER_INCREMENTAL")
+                                  .exists(_.equalsIgnoreCase("false")),
+        championIncremental   = !sys.env.get("PICHESS_TOURNAMENT_CHAMPION_INCREMENTAL")
+                                  .exists(_.equalsIgnoreCase("false")),
         challengerFlags     = flagsEnv("PICHESS_TOURNAMENT_CHALLENGER_FLAGS"),
         championFlags       = flagsEnv("PICHESS_TOURNAMENT_CHAMPION_FLAGS"),
         challengerHybridAlpha = sys.env.get("PICHESS_TOURNAMENT_CHALLENGER_HYBRID_ALPHA").flatMap(_.toDoubleOption),
@@ -338,7 +345,7 @@ object TournamentMain extends ZIOAppDefault:
       cfg.championId, cfg.championNmp, cfg.championLmpFut, cfg.championSeed,
       cfg.championContHist, cfg.championAsp, cfg.championNnue, cfg.championSe,
       cfg.championNnueEns, cfg.championLazySmp, cfg.championEvalCache,
-      cfg.championFlags, cfg.championHybridAlpha,
+      cfg.championIncremental, cfg.championFlags, cfg.championHybridAlpha,
     )
 
   /** Build a [[Search]] for the given weights-version JSON
@@ -362,6 +369,7 @@ object TournamentMain extends ZIOAppDefault:
       nnueEnsembleEnabled: Boolean,
       lazySmpEnabled: Boolean,
       evalCacheEnabled: Boolean,
+      incrementalAccumulators: Boolean,
       newFlags: Set[String],
       hybridAlpha: Option[Double] = None,
   ): ZIO[Any, Throwable, () => Search] =
@@ -396,6 +404,12 @@ object TournamentMain extends ZIOAppDefault:
             s"Recognised: ${RecognisedNewFlags.toList.sorted.mkString(", ")}"
         )
       def on(name: String): Boolean = newFlags.contains(name)
+      // Shared LazySMP helper budget (one global cap across the per-game
+      // searches, like the live bot); Single = no helpers unless lazySmp is on.
+      // A/B LazySMP at PARALLELISM=1 so the single game grabs all spare cores.
+      val sharedBudget =
+        if lazySmpEnabled then chess.bot.engine.ParallelismBudget.ofCores()
+        else chess.bot.engine.ParallelismBudget.Single
       // Per-game search factory: fresh evaluator (HCE only) + fresh
       // TT + tables each call so concurrent tournament games never
       // share mutable state. The eval cache (when enabled) is ALSO
@@ -432,6 +446,8 @@ object TournamentMain extends ZIOAppDefault:
         aspirationWindowsEnabled     = aspirationWindowsEnabled,
         singularExtensionsEnabled    = singularExtensionsEnabled,
         lazySmpEnabled               = lazySmpEnabled,
+        budget                       = sharedBudget,
+        incrementalAccumulators      = incrementalAccumulators,
         // Newer flags driven by the comma-separated set so a single
         // env var A/Bs any of them on top of the same base config.
         checkExtensionEnabled        = on("checkext"),
