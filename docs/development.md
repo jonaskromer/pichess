@@ -113,7 +113,7 @@
 
 ### Multi-Project Tips
 
-The project has 25 SBT sub-projects (run `sbt projects` for the full list). To run commands against a single module, prefix with the module name: `sbt codec/test`, `sbt gateway/compile`, etc. `sbt test` runs tests across all modules.
+The project has 31 SBT sub-projects (run `sbt projects` for the full list; `domain` and `api` each show up twice there, as JVM + JS variants). To run commands against a single module, prefix with the module name: `sbt codec/test`, `sbt gateway/compile`, etc. `sbt test` runs tests across all modules.
 
 Coverage is enforced at 100% on all JVM modules. The build fails if any line is uncovered. Scala.js modules (`web-ui`, `domain.js`, `api.js`) have coverage disabled since scoverage doesn't instrument JS output. The `proto` module has coverage disabled (generated code) and `KafkaGameEventProducer`/`KafkaGameEventConsumer`/`GameServiceMain`/`GatewayMain` are excluded via `coverageExcludedFiles` (they need a live broker / port to exercise; covered by docker-compose smoke tests instead). Use `scripts/check-coverage.py` after a `coverageReport` run to inspect uncovered lines per file.
 

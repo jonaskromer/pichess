@@ -95,14 +95,14 @@ The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural
 
 **Lecture task:** Start each microservice using Docker. Then start the entire application using Docker Compose.
 
-- SBT split is now 14 sub-projects:
+- The Phase-5 SBT split introduced the multi-service skeleton (it has since grown to **31 modules** as later phases added persistence, the bot, the lobby, and the projections — see [architecture.md](architecture.md) for the full map):
   - `domain` (cross JVM/JS), `api` (cross JVM/JS), `rules`, `codec`, `repositoryApi` — libraries (no Docker)
   - `events` — Kafka event ADT + zio-json codecs (new in this phase)
   - `proto` — generated zio-grpc stubs (new in this phase; `coverageEnabled := false` for generated code)
   - `repository` (svc, port 8091) — REST surface for read-side queries; Kafka consumer for the `chess.game-events` topic (write side)
   - `game-service` (svc, gRPC :9000) — authoritative in-memory game state; zio-grpc server; Kafka producer
   - `gateway` (svc, HTTP :8090) — public Tapir REST + SSE + Laminar web-ui static; gRPC client to game-service
-  - `tui` — parser-only library (handleCommand → REST gateway calls is documented future work)
+  - `tui` — terminal client; now runs interactively against the gateway (`make tui`)
   - `webUi` — Laminar/Scala.js single-page app (embedded into gateway resources)
 - The `app` monolith is **deleted**. Its responsibilities are split across `gateway` and `gameService`, each running as its own Docker container. `sbt run` at the root no longer works — use `sbt <svc>/run` or `docker compose up`.
 - See [ADR 013](adr/013-deletion-of-app-module-and-sbt-run.md) for the rationale.
@@ -112,13 +112,14 @@ The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural
 
 ## Phase 6 — Persistence: Slick (PostgreSQL)
 
+**Status:** Complete.
+
 **Lecture task:** Develop a database layer. Use the DAO pattern to make the interface independent of the used DB. Use Slick as first DB implementation.
 
-- **DAO pattern** already in place via `GameRepository` trait — database-agnostic interface with `save`, `load`, `delete`
-- Implement `SlickGameRepository` (or `PostgresGameRepository`) using **Slick** (Functional-Relational Mapping)
-- Slick dependency: `"com.typesafe.slick" %% "slick" % "3.x"`
-- Define persistent entity classes separate from domain model (e.g., `PersistentGameState`)
-- Swap in `Main.scala` by changing one `ZLayer` line
+- **DAO pattern** in place via the `GameRepository` / `LobbyRepository` traits in `persistence/api` — database-agnostic `save` / `load` / `delete`
+- `persistence/postgres` implements both traits with **Slick + HikariCP** (`slick` / `slick-hikaricp` 3.6.1, `postgresql` 42.7.4)
+- The backend is selected by `PICHESS_BACKEND=postgres` (read by `BackendConfig`); `PersistenceLayers` in `persistence/runtime` is the single swap point — no service-Main change
+- Persistence was generalised well beyond Slick: see Phase 7 for the Mongo / Redis / Cassandra backends and the [db-selection-report](db-selection-report.md) for the cross-backend benchmark
 
 ---
 
@@ -126,7 +127,7 @@ The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural
 
 **Lecture task (MongoDB):** Use MongoDB to build a second DB implementation using the DAO pattern.
 
-**Status:** Web UI complete (built ahead of schedule and now feature-equivalent to the TUI). MongoDB not started.
+**Status:** Complete — and generalised into a multi-backend persistence layer.
 
 - **Web UI** (`web-ui` module — Scala.js + Laminar):
   - Drag-and-drop, promotion dialog, move log, board flip, undo/redo, draw-claim, FEN/PGN/JSON load and export
@@ -134,41 +135,47 @@ The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural
   - Coordinated shutdown via `Promise[Nothing, Unit]` — quit from any surface ends both
   - Pure board-logic helpers extracted into `Logic.scala` so they're unit-testable in plain `zio-test` even though scoverage doesn't instrument Scala.js output
   - Wire DTOs and endpoint contracts shared with the gateway via the cross-compiled `api` module
-- **MongoDB:** Pending. Plan: `MongoGameRepository` using the MongoDB Scala driver, swappable via ZLayer alongside the Slick implementation from Phase 6
+- **MongoDB:** Done — `persistence/mongo` (MongoDB Scala driver 5.5.1) implements the same DAO traits, selected via `PICHESS_BACKEND=mongo`.
+- **Beyond the lecture:** `persistence/redis` (zio-redis) and `persistence/cassandra` (DataStax driver) add two more backends, plus `persistence/cache` (a Redis `CachedGameRepository` decorator over any primary). `persistence/contract` runs one Testcontainers behaviour suite against every backend so they stay observationally equal. `mongo + redis` is the validated production default ([db-selection-report](db-selection-report.md)).
 
 ---
 
 ## Phase 8 — Performance (Gatling)
 
+**Status:** Complete — and grown into a full performance harness.
+
 **Lecture task:** Generate a Gatling performance test script, optimize the generated script, analyse the report, optimize application code, repeat and show the improvement.
 
-- **Gatling** load tests against the REST API introduced in Phase 4
-- Use Gatling Recorder to generate initial simulation script, then optimize by hand
-- Performance patterns to consider: Flyweight (chess pieces), Object Pool, Proxy (lazy loading)
-- Avoid hidden allocations or blocking calls in hot paths
-- `GameService` and domain remain unchanged
+- **Gatling** load tests in the `gatling` module, driven by `make perf` (cross-backend) and `make db-matrix` (backend × cache × workload sweeps)
+- **k6** added on top (`make k6`) with three surfaces — browser (Chromium), native gRPC, and direct xk6-kafka producer load
+- **JMH** microbenchmarks (`bench` module) for the rules / codec / domain / bot hot paths, plus **async-profiler** attachment to live containers (`make profile-async-cpu`)
+- Results are written under `perf-reports/<TS>/` and summarised by `make perf-report`; see [performance.md](performance.md), [perf-experiments.md](perf-experiments.md), and [performance-test-results.md](performance-test-results.md)
 
 ---
 
 ## Phase 9 — Bot / AI
 
+**Status:** Complete — and the project's largest area of ongoing work.
+
 **Goal:** Add a computer opponent.
 
-- AI player calls `GameService.makeMove` with a computed move
-- Move selection strategy is pluggable (random, minimax, etc.)
-- No changes to domain or HTTP layer
+- `bot-engine` is a pure engine library: negamax **α-β + transposition table**, quiescence, null-move pruning, SEE ordering, singular + check extensions, and a time-budgeted iterative-deepening mode
+- **Hybrid HCE + NNUE evaluation** (Stockfish-distilled net) + weighted-random opening book + a Syzygy tablebase oracle — measured at **≈2350 Elo** against UCI_Elo-anchored Stockfish
+- `game-service` embeds the engine for vs-computer play; `bot-lichess` runs it online as [pichess-htwg](https://lichess.org/@/pichess-htwg)
+- Offline training + the Elo harness live in `bot-train` (Texel tuning, self-play, `TournamentMain`) and the Python `nnue-train/` trainer
+- **See [bot.md](bot.md)** for the engine reference and how Elo is correctly measured, and [engine-levers.md](engine-levers.md) for the search/eval A/B history
 
 ---
 
 ## Phase 10 — Reactive Streams
 
+**Status:** Complete (ZIO Streams instead of Akka Streams).
+
 **Lecture task:** Create a stream with Source, Flow, and Sink. Source can be keyboard, file, website, or data in external DSL form.
 
-- Lecture specifies **Akka Streams** with GraphDSL; project may use **ZIO Streams** for consistency
-- Wrap `GameService.makeMove` results in a stream
-- `GameService.makeMove` return value is the publishing seam — no service changes needed
-- Clients subscribe to a game stream by `GameId`
-- SSE endpoint (`/api/events`) already uses `SubscriptionRef.changes` as a ZIO Stream — this is a partial implementation
+- The gateway's **SSE endpoint** (`/api/events`) streams `SubscriptionRef.changes` (Source) through a JSON-encoding `Flow` to the connected browser (Sink) — live multi-client board sync
+- The repository and both projection services consume `chess.game-events` as **zio-kafka** streams (Source = topic, Sink = the persistence layer / Neo4j / ClickHouse), with stream-level failures interrupting the service via the supervising scope
+- `GameService.makeMove` returns `(newState, event)` — the publishing seam the producer stream drains into Kafka
 
 ---
 
@@ -195,14 +202,18 @@ The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural
 
 ---
 
-## Phase 13 — Spark
+## Phase 13 — Data Aggregation (Spark brief → Kafka projections)
+
+**Status:** Met with ZIO-Kafka projections instead of Spark.
 
 **Lecture task:** Work with Spark to aggregate data from your application. First read from a file, then connect Spark to Kafka as a stream.
 
-- Spark dependencies: `spark-core`, `spark-streaming`, `spark-sql`, `spark-streaming-kafka`
-- Note: Spark requires Scala 2.12 — may need a separate SBT sub-project with Scala 2.12
-- Consume game event data from Kafka (Phase 11)
-- Spark jobs for move statistics, opening analysis, player ratings
+Rather than pull in Spark (which would force a Scala 2.12 sub-project), the data-aggregation requirement is satisfied by two **zio-kafka stream projections** that consume `chess.game-events` (Phase 11):
+
+- **`analytics-service`** ingests every event into **ClickHouse** (an OLAP `move_events` table) and serves aggregate queries — top openings, average game length, game count — over REST (`:8093`).
+- **`opening-service`** builds an **opening tree in Neo4j** — `(:Position)-[:MOVE {san, count}]->(:Position)` edges with move frequencies.
+
+Both are optional add-ons (`make analytics` / `make opening`); see [development.md](development.md) and [architecture.md](architecture.md). Revisit a true Spark job only if the lecture explicitly requires the Spark API itself.
 
 ---
 

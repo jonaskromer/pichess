@@ -2,7 +2,12 @@
 
 Plan to deploy piChess to an assigned HTWG virtual server, following lecture
 [09‑Deployment](https://markoboger.github.io/HTWG-AIN-BOGER-slides/lectures/software-architecture/09-Deployment.html).
-**Status: PLAN ONLY — nothing implemented yet.**
+**Status: PARTIALLY IMPLEMENTED.** CI/CD image publishing has landed —
+`.github/workflows/release.yml` builds **multi-arch (amd64 + arm64)** images for
+`gateway`, `game-service`, `repository`, and `lobby-service` and **pushes them to
+GHCR** on every `v*` tag (gated by the full `test.yml` coverage suite). What's
+still missing is everything Kubernetes: no k8s/k3s manifests, no cluster, no
+deploy job. The k3s rollout below is the remaining work.
 
 ---
 
@@ -43,16 +48,20 @@ I fetched the deck twice — it contains only **generic, example** commands. It 
 
 ## 3. Current state vs. what's missing
 
-**We have:** working Dockerfiles via `sbt-native-packager` (`sbt dockerBuildAll` → `pichess-*:latest` on `eclipse-temurin:23-jre`), a full `docker-compose.yml`, a `mongo+redis` production backend already validated (`docs/db-selection-report.md`), and all services 12‑factor‑ish (config from env vars).
+**We have:** working Dockerfiles via `sbt-native-packager` (`sbt dockerBuildAll` → `pichess-*:latest` on `eclipse-temurin:23-jre`), a full `docker-compose.yml`, a `mongo+redis` production backend already validated (`docs/db-selection-report.md`), all services 12‑factor‑ish (config from env vars), and — new — **GitHub Actions CI/CD that builds multi-arch images and pushes them to GHCR on tagged releases** (`release.yml`, gated by `test.yml`).
 
-**Missing (the work):**
+**Done since the first draft:**
 
-1. **Registry publishing** — build.sbt only does `Docker/publishLocal`; no `dockerRepository`/`dockerUsername`, no image tags beyond `latest`.
-2. **Kubernetes manifests** — none exist (`find` for k8s/k3s/helm = empty).
-3. **k3s on the VM** — not provisioned.
-4. **GitHub Actions** — no `.github/` at all.
-5. **Secrets/config story for k8s** — currently env vars in compose; need ConfigMap + Secret.
-6. **Kafka‑in‑k8s listeners**, **Mongo persistence (PVC)**, **Ingress** for the gateway.
+- ✅ **Registry publishing** — `release.yml` builds `linux/amd64,linux/arm64` via buildx and pushes `ghcr.io/<owner>/pichess-{gateway,game-service,repository,lobby-service}` tagged `:<version>` + `:sha-<sha>`, then cuts a GitHub Release. (build.sbt still only does `Docker/publishLocal`; the multi-arch push lives in the workflow, not sbt's `dockerRepository`.)
+- ✅ **GitHub Actions** — `.github/workflows/` now holds `test.yml` (coverage gate, every push/PR), `release.yml` (tag → build-push), and `metrics.yml` (badge data).
+
+**Still missing (the k3s work):**
+
+1. **Kubernetes manifests** — none exist (`find` for k8s/k3s/helm = empty).
+2. **k3s on the VM** — not provisioned.
+3. **A deploy job** — `release.yml` publishes images but does **not** roll them out to a cluster (no SSH/kubeconfig step yet).
+4. **Secrets/config story for k8s** — currently env vars in compose; need ConfigMap + Secret.
+5. **Kafka‑in‑k8s listeners**, **Mongo persistence (PVC)**, **Ingress** for the gateway.
 
 ---
 
@@ -94,7 +103,11 @@ I fetched the deck twice — it contains only **generic, example** commands. It 
 - Collect VM details + decide ingress hostname (§8). If no real domain, use `nip.io` (`pichess.<VM-IP>.nip.io`).
 - Confirm GitHub repo location → fixes the ghcr namespace `ghcr.io/<owner>/`.
 
-### Phase 1 — Registry‑ready images
+### Phase 1 — Registry‑ready images  ✅ *largely done (see §3)*
+> `release.yml` already builds multi-arch images and pushes them to GHCR with
+> version + `sha-` tags. The remaining nuance below (driving tags through sbt
+> rather than the workflow) is optional polish, not a blocker.
+
 - Add to each Docker‑enabled module in `build.sbt`:
   - `dockerRepository := Some("ghcr.io")`, `dockerUsername := Some("<owner>")`.
   - Tag with the **git SHA** (not just `latest`) so k8s rollouts are deterministic — e.g. drive `Docker / version` from an env var / sbt‑dynver.
@@ -124,7 +137,11 @@ I fetched the deck twice — it contains only **generic, example** commands. It 
 - Create the ghcr `imagePullSecret` (or make the ghcr packages public to skip auth).
 - `kubectl apply -f deploy/k8s/` → verify pods, ingress, public URL.
 
-### Phase 5 — GitHub Actions CI/CD
+### Phase 5 — GitHub Actions CI/CD  ✅ *build-push done; deploy job pending*
+> The **build‑push** half exists today as `release.yml` (tag‑triggered, not
+> push‑to‑`main`): it gates on `test.yml`, builds multi-arch, and pushes to GHCR.
+> What's left is the **deploy job** that rolls those images onto the k3s box.
+
 - `.github/workflows/deploy.yml`, on push to `main`:
   - **build‑push job:** checkout → JDK 23 + sbt cache → `make tailwind-build` → `docker/login-action` (ghcr, `GITHUB_TOKEN`) → `sbt dockerPublishAll` (tag = `${{ github.sha }}` + `latest`).
   - **deploy job (needs build‑push):** either (a) **SSH** to the VM (`appleboy/ssh-action`, key in secrets) and `kubectl -n pichess set image ...`/`rollout restart` + `kubectl apply -f deploy/k8s`, or (b) **kubeconfig secret** + `kubectl` from the runner. SSH is simplest for a self‑managed k3s box.
