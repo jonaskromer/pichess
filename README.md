@@ -15,9 +15,9 @@
 ![k3s](https://img.shields.io/badge/deploy-k3s-326CE5?logo=kubernetes&logoColor=white)
 
 **Metrics** &nbsp;&nbsp;
-[![lines of code](https://img.shields.io/endpoint?url=https%3A%2F%2Fgithub.com%2Fjonaskromer%2Fpichess%2Freleases%2Fdownload%2Fmetrics%2Floc.json)](https://github.com/jonaskromer/pichess/releases/tag/metrics)
-[![modules](https://img.shields.io/endpoint?url=https%3A%2F%2Fgithub.com%2Fjonaskromer%2Fpichess%2Freleases%2Fdownload%2Fmetrics%2Fmodules.json)](https://github.com/jonaskromer/pichess/releases/tag/metrics)
-[![tech debt](https://img.shields.io/endpoint?url=https%3A%2F%2Fgithub.com%2Fjonaskromer%2Fpichess%2Freleases%2Fdownload%2Fmetrics%2Ftechdebt.json)](https://github.com/jonaskromer/pichess/releases/tag/metrics)
+[![lines of code](https://img.shields.io/endpoint?url=https%3A%2F%2Fgist.githubusercontent.com%2FSloppyPotato%2Fedd5d4dd1a82fef389f1118aeaf291f5%2Fraw%2Floc.json)](https://gist.github.com/SloppyPotato/edd5d4dd1a82fef389f1118aeaf291f5)
+[![modules](https://img.shields.io/endpoint?url=https%3A%2F%2Fgist.githubusercontent.com%2FSloppyPotato%2Fedd5d4dd1a82fef389f1118aeaf291f5%2Fraw%2Fmodules.json)](https://gist.github.com/SloppyPotato/edd5d4dd1a82fef389f1118aeaf291f5)
+[![tech debt](https://img.shields.io/endpoint?url=https%3A%2F%2Fgist.githubusercontent.com%2FSloppyPotato%2Fedd5d4dd1a82fef389f1118aeaf291f5%2Fraw%2Ftechdebt.json)](https://gist.github.com/SloppyPotato/edd5d4dd1a82fef389f1118aeaf291f5)
 [![lichess blitz](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Flichess.org%2Fapi%2Fuser%2Fpichess-htwg&query=%24.perfs.blitz.rating&label=lichess%20blitz&logo=lichess&color=brightgreen)](https://lichess.org/@/pichess-htwg)
 ![last commit](https://img.shields.io/github/last-commit/jonaskromer/pichess?color=ff9bb3)
 

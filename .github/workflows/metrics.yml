@@ -1,23 +1,25 @@
 name: metrics
 
-# Self-hosted badge data — no third-party analysis service, no committed badge
-# file. On every push to main, recompute the metrics and publish one shields
-# endpoint JSON per badge (loc.json, modules.json, techdebt.json, …) on a
-# mutable `metrics` PRE-RELEASE. A pre-release is excluded from
-# `releases/latest`, so it never touches the real release badges, and it gives
-# every asset a stable URL (releases/download/metrics/<name>.json). The README
-# "Metrics" badges render each file with shields' endpoint badge.
+# Self-hosted badge data via a gist. On every push to main, recompute the
+# metrics and PATCH them into a public gist using a gist-scoped PAT (the
+# GIST_SECRET repo secret). The README "Metrics" badges render each file with
+# shields' endpoint badge, reading gist.githubusercontent.com — which shields
+# allows (unlike github.com release assets, which it blocks). No repo commits,
+# no third-party analysis service.
 on:
   push:
     branches: [main]
   workflow_dispatch: {}
 
 permissions:
-  contents: write # create/refresh the `metrics` pre-release and its assets
+  contents: read # only needs to check the repo out; the gist is updated via GIST_SECRET
 
 concurrency:
   group: metrics
   cancel-in-progress: true
+
+env:
+  GIST_ID: edd5d4dd1a82fef389f1118aeaf291f5 # gist.github.com/SloppyPotato/<this>
 
 jobs:
   badges:
@@ -25,16 +27,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Pure git + bash (see the script) — nothing to install.
+      # Pure git + bash (see the script) — writes badges/<metric>.json.
       - name: Generate badge JSONs
         run: bash scripts/gen-badges.sh badges
 
-      - name: Publish to the `metrics` pre-release
+      - name: Update the badge gist
         env:
-          GH_TOKEN: ${{ github.token }}
+          GIST_TOKEN: ${{ secrets.GIST_SECRET }}
         run: |
-          gh release view metrics >/dev/null 2>&1 \
-            || gh release create metrics --prerelease \
-                 --title "CI metrics (badge data)" \
-                 --notes "Auto-updated badge data read by the README \`Metrics\` badges. Not a real release."
-          gh release upload metrics badges/*.json --clobber
+          payload=$(jq -n \
+            --arg loc      "$(cat badges/loc.json)" \
+            --arg modules  "$(cat badges/modules.json)" \
+            --arg techdebt "$(cat badges/techdebt.json)" \
+            '{files: {"loc.json": {content: $loc}, "modules.json": {content: $modules}, "techdebt.json": {content: $techdebt}}}')
+          curl -fsS -X PATCH \
+            -H "Authorization: token ${GIST_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/gists/${GIST_ID}" \
+            -d "${payload}" -o /dev/null
+          echo "gist ${GIST_ID} updated"
