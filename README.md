@@ -54,6 +54,7 @@ Kafka- and gRPC-server-Main code is excluded from unit coverage (it needs a live
 - 🍑 **[Architecture](docs/architecture.md)** — the microservice graph, event log, gRPC contract, ADRs.
 - 🍑 **[Development Workflow](docs/development.md)** — TDD rules, sbt pipeline, troubleshooting.
 - 🍑 **[Performance & Profiling](docs/performance.md)** — Gatling, JMH, async-profiler, zio-profiling, Prometheus, Grafana, Jaeger, and the `make perf` harness.
+- 🍑 **[Bot & Engine](docs/bot.md)** — search + NNUE/hybrid evaluation, the Lichess client, and **how the bot's Elo is correctly measured** (UCI_Elo-anchored Stockfish).
 - 🍑 **[Roadmap](docs/roadmap.md)** — the 14-phase evolution plan.
 
 ## 🛠️ Current Status
