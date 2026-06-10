@@ -595,4 +595,4 @@ object GameControllerSpec extends ZIOSpecDefault:
         )
       }
     )
-  ).provide(appLayer)
+  ).provide(appLayer) @@ TestAspect.withLiveClock

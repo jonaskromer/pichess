@@ -82,4 +82,4 @@ abstract class GameRepositoryContract extends ZIOSpecDefault:
           result.exists(s => states.exists(_ == s))
         )
       }
-    ).provideShared(repoLayer)
+    ).provideShared(repoLayer) @@ TestAspect.withLiveClock

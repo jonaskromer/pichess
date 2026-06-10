@@ -1,4 +1,4 @@
-package chess.bot.lichess
+package chess.codec
 
 import zio.test.*
 
@@ -8,6 +8,10 @@ import chess.model.piece.PieceType
 /** Pins the UCI ↔ [[Move]] round-trip behaviour. UCI is THE wire
   * format used by Lichess (and every other engine on the planet) so
   * incorrect parsing here breaks every game from move 1.
+  *
+  * Lives in the `codec` module alongside [[UciCodec]] itself — the
+  * `bot-lichess` adapter only re-exports it via a `val` alias, so the
+  * behaviour is pinned here where the implementation lives.
   */
 object UciCodecSpec extends ZIOSpecDefault:
 

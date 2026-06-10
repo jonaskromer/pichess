@@ -1483,7 +1483,7 @@ object Main:
     * user clicks "new game" or loads a serialized payload.
     */
   private def bootstrapGame(
-      load: Option[String] = None,
+      load: Option[String],
   ): Unit =
     postCreateGameClient((sessionId, CreateGameRequest(load))).foreach {
       case Right(snapshot) =>

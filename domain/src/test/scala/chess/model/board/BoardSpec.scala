@@ -113,5 +113,15 @@ object BoardSpec extends ZIOSpecDefault:
       test("Bitboard.iterator on empty bitboard emits nothing") {
         assertTrue(Bitboard.Empty.iterator.isEmpty)
       },
+      test("foldLeft visits every (pos, piece) entry, agreeing with toList") {
+        // foldLeft is the general form of toList — folding the entries
+        // back into a list must reproduce toList exactly (all 32 pieces).
+        val entries =
+          board.foldLeft(List.empty[(Position, Piece)])((acc, e) => e :: acc).reverse
+        assertTrue(
+          entries == board.toList,
+          entries.size == 32,
+        )
+      },
     )
   )

@@ -475,7 +475,7 @@ object MoveValidator:
       piece: Piece
   ): List[Move] =
     piece.pieceType match
-      case PieceType.Pawn => pawnCandidates(from, piece.color, state)
+      case PieceType.Pawn => pawnCandidates(from, piece.color)
       case PieceType.King => kingCandidates(state, from, piece)
       case pt =>
         Ray
@@ -485,8 +485,7 @@ object MoveValidator:
 
   private def pawnCandidates(
       from: Position,
-      color: Color,
-      state: GameState
+      color: Color
   ): List[Move] =
     val direction = if color == Color.White then 1 else -1
     val startRank = if color == Color.White then 2 else 7

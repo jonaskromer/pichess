@@ -57,7 +57,7 @@ object LobbyProxySpec extends ZIOSpecDefault:
           out  <- body(s"http://localhost:$port")
         yield out
       }.provideSomeLayer[Scope & Client & Tracing & ContextStorage](serverLayer)
-    }.provide(Scope.default, Client.default, TracingLayer.noop)
+    }.provide(Client.default, TracingLayer.noop)
 
   def spec = suite("LobbyProxy")(
     test("GET /lobbies forwards the method + empty path to the upstream") {

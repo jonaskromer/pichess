@@ -219,4 +219,4 @@ object GameServiceSpec extends ZIOSpecDefault:
         yield assertTrue(state.isEmpty)
       }
     )
-  ).provide(appLayer)
+  ).provide(appLayer) @@ TestAspect.withLiveClock

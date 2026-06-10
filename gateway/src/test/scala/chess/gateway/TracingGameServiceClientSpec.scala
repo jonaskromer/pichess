@@ -217,4 +217,4 @@ object TracingGameServiceClientSpec extends ZIOSpecDefault:
         )
       }
     },
-  )
+  ) @@ TestAspect.withLiveClock

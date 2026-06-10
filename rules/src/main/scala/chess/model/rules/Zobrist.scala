@@ -61,10 +61,14 @@ object Zobrist:
   // a zero entry would collapse that feature's contribution to the hash and
   // fail the matching "… alone changes the key" test.
 
-  private def pieceIndex(piece: Piece): Int =
+  // `pieceIndex` / `squareIndex` encode the table-index scheme that
+  // `hash` applies inline (it walks the 12 piece bitboards by hardcoded
+  // index for speed). Retained as the single readable definition of that
+  // scheme; `private[rules]` so the contract test can pin the formula.
+  private[rules] def pieceIndex(piece: Piece): Int =
     piece.color.ordinal * 6 + piece.pieceType.ordinal
 
-  private def squareIndex(pos: Position): Int =
+  private[rules] def squareIndex(pos: Position): Int =
     (pos.col - 'a') + (pos.row - 1) * 8
 
   /** Hash a [[GameState]] to a 64-bit Zobrist key.

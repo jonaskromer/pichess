@@ -120,4 +120,4 @@ abstract class LobbyRepositoryContract extends ZIOSpecDefault:
           !ids.contains("full-1")
         )
       }
-    ).provideShared(repoLayer)
+    ).provideShared(repoLayer) @@ TestAspect.withLiveClock

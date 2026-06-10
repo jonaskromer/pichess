@@ -1,0 +1,40 @@
+name: metrics
+
+# Self-hosted badge data — no third-party analysis service, no committed badge
+# file. On every push to main, recompute the metrics and publish one shields
+# endpoint JSON per badge (loc.json, modules.json, techdebt.json, …) on a
+# mutable `metrics` PRE-RELEASE. A pre-release is excluded from
+# `releases/latest`, so it never touches the real release badges, and it gives
+# every asset a stable URL (releases/download/metrics/<name>.json). The README
+# "Metrics" badges render each file with shields' endpoint badge.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write # create/refresh the `metrics` pre-release and its assets
+
+concurrency:
+  group: metrics
+  cancel-in-progress: true
+
+jobs:
+  badges:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pure git + bash (see the script) — nothing to install.
+      - name: Generate badge JSONs
+        run: bash scripts/gen-badges.sh badges
+
+      - name: Publish to the `metrics` pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view metrics >/dev/null 2>&1 \
+            || gh release create metrics --prerelease \
+                 --title "CI metrics (badge data)" \
+                 --notes "Auto-updated badge data read by the README \`Metrics\` badges. Not a real release."
+          gh release upload metrics badges/*.json --clobber

@@ -120,4 +120,4 @@ object GrpcMappersSpec extends ZIOSpecDefault:
         )
       }.provideLayer(deps)
     )
-  )
+  ) @@ TestAspect.withLiveClock

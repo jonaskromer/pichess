@@ -2,6 +2,8 @@ package chess.controller
 
 import java.util.concurrent.TimeUnit
 
+import scala.annotation.unused
+
 import zio.*
 import zio.stream.SubscriptionRef
 
@@ -41,7 +43,10 @@ object GameController:
 
   def makeMove(
       gs: GameService,
-      producer: GameEventProducer,
+      // Publishing flows through `gs.commit`, so `makeMove` doesn't touch
+      // `producer` directly — kept for signature parity with the other
+      // controller actions (undo/redo/claimDraw/forfeit) that do.
+      @unused producer: GameEventProducer,
       session: SubscriptionRef[SessionState],
       rawInput: String
   ): IO[GameError, Unit] =

@@ -5,7 +5,8 @@ import zio.test.*
 
 import chess.codec.{FenSerializer, PositionIdentityBehaviors}
 import chess.model.GameError
-import chess.model.board.GameState
+import chess.model.board.{GameState, Position}
+import chess.model.piece.{Color, Piece, PieceType}
 import chess.notation.MoveParser
 
 /** Contract tests for [[Zobrist.hash]] as a position-identity function.
@@ -40,6 +41,15 @@ object ZobristSpec extends ZIOSpecDefault:
           yield (next, next :: acc)
       }
       .map(_._2.reverse)
+
+  /** Play a SAN line from the initial position and return the final state. */
+  private def play(moves: List[String]): IO[GameError, GameState] =
+    ZIO.foldLeft(moves)(GameState.initial) { (state, san) =>
+      for
+        move <- MoveParser.parse(san, state)
+        next <- Game.applyMove(state, move)
+      yield next
+    }
 
   private val corpusSequences: List[List[String]] = List(
     // Ruy Lopez with both castling kingside
@@ -122,5 +132,39 @@ object ZobristSpec extends ZIOSpecDefault:
           fenEq != zobEq
         }
         assertTrue(disagreements.isEmpty)
+    },
+    test("pawnHash tracks the pawn skeleton, ignoring piece moves") {
+      for
+        afterKnight <- play(List("Nf3")) // only a knight moved
+        afterPawn   <- play(List("e4"))  // a pawn moved
+      yield assertTrue(
+        // a non-pawn move leaves the pawn key unchanged …
+        Zobrist.pawnHash(afterKnight) == Zobrist.pawnHash(GameState.initial),
+        // … but moving a pawn changes it
+        Zobrist.pawnHash(afterPawn) != Zobrist.pawnHash(GameState.initial),
+      )
+    },
+    test("materialKey is stable across quiet moves and shifts on a capture") {
+      for
+        quiet    <- play(List("Nf3", "Nf6"))       // no material change
+        captured <- play(List("e4", "d5", "exd5")) // White wins a pawn
+      yield assertTrue(
+        Zobrist.materialKey(quiet) == Zobrist.materialKey(GameState.initial),
+        Zobrist.materialKey(captured) != Zobrist.materialKey(GameState.initial),
+      )
+    },
+    test("pieceIndex and squareIndex encode the table-index scheme") {
+      assertTrue(
+        // pieceIndex: White King=0 … White Pawn=5, Black King=6 … Black Pawn=11
+        Zobrist.pieceIndex(Piece(Color.White, PieceType.King)) == 0,
+        Zobrist.pieceIndex(Piece(Color.White, PieceType.Pawn)) == 5,
+        Zobrist.pieceIndex(Piece(Color.Black, PieceType.King)) == 6,
+        Zobrist.pieceIndex(Piece(Color.Black, PieceType.Pawn)) == 11,
+        // squareIndex: LERF (a1=0, h1=7, a2=8, h8=63)
+        Zobrist.squareIndex(Position('a', 1)) == 0,
+        Zobrist.squareIndex(Position('h', 1)) == 7,
+        Zobrist.squareIndex(Position('a', 2)) == 8,
+        Zobrist.squareIndex(Position('h', 8)) == 63,
+      )
     }
   )

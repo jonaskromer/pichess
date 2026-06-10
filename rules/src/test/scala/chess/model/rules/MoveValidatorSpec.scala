@@ -1200,6 +1200,24 @@ object MoveValidatorSpec extends ZIOSpecDefault:
           MoveValidator.legalDestinationsIndexSync(s) == io
         )
       },
+      test("legalDestinationsIndexSync covers black to move and a source with no legal moves") {
+        // Black to move exercises the activeColor=Black branch. The
+        // black king is boxed into the corner by its own pieces, so it
+        // has no legal destination and contributes no entry —
+        // exercising the `dests.nonEmpty` skip.
+        val s = blackState(
+          pos('h', 8) -> BK,
+          pos('g', 8) -> BR,
+          pos('h', 7) -> BP,
+          pos('g', 7) -> BP,
+          pos('e', 1) -> WK,
+        )
+        for io <- MoveValidator.legalDestinationsIndex(s)
+        yield assertTrue(
+          MoveValidator.legalDestinationsIndexSync(s) == io,
+          !MoveValidator.legalDestinationsIndexSync(s).contains(pos('h', 8)),
+        )
+      },
       test("legalMovesFromSync returns Nil on an empty square") {
         val s = state(pos('e', 1) -> WK, pos('e', 8) -> BK)
         assertTrue(MoveValidator.legalMovesFromSync(s, pos('d', 4)) == Nil)

@@ -176,4 +176,4 @@ object VsBotOrchestratorSpec extends ZIOSpecDefault:
         )
       },
     ),
-  ).provide(testLayer)
+  ).provide(testLayer) @@ TestAspect.withLiveClock

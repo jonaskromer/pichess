@@ -1,5 +1,7 @@
 package chess.model.rules
 
+import zio.*
+
 /** Precomputed attack tables + bitboard ray walkers used by the
   * bitboard-native predicates in [[MoveValidator]] (Phase 2 of the
   * bitboard migration). The leaper tables are computed once at class
@@ -232,38 +234,80 @@ object BitboardAttacks:
       occupancies(i) = indexToOccupancy(i, bits, mask)
       attacks(i) = slidingAttacks(sq, occupancies(i), deltaCol, deltaRow)
       i += 1
-    val table = new Array[Long](n)
-    // `used` marks slots that have been claimed by some attack value,
-    // including 0L (empty attack set, which CAN occur for sliders when
-    // every ray is blocked at distance 1 — e.g. a rook in a corner
-    // ringed by its own pieces). Using a separate flag instead of
-    // `table(idx) == 0L` avoids treating those legitimate empty-attack
-    // slots as "free" and silently overwriting them with a different
-    // attack later.
-    val used = new Array[Boolean](n)
-    var found = false
-    var magic = 0L
-    var attempts = 0
-    while !found do
-      magic = sparseLong(rng)
-      java.util.Arrays.fill(table, 0L)
-      java.util.Arrays.fill(used, false)
-      var collision = false
-      var k = 0
-      while !collision && k < n do
-        val idx = ((occupancies(k) * magic) >>> shift).toInt
-        if !used(idx) then
-          table(idx) = attacks(k)
-          used(idx) = true
-        else if table(idx) != attacks(k) then collision = true
-        k += 1
-      if !collision then found = true
-      attempts += 1
-      if attempts > 5000000 then
-        throw new RuntimeException(s"Magic search failed at sq=$sq after $attempts attempts")
+    val (magic, table) =
+      Unsafe.unsafe { implicit u =>
+        Runtime.default.unsafe
+          .run(searchMagic(sq, occupancies, attacks, shift, n, rng))
+          .getOrThrowFiberFailure()
+      }
     shifts(sq) = shift
     magics(sq) = magic
     tables(sq) = table
+
+  /** Raised when [[searchMagic]] exhausts its attempt budget without
+    * finding a collision-free multiplier. Never happens at class-load
+    * with the production seed — a magic turns up in far fewer than
+    * [[MaxMagicAttempts]] tries — but modelled as a typed ZIO failure so
+    * the exhaustion path is a value the suite can drive rather than an
+    * untestable `throw`. */
+  final case class MagicSearchExhausted(sq: Int, attempts: Int)
+
+  // `final` ⇒ inlined constant, so it is safe to reference from
+  // `searchMagic`'s default argument even though `initMagics()` runs at
+  // class-load (line above) before this definition textually appears.
+  private final val MaxMagicAttempts = 5_000_000
+
+  /** Search for a magic multiplier that hashes every blocker subset
+    * (`occupancies`) into a distinct table slot whose stored attack set
+    * matches, trying up to `maxAttempts` sparse-random candidates drawn
+    * from `rng`. Returns the magic plus its fully-populated attack table
+    * on success, or fails with [[MagicSearchExhausted]] once the budget
+    * is spent.
+    *
+    * Pure CPU — the `ZIO` wrapper exists only so the exhaustion case is
+    * a typed value. `private[rules]` so [[BitboardAttacksSpec]] can drive
+    * that branch with a tiny `maxAttempts` (it is unreachable with real
+    * chess masks). */
+  private[rules] def searchMagic(
+      sq: Int,
+      occupancies: Array[Long],
+      attacks: Array[Long],
+      shift: Int,
+      n: Int,
+      rng: java.util.Random,
+      maxAttempts: Int = MaxMagicAttempts,
+  ): IO[MagicSearchExhausted, (Long, Array[Long])] =
+    ZIO.suspendSucceed {
+      // `used` marks slots that have been claimed by some attack value,
+      // including 0L (empty attack set, which CAN occur for sliders when
+      // every ray is blocked at distance 1 — e.g. a rook in a corner
+      // ringed by its own pieces). Using a separate flag instead of
+      // `table(idx) == 0L` avoids treating those legitimate empty-attack
+      // slots as "free" and silently overwriting them with a different
+      // attack later.
+      val table = new Array[Long](n)
+      val used = new Array[Boolean](n)
+      var found = false
+      var magic = 0L
+      var attempts = 0
+      while !found && attempts < maxAttempts do
+        magic = sparseLong(rng)
+        java.util.Arrays.fill(table, 0L)
+        java.util.Arrays.fill(used, false)
+        var collision = false
+        var k = 0
+        while !collision && k < n do
+          val idx = ((occupancies(k) * magic) >>> shift).toInt
+          if !used(idx) then
+            table(idx) = attacks(k)
+            used(idx) = true
+          else if table(idx) != attacks(k) then collision = true
+          k += 1
+        if !collision then found = true
+        attempts += 1
+      if found then ZIO.succeed((magic, table))
+      else ZIO.fail(MagicSearchExhausted(sq, attempts))
+    }
 
   /** Build the per-square relevant-blocker mask for a slider whose ray
     * directions are given by `(deltaCol(i), deltaRow(i))`. Walks each

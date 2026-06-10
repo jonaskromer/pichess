@@ -68,7 +68,7 @@ object CachedGameRepositorySpec extends ZIOSpecDefault:
     },
     test("load on cache miss falls through to primary and populates cache") {
       for
-        (cache, _, cacheLoads, _) <- CountingGameRepository.make
+        (cache, _, _, _) <- CountingGameRepository.make
         (primary, _, primaryLoads, _) <- CountingGameRepository.make
         // Seed primary directly so cache is cold
         _ <- primary.save("g1", state)

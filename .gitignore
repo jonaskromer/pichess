@@ -38,6 +38,9 @@ metals.sbt
 # Tailwind standalone CLI fetched by 'make tailwind-install'
 /bin/
 
+# Local output of scripts/gen-badges.sh — published as `metrics` pre-release assets, never committed
+/badges/
+
 # Dev stack selector state file (written by 'make stack-*')
 /.pichess-stack
 

@@ -1,10 +1,12 @@
 # <img src="gateway/src/main/resources/web/peach.svg" alt="🍑" width="32" /> piChess
 
+**Build** &nbsp;&nbsp;
 [![test](https://github.com/jonaskromer/pichess/actions/workflows/test.yml/badge.svg)](https://github.com/jonaskromer/pichess/actions/workflows/test.yml)
 [![release](https://github.com/jonaskromer/pichess/actions/workflows/release.yml/badge.svg)](https://github.com/jonaskromer/pichess/actions/workflows/release.yml)
 [![latest release](https://img.shields.io/github/v/release/jonaskromer/pichess?label=latest%20release&sort=semver&color=ff9bb3&logo=github)](https://github.com/jonaskromer/pichess/releases)
 ![coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
 
+**Stack** &nbsp;&nbsp;
 ![Scala](https://img.shields.io/badge/Scala-3.8-DC322F?logo=scala&logoColor=white)
 ![ZIO](https://img.shields.io/badge/ZIO-throughout-7B2FBE)
 ![gRPC](https://img.shields.io/badge/gRPC-inter--service-244c5a?logo=grpc&logoColor=white)
@@ -12,8 +14,11 @@
 ![Docker](https://img.shields.io/badge/images-multi--arch-2496ED?logo=docker&logoColor=white)
 ![k3s](https://img.shields.io/badge/deploy-k3s-326CE5?logo=kubernetes&logoColor=white)
 
+**Metrics** &nbsp;&nbsp;
+[![lines of code](https://img.shields.io/endpoint?url=https%3A%2F%2Fgithub.com%2Fjonaskromer%2Fpichess%2Freleases%2Fdownload%2Fmetrics%2Floc.json)](https://github.com/jonaskromer/pichess/releases/tag/metrics)
+[![modules](https://img.shields.io/endpoint?url=https%3A%2F%2Fgithub.com%2Fjonaskromer%2Fpichess%2Freleases%2Fdownload%2Fmetrics%2Fmodules.json)](https://github.com/jonaskromer/pichess/releases/tag/metrics)
+[![tech debt](https://img.shields.io/endpoint?url=https%3A%2F%2Fgithub.com%2Fjonaskromer%2Fpichess%2Freleases%2Fdownload%2Fmetrics%2Ftechdebt.json)](https://github.com/jonaskromer/pichess/releases/tag/metrics)
 [![lichess blitz](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Flichess.org%2Fapi%2Fuser%2Fpichess-htwg&query=%24.perfs.blitz.rating&label=lichess%20blitz&logo=lichess&color=brightgreen)](https://lichess.org/@/pichess-htwg)
-![lines of code](https://img.shields.io/badge/lines%20of%20code-48k%20Scala-blueviolet)
 ![last commit](https://img.shields.io/github/last-commit/jonaskromer/pichess?color=ff9bb3)
 
 Welcome to **πChess** (pronounced like *peaches* in German)!
