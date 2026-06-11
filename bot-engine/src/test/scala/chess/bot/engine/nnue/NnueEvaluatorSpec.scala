@@ -17,6 +17,24 @@ object NnueEvaluatorSpec extends ZIOSpecDefault:
     test("loads the baked /nnue-v1.bin resource") {
       assertTrue(NnueEvaluator.loadResource("/nnue-v1.bin").isDefined)
     },
+    test("loadFile reads a net from a filesystem path (matches baked), None when absent") {
+      // The A/B harness loads candidate nets from /tmp via loadFile; it must
+      // produce the same evaluator as the classpath loader for the same bytes.
+      val baked = NnueEvaluator.loadResource("/nnue-v1.bin").get
+      val bytes = getClass.getResourceAsStream("/nnue-v1.bin").readAllBytes()
+      val tmp   = java.nio.file.Files.createTempFile("nnue-ab", ".bin")
+      java.nio.file.Files.write(tmp, bytes)
+      val fromFile = NnueEvaluator.loadFile(tmp.toString)
+      java.nio.file.Files.deleteIfExists(tmp)
+      for state <- FenParserRegex.parse(
+                     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+                   )
+      yield assertTrue(
+        fromFile.isDefined,
+        fromFile.get.evaluate(state) == baked.evaluate(state),
+        NnueEvaluator.loadFile("/no/such/net-does-not-exist.bin").isEmpty,
+      )
+    },
     test("starting position evaluates close to zero (symmetric)") {
       val nnue = NnueEvaluator.loadResource("/nnue-v1.bin").get
       for state <- FenParserRegex.parse(

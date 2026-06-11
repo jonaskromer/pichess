@@ -220,6 +220,15 @@ object NnueEvaluator:
       finally res.close()
     }
 
+  /** Load the network from a filesystem PATH (not the classpath).
+    * Used by the A/B harness to pit a freshly-trained candidate net
+    * (e.g. `/tmp/nnue-128-refined.bin`) head-to-head against the baked
+    * one without repackaging. Returns None when the file is absent. */
+  def loadFile(path: String): Option[NnueEvaluator] =
+    val f = new java.io.File(path)
+    if !f.isFile then None
+    else Some(parse(java.nio.file.Files.readAllBytes(f.toPath)))
+
   /** Parse the raw byte layout into the four weight arrays. The
     * length check rejects mis-sized files before we start reading
     * garbage as quantized weights. */

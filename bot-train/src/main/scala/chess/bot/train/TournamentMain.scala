@@ -53,6 +53,7 @@ object TournamentMain extends ZIOAppDefault:
                         cfg.challengerNnueEns, cfg.challengerLazySmp,
                         cfg.challengerEvalCache, cfg.challengerIncremental,
                         cfg.challengerFlags, cfg.challengerHybridAlpha,
+                        cfg.challengerNnuePath,
                       ).flatMap(maybeWrapSyzygy(_, cfg.challengerSyzygy, cfg))
         championF   <- loadOpponent(cfg)
                         .flatMap(maybeWrapSyzygy(_, cfg.championSyzygy, cfg))
@@ -103,8 +104,12 @@ object TournamentMain extends ZIOAppDefault:
     val searchNote =
       cfg.challengerBudgetMs.fold(s"depth ${cfg.depth}")(ms =>
         s"${ms}ms/move budget (fallback depth ${cfg.depth})")
+    val netNote =
+      if cfg.challengerNnuePath.isEmpty && cfg.championNnuePath.isEmpty then ""
+      else s" [challenger net: ${cfg.challengerNnuePath.getOrElse("baked")} | " +
+        s"champion net: ${cfg.championNnuePath.getOrElse("baked")}]"
     s"Tournament: v${cfg.challenger} (challenger) vs $opponent (champion), " +
-      s"${cfg.games} games at $searchNote, parallelism $parNote" + flagNote
+      s"${cfg.games} games at $searchNote, parallelism $parNote" + flagNote + netNote
 
   private final case class Config(
       challenger: Int,
@@ -163,6 +168,13 @@ object TournamentMain extends ZIOAppDefault:
       // HCE-weighted NNUE blend beats pure HCE.
       challengerHybridAlpha: Option[Double],
       championHybridAlpha:   Option[Double],
+      // Optional per-side NNUE net FILE path (filesystem, not classpath).
+      // When set, that side loads its net from this path instead of the
+      // baked `/nnue-v1.bin` — lets the harness A/B a freshly-trained
+      // candidate net head-to-head against the shipped one in ONE run
+      // (both sides identical except the net → low-variance ΔElo).
+      challengerNnuePath: Option[String],
+      championNnuePath:   Option[String],
       // When set, the challenger plays with a per-move TIME BUDGET
       // (iterative deepening to N ms via `bestMoveWithBudget`) instead
       // of the fixed `depth`. This reproduces the live Lichess bot's
@@ -287,6 +299,8 @@ object TournamentMain extends ZIOAppDefault:
         championFlags       = flagsEnv("PICHESS_TOURNAMENT_CHAMPION_FLAGS"),
         challengerHybridAlpha = sys.env.get("PICHESS_TOURNAMENT_CHALLENGER_HYBRID_ALPHA").flatMap(_.toDoubleOption),
         championHybridAlpha   = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_HYBRID_ALPHA").flatMap(_.toDoubleOption),
+        challengerNnuePath = sys.env.get("PICHESS_TOURNAMENT_CHALLENGER_NNUE_PATH"),
+        championNnuePath   = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_NNUE_PATH"),
         challengerBudgetMs    = sys.env.get("PICHESS_TOURNAMENT_BUDGET_MS").flatMap(_.toLongOption),
       )
     }
@@ -346,6 +360,7 @@ object TournamentMain extends ZIOAppDefault:
       cfg.championContHist, cfg.championAsp, cfg.championNnue, cfg.championSe,
       cfg.championNnueEns, cfg.championLazySmp, cfg.championEvalCache,
       cfg.championIncremental, cfg.championFlags, cfg.championHybridAlpha,
+      cfg.championNnuePath,
     )
 
   /** Build a [[Search]] for the given weights-version JSON
@@ -372,6 +387,7 @@ object TournamentMain extends ZIOAppDefault:
       incrementalAccumulators: Boolean,
       newFlags: Set[String],
       hybridAlpha: Option[Double] = None,
+      nnuePath: Option[String] = None,
   ): ZIO[Any, Throwable, () => Search] =
     WeightsLoader.load(version).map { snapshot =>
       // NNUE evaluators are stateless (they allocate fresh
@@ -390,10 +406,19 @@ object TournamentMain extends ZIOAppDefault:
             .getOrElse(throw new IllegalStateException(
               "NNUE ensemble resources /nnue-ens-v1-s{1..3}.bin not packaged")))
         else if nnueEnabled || hybridAlpha.isDefined then
-          Some(chess.bot.engine.nnue.NnueEvaluator
-            .loadResource("/nnue-v1.bin")
-            .getOrElse(throw new IllegalStateException(
-              "NNUE resource /nnue-v1.bin not packaged")))
+          // A/B override: load the net from a filesystem path when given
+          // (a freshly-trained candidate), else the baked classpath net.
+          Some(nnuePath match
+            case Some(p) =>
+              chess.bot.engine.nnue.NnueEvaluator
+                .loadFile(p)
+                .getOrElse(throw new IllegalStateException(
+                  s"NNUE net not found at path: $p"))
+            case None =>
+              chess.bot.engine.nnue.NnueEvaluator
+                .loadResource("/nnue-v1.bin")
+                .getOrElse(throw new IllegalStateException(
+                  "NNUE resource /nnue-v1.bin not packaged")))
         else None
       // Validate the requested new-flag names up front — a typo in an
       // A/B config should fail loud, not silently test nothing.
