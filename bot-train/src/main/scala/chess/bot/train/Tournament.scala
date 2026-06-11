@@ -107,7 +107,8 @@ object Tournament:
       openingStates: Vector[GameState] = Vector.empty,
   ): UIO[Report] =
     SelfPlay
-      .roundIsolated(championFactory, challengerFactory, games, depth, maxPlies, parallelism, openingStates)
+      .roundIsolated(championFactory, challengerFactory, games, depth, maxPlies, parallelism, openingStates,
+        collectTrainingRows = false)
       .map { round =>
         val score = challengerScoreOf(round)
         Report(

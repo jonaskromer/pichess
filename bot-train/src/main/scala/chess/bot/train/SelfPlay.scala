@@ -101,13 +101,14 @@ object SelfPlay:
       maxPlies: Int = 200,
       parallelism: Int = 1,
       openingStates: Vector[GameState] = Vector.empty,
+      collectTrainingRows: Boolean = true,
   ): UIO[RoundResult] =
     // Shared-instance behaviour (constant factories) — kept for
     // back-compat. At parallelism > 1 this races the shared search
     // state across games; use [[roundIsolated]] for clean
     // measurement. See its doc for why.
     roundIsolated(() => champion, () => challenger, games, depth,
-      maxPlies, parallelism, openingStates)
+      maxPlies, parallelism, openingStates, collectTrainingRows)
 
   /** Like [[round]] but mints a FRESH [[Search]] per game from the
     * supplied factories, so concurrent games never share mutable
@@ -134,11 +135,12 @@ object SelfPlay:
       maxPlies: Int = 200,
       parallelism: Int = 1,
       openingStates: Vector[GameState] = Vector.empty,
+      collectTrainingRows: Boolean = true,
   ): UIO[RoundResult] =
     if parallelism > 1 then
-      parallelRound(championFactory, challengerFactory, games, depth, maxPlies, parallelism, openingStates)
+      parallelRound(championFactory, challengerFactory, games, depth, maxPlies, parallelism, openingStates, collectTrainingRows)
     else
-      sequentialRound(championFactory, challengerFactory, games, depth, maxPlies, openingStates)
+      sequentialRound(championFactory, challengerFactory, games, depth, maxPlies, openingStates, collectTrainingRows)
 
   /** Pick the opening for the i-th game. Empty pool → start from
     * the standard initial position (back-compat default). Otherwise
@@ -158,6 +160,7 @@ object SelfPlay:
       depth: Int,
       maxPlies: Int,
       openingStates: Vector[GameState],
+      collectTrainingRows: Boolean,
   ): UIO[RoundResult] =
     ZIO.foldLeft(0 until games)(emptyRound) { (acc, i) =>
       val (whitePlayer, blackPlayer, challengerIsWhite) =
@@ -166,8 +169,8 @@ object SelfPlay:
         whitePlayer, blackPlayer, depth, maxPlies,
         initialState = openingFor(i, openingStates),
       ).map { result =>
-        val rows = gameToTrainingRows(result)
-        addToRound(acc, result, challengerIsWhite, rows)
+        val rows = if collectTrainingRows then gameToTrainingRows(result) else Vector.empty
+        addToRound(acc, result.outcome, challengerIsWhite, rows)
       }
     }
 
@@ -184,24 +187,32 @@ object SelfPlay:
       maxPlies: Int,
       parallelism: Int,
       openingStates: Vector[GameState],
+      collectTrainingRows: Boolean,
   ): UIO[RoundResult] =
-    ZIO
-      .foreachPar(0 until games) { i =>
-        val (whitePlayer, blackPlayer, challengerIsWhite) =
-          gamePairing(i, championFactory, challengerFactory)
-        playGame(
-          whitePlayer, blackPlayer, depth, maxPlies,
-          initialState = openingFor(i, openingStates),
-        ).map { result =>
-          (result, challengerIsWhite, gameToTrainingRows(result))
+    // Fold each game's OUTCOME into a shared Ref as it finishes, via
+    // foreachParDiscard (bounded by `parallelism`). The round retains nothing
+    // per-game: not the game's full `history` (projected to its Outcome here)
+    // nor a Chunk of all N results (the old `foreachPar.map(_.foldLeft)` held
+    // all N tuples at once). Per-game Search/TT retention — the real OOM at
+    // large N — was a separate leak in AlphaBetaSearch (a pooled inner-class
+    // SearchBufs pinned its outer Search); fixed there. Counts are
+    // commutative, so completion-order folding is exact.
+    Ref.make(emptyRound).flatMap { ref =>
+      ZIO
+        .foreachParDiscard(0 until games) { i =>
+          val (whitePlayer, blackPlayer, challengerIsWhite) =
+            gamePairing(i, championFactory, challengerFactory)
+          playGame(
+            whitePlayer, blackPlayer, depth, maxPlies,
+            initialState = openingFor(i, openingStates),
+          ).flatMap { result =>
+            val rows = if collectTrainingRows then gameToTrainingRows(result) else Vector.empty
+            ref.update(addToRound(_, result.outcome, challengerIsWhite, rows))
+          }
         }
-      }
-      .withParallelism(parallelism)
-      .map { perGame =>
-        perGame.foldLeft(emptyRound) { case (acc, (result, isCh, rows)) =>
-          addToRound(acc, result, isCh, rows)
-        }
-      }
+        .withParallelism(parallelism)
+        .zipRight(ref.get)
+    }
 
   /** Color-alternation helper — shared by sequential + parallel
     * paths so the pairing rule lives in one place. Even-indexed
@@ -306,11 +317,11 @@ object SelfPlay:
   /** Fold the result of one game into a [[RoundResult]] accumulator. */
   private def addToRound(
       acc: RoundResult,
-      result: GameResult,
+      outcome: Outcome,
       challengerIsWhite: Boolean,
       rows: Vector[TrainingRow],
   ): RoundResult =
-    val (chWin, chmpWin, draw) = result.outcome match
+    val (chWin, chmpWin, draw) = outcome match
       case Outcome.WhiteWins        =>
         if challengerIsWhite then (1, 0, 0) else (0, 1, 0)
       case Outcome.BlackWins        =>
