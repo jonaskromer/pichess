@@ -34,7 +34,7 @@ Usage:
       --out bot-engine/src/main/resources/nnue-v1.bin \
       --tsv nnue-train/data/lichess-eval.tsv.gz --epochs 3 --depth-norm 40
 """
-import argparse, os, shutil, time
+import argparse, functools, multiprocessing as mp, os, random, shutil, time
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import torch
@@ -182,11 +182,26 @@ def main():
     ap.add_argument('--endgame-boost', type=float, default=1.0,
                     help='loss-weight multiplier for endgame positions (1.0 = off; '
                          'e.g. 6.0 to emphasise local endgame eval) (--tsv mode)')
+    ap.add_argument('--hidden', type=int, default=128,
+                    help='NNUE hidden width. MUST match Scala NnueEvaluator.HiddenSize '
+                         'for the .bin to load (128 = current shipped, 256 = 2x control)')
+    ap.add_argument('--parse-workers', type=int,
+                    default=max(1, (os.cpu_count() or 4) - 2),
+                    help='parallel TSV-parse worker processes (--tsv mode). The parse '
+                         '(fen_to_features per row) is pure-Python, GIL-bound to one '
+                         'core; fanning it out is the dominant speedup over 100M+ rows')
+    ap.add_argument('--sample-frac', type=float, default=1.0,
+                    help='randomly keep this fraction of TSV rows (--tsv mode) — an '
+                         'inline subsample for a quick run, no recompress to a temp file')
+    ap.add_argument('--max-rows', type=int, default=0,
+                    help='read only the first N raw TSV rows then stop (--tsv mode) — a '
+                         'fast PREFIX subset. Unlike --sample-frac it does NOT scan the '
+                         'whole file single-threaded (which starves the parse workers)')
     a = ap.parse_args()
 
     dev = 'mps' if torch.backends.mps.is_available() else 'cpu'
-    print(f"device={dev}", flush=True)
-    net = Net().to(dev)
+    print(f"device={dev}  hidden={a.hidden}", flush=True)
+    net = Net(h=a.hidden).to(dev)
     opt = torch.optim.Adam(net.parameters(), lr=a.lr, weight_decay=a.wd)
     lossf = nn.MSELoss()
 
@@ -194,28 +209,69 @@ def main():
     if a.tsv:
         import gzip
         lossf_none = nn.MSELoss(reduction='none')
-        print(f"TSV mode: {a.tsv} (epochs={a.epochs}, depth_norm={a.depth_norm})", flush=True)
-        for ep in range(a.epochs):
-            ts = time.time(); chunk = []; trained = 0; tloss = 0.0; tnb = 0
-            with gzip.open(a.tsv, 'rt') as fh:
+        # The TSV parse (`fen_to_features` per row) is pure-Python and GIL-bound
+        # to ONE core (~24K rows/s) — the dominant cost over 100M+ rows. Fan it
+        # out across worker PROCESSES: each parses a chunk -> numpy arrays (never
+        # touches torch/MPS), the main process trains on the results on MPS.
+        nworkers = max(1, a.parse_workers)
+        print(f"TSV mode: {a.tsv} (epochs={a.epochs}, depth_norm={a.depth_norm}, "
+              f"parse_workers={nworkers})", flush=True)
+        worker = functools.partial(parse_tsv_chunk, depth_norm=a.depth_norm,
+                                   endgame_pieces=a.endgame_pieces,
+                                   endgame_boost=a.endgame_boost)
+
+        def read_chunks(path, batch, frac, max_rows):
+            """Stream the gzip in `batch`-line chunks (one parse task each).
+            `max_rows`>0 stops after that many RAW rows (a fast prefix). `frac`<1
+            keeps a random fraction — but `frac` must still scan the whole file
+            single-threaded, which can STARVE the parse workers; prefer `max_rows`
+            for a quick subset. The parse worker drops the header line itself."""
+            with gzip.open(path, 'rt') as fh:
+                buf = []; nread = 0
                 for ln in fh:
-                    chunk.append(ln)
-                    if len(chunk) >= a.read_batch:
-                        S, Nt, T, W = parse_tsv_chunk(chunk, a.depth_norm, a.endgame_pieces, a.endgame_boost); chunk = []
+                    nread += 1
+                    if max_rows and nread > max_rows:
+                        break
+                    if frac < 1.0 and random.random() >= frac:
+                        continue
+                    buf.append(ln)
+                    if len(buf) >= batch:
+                        yield buf; buf = []
+                if buf:
+                    yield buf
+
+        def waves(it, n):
+            """Group chunks into waves of `n` so at most `n` are ever in flight
+            (bounds peak memory regardless of total rows)."""
+            w = []
+            for x in it:
+                w.append(x)
+                if len(w) >= n:
+                    yield w; w = []
+            if w:
+                yield w
+
+        with mp.Pool(nworkers) as pool:
+            for ep in range(a.epochs):
+                ts = time.time(); trained = 0; tloss = 0.0; tnb = 0; nchunks = 0
+                for wave in waves(read_chunks(a.tsv, a.read_batch, a.sample_frac, a.max_rows), nworkers):
+                    # Parse up to `nworkers` chunks in parallel, then train each
+                    # result on MPS in the main process.
+                    for (S, Nt, T, W) in pool.map(worker, wave):
                         l, nb = train_chunk_weighted(net, opt, lossf_none, dev, S, Nt, T, W, a.batch)
-                        tloss += l; tnb += nb; trained += len(T)
-                if chunk:
-                    S, Nt, T, W = parse_tsv_chunk(chunk, a.depth_norm, a.endgame_pieces, a.endgame_boost)
-                    l, nb = train_chunk_weighted(net, opt, lossf_none, dev, S, Nt, T, W, a.batch)
-                    tloss += l; tnb += nb; trained += len(T)
-            print(f"[epoch {ep}] trained on {trained} positions "
-                  f"(loss={tloss/max(tnb,1):.5f}, {time.time()-ts:.0f}s)", flush=True)
-            export_bin(net, a.out)
-            print(f"[epoch {ep}] checkpoint -> {a.out}", flush=True)
-            if a.lr_decay != 1.0:
-                for g in opt.param_groups:
-                    g['lr'] *= a.lr_decay
-                print(f"[epoch {ep}] lr -> {opt.param_groups[0]['lr']:.2e}", flush=True)
+                        tloss += l; tnb += nb; trained += len(T); nchunks += 1
+                        if nchunks % 10 == 0:
+                            el = time.time() - ts
+                            print(f"[epoch {ep}] {trained:,} rows  {trained/max(el,1):.0f} rows/s  "
+                                  f"loss={tloss/max(tnb,1):.5f}  {el:.0f}s", flush=True)
+                print(f"[epoch {ep}] trained on {trained} positions "
+                      f"(loss={tloss/max(tnb,1):.5f}, {time.time()-ts:.0f}s)", flush=True)
+                export_bin(net, a.out)
+                print(f"[epoch {ep}] checkpoint -> {a.out}", flush=True)
+                if a.lr_decay != 1.0:
+                    for g in opt.param_groups:
+                        g['lr'] *= a.lr_decay
+                    print(f"[epoch {ep}] lr -> {opt.param_groups[0]['lr']:.2e}", flush=True)
         return
 
     nshards = min(a.shards, NSHARDS)

@@ -62,3 +62,6 @@ metals.sbt
 /.claude/
 .venv-nnue/
 nnue-train/__pycache__/
+
+# large generated training data (never commit)
+nnue-train/data/
