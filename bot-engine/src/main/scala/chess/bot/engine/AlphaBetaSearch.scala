@@ -7,6 +7,26 @@ import chess.model.board.{GameState, Move, MoveInt, Position}
 import chess.model.piece.{Color, PieceType}
 import chess.model.rules.Zobrist
 
+/** Pre-allocated, thread-reusable search scratch buffers — a TOP-LEVEL
+  * class (NOT nested in [[AlphaBetaSearch]]) on purpose. A nested class
+  * captures its outer `AlphaBetaSearch.this`; pooled in a `ThreadLocal`,
+  * that outer reference made every worker thread pin every per-game
+  * `Search` — and its multi-MB transposition table — forever: an
+  * unbounded memory leak under long runs / many games (confirmed by heap
+  * histogram). Taking sizes + accumulator as constructor args keeps it
+  * self-contained, so a completed search's buffers no longer retain it. */
+private final class SearchBufs(
+    maxPly: Int,
+    maxMoves: Int,
+    noKiller: Int,
+    val accumulator: chess.bot.engine.nnue.NnueAccumulator,
+):
+  val captures:      Array[Array[Int]]  = Array.fill(maxPly + 1)(new Array[Int](maxMoves))
+  val quiets:        Array[Array[Int]]  = Array.fill(maxPly + 1)(new Array[Int](maxMoves))
+  val scored:        Array[Array[Long]] = Array.fill(maxPly + 1)(new Array[Long](maxMoves))
+  val staticEval:    Array[Int]         = Array.fill(maxPly + 1)(Int.MinValue)
+  val recursionMove: Array[Int]         = Array.fill(maxPly + 1)(noKiller)
+
 /** Fixed-depth negamax α-β with TT support. Used via the public
   * factory [[Search.alphaBeta]].
   *
@@ -326,53 +346,29 @@ private[engine] final class AlphaBetaSearch(
     case PieceType.Queen  => 900
     case PieceType.King   => 20_000
 
-  /** Search-call-scoped scratch buffers — one capture list, one
-    * quiet-move list, and one scored-pack list per ply. Allocated
-    * fresh on each [[bestMove]] call so concurrent calls (e.g.
-    * parallel test runs) don't share mutable state. Per-call
-    * cost: ~128 KB for the whole stack, trivial vs the ~100 MB
-    * of allocations elsewhere in a depth-4 search.
-    *
-    * The split into separate `captures` and `quiets` buffers
-    * supports the two-stage move generator: stage 1 fills both
-    * via one rules-layer call, stage 1 iterates captures with
-    * MVV-LVA ordering, and if no α-β cutoff fires, stage 2
-    * iterates quiets with history ordering. `scored` is reused
-    * between the two stages because we never need them
-    * simultaneously. */
-  private final class SearchBufs:
-    val captures: Array[Array[Int]]  = Array.fill(MaxPly + 1)(new Array[Int](MaxMovesPerNode))
-    val quiets:   Array[Array[Int]]  = Array.fill(MaxPly + 1)(new Array[Int](MaxMovesPerNode))
-    val scored:   Array[Array[Long]] = Array.fill(MaxPly + 1)(new Array[Long](MaxMovesPerNode))
-    // Per-ply static eval cache. `Int.MinValue` is the sentinel for
-    // "not computed at this ply yet" (legal evals never reach that
-    // value — mate scores cap at ~ ±32000). Cleared lazily — each
-    // ply's slot is overwritten before it's read.
-    val staticEval: Array[Int]       = Array.fill(MaxPly + 1)(Int.MinValue)
-    // Per-ply "move just searched" cache for the multi-ply
-    // continuation history. Set in searchMoves immediately before
-    // each recursive negamax call so deeper plies can look up the
-    // move played 2 plies ago via `recursionMove(ply - 2)`.
-    val recursionMove: Array[Int]    = Array.fill(MaxPly + 1)(NoKiller)
-    // Single NNUE accumulator, maintained incrementally across the DFS
-    // (refreshed at the search root, ±delta per make/unmake). Allocated
-    // only when the eval has an NNUE; null otherwise.
-    val accumulator: chess.bot.engine.nnue.NnueAccumulator =
-      if incNet != null then incNet.freshAccumulator() else null
-
-  /** Thread-local pool for `SearchBufs`. Each OS thread gets one
-    * instance (~166 KB) which is reused across every search that
-    * thread executes — eliminates the per-search `_platform_bzero`
-    * cost the profiler flagged at ~130 samples in the depth-6
-    * benchmark. ZIO fibers don't yield mid-`syncBestMove` (the
-    * body of `ZIO.succeed { syncBestMove(...) }` runs to
-    * completion on the calling thread), so two concurrent fibers
-    * never share a `SearchBufs` even though they may both touch
-    * this `ThreadLocal`. Contents are always overwritten before
-    * read inside the search loop, so no per-acquire clear is
-    * needed. */
+  /** Thread-local pool for [[SearchBufs]] (a top-level class so it does
+    * not capture this `AlphaBetaSearch`). Each OS thread gets one
+    * instance (~166 KB) reused across every search that thread executes —
+    * eliminates the per-search `_platform_bzero` cost the profiler
+    * flagged at ~130 samples in the depth-6 benchmark. ZIO fibers don't
+    * yield mid-`syncBestMove` (the `ZIO.succeed { syncBestMove }` body
+    * runs to completion on the calling thread), so two concurrent fibers
+    * never share a `SearchBufs` even though they may both touch this
+    * `ThreadLocal`. Contents are always overwritten before read, so no
+    * per-acquire clear is needed. The per-ply captures/quiets/scored
+    * buffers + the incrementally maintained NNUE accumulator live on
+    * [[SearchBufs]]; see its note on why it's a top-level class. */
   private val pooledBufs: ThreadLocal[SearchBufs] =
-    ThreadLocal.withInitial(() => new SearchBufs())
+    // Capture the SHARED net, NOT `this`: the initializer is retained by
+    // the ThreadLocal for the life of the pool, so referencing this
+    // Search would let every worker thread's ThreadLocalMap pin every
+    // per-game Search (and its whole TT) it ever ran — an unbounded leak.
+    val net = incNet
+    ThreadLocal.withInitial(() =>
+      new SearchBufs(
+        MaxPly, MaxMovesPerNode, NoKiller,
+        if net != null then net.freshAccumulator() else null,
+      ))
 
   private inline def acquireBufs(): SearchBufs = pooledBufs.get()
 
