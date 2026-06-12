@@ -62,9 +62,21 @@ object SfDistillMain extends ZIOAppDefault:
 
   private def whiteToMove(fen: String): Boolean = fen.contains(" w ")
 
+  /** Lichess-eval FENs are 4-field (board, stm, castling, ep) with NO
+    * halfmove/fullmove counters, but [[FenParserRegex]] requires all 6.
+    * Pad the missing counters (default `0 1`) so these rows parse; a no-op
+    * for FENs that already carry 6 fields. Without this, every real dataset
+    * row fails to parse → empty corpus → `tune` returns the init weights
+    * unchanged (the silent regression pinned in SfDistillMainSpec). */
+  private[train] def normalizeFen(fen: String): String =
+    fen.trim.split(" +").length match
+      case n if n >= 6 => fen
+      case 5           => s"$fen 1"
+      case _           => s"$fen 0 1"
+
   private def parseState(fen: String) =
     zio.Unsafe.unsafe { implicit u =>
-      zio.Runtime.default.unsafe.run(FenParserRegex.parse(fen).either).getOrThrow().toOption
+      zio.Runtime.default.unsafe.run(FenParserRegex.parse(normalizeFen(fen)).either).getOrThrow().toOption
     }
 
   /** A collected light row: fen + precomputed target + weight. Features are
