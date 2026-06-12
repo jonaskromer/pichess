@@ -53,7 +53,7 @@ object TournamentMain extends ZIOAppDefault:
                         cfg.challengerNnueEns, cfg.challengerLazySmp,
                         cfg.challengerEvalCache, cfg.challengerIncremental,
                         cfg.challengerFlags, cfg.challengerHybridAlpha,
-                        cfg.challengerNnuePath,
+                        cfg.challengerNnuePath, cfg.challengerHybridAlphaEnd,
                       ).flatMap(maybeWrapSyzygy(_, cfg.challengerSyzygy, cfg))
         championF   <- loadOpponent(cfg)
                         .flatMap(maybeWrapSyzygy(_, cfg.championSyzygy, cfg))
@@ -68,7 +68,13 @@ object TournamentMain extends ZIOAppDefault:
         // Resolve the opening pool. Empty pool → all games start
         // from startpos (90%+ draws between similar bots). Non-
         // empty pool → diversifies games for a decisive signal.
-        openings <- ZIO.foreach(if cfg.useOpenings then OpeningPool.fens else Vector.empty)(
+        openingFens =  cfg.openingsFile match
+                         case Some(path) =>
+                           scala.io.Source.fromFile(path).getLines().map(_.trim)
+                             .filter(_.nonEmpty).toVector
+                         case None =>
+                           if cfg.useOpenings then OpeningPool.fens else Vector.empty
+        openings <- ZIO.foreach(openingFens)(
                       fen => chess.codec.FenParserRegex.parse(fen)
                     )
         // Isolated: a fresh search per game (constant factory for the
@@ -121,6 +127,7 @@ object TournamentMain extends ZIOAppDefault:
       stockfishSkill: Int,
       stockfishElo:   Option[Int],
       useOpenings: Boolean,
+      openingsFile: Option[String],
       challengerCmh: Boolean,
       championCmh:   Boolean,
       challengerQ:   Boolean,
@@ -168,6 +175,8 @@ object TournamentMain extends ZIOAppDefault:
       // HCE-weighted NNUE blend beats pure HCE.
       challengerHybridAlpha: Option[Double],
       championHybridAlpha:   Option[Double],
+      challengerHybridAlphaEnd: Option[Double],
+      championHybridAlphaEnd:   Option[Double],
       // Optional per-side NNUE net FILE path (filesystem, not classpath).
       // When set, that side loads its net from this path instead of the
       // baked `/nnue-v1.bin` — lets the harness A/B a freshly-trained
@@ -209,6 +218,10 @@ object TournamentMain extends ZIOAppDefault:
         // bare from-initial behaviour).
         useOpenings    = !sys.env.get("PICHESS_TOURNAMENT_OPENINGS")
                            .exists(_.equalsIgnoreCase("false")),
+        // When set, START GAMES FROM THESE FENs (one per line) instead of the
+        // baked opening pool — e.g. a balanced-endgame pool to measure endgame
+        // eval changes the opening pool would dilute.
+        openingsFile   = sys.env.get("PICHESS_TOURNAMENT_OPENINGS_FILE"),
         // Counter-move heuristic toggles: OFF by default to match
         // the production [[Search.alphaBeta]] default (a 200-game
         // v8-CMH vs v8-noCMH measured ΔElo = -20.9, so CMH ships
@@ -299,6 +312,8 @@ object TournamentMain extends ZIOAppDefault:
         championFlags       = flagsEnv("PICHESS_TOURNAMENT_CHAMPION_FLAGS"),
         challengerHybridAlpha = sys.env.get("PICHESS_TOURNAMENT_CHALLENGER_HYBRID_ALPHA").flatMap(_.toDoubleOption),
         championHybridAlpha   = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_HYBRID_ALPHA").flatMap(_.toDoubleOption),
+        challengerHybridAlphaEnd = sys.env.get("PICHESS_TOURNAMENT_CHALLENGER_HYBRID_ALPHA_END").flatMap(_.toDoubleOption),
+        championHybridAlphaEnd   = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_HYBRID_ALPHA_END").flatMap(_.toDoubleOption),
         challengerNnuePath = sys.env.get("PICHESS_TOURNAMENT_CHALLENGER_NNUE_PATH"),
         championNnuePath   = sys.env.get("PICHESS_TOURNAMENT_CHAMPION_NNUE_PATH"),
         challengerBudgetMs    = sys.env.get("PICHESS_TOURNAMENT_BUDGET_MS").flatMap(_.toLongOption),
@@ -360,7 +375,7 @@ object TournamentMain extends ZIOAppDefault:
       cfg.championContHist, cfg.championAsp, cfg.championNnue, cfg.championSe,
       cfg.championNnueEns, cfg.championLazySmp, cfg.championEvalCache,
       cfg.championIncremental, cfg.championFlags, cfg.championHybridAlpha,
-      cfg.championNnuePath,
+      cfg.championNnuePath, cfg.championHybridAlphaEnd,
     )
 
   /** Build a [[Search]] for the given weights-version JSON
@@ -388,6 +403,7 @@ object TournamentMain extends ZIOAppDefault:
       newFlags: Set[String],
       hybridAlpha: Option[Double] = None,
       nnuePath: Option[String] = None,
+      hybridAlphaEnd: Option[Double] = None,
   ): ZIO[Any, Throwable, () => Search] =
     WeightsLoader.load(version).map { snapshot =>
       // NNUE evaluators are stateless (they allocate fresh
@@ -450,7 +466,8 @@ object TournamentMain extends ZIOAppDefault:
           // here (loaded above when hybridAlpha is defined).
           case Some(alpha) =>
             new chess.bot.engine.HybridEvaluator(
-              ArrayTaperedEvaluator(snapshot.weights), sharedNnue.get, alpha)
+              ArrayTaperedEvaluator(snapshot.weights), sharedNnue.get, alpha,
+              hybridAlphaEnd.getOrElse(Double.NaN))
           case None =>
             sharedNnue.getOrElse(ArrayTaperedEvaluator(snapshot.weights))
       val eval: chess.bot.engine.Evaluator =
