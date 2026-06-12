@@ -86,6 +86,12 @@ object EngineBundle:
       // 0.3–0.5). A smaller NNUE correction on the HCE backbone beats
       // a heavier blend even though the NNUE is now strong standalone.
       hybridAlpha: Double = 0.3,
+      // Endgame NNUE weight: α tapers `hybridAlpha` (opening) → this (bare
+      // endgame) by game phase ([[HybridEvaluator]] / [[GamePhase]]). The
+      // endgame-boosted net is ~+20 Elo in endgames at α0.5; tapering cashes
+      // that into +19.7 Elo overall (1500g A/B vs the pre-taper deployment).
+      // Set == hybridAlpha to disable the taper.
+      hybridAlphaEndgame: Double = 0.5,
   ): IO[Throwable, EngineBundle] =
     for
       weights <- WeightsLoader.load(weightsVersion)
@@ -101,6 +107,7 @@ object EngineBundle:
       eval     = wrapEval(
                    hce, evalSource, evalCacheEnabled, evalCacheEntries,
                    ensembleSize, endgameHeuristicsEnabled, hybridAlpha,
+                   hybridAlphaEndgame,
                  )
       base     = Search.alphaBeta(eval, book, maxTtEntries)
       search   = tablebaseOracle match
@@ -118,6 +125,7 @@ object EngineBundle:
       ensembleSize: Int,
       endgameHeuristics: Boolean,
       hybridAlpha: Double,
+      hybridAlphaEndgame: Double = 0.5,
   ): Evaluator =
     val chosen = source match
       case EvalSource.Hce => hce
@@ -132,7 +140,7 @@ object EngineBundle:
         // HCE + NNUE blend. Falls back to pure HCE when the NNUE
         // resource is absent (no blend partner → nothing to mix).
         NnueEvaluator.loadResource("/nnue-v1.bin")
-          .map(nnue => new HybridEvaluator(hce, nnue, hybridAlpha))
+          .map(nnue => new HybridEvaluator(hce, nnue, hybridAlpha, hybridAlphaEndgame))
           .getOrElse(hce)
     val withEndgame =
       if endgameHeuristics then new EndgameAwareEvaluator(chosen) else chosen
@@ -151,12 +159,14 @@ object EngineBundle:
       ensembleSize: Int = 3,
       endgameHeuristicsEnabled: Boolean = false,
       hybridAlpha: Double = 0.3,
+      hybridAlphaEndgame: Double = 0.5,
   ): UIO[(EngineBundle, Option[Throwable])] =
     fromResources(
       weightsVersion, maxBookPly, maxTtEntries,
       evalSource, evalCacheEnabled, evalCacheEntries, ensembleSize,
       endgameHeuristicsEnabled = endgameHeuristicsEnabled,
       hybridAlpha = hybridAlpha,
+      hybridAlphaEndgame = hybridAlphaEndgame,
     )
       .map(b => (b, None))
       .catchAll { err =>

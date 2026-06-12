@@ -28,10 +28,21 @@ final class HybridEvaluator(
     base: Evaluator,
     other: Evaluator,
     nnueWeight: Double,
+    nnueWeightEndgame: Double = Double.NaN,
 ) extends Evaluator:
 
-  private val w  = math.max(0.0, math.min(1.0, nnueWeight))
-  private val bw = 1.0 - w
+  private val w = math.max(0.0, math.min(1.0, nnueWeight))
+  // When `nnueWeightEndgame` is set (not NaN) the NNUE weight TAPERS by game
+  // phase — `w` at full material, `wEnd` at a bare endgame, linear in
+  // [[GamePhase]]. A boosted-endgame NNUE then earns more of the blend exactly
+  // where it is strong, without raising its midgame weight. NaN → constant `w`.
+  private val tapered = !java.lang.Double.isNaN(nnueWeightEndgame)
+  private val wEnd    = if tapered then math.max(0.0, math.min(1.0, nnueWeightEndgame)) else w
+  private def weightAt(state: GameState): Double =
+    if !tapered then w
+    else
+      val phase = GamePhase.compute(state)   // 1.0 opening .. 0.0 bare endgame
+      w + (wEnd - w) * (1.0 - phase)
 
   // The NNUE half, when `other` is one — enables the incremental
   // accumulator path. EngineBundle / loadSearch always pass an NNUE here;
@@ -41,9 +52,8 @@ final class HybridEvaluator(
     case _                => None
 
   override def evaluate(state: GameState): Int =
-    val b = base.evaluate(state)
-    val o = other.evaluate(state)
-    math.round(bw * b + w * o).toInt
+    val ww = weightAt(state)
+    math.round((1.0 - ww) * base.evaluate(state) + ww * other.evaluate(state)).toInt
 
   // -- Incremental-eval capability (see [[Evaluator]]). The HCE half is
   //    computed from `state`; the NNUE half reads the maintained acc. --
@@ -51,6 +61,7 @@ final class HybridEvaluator(
   override def evaluateWith(acc: NnueAccumulator, state: GameState): Int =
     net match
       case Some(n) =>
-        math.round(bw * base.evaluate(state) + w * n.evaluateFrom(acc, state.activeColor)).toInt
+        val ww = weightAt(state)
+        math.round((1.0 - ww) * base.evaluate(state) + ww * n.evaluateFrom(acc, state.activeColor)).toInt
       case None =>
         evaluate(state)
