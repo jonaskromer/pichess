@@ -268,7 +268,8 @@ def main():
                          '--rows-per-shard 0 (no cap) for full volume')
     a = ap.parse_args()
 
-    dev = 'mps' if torch.backends.mps.is_available() else 'cpu'
+    dev = ('cuda' if torch.cuda.is_available()
+           else 'mps' if torch.backends.mps.is_available() else 'cpu')
     print(f"device={dev}  hidden={a.hidden}", flush=True)
     net = Net(h=a.hidden).to(dev)
     opt = torch.optim.Adam(net.parameters(), lr=a.lr, weight_decay=a.wd)

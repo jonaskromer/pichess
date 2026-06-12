@@ -151,7 +151,8 @@ def main():
     ap.add_argument('--val', type=float, default=0.0, help='fraction held out for val loss')
     a = ap.parse_args()
 
-    dev = 'mps' if torch.backends.mps.is_available() else 'cpu'
+    dev = ('cuda' if torch.cuda.is_available()
+           else 'mps' if torch.backends.mps.is_available() else 'cpu')
     print(f"device={dev}", flush=True)
     S, Nt, T = load(a.data, a.clip, a.lam)
     N = len(T)
