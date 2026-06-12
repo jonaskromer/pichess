@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# full = lobbies + durable persistence: repository read-side, Kafka event log,
+# Mongo primary store, Redis cache. The patch flips the shared config from
+# in-memory to mongo+redis+kafka. Needs the 12 GB RAM upgrade (4 JVMs + Kafka +
+# Mongo); see docs/deployment-plan.md and the project memory.
+resources:
+  - ../lobbies
+  - mongodb.yaml
+  - redis.yaml
+  - kafka.yaml
+  - repository.yaml
+
+patches:
+  - path: patch-config.yaml
+
+images:
+  - name: ghcr.io/jonaskromer/pichess-repository
+    newTag: "0.0.2"

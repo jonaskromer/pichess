@@ -1,0 +1,14 @@
+# Point the gateway at lobby-service. The base gateway uses envFrom the shared
+# ConfigMap; this strategic-merge patch just adds one env var to its container.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+spec:
+  template:
+    spec:
+      containers:
+        - name: gateway
+          env:
+            - name: PICHESS_LOBBY_URL
+              value: http://lobby-service:8092

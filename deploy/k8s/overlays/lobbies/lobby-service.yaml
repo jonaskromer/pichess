@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lobby-service
+  labels:
+    app: lobby-service
+spec:
+  replicas: 1 # in-memory lobby state -> single replica
+  selector:
+    matchLabels:
+      app: lobby-service
+  template:
+    metadata:
+      labels:
+        app: lobby-service
+    spec:
+      containers:
+        - name: lobby-service
+          image: ghcr.io/jonaskromer/pichess-lobby-service
+          ports:
+            - name: http
+              containerPort: 8092
+          env:
+            - name: LOBBY_PORT
+              value: "8092"
+          envFrom:
+            - configMapRef:
+                name: pichess-config # PICHESS_BACKEND=inmemory in this tier
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: 8092
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lobby-service
+spec:
+  selector:
+    app: lobby-service
+  ports:
+    - name: http
+      port: 8092
+      targetPort: 8092

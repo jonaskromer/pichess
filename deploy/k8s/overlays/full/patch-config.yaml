@@ -1,0 +1,19 @@
+# Flip the shared config from the MVP in-memory setup to the durable backend.
+# Strategic-merge into the ConfigMap data: overrides BACKEND/CACHE and adds the
+# Kafka + Mongo + Redis wiring (game-service publishes events; repository
+# consumes them; mongo+redis is the validated production pair — both run
+# without auth, reachable only in-cluster).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pichess-config
+data:
+  PICHESS_BACKEND: mongo
+  PICHESS_CACHE: redis
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  KAFKA_CONSUMER_GROUP: pichess-repository
+  PICHESS_MONGO_URL: mongodb://mongodb:27017
+  PICHESS_MONGO_DB: pichess
+  PICHESS_REDIS_HOST: redis
+  PICHESS_REDIS_PORT: "6379"
+  REPOSITORY_PORT: "8091"

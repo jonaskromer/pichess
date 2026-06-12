@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: repository
+  labels:
+    app: repository
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: repository
+  template:
+    metadata:
+      labels:
+        app: repository
+    spec:
+      containers:
+        - name: repository
+          image: ghcr.io/jonaskromer/pichess-repository
+          ports:
+            - name: http
+              containerPort: 8091
+          envFrom:
+            - configMapRef:
+                name: pichess-config # mongo + kafka + REPOSITORY_PORT + consumer group
+          readinessProbe:
+            # repository exposes no /health endpoint — a listening port means up.
+            tcpSocket:
+              port: 8091
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 200m
+              memory: 384Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: repository
+spec:
+  selector:
+    app: repository
+  ports:
+    - name: http
+      port: 8091
+      targetPort: 8091
