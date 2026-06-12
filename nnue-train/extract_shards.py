@@ -33,7 +33,9 @@ Run (full):  python extract_shards.py --out data/lichess-eval.tsv.gz --min-depth
 Test (local): python extract_shards.py --local sample.parquet --out /tmp/o.tsv.gz --min-depth 0 --multipv 3
 """
 import argparse
+import glob
 import gzip
+import os
 import shutil
 import time
 
@@ -58,10 +60,32 @@ def white_to_move(fen):
     return " w " in fen
 
 
-def emit_group(out, fen, rows, min_depth, min_knodes, multipv):
-    """`rows`: list of (line, depth, knodes, cp, mate) for ONE fen. Keep the
-    deepest row as canonical; optionally collect the top-K distinct moves.
-    Returns 1 if a row was written, else 0 (filtered)."""
+def emit_group(out, fen, rows, min_depth, min_knodes, multipv, per_analysis=False):
+    """`rows`: list of (line, depth, knodes, cp, mate) for ONE fen.
+    Default: keep the single DEEPEST row as canonical (one row/FEN).
+    per_analysis=True: keep pv[0] — the best-move row, i.e. the FIRST row, since
+    the dataset orders PV lines best-first — of EACH distinct (depth, knodes)
+    analysis. This preserves FREQUENCY (a FEN analysed N times at N depths → N
+    rows) and VOLUME (all depths), while dropping the multi-PV pv[1+] rows
+    (worse-move evals = wrong position-values). Depth soft-weighting happens later
+    at train time. Returns the number of rows written."""
+    if per_analysis:
+        written = 0
+        seen = set()
+        for (line, depth, knodes, cp, mate) in rows:
+            key = (depth, knodes)
+            if key in seen:
+                continue                       # pv[1+] of an already-emitted analysis
+            seen.add(key)
+            if (depth or 0) < min_depth or (knodes or 0) < min_knodes:
+                continue
+            best = best_move_of(line)
+            cp_s = "\\N" if cp is None else str(cp)
+            mate_s = "\\N" if mate is None else str(mate)
+            best_s = best if best else "\\N"
+            out.write(f"{fen}\t{cp_s}\t{mate_s}\t{best_s}\t{depth or 0}\t{knodes or 0}\t\n")
+            written += 1
+        return written
     canon = max(rows, key=lambda r: ((r[1] or 0), (r[2] or 0)))
     line, depth, knodes, cp, mate = canon
     if (depth or 0) < min_depth or (knodes or 0) < min_knodes:
@@ -112,14 +136,14 @@ def process_parquet(path, out, a):
                 cur_rows.append(row)
             else:
                 if cur_fen is not None:
-                    written += emit_group(out, cur_fen, cur_rows, a.min_depth, a.min_knodes, a.multipv)
+                    written += emit_group(out, cur_fen, cur_rows, a.min_depth, a.min_knodes, a.multipv, a.per_analysis)
                 cur_fen, cur_rows = f, [row]
             if a.limit_rows and read >= a.limit_rows:
                 break
         if a.limit_rows and read >= a.limit_rows:
             break
     if cur_fen is not None and cur_rows:
-        written += emit_group(out, cur_fen, cur_rows, a.min_depth, a.min_knodes, a.multipv)
+        written += emit_group(out, cur_fen, cur_rows, a.min_depth, a.min_knodes, a.multipv, a.per_analysis)
     return read, written
 
 
@@ -130,11 +154,17 @@ def main():
     ap.add_argument("--min-depth", type=int, default=0, help="drop FENs whose deepest eval is shallower")
     ap.add_argument("--min-knodes", type=int, default=0)
     ap.add_argument("--multipv", type=int, default=0, help="top-K moves for policy (0 = off)")
+    ap.add_argument("--per-analysis", action="store_true",
+                    help="keep pv[0] of EVERY analysis per FEN (frequency + all depths, "
+                         "drops multi-PV pv[1+]) instead of only the single deepest row")
     ap.add_argument("--read-batch", type=int, default=131072)
     ap.add_argument("--dldir", default="/tmp/lichess-shard")
     ap.add_argument("--keep-shards", action="store_true", help="don't delete shards after use")
     ap.add_argument("--limit-rows", type=int, default=0, help="cap input rows (smoke test)")
-    ap.add_argument("--local", default=None, help="process a local parquet instead of downloading")
+    ap.add_argument("--local", default=None, help="process a single local parquet instead of downloading")
+    ap.add_argument("--local-dir", default=None,
+                    help="process ALL train-*.parquet already in this local dir (NO network) "
+                         "into one TSV — use after downloading shards out-of-band")
     a = ap.parse_args()
 
     total_read = total_written = 0
@@ -143,14 +173,35 @@ def main():
         if a.local:
             r, w = process_parquet(a.local, out, a)
             total_read, total_written = r, w
+        elif a.local_dir:
+            files = sorted(glob.glob(os.path.join(a.local_dir, "train-*.parquet")))
+            print(f"processing {len(files)} local shards from {a.local_dir} (no download)", flush=True)
+            for i, p in enumerate(files):
+                t0 = time.time()
+                r, w = process_parquet(p, out, a)
+                total_read += r; total_written += w
+                print(f"[{i+1}/{len(files)} {os.path.basename(p)}] read={r} kept={w} "
+                      f"(total kept={total_written}, {time.time()-t0:.0f}s)", flush=True)
         else:
             for si in range(a.shards):
                 t0 = time.time()
                 d = f"{a.dldir}-{si}"
-                shutil.rmtree(d, ignore_errors=True)
                 fn = f"data/train-{si:05d}-of-{NSHARDS:05d}.parquet"
-                p = hf_hub_download(REPO, fn, repo_type="dataset", local_dir=d)
-                print(f"[shard {si}] downloaded in {time.time()-t0:.0f}s", flush=True)
+                # No pre-rmtree: hf_hub_download REUSES an already-complete shard
+                # (etag check) and RESUMES a partial one — so a dropped connection
+                # costs a retry, not a restart. Retry to ride out flaky internet.
+                p = None
+                for attempt in range(1, 9):
+                    try:
+                        p = hf_hub_download(REPO, fn, repo_type="dataset", local_dir=d)
+                        break
+                    except Exception as e:
+                        print(f"[shard {si}] download attempt {attempt} failed: "
+                              f"{type(e).__name__}: {e} — retry in 15s", flush=True)
+                        time.sleep(15)
+                if p is None:
+                    raise RuntimeError(f"shard {si} download failed after 8 attempts")
+                print(f"[shard {si}] ready in {time.time()-t0:.0f}s", flush=True)
                 r, w = process_parquet(p, out, a)
                 total_read += r
                 total_written += w

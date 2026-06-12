@@ -75,6 +75,66 @@ def parse_batch(fens, cps, mates, prev_fen):
             np.array(T, np.float32), prev_fen)
 
 
+def parse_batch_freq(fens, cps, mates, depths, knodes, depth_norm, prev_key):
+    """Frequency/volume recipe for the streaming --shards path. Keeps the pv[0]
+    of EACH analysis — one row per consecutive (fen, depth, knodes) group, since
+    rows are best-first WITHIN an analysis — rather than only the single deepest
+    pv[0] per FEN. This preserves FREQUENCY (a FEN analysed N times at N depths →
+    N rows) and VOLUME (all depths, no min-depth filter), while still dropping the
+    multi-PV pv[1+] rows (which are evals AFTER a worse move = wrong values for
+    the position). Each kept row is soft-weighted by depth. -> (S,Nt,T,W,prev_key)."""
+    S, Nt, T, W = [], [], [], []
+    for fen, cp, mate, dep, kn in zip(fens, cps, mates, depths, knodes):
+        key = (fen, dep, kn)
+        if key == prev_key:
+            continue                       # pv[1+] of the same analysis — skip
+        prev_key = key
+        if cp is None:
+            if mate is None:
+                continue
+            cp = MATE_CP if mate > 0 else -MATE_CP
+        cp = max(-MATE_CP, min(MATE_CP, cp))
+        s_idx, n_idx, stm_white = fen_to_features(fen)
+        if not s_idx or len(s_idx) > MAXP:
+            continue
+        stm_cp = cp if stm_white else -cp
+        T.append(1.0 / (1.0 + np.exp(-stm_cp / 400.0)))
+        W.append(min(1.0, (dep or 0) / depth_norm))   # soft depth-confidence weight
+        S.append(s_idx + [PAD] * (MAXP - len(s_idx)))
+        Nt.append(n_idx + [PAD] * (MAXP - len(n_idx)))
+    return (np.array(S, np.int64), np.array(Nt, np.int64),
+            np.array(T, np.float32), np.array(W, np.float32), prev_key)
+
+
+def parse_batch_eb(fens, cps, mates, prev_fen, endgame_pieces, endgame_boost):
+    """parse_batch (first-pv-per-FEN, UNWEIGHTED base — the reproduced shipped
+    recipe) PLUS an endgame loss-weight: positions with <= endgame_pieces total
+    pieces get weight endgame_boost (others 1.0), so the net learns sparse-position
+    eval where SF labels are near-tablebase-perfect. The ONLY change vs parse_batch
+    is the per-sample weight. -> (S, Nt, T, W, prev_fen)."""
+    S, Nt, T, W = [], [], [], []
+    for fen, cp, mate in zip(fens, cps, mates):
+        if fen == prev_fen:
+            continue                      # skip non-first multi-PV rows
+        prev_fen = fen
+        if cp is None:
+            if mate is None:
+                continue
+            cp = MATE_CP if mate > 0 else -MATE_CP
+        cp = max(-MATE_CP, min(MATE_CP, cp))
+        s_idx, n_idx, stm_white = fen_to_features(fen)
+        if not s_idx or len(s_idx) > MAXP:
+            continue
+        stm_cp = cp if stm_white else -cp
+        npieces = sum(c.isalpha() for c in fen.split(' ', 1)[0])
+        T.append(1.0 / (1.0 + np.exp(-stm_cp / 400.0)))
+        W.append(endgame_boost if npieces <= endgame_pieces else 1.0)
+        S.append(s_idx + [PAD] * (MAXP - len(s_idx)))
+        Nt.append(n_idx + [PAD] * (MAXP - len(n_idx)))
+    return (np.array(S, np.int64), np.array(Nt, np.int64),
+            np.array(T, np.float32), np.array(W, np.float32), prev_fen)
+
+
 def train_chunk(net, opt, lossf, dev, S, Nt, T, batch):
     if len(T) == 0:
         return 0.0, 0
@@ -171,6 +231,10 @@ def main():
                     help='multiply LR by this after each shard (e.g. 0.9 for a long run)')
     ap.add_argument('--wd', type=float, default=5e-5)
     ap.add_argument('--dldir', default='/tmp/lichess-shard')
+    ap.add_argument('--local-shards', default=None,
+                    help='read shards from this local dir (train-NNNNN-of-00017.parquet) '
+                         'instead of downloading; also disables the post-shard rmtree '
+                         '(so persisted shards are not deleted)')
     ap.add_argument('--tsv', default=None,
                     help='train from the shared-pipeline TSV (extract_shards.py) with '
                          'depth-weighting, instead of downloading raw shards (roadmap 6b)')
@@ -197,6 +261,11 @@ def main():
                     help='read only the first N raw TSV rows then stop (--tsv mode) — a '
                          'fast PREFIX subset. Unlike --sample-frac it does NOT scan the '
                          'whole file single-threaded (which starves the parse workers)')
+    ap.add_argument('--keep-frequency', action='store_true',
+                    help='(--shards stream mode) keep pv[0] of EVERY analysis per FEN '
+                         '(frequency + all depths, soft-weighted by --depth-norm) instead '
+                         'of only the deepest pv[0]; drops multi-PV pv[1+]. Pair with '
+                         '--rows-per-shard 0 (no cap) for full volume')
     a = ap.parse_args()
 
     dev = 'mps' if torch.backends.mps.is_available() else 'cpu'
@@ -277,14 +346,31 @@ def main():
     nshards = min(a.shards, NSHARDS)
 
     def dl(si):
-        """Download shard si into its own dir; return the parquet path."""
+        """Download shard si into its own dir; return the parquet path. RETRIES
+        on failure (incl. dropped/stalled connections) — does NOT rmtree first, so
+        hf_hub_download RESUMES a partial download across attempts. Pair with
+        HF_HUB_DOWNLOAD_TIMEOUT (set at launch) so a hung socket raises (and is
+        retried) instead of hanging forever. When --local-shards is set, returns
+        the already-present local parquet (no network)."""
+        if a.local_shards:
+            p = os.path.join(a.local_shards, f"train-{si:05d}-of-{NSHARDS:05d}.parquet")
+            if not os.path.isfile(p):
+                raise RuntimeError(f"local shard not found: {p}")
+            return p
         d = f"{a.dldir}-{si}"
-        shutil.rmtree(d, ignore_errors=True)
         fn = f"data/train-{si:05d}-of-{NSHARDS:05d}.parquet"
         t0 = time.time()
-        p = hf_hub_download(REPO, fn, repo_type="dataset", local_dir=d)
-        print(f"[shard {si}] downloaded in {time.time()-t0:.0f}s", flush=True)
-        return p
+        for attempt in range(1, 9):
+            try:
+                p = hf_hub_download(REPO, fn, repo_type="dataset", local_dir=d)
+                print(f"[shard {si}] downloaded in {time.time()-t0:.0f}s "
+                      f"(attempt {attempt})", flush=True)
+                return p
+            except Exception as e:
+                print(f"[shard {si}] download attempt {attempt} failed: "
+                      f"{type(e).__name__}: {e} — retry in 15s", flush=True)
+                time.sleep(15)
+        raise RuntimeError(f"shard {si} download failed after 8 attempts")
 
     # Prefetch: keep the NEXT shard downloading in a background thread
     # while the current one trains (peak disk = 2 shards ~5 GB).
@@ -296,19 +382,34 @@ def main():
             fut = pool.submit(dl, si + 1)          # kick off next download
         print(f"[shard {si}] streaming...", flush=True)
         pf = pq.ParquetFile(path)
-        seen = 0; prev_fen = None; tloss = 0.0; tnb = 0; trained = 0
+        seen = 0; prev_fen = None; prev_key = None; tloss = 0.0; tnb = 0; trained = 0
         ts = time.time()
-        for rb in pf.iter_batches(batch_size=a.read_batch, columns=["fen", "cp", "mate"]):
+        lossf_none = nn.MSELoss(reduction='none')
+        cols = (["fen", "cp", "mate", "depth", "knodes"] if a.keep_frequency
+                else ["fen", "cp", "mate"])
+        for rb in pf.iter_batches(batch_size=a.read_batch, columns=cols):
             d = rb.to_pydict()
-            S, Nt, T, prev_fen = parse_batch(d["fen"], d["cp"], d["mate"], prev_fen)
-            l, nb = train_chunk(net, opt, lossf, dev, S, Nt, T, a.batch)
+            if a.keep_frequency:                       # frequency + volume + soft-weight
+                S, Nt, T, W, prev_key = parse_batch_freq(
+                    d["fen"], d["cp"], d["mate"], d["depth"], d["knodes"],
+                    a.depth_norm, prev_key)
+                l, nb = train_chunk_weighted(net, opt, lossf_none, dev, S, Nt, T, W, a.batch)
+            elif a.endgame_boost != 1.0:               # original labels + endgame up-weight
+                S, Nt, T, W, prev_fen = parse_batch_eb(
+                    d["fen"], d["cp"], d["mate"], prev_fen,
+                    a.endgame_pieces, a.endgame_boost)
+                l, nb = train_chunk_weighted(net, opt, lossf_none, dev, S, Nt, T, W, a.batch)
+            else:                                      # deepest-pv[0] only (original)
+                S, Nt, T, prev_fen = parse_batch(d["fen"], d["cp"], d["mate"], prev_fen)
+                l, nb = train_chunk(net, opt, lossf, dev, S, Nt, T, a.batch)
             tloss += l; tnb += nb; trained += len(T)
             seen += len(d["fen"])
-            if seen >= a.rows_per_shard:
+            if a.rows_per_shard and seen >= a.rows_per_shard:   # 0 = no cap (full volume)
                 break
         print(f"[shard {si}] trained on {trained} positions "
               f"(loss={tloss/max(tnb,1):.5f}, {time.time()-ts:.0f}s)", flush=True)
-        shutil.rmtree(f"{a.dldir}-{si}", ignore_errors=True)  # free this shard
+        if not a.local_shards:                                # keep persisted shards
+            shutil.rmtree(f"{a.dldir}-{si}", ignore_errors=True)  # free this shard
         export_bin(net, a.out)                                # checkpoint each shard
         print(f"[shard {si}] checkpoint -> {a.out}", flush=True)
         if a.lr_decay != 1.0:                                 # decay LR per shard
