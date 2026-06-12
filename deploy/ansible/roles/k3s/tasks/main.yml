@@ -8,15 +8,17 @@
     path: /usr/local/bin/k3s
   register: k3s_bin
 
-- name: Install k3s (server)
+- name: Install k3s (server)  # noqa: command-instead-of-module
   ansible.builtin.shell:
     cmd: >
+      set -o pipefail;
       curl -sfL https://get.k3s.io |
       INSTALL_K3S_VERSION='{{ k3s_version }}'
       sh -s - server
       --write-kubeconfig-mode 644
       --tls-san '{{ ansible_host }}'
     creates: /usr/local/bin/k3s
+    executable: /bin/bash
   when: not k3s_bin.stat.exists
 
 - name: Ensure the k3s service is enabled and running

@@ -18,6 +18,7 @@
 **Metrics** &nbsp;&nbsp;
 [![lines of code](https://img.shields.io/endpoint?url=https%3A%2F%2Fgist.githubusercontent.com%2FSloppyPotato%2Fedd5d4dd1a82fef389f1118aeaf291f5%2Fraw%2Floc.json)](https://gist.github.com/SloppyPotato/edd5d4dd1a82fef389f1118aeaf291f5)
 [![modules](https://img.shields.io/endpoint?url=https%3A%2F%2Fgist.githubusercontent.com%2FSloppyPotato%2Fedd5d4dd1a82fef389f1118aeaf291f5%2Fraw%2Fmodules.json)](https://gist.github.com/SloppyPotato/edd5d4dd1a82fef389f1118aeaf291f5)
+[![tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fgist.githubusercontent.com%2FSloppyPotato%2Fedd5d4dd1a82fef389f1118aeaf291f5%2Fraw%2Ftests.json)](https://gist.github.com/SloppyPotato/edd5d4dd1a82fef389f1118aeaf291f5)
 [![tech debt](https://img.shields.io/endpoint?url=https%3A%2F%2Fgist.githubusercontent.com%2FSloppyPotato%2Fedd5d4dd1a82fef389f1118aeaf291f5%2Fraw%2Ftechdebt.json)](https://gist.github.com/SloppyPotato/edd5d4dd1a82fef389f1118aeaf291f5)
 [![lichess blitz](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Flichess.org%2Fapi%2Fuser%2Fpichess-htwg&query=%24.perfs.blitz.rating&label=lichess%20blitz&logo=lichess&color=brightgreen)](https://lichess.org/@/pichess-htwg)
 ![last commit](https://img.shields.io/github/last-commit/jonaskromer/pichess?color=ff9bb3)

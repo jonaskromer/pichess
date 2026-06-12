@@ -9,13 +9,13 @@
     mode: "0644"
     directory_mode: "0755"
 
-- name: Apply the {{ pichess_tier }} overlay
+- name: Apply kustomize overlay {{ pichess_tier }}
   ansible.builtin.command:
     cmd: k3s kubectl apply -k {{ manifests_dest }}/overlays/{{ pichess_tier }}
-  register: kustomize_apply
+  register: pichess_kustomize_apply
   changed_when: >
-    ('created' in kustomize_apply.stdout) or
-    ('configured' in kustomize_apply.stdout)
+    ('created' in pichess_kustomize_apply.stdout) or
+    ('configured' in pichess_kustomize_apply.stdout)
 
 - name: Wait for all deployments in the namespace to roll out
   ansible.builtin.command:

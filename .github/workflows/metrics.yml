@@ -38,8 +38,9 @@ jobs:
           payload=$(jq -n \
             --arg loc      "$(cat badges/loc.json)" \
             --arg modules  "$(cat badges/modules.json)" \
+            --arg tests    "$(cat badges/tests.json)" \
             --arg techdebt "$(cat badges/techdebt.json)" \
-            '{files: {"loc.json": {content: $loc}, "modules.json": {content: $modules}, "techdebt.json": {content: $techdebt}}}')
+            '{files: {"loc.json": {content: $loc}, "modules.json": {content: $modules}, "tests.json": {content: $tests}, "techdebt.json": {content: $techdebt}}}')
           curl -fsS -X PATCH \
             -H "Authorization: token ${GIST_TOKEN}" \
             -H "Accept: application/vnd.github+json" \

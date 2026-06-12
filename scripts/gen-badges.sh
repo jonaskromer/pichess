@@ -30,6 +30,10 @@ modules=$(grep -E '^lazy val [A-Za-z0-9_]+ = (project|crossProject)' build.sbt \
   | grep -vc '^lazy val root ' || true)
 badge modules.json "modules" "$modules" "blue"
 
+# --- test cases (zio-test `test("...")` declarations in the test sources) ----
+tests=$(git grep -IE 'test\(s?"' -- '*src/test*.scala' | wc -l | tr -d ' ')
+badge tests.json "tests" "$tests" "brightgreen"
+
 # --- tech-debt markers in Scala sources (green at 0, orange otherwise) -------
 techdebt=$(git grep -IE '\b(TODO|FIXME|HACK|XXX)\b' -- '*.scala' | wc -l | tr -d ' ')
 if [ "$techdebt" -eq 0 ]; then td_color="brightgreen"; else td_color="orange"; fi

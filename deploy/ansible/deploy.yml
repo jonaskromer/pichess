@@ -5,7 +5,7 @@
 #
 #   ansible-playbook deploy.yml                                   # mvp -> local
 #   ansible-playbook deploy.yml -e target=htwg -e pichess_tier=full
-- name: Deploy pichess ({{ pichess_tier }} tier)
+- name: Deploy pichess
   hosts: "{{ target | default('local') }}"
   become: true
   gather_facts: false
