@@ -1,0 +1,17 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pichess
+spec:
+  ingressClassName: traefik # ships with k3s
+  rules:
+    # No host -> matches any Host header (the raw VM IP or a *.nip.io name).
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: 8090

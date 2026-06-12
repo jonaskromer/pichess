@@ -1,0 +1,48 @@
+---
+# Install single-node k3s (bundles containerd, Traefik ingress, local-path
+# storage). Idempotent: the installer runs only when /usr/local/bin/k3s is
+# absent, and re-running the play just re-asserts the service state.
+
+- name: Check whether k3s is already installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/k3s
+  register: k3s_bin
+
+- name: Install k3s (server)
+  ansible.builtin.shell:
+    cmd: >
+      curl -sfL https://get.k3s.io |
+      INSTALL_K3S_VERSION='{{ k3s_version }}'
+      sh -s - server
+      --write-kubeconfig-mode 644
+      --tls-san '{{ ansible_host }}'
+    creates: /usr/local/bin/k3s
+  when: not k3s_bin.stat.exists
+
+- name: Ensure the k3s service is enabled and running
+  ansible.builtin.systemd:
+    name: k3s
+    enabled: true
+    state: started
+
+- name: Wait for the node to report Ready
+  ansible.builtin.command: k3s kubectl get nodes --no-headers
+  register: k3s_nodes
+  changed_when: false
+  retries: 20
+  delay: 6
+  until: "'Ready' in k3s_nodes.stdout"
+
+- name: Fetch the kubeconfig to the controller (for kubectl from your Mac)
+  ansible.builtin.fetch:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: "{{ playbook_dir }}/kubeconfig-{{ inventory_hostname }}.yaml"
+    flat: true
+
+- name: Rewrite the fetched kubeconfig server to the real host (was 127.0.0.1)
+  ansible.builtin.replace:
+    path: "{{ playbook_dir }}/kubeconfig-{{ inventory_hostname }}.yaml"
+    regexp: 'https://127\.0\.0\.1:6443'
+    replace: "https://{{ ansible_host }}:6443"
+  delegate_to: localhost
+  become: false

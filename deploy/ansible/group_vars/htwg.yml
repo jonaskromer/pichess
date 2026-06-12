@@ -1,0 +1,14 @@
+---
+# Connection details for the HTWG VM, read from the environment so nothing
+# secret is committed. Source .env.local first (it defines SERVER_IP /
+# SSH_USERNAME / SSH_PW), e.g.  `set -a; . ../../.env.local; set +a`.
+#
+# NOTE: password auth needs `sshpass` installed locally
+#   (brew install hudochenkov/sshpass/sshpass). Better: run the `base` role
+#   once with -e ssh_public_key=~/.ssh/id_ed25519.pub to authorize a key, then
+#   subsequent runs use it and you can drop the password.
+
+ansible_host: "{{ lookup('env', 'SERVER_IP') }}"
+ansible_user: "{{ lookup('env', 'SSH_USERNAME') }}"
+ansible_password: "{{ lookup('env', 'SSH_PW') }}"
+ansible_become_password: "{{ lookup('env', 'SSH_PW') }}"

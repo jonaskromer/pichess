@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: game-service
+  labels:
+    app: game-service
+spec:
+  replicas: 1 # in-memory game state is per-process -> single replica only
+  selector:
+    matchLabels:
+      app: game-service
+  template:
+    metadata:
+      labels:
+        app: game-service
+    spec:
+      containers:
+        - name: game-service
+          image: ghcr.io/jonaskromer/pichess-game-service
+          ports:
+            - name: grpc
+              containerPort: 9000
+            - name: metrics
+              containerPort: 9102
+          envFrom:
+            - configMapRef:
+                name: pichess-config
+          readinessProbe:
+            tcpSocket:
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 9000
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            # The embedded engine is CPU-bound during search; on the 4-vCPU box
+            # ~2 cores are free after k3s + gateway (see project memory).
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: game-service
+spec:
+  selector:
+    app: game-service
+  ports:
+    - name: grpc
+      port: 9000
+      targetPort: 9000

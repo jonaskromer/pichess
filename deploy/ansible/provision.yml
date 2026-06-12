@@ -1,0 +1,13 @@
+---
+# OS baseline + k3s on a blank Ubuntu 24.04 host. Idempotent: safe to re-run
+# after a dropped VPN connection — completed tasks report `ok`, not `changed`.
+#
+#   ansible-playbook provision.yml                 # -> local (Multipass), default
+#   ansible-playbook provision.yml -e target=htwg  # -> the HTWG VM (opt-in)
+- name: Provision host (OS baseline + k3s)
+  hosts: "{{ target | default('local') }}"
+  become: true
+  gather_facts: true
+  roles:
+    - base
+    - k3s

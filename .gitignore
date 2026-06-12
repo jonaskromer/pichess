@@ -65,3 +65,9 @@ nnue-train/__pycache__/
 
 # large generated training data (never commit)
 nnue-train/data/
+
+# Ansible deploy artifacts — fetched kubeconfigs hold cluster creds; installed
+# collections and retry files are local-only.
+deploy/ansible/kubeconfig-*.yaml
+deploy/ansible/collections/
+*.retry

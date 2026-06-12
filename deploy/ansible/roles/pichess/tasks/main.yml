@@ -1,0 +1,29 @@
+---
+# Deploy the selected tier by copying the kustomize tree to the host and
+# applying it with k3s' bundled kubectl (built-in kustomize, `-k`). Idempotent.
+
+- name: Copy the kustomize manifests to the host
+  ansible.builtin.copy:
+    src: "{{ manifests_src }}/"
+    dest: "{{ manifests_dest }}/"
+    mode: "0644"
+    directory_mode: "0755"
+
+- name: Apply the {{ pichess_tier }} overlay
+  ansible.builtin.command:
+    cmd: k3s kubectl apply -k {{ manifests_dest }}/overlays/{{ pichess_tier }}
+  register: kustomize_apply
+  changed_when: >
+    ('created' in kustomize_apply.stdout) or
+    ('configured' in kustomize_apply.stdout)
+
+- name: Wait for all deployments in the namespace to roll out
+  ansible.builtin.command:
+    cmd: >
+      k3s kubectl -n {{ pichess_namespace }}
+      rollout status deployment --timeout=180s
+  changed_when: false
+
+- name: Show the public entrypoint
+  ansible.builtin.debug:
+    msg: "pichess ({{ pichess_tier }}) is up — browse http://{{ ansible_host }}/"

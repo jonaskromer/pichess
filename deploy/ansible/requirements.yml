@@ -1,0 +1,4 @@
+# Install with:  ansible-galaxy collection install -r requirements.yml -p collections
+collections:
+  - name: community.general   # ufw module
+  - name: ansible.posix       # authorized_key, synchronize

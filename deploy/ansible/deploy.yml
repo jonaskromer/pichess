@@ -1,0 +1,13 @@
+---
+# Deploy the selected tier's kustomize overlay onto an already-provisioned host.
+# Idempotent (kustomize apply converges to desired state). Fast loop — run this
+# repeatedly; run provision.yml only when the box changes.
+#
+#   ansible-playbook deploy.yml                                   # mvp -> local
+#   ansible-playbook deploy.yml -e target=htwg -e pichess_tier=full
+- name: Deploy pichess ({{ pichess_tier }} tier)
+  hosts: "{{ target | default('local') }}"
+  become: true
+  gather_facts: false
+  roles:
+    - pichess

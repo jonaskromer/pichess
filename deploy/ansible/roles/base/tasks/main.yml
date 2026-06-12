@@ -1,0 +1,59 @@
+---
+# OS baseline for a blank Ubuntu 24.04 host: reachability, packages, an
+# optional SSH key, and a k3s-aware firewall. Every task is idempotent.
+
+- name: Wait until the host accepts connections (survive a just-booted/rebooted VM)
+  ansible.builtin.wait_for_connection:
+    timeout: 90
+
+- name: Refresh the apt cache (no-op if fresher than 1h)
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install baseline packages (k3s is otherwise self-contained)
+  ansible.builtin.apt:
+    name:
+      - curl
+      - ca-certificates
+      - apparmor # containerd uses it on Ubuntu
+    state: present
+
+- name: Authorize the operator's SSH key (so later runs drop the password)
+  ansible.posix.authorized_key:
+    user: "{{ ansible_user }}"
+    key: "{{ lookup('file', ssh_public_key) }}"
+    state: present
+  become: false
+  when: ssh_public_key is defined and ssh_public_key | length > 0
+
+# --- firewall (k3s-aware; the campus edge is the primary gate) --------------
+- name: Allow inbound service ports
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop: "{{ ufw_allowed_ports }}"
+  when: configure_ufw | bool
+
+- name: Allow intra-cluster traffic from the pod + service CIDRs
+  community.general.ufw:
+    rule: allow
+    src: "{{ item }}"
+  loop:
+    - "{{ k3s_pod_cidr }}"
+    - "{{ k3s_service_cidr }}"
+  when: configure_ufw | bool
+
+- name: Allow routed/forwarded traffic (k3s flannel needs it)
+  community.general.ufw:
+    direction: routed
+    default: allow
+  when: configure_ufw | bool
+
+- name: Enable ufw with default-deny incoming (SSH already allowed above)
+  community.general.ufw:
+    state: enabled
+    policy: deny
+    direction: incoming
+  when: configure_ufw | bool

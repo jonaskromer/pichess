@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pichess-config
+data:
+  # MVP runs game-service with no datastore and no Kafka (see docs/deployment-plan.md).
+  PICHESS_BACKEND: inmemory
+  PICHESS_CACHE: none
+  GRPC_PORT: "9000"
+  HTTP_PORT: "8090"
+  GAME_SERVICE_GRPC: game-service:9000

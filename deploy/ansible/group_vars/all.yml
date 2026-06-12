@@ -1,0 +1,32 @@
+---
+# Non-secret deployment config shared by all targets. Override per-run with -e.
+
+pichess_namespace: pichess
+
+# Which capability tier to deploy: mvp | lobbies | full
+#   mvp     = gateway + game-service (inmemory, no datastore)
+#   lobbies = + lobby-service (still inmemory)
+#   full    = + repository + kafka + mongo  (needs the 12 GB RAM upgrade)
+pichess_tier: mvp
+
+# Public, multi-arch images pushed by .github/workflows/release.yml.
+image_registry: ghcr.io/jonaskromer
+image_tag: "0.0.2" # the released version to deploy (kustomize sets this tag)
+
+# --- k3s ---
+k3s_version: "v1.31.5+k3s1" # pinned for reproducible installs
+k3s_pod_cidr: "10.42.0.0/16" # k3s defaults — referenced by the ufw rules
+k3s_service_cidr: "10.43.0.0/16"
+
+# --- host firewall (defense-in-depth; the campus edge already gates access) ---
+configure_ufw: true
+ufw_allowed_ports: [22, 80, 443, 6443] # ssh, ingress (Traefik), k3s API
+
+# --- where the kustomize manifests get copied + applied on the host ---
+manifests_src: "{{ playbook_dir }}/../k8s"
+manifests_dest: "/opt/pichess/k8s"
+
+# Optional: path to a public key to authorize on the host so subsequent runs
+# use key auth instead of the password. Set with -e or here, e.g.
+# ssh_public_key: "~/.ssh/id_ed25519.pub"
+# ssh_public_key: ""
