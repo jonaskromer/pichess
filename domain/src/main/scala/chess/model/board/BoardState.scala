@@ -105,6 +105,53 @@ final case class BoardState(
   def -(pos: Position): BoardState =
     afterRemove(pos.squareIdx)
 
+  /** Apply a piece move in a SINGLE allocation: clear `from` and `to`
+    * across all twelve bitboards (removing the moving piece and any
+    * piece captured on `to`), then place `piece` on `to`. Semantically
+    * identical to `this - from + (to -> piece)` but builds one
+    * `BoardState` instead of three — each `-`/`+` allocates via
+    * `afterRemove`/`withSet`, and the eager aggregate vals recompute
+    * per instance, so the old chain paid that 3×.
+    *
+    * `piece` is the post-promotion piece for a promoting pawn; the
+    * pawn on `from` is cleared regardless of type. The second rook hop
+    * (castling) and the off-square pawn removal (en passant) are
+    * layered on by the caller with a further `movePiece`/`-`. */
+  def movePiece(from: Position, to: Position, piece: Piece): BoardState =
+    val clear = ~((1L << from.squareIdx) | (1L << to.squareIdx))
+    val set   = 1L << to.squareIdx
+    var pW = pawnsW.raw   & clear
+    var nW = knightsW.raw & clear
+    var bW = bishopsW.raw & clear
+    var rW = rooksW.raw   & clear
+    var qW = queensW.raw  & clear
+    var kW = kingW.raw    & clear
+    var pB = pawnsB.raw   & clear
+    var nB = knightsB.raw & clear
+    var bB = bishopsB.raw & clear
+    var rB = rooksB.raw   & clear
+    var qB = queensB.raw  & clear
+    var kB = kingB.raw    & clear
+    bitboardFor(piece) match
+      case BoardState.PieceField.PawnW   => pW |= set
+      case BoardState.PieceField.KnightW => nW |= set
+      case BoardState.PieceField.BishopW => bW |= set
+      case BoardState.PieceField.RookW   => rW |= set
+      case BoardState.PieceField.QueenW  => qW |= set
+      case BoardState.PieceField.KingW   => kW |= set
+      case BoardState.PieceField.PawnB   => pB |= set
+      case BoardState.PieceField.KnightB => nB |= set
+      case BoardState.PieceField.BishopB => bB |= set
+      case BoardState.PieceField.RookB   => rB |= set
+      case BoardState.PieceField.QueenB  => qB |= set
+      case BoardState.PieceField.KingB   => kB |= set
+    BoardState(
+      Bitboard.fromLong(pW), Bitboard.fromLong(nW), Bitboard.fromLong(bW),
+      Bitboard.fromLong(rW), Bitboard.fromLong(qW), Bitboard.fromLong(kW),
+      Bitboard.fromLong(pB), Bitboard.fromLong(nB), Bitboard.fromLong(bB),
+      Bitboard.fromLong(rB), Bitboard.fromLong(qB), Bitboard.fromLong(kB),
+    )
+
   /** Total piece count across both colors. */
   def size: Int = occupancy.popCount
 
