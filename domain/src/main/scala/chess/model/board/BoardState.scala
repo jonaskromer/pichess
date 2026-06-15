@@ -30,7 +30,7 @@ final case class BoardState(
     rooksB: Bitboard,
     queensB: Bitboard,
     kingB: Bitboard,
-):
+) extends BoardLike:
   import BoardState.bitboardFor
 
   // ── Cached aggregates ────────────────────────────────────────────────
