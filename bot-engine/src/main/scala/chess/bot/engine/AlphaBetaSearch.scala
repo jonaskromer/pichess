@@ -26,6 +26,12 @@ private final class SearchBufs(
   val scored:        Array[Array[Long]] = Array.fill(maxPly + 1)(new Array[Long](maxMoves))
   val staticEval:    Array[Int]         = Array.fill(maxPly + 1)(Int.MinValue)
   val recursionMove: Array[Int]         = Array.fill(maxPly + 1)(noKiller)
+  // Search-path Zobrist hashes by ply, for repetition detection WITHOUT the
+  // per-node immutable Set[Long] + boxed-Long alloc the search used to thread.
+  // negamax writes pathHashes(ply) at entry; a descendant scans pathHashes
+  // [1..ply-1] for a repeat. The root (ply 0) + pre-search game positions stay
+  // in the threaded Set (extended once at the root, not per node).
+  val pathHashes:    Array[Long]        = new Array[Long](maxPly + 2)
 
   // Time-budget abort state, per-thread (each LazySMP fiber owns its
   // SearchBufs). `budgetedBestMove` sets `deadlineNanos`; `negamax` ticks
@@ -1058,6 +1064,17 @@ private[engine] final class AlphaBetaSearch(
         tt.put(rootHash, Entry(depth, bestScore, kind, Some(MoveInt.decode(best))))
       Some(best)
 
+  /** Has `hash` already occurred on the current search path (plies 1..ply-1)?
+    * The root (ply 0) + pre-search game positions live in the threaded Set;
+    * this scans only the in-tree ancestors — allocation-free, replacing the
+    * immutable `Set[Long]` that was extended (and boxed) at every node. */
+  private def pathRepeat(bufs: SearchBufs, ply: Int, hash: Long): Boolean =
+    var i = 1
+    while i < ply do
+      if bufs.pathHashes(i) == hash then return true
+      i += 1
+    false
+
   /** Negamax core.
     *
     * Returns the side-to-move score of `state` under an α-β window. On
@@ -1103,8 +1120,9 @@ private[engine] final class AlphaBetaSearch(
     if state.halfmoveClock >= 100 then 0
     else
       val hash = Zobrist.hash(state)
-      if history.contains(hash) then 0
+      if history.contains(hash) || pathRepeat(bufs, ply, hash) then 0
       else
+        bufs.pathHashes(ply) = hash
         probeTt(hash, depth, alpha, beta) match
           case Some(score) => score
           case None =>
@@ -1208,7 +1226,7 @@ private[engine] final class AlphaBetaSearch(
                 val nullState = nullMoveState(state)
                 val nullScore = -negamax(
                   nullState, iirDepth - 1 - r, -beta, -beta + 1,
-                  ply + 1, history + hash, bufs, prevMove = NoKiller,
+                  ply + 1, history, bufs, prevMove = NoKiller,
                   nullAllowed = false,
                 )
                 if nullScore >= beta then
@@ -1279,7 +1297,7 @@ private[engine] final class AlphaBetaSearch(
     else
       searchMoves(
         state, capBuf, capCount, quietBuf, quietCount,
-        depth, alpha, beta, ply, hash, history + hash, bufs, prevMove,
+        depth, alpha, beta, ply, hash, history, bufs, prevMove,
       )
 
   /** Side-to-move has at least one knight/bishop/rook/queen — the
