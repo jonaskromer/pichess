@@ -120,16 +120,18 @@ final class NnueEvaluator private (
     val whiteToMove = sideToMove == Color.White
     val stm = if whiteToMove then acc.white else acc.black
     val ntm = if whiteToMove then acc.black else acc.white
-    var out: Long = 0L
+    // Two independent accumulators (own- and other-perspective) over a
+    // single fused loop: halves loop overhead and gives the two reduction
+    // chains instruction-level parallelism. Bit-identical to the previous
+    // two sequential loops (integer addition is associative).
+    var outStm: Long = 0L
+    var outNtm: Long = 0L
     var i = 0
     while i < HiddenSize do
-      out += screlu(stm(i)).toLong * outputWeights(i).toInt
+      outStm += screlu(stm(i)).toLong * outputWeights(i).toInt
+      outNtm += screlu(ntm(i)).toLong * outputWeights(HiddenSize + i).toInt
       i += 1
-    var j = 0
-    while j < HiddenSize do
-      out += screlu(ntm(j)).toLong * outputWeights(HiddenSize + j).toInt
-      j += 1
-    val withBias = out / QA + outputBias.toInt
+    val withBias = (outStm + outNtm) / QA + outputBias.toInt
     val cp       = (withBias * Scale) / (QA * QB)
     (if whiteToMove then cp else -cp).toInt
 
@@ -191,7 +193,7 @@ final class NnueEvaluator private (
   /** Square clipped ReLU — clamp the QA-scale value to `[0, QA]`, then
     * square. Output is at QA² scale. */
   private inline def screlu(x: Int): Int =
-    val y = if x < 0 then 0 else if x > QA then QA else x
+    val y = Math.max(0, Math.min(x, QA)) // branchless clamp to [0, QA]
     y * y
 
 /** Two turn-independent perspective accumulators (White-POV + Black-POV),
