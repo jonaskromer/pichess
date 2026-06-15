@@ -110,7 +110,8 @@ private[engine] object RulesAdapter:
       capturesOut: Array[Int],
       quietsOut:   Array[Int],
       underPromotion: Boolean = false,
-  ): (Int, Int) =
+  ): Long = // (captureCount << 32) | quietCount — packed to avoid a per-call Tuple2
+
     // Delegate to the bitboard-driven generator. It walks the
     // active-piece bitboards directly (knight / bishop / rook /
     // queen / king via `BitboardAttacks`; pawns + castling via

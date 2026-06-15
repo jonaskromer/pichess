@@ -710,7 +710,9 @@ private[engine] final class AlphaBetaSearch(
   ): List[(Move, Int)] =
     val capBuf   = bufs.captures(0)
     val quietBuf = bufs.quiets(0)
-    val (capCount, quietCount) = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
+    val moveCounts = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
+    val capCount   = (moveCounts >>> 32).toInt
+    val quietCount = moveCounts.toInt
     if capCount == 0 && quietCount == 0 then Nil
     else
       if useIncremental then incNet.refreshInto(bufs.accumulator, state.board)
@@ -862,7 +864,9 @@ private[engine] final class AlphaBetaSearch(
     val rootBufs = acquireBufs()
     val capBuf   = rootBufs.captures(0)
     val quietBuf = rootBufs.quiets(0)
-    val (capCount, quietCount) = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
+    val moveCounts = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
+    val capCount   = (moveCounts >>> 32).toInt
+    val quietCount = moveCounts.toInt
     if capCount == 0 && quietCount == 0 then ZIO.none
     else
       val rootHash    = Zobrist.hash(state)
@@ -999,7 +1003,9 @@ private[engine] final class AlphaBetaSearch(
   ): Option[Int] =
     val capBuf   = bufs.captures(0)
     val quietBuf = bufs.quiets(0)
-    val (capCount, quietCount) = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
+    val moveCounts = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
+    val capCount   = (moveCounts >>> 32).toInt
+    val quietCount = moveCounts.toInt
     if capCount == 0 && quietCount == 0 then None
     else
       // Build the incremental accumulator for this search root; every
@@ -1291,8 +1297,9 @@ private[engine] final class AlphaBetaSearch(
   ): Int =
     val capBuf   = bufs.captures(ply)
     val quietBuf = bufs.quiets(ply)
-    val (capCount, quietCount) =
-      RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
+    val moveCounts = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
+    val capCount   = (moveCounts >>> 32).toInt
+    val quietCount = moveCounts.toInt
     if capCount == 0 && quietCount == 0 then terminalScore(state, ply)
     else
       searchMoves(
@@ -1504,8 +1511,9 @@ private[engine] final class AlphaBetaSearch(
       val inCheck  = RulesAdapter.isInCheck(state)
       val capBuf   = bufs.captures(ply)
       val quietBuf = bufs.quiets(ply)
-      val (capCount, quietCount) =
-        RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
+      val moveCounts = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
+      val capCount   = (moveCounts >>> 32).toInt
+      val quietCount = moveCounts.toInt
 
       if capCount == 0 && quietCount == 0 then
         // No legal moves: mate if in check, stalemate (draw) otherwise.
