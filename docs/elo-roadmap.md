@@ -44,12 +44,15 @@ Mac-only Claude memory that wasn't transferred; this rebuilds it). Last updated
 
 ## Lever menu
 
-> **Deployment constraint:** the live bot runs on a RAM/CPU-limited VM
-> (manual/VPN-gated redeploy), so the net must stay **small + cheap to infer** —
-> cap hidden width ≈256–384, favour training-side gains (no inference cost) over
-> heavy architecture, and **no ensemble** (can't run multiple nets).
-> **Tried + abandoned (no worthwhile gain): NNUE ensemble, cleaner/relabelled
-> teacher** — don't repeat.
+> **Deployment constraint (target = live bot VM):** **4 cores — 2 reserved for
+> JVM/Docker, only 2 usable by the engine — and 12 GB RAM**; manual/VPN-gated
+> redeploy. Implications: net must stay **small + cheap to infer** (cap hidden
+> ≈256–384, favour training-side gains over heavy architecture, **no ensemble**);
+> **LazySMP capped at ~2 engine threads**; TT + eval-cache must fit 12 GB; and
+> **engine SPEED is itself an Elo lever** (more nodes/s → deeper search at the
+> live time budget) → see the *Final phase — perf optimization* below.
+> **Tried + abandoned (no gain): NNUE ensemble, cleaner/relabelled teacher.**
+> (The 24-thread / 32 GB box in *Recipes* is the TRAINING machine, not the target.)
 
 ### Eval — NNUE (the bigger lever)
 *Architecture (size-bounded by the constraint):*
@@ -97,13 +100,38 @@ Mac-only Claude memory that wasn't transferred; this rebuilds it). Last updated
 - **Policy ordering** (`policy` flag) — `PolicyPriorMain` distills SF best-move +
   multi-PV from the processed TSV (`best`/`mpv` cols) → `/policy-prior.bin`.
   Better ordering → more cutoffs → deeper effective search at fixed budget.
-- **LazySMP** (`_SMP`) — parallel search; this box has 24 threads for it.
+- **LazySMP** (`_SMP`) — parallel search, but the target has only **~2 engine
+  threads**, so the realistic gain is small (≈1 helper). (The 24-thread box is
+  the training machine, not the deploy target.)
 - Pruning/extensions: `rfp`, `iir`, `razoring`, `deltaprune`, `movecount`,
   `doubleext`, `multicut`, `nmpverify`, `ttaging`, `pawncorr`/`matcorr`,
   `checkext`; plus `eval-cache` (`_EVCACHE`), aspiration windows, `timemgmt`.
 
 ### Data / oracle
 - **Syzygy tablebases** (`TbAugmentedSearch`, `_SYZYGY`) — perfect ≤N-piece play.
+
+## Final phase — perf profiling & optimization (after the eval work)
+
+Goal: maximise engine speed (nodes/s) for the **2-engine-core / 12 GB target** —
+faster search = deeper search at the live time budget = Elo — **without
+regressing any eval Elo gained above.** Loop, ONE optimization at a time:
+
+1. **Profile** on a target-matched config (cap to 2 threads, modest heap): JMH
+   `make bench-bot` (`SearchBenchmark` → nodes/s) + async-profiler
+   (`make profile-async-cpu` / `-alloc`) for CPU + allocation flamegraphs.
+   Likely hot spots: NNUE accumulator/SCReLU + output (vectorize int16?),
+   move-gen, TT probe/store, make/unmake, GC/allocation pressure.
+2. **Optimize** the top hot path (one change).
+3. **Elo-guard A/B (the sanity check):**
+   - **fixed-depth A/B vs the pre-change build → must be ≈0 ΔElo.** A pure perf
+     change is behaviour-identical at fixed depth; a non-zero ΔElo means it
+     altered play = a bug → reject.
+   - **nodes/s delta** (JMH) → confirm the speedup is real.
+   - **time-budget A/B** (`PICHESS_TOURNAMENT_BUDGET_MS`, the live search path) →
+     confirm the speedup converts to +Elo.
+4. Keep only changes that are **fixed-depth-neutral AND nodes/s-positive** (and
+   ideally time-budget-positive). Repeat. Also: size TT + eval-cache to fit
+   12 GB, and set LazySMP helpers for 2 cores.
 
 ## Recipes (this box)
 
@@ -159,8 +187,11 @@ TSVs). Live redeploy is manual/VPN-gated (not done).
    re-distill with a fitted K (capped upside; cheap inference).
 6. **King-bucketed inputs (HalfKA)** — biggest gain but borderline on RAM;
    cost-check first.
-7. **Search levers** — re-A/B off-by-default flags, LazySMP, eval-cache, Syzygy,
-   correction history.
+7. **Search levers** — re-A/B off-by-default flags, LazySMP (~2 threads),
+   eval-cache, Syzygy, correction history.
+8. **FINAL: perf profiling/optimization loop** — speed up the engine for the
+   2-core / 12 GB target (nodes/s → depth → Elo), Elo-guarded (fixed-depth ≈0 +
+   time-budget +). See *Final phase — perf optimization* above.
 
 Excluded (tried, no worthwhile gain): NNUE ensemble, cleaner/relabelled teacher.
 
