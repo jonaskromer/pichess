@@ -58,9 +58,14 @@ final case class BoardState(
     * check immediately upstream) can keep using `board(pos)`.
     */
   def apply(pos: Position): Piece =
-    get(pos).getOrElse(
-      throw new NoSuchElementException(s"No piece at $pos")
-    )
+    // `match` rather than `get(pos).getOrElse(throw …)`: the by-name
+    // argument to `getOrElse` compiles to a `Function0` thunk allocated
+    // on EVERY call, and `apply` is on the move-apply hot path
+    // (`Game.applyMoveCoreSync` / `updatedCastlingRights` call it per
+    // move). The match allocates nothing; `get` returns a flyweight.
+    get(pos) match
+      case Some(p) => p
+      case None    => throw new NoSuchElementException(s"No piece at $pos")
 
   /** The piece at `pos`, or `None` if the square is empty.
     *

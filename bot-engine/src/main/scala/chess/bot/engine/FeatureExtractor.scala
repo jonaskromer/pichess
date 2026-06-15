@@ -190,7 +190,7 @@ object FeatureExtractor:
   /** Mutates a pre-allocated `Array[Int]`. Zero allocation per
     * call. The caller is responsible for clearing the array before
     * each fill ([[FullFeatures.fillArray]] does so). */
-  private[engine] final class ArraySink(val arr: Array[Int]) extends FeatureSink:
+  private[engine] final class ArraySink(var arr: Array[Int]) extends FeatureSink:
     def add(idx: Int, value: Int): Unit = arr(idx) += value
 
   /** Accumulates into a `mutable.HashMap[String, Int]` keyed by the
@@ -224,13 +224,22 @@ object FeatureExtractor:
       compute(state, sink)
       sink.acc.toMap
 
+    /** Per-thread reusable [[ArraySink]] — pooled so the hot eval loop
+      * doesn't allocate a wrapper per call. Its backing array is the
+      * caller's `out`, swapped in on each [[fillArray]]; safe because
+      * eval is synchronous and non-reentrant within a search thread. */
+    private val sinkLocal: ThreadLocal[ArraySink] =
+      ThreadLocal.withInitial(() => new ArraySink(null))
+
     /** Zero-allocation fast path: clears `out`, then fills feature
       * values at canonical indices. Used by [[ArrayTaperedEvaluator]]
       * on the search hot loop. The same geometric helpers as the
       * Map path — drift between the two is impossible. */
     def fillArray(state: GameState, out: Array[Int]): Unit =
       java.util.Arrays.fill(out, 0)
-      compute(state, new ArraySink(out))
+      val sink = sinkLocal.get()
+      sink.arr = out
+      compute(state, sink)
 
     /** Shared compute path. Writes to whichever sink the caller
       * supplies. */
