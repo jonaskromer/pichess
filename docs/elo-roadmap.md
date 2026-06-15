@@ -67,6 +67,17 @@ at their ceiling for the current architecture — see "Tapped levers" below):
   ordering (multi-ply + history-gravity) +2.9 (noise), RFP −19, razoring+IIR
   −8.7 — all neutral-to-negative at a 100 ms budget. Untried: policy-ordering
   net, LazySMP@2.
+- **Deepening the NNUE output head doesn't help.** Added a `(2H)→h2`
+  (clipped-ReLU) `→1` float head (the "NNU2" .bin format; the 768→128
+  accumulator is unchanged, so per-node `applyDiff` cost stays flat), Scala
+  inference parity-verified against the PyTorch forward. The deeper head fits
+  the WDL data ~5% better, and that's REAL not overfit (the edge holds at 24M
+  rows). But at FIXED depth — its best case, no eval-point speed penalty — it
+  plays −8 to −15 Elo vs a linear head trained identically. The fit-gain
+  doesn't translate to play: the NNUE is the diluted *minority* hybrid partner
+  (α 0.3→0.5, HCE dominant) and lower WDL-loss ≠ better move-ranking. The
+  trainer + inference infra works (`--h2` flag, parity harness) but is stashed,
+  not committed.
 
 ## Confirmed findings (this session, 2026-06-12)
 
