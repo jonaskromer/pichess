@@ -4,6 +4,7 @@ metadata:
   name: redis
   labels:
     app: redis
+    pichess.tier: full # reset.yml prunes this label's tier when downgrading
 spec:
   replicas: 1
   selector:
@@ -37,6 +38,9 @@ apiVersion: v1
 kind: Service
 metadata:
   name: redis
+  labels:
+    app: redis
+    pichess.tier: full
 spec:
   selector:
     app: redis

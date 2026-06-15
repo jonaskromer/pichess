@@ -9,6 +9,14 @@ pichess_namespace: pichess
 #   full    = + repository + kafka + mongo  (needs the 12 GB RAM upgrade)
 pichess_tier: mvp
 
+# Tiers in increasing-capability order. reset.yml uses this to prune the
+# workloads of every tier *above* the target (the tiers are strictly nested).
+pichess_tiers_ordered: [mvp, lobbies, full]
+
+# reset.yml safety switch: a downgrade keeps the Mongo/Kafka data PVCs by
+# default (a later upgrade rebinds them). Set true to also delete the volumes.
+pichess_wipe_data: false
+
 # Public, multi-arch images pushed by .github/workflows/release.yml.
 image_registry: ghcr.io/jonaskromer
 image_tag: "0.0.2" # the released version to deploy (kustomize sets this tag)

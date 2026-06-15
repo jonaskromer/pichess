@@ -1,9 +1,11 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+namespace: pichess
 # full = lobbies + durable persistence: repository read-side, Kafka event log,
-# Mongo primary store, Redis cache. The patch flips the shared config from
-# in-memory to mongo+redis+kafka. Needs the 12 GB RAM upgrade (4 JVMs + Kafka +
-# Mongo); see docs/deployment-plan.md and the project memory.
+# Mongo primary store, Redis cache. The configMapGenerator below merges the
+# durable-backend values over the base's in-memory ones; the resulting hash
+# change rolls the JVM pods onto mongo+kafka+redis automatically. Needs ~8-12 GB
+# RAM (5 JVMs + Kafka + Mongo) — see docs/deployment-plan.md and project memory.
 resources:
   - ../lobbies
   - mongodb.yaml
@@ -11,8 +13,19 @@ resources:
   - kafka.yaml
   - repository.yaml
 
-patches:
-  - path: patch-config.yaml
+configMapGenerator:
+  - name: pichess-config
+    behavior: merge
+    literals:
+      - PICHESS_BACKEND=mongo
+      - PICHESS_CACHE=redis
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KAFKA_CONSUMER_GROUP=pichess-repository
+      - PICHESS_MONGO_URL=mongodb://mongodb:27017
+      - PICHESS_MONGO_DB=pichess
+      - PICHESS_REDIS_HOST=redis
+      - PICHESS_REDIS_PORT=6379
+      - REPOSITORY_PORT=8091
 
 images:
   - name: ghcr.io/jonaskromer/pichess-repository

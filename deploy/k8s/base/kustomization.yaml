@@ -4,10 +4,23 @@ namespace: pichess
 
 resources:
   - namespace.yaml
-  - configmap.yaml
   - game-service.yaml
   - gateway.yaml
   - ingress.yaml
+
+# The shared config is a generator (not a static ConfigMap) so that a value
+# change — e.g. the full tier's inmemory->mongo flip — yields a new *hashed*
+# ConfigMap name. kustomize rewrites every envFrom reference to that name, which
+# changes the pod spec and triggers an automatic, idempotent rollout: no manual
+# `rollout restart`, and no churn when nothing changed.
+configMapGenerator:
+  - name: pichess-config
+    literals:
+      - PICHESS_BACKEND=inmemory
+      - PICHESS_CACHE=none
+      - GRPC_PORT=9000
+      - HTTP_PORT=8090
+      - GAME_SERVICE_GRPC=game-service:9000
 
 # Pin the image tag here per release (the version published by release.yml).
 # Bump `newTag` when you cut a new version; keep it in sync with image_tag in

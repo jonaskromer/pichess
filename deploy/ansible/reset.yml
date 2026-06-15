@@ -1,0 +1,19 @@
+---
+# Authoritative reset / downgrade. Unlike deploy.yml (which is additive and only
+# converges UP), this makes the cluster match EXACTLY pichess_tier by applying
+# the target overlay and then deleting the workloads of every higher tier.
+# Data PVCs (Mongo/Kafka) are preserved unless pichess_wipe_data=true, so a later
+# `deploy.yml -e pichess_tier=full` rebinds the same volumes.
+#
+#   ansible-playbook reset.yml -e pichess_tier=lobbies                  # full -> lobbies, keep data
+#   ansible-playbook reset.yml -e pichess_tier=mvp                      # -> mvp, keep data
+#   ansible-playbook reset.yml -e pichess_tier=mvp -e pichess_wipe_data=true   # also drop the volumes
+#   ansible-playbook reset.yml -e pichess_teardown=true                 # delete the whole namespace
+#   ansible-playbook reset.yml -e target=htwg -e pichess_tier=lobbies   # against the HTWG VM (opt-in)
+- name: Reset pichess (downgrade tier or tear down)
+  hosts: "{{ target | default('local') }}"
+  become: true
+  gather_facts: false
+  roles:
+    - role: pichess
+      pichess_prune: true

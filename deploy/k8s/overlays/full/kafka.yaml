@@ -12,6 +12,7 @@ metadata:
   name: kafka
   labels:
     app: kafka
+    pichess.tier: full # reset.yml prunes this label's tier when downgrading
 spec:
   clusterIP: None
   publishNotReadyAddresses: true
@@ -29,6 +30,9 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: kafka
+  labels:
+    app: kafka
+    pichess.tier: full
 spec:
   serviceName: kafka
   replicas: 1
@@ -74,6 +78,9 @@ spec:
   volumeClaimTemplates:
     - metadata:
         name: data
+        labels:
+          app: kafka
+          pichess.tier: full # so `reset.yml -e pichess_wipe_data=true` can select the PVC
       spec:
         accessModes: ["ReadWriteOnce"]
         resources:

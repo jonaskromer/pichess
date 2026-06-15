@@ -1,0 +1,6 @@
+# Ignore installed galaxy collections and the fetched kubeconfig (a gitignored
+# runtime artifact with long base64 cert lines) — neither is our source.
+exclude_paths:
+  - collections/
+  - kubeconfig-pichess-test.yaml
+  - kubeconfig-pichess-prod.yaml

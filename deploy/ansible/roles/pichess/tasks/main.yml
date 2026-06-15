@@ -1,6 +1,21 @@
 ---
 # Deploy the selected tier by copying the kustomize tree to the host and
 # applying it with k3s' bundled kubectl (built-in kustomize, `-k`). Idempotent.
+#
+# deploy.yml runs this additively (converge UP). reset.yml sets pichess_prune=true
+# to converge DOWN — apply the target, then delete higher-tier workloads. Setting
+# pichess_teardown=true deletes the whole namespace and stops.
+
+- name: Tear down the entire pichess namespace — destructive, opt-in (-e pichess_teardown=true)
+  ansible.builtin.command:
+    cmd: k3s kubectl delete namespace {{ pichess_namespace }} --ignore-not-found --wait=true
+  register: pichess_teardown_out
+  changed_when: "'deleted' in pichess_teardown_out.stdout"
+  when: pichess_teardown | default(false) | bool
+
+- name: End the run after a teardown (nothing left to deploy)
+  ansible.builtin.meta: end_host
+  when: pichess_teardown | default(false) | bool
 
 - name: Copy the kustomize manifests to the host
   ansible.builtin.copy:
@@ -13,6 +28,10 @@
   ansible.builtin.command:
     cmd: k3s kubectl apply -k {{ manifests_dest }}/overlays/{{ pichess_tier }}
   register: pichess_kustomize_apply
+  # "created"/"configured" in the output => a real change. NB: on the full tier
+  # kubectl always reports the Mongo/Kafka StatefulSets as "configured" on
+  # re-apply (a client-side-apply + volumeClaimTemplate quirk); it's cosmetic —
+  # the pods are not rolled — so a steady-state full re-deploy shows changed=1.
   changed_when: >
     ('created' in pichess_kustomize_apply.stdout) or
     ('configured' in pichess_kustomize_apply.stdout)
@@ -23,6 +42,56 @@
       k3s kubectl -n {{ pichess_namespace }}
       rollout status deployment --timeout=180s
   changed_when: false
+
+- name: Wait for StatefulSets (Mongo/Kafka) to roll out — full tier only
+  ansible.builtin.command:
+    cmd: k3s kubectl -n {{ pichess_namespace }} rollout status statefulset --timeout=180s
+  changed_when: false
+  when: pichess_tier == "full"
+
+# --- reset.yml only (pichess_prune=true): converge DOWN by deleting the
+# workloads of every tier above the target. deploy.yml leaves these untouched.
+- name: Determine which tiers sit above {{ pichess_tier }}
+  ansible.builtin.set_fact:
+    pichess_higher_tiers: "{{ pichess_tiers_ordered[(pichess_tiers_ordered.index(pichess_tier) + 1) :] }}"
+  when: pichess_prune | default(false) | bool
+
+- name: Prune workloads from higher tiers (data volumes kept)
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - delete
+      - deployment,statefulset,service
+      - -n
+      - "{{ pichess_namespace }}"
+      - -l
+      - "pichess.tier in ({{ pichess_higher_tiers | join(',') }})"
+      - --ignore-not-found
+  register: pichess_prune_out
+  changed_when: "'deleted' in pichess_prune_out.stdout"
+  when:
+    - pichess_prune | default(false) | bool
+    - pichess_higher_tiers | length > 0
+
+- name: Wipe data volumes from higher tiers — destructive, opt-in (-e pichess_wipe_data=true)
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - delete
+      - pvc
+      - -n
+      - "{{ pichess_namespace }}"
+      - -l
+      - "pichess.tier in ({{ pichess_higher_tiers | join(',') }})"
+      - --ignore-not-found
+  register: pichess_pvc_out
+  changed_when: "'deleted' in pichess_pvc_out.stdout"
+  when:
+    - pichess_prune | default(false) | bool
+    - pichess_wipe_data | default(false) | bool
+    - pichess_higher_tiers | length > 0
 
 - name: Show the public entrypoint
   ansible.builtin.debug:
