@@ -69,11 +69,17 @@ at their ceiling for the current architecture — see "Tapped levers" below):
   per-node `Tuple2[Int,Int]`). HCE search also got ~32% faster (4.5→3.0 ms/op)
   from the reduced GC. Each guarded by targeted regression tests (determinism
   golden, TT collision-soundness, `movePiece` equivalence) + the incremental-NNUE
-  equivalence spec. **Remaining:** the immutable board is now 61% of hybrid alloc
-  (`BoardState` 47% + `GameState` 14%) — only a mutable make/unmake architecture
-  can cut it (large refactor, deferred); then the `applyMoveInt` path (`Some` 10%
-  + `Move` 8% — decode + Option wrapper per move) via an Int-keyed, sentinel-
-  returning apply.
+  equivalence spec. A follow-up interned `MoveInt.decode`→`Move` via a pre-built
+  flyweight table (like `Position.cached`) — the applyMoveInt path's one
+  separable alloc (hybrid → 14.9 MB/op). **Remaining (contained wins now
+  exhausted):** the rest is the immutable per-move state itself — the apply
+  `Option`/`Some` + `GameState` + `BoardState` ≈ 77% of hybrid — one thing,
+  removable only by a **mutable board make/unmake** architecture (which also
+  drops the apply `Option` via mutate-in-place + Boolean legality). Constraints:
+  NO `null`/sentinel returns, and the gateway's `Move`/`Option` public API stays
+  (the mutable path is search-internal only) — so the `Some` folds into that
+  refactor, not a standalone null/sentinel apply. It's the sole remaining perf
+  lever: a large core-model refactor, deferred pending a plan.
 
 ## Tapped levers (explored + grounded — no further gain found)
 
@@ -274,13 +280,15 @@ TSVs). Live redeploy is manual/VPN-gated (not done).
 7. **Search levers** — re-A/B off-by-default flags, LazySMP (~2 threads),
    eval-cache, Syzygy, correction history.
 8. **FINAL: perf profiling/optimization loop** — the allocation pass is DONE
-   (six bit-identical cuts, depth-6 HCE 53.5→5.0 MB/op, hybrid 32→15.9; see *Perf
-   + search hardening* above). Remaining perf levers: (a) **mutable board
-   make/unmake** — the immutable `BoardState`+`GameState` is now 61% of hybrid
-   alloc; the only way to cut it, but a large core-model refactor (deferred);
-   (b) Int-keyed sentinel-returning apply to drop the `applyMoveInt` `Some`+`Move`
-   (~18%); (c) **time-budget A/B vs SF** to bank the GC speedup as Elo (the cuts
-   are fixed-depth-neutral by construction — tests prove identical play).
+   (six bit-identical cuts + a `MoveInt.decode` flyweight follow-up; depth-6 HCE
+   53.5→5.0 MB/op, hybrid 32→14.9; see *Perf + search hardening* above).
+   Contained wins are now exhausted. Remaining perf levers: (a) **mutable board
+   make/unmake** — the immutable `BoardState`+`GameState`+apply-`Option` is now
+   ~77% of hybrid alloc; the only way to cut it (mutate-in-place + Boolean
+   legality drops all three), but a large core-model refactor that must keep the
+   Move-based public API — deferred pending a plan; (b) **time-budget A/B vs SF**
+   to bank the GC speedup as Elo (the cuts are fixed-depth-neutral by
+   construction — tests prove identical play).
 
 Excluded (tried, no worthwhile gain): NNUE ensemble, cleaner/relabelled teacher.
 
