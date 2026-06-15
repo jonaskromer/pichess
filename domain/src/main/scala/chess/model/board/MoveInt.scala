@@ -55,9 +55,29 @@ object MoveInt:
   inline def toIdx(m: Int):   Int = (m >>> 6) & 0x3F
   inline def promo(m: Int):   Int = (m >>> 12) & 0x7
 
-  /** Decode back into a [[Move]] case class. Allocates — call
-    * only at the search boundary (final returned best move). */
-  def decode(m: Int): Move =
+  /** Decode back into a [[Move]] case class.
+    *
+    * Interned via a flyweight table — a move is fully determined by its
+    * 15 geometry bits (from/to/promo → 2^15 values), and the search
+    * decodes a `Move` per applied move, so every distinct move is built
+    * once at class load and shared thereafter: no per-decode `Move` (or
+    * promotion `Some`) allocation on the hot path. Mirrors [[Position]]'s
+    * cached-flyweight table; the returned value is unchanged (`==`-equal
+    * to a freshly built move). */
+  def decode(m: Int): Move = decodeCache(m & 0x7FFF)
+
+  /** All 2^15 moves, indexed by the 15 geometry bits. Built once at
+    * class load, never mutated — so every slot is non-null and reads are
+    * allocation-free. */
+  private val decodeCache: Array[Move] =
+    val arr = new Array[Move](1 << 15)
+    var k   = 0
+    while k < arr.length do
+      arr(k) = buildMove(k)
+      k += 1
+    arr
+
+  private def buildMove(m: Int): Move =
     Move(
       Position(('a' + (fromIdx(m) % 8)).toChar, fromIdx(m) / 8 + 1),
       Position(('a' + (toIdx(m)   % 8)).toChar, toIdx(m)   / 8 + 1),

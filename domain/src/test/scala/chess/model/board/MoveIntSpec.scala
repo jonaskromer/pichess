@@ -47,6 +47,15 @@ object MoveIntSpec extends ZIOSpecDefault:
         val decoded  = MoveInt.decode(encoded)
         assertTrue(decoded == original)
       },
+      test("decode interns — equal bits yield the SAME instance (flyweight, no per-call alloc)") {
+        val original = Move(Position('a', 7), Position('a', 8), Some(PieceType.Queen))
+        val encoded  = MoveInt.encodeMove(original)
+        val a        = MoveInt.decode(encoded)
+        val b        = MoveInt.decode(encoded)
+        // Interned: reference-identical across calls (the per-decode Move
+        // allocation we removed), and still value-correct.
+        assertTrue(a eq b, a == original)
+      },
     ),
     suite("encodePromotion + decodePromotion")(
       test("None encodes to NoPromotion") {
