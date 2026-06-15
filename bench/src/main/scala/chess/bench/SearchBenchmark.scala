@@ -4,7 +4,7 @@ import java.util.concurrent.TimeUnit
 
 import org.openjdk.jmh.annotations.*
 
-import chess.bot.engine.{ArrayTaperedEvaluator, Evaluator, FeatureExtractor, Search, TaperedEvaluator, TaperedFeatureExtractor}
+import chess.bot.engine.{ArrayTaperedEvaluator, Evaluator, FeatureExtractor, HybridEvaluator, Search, TaperedEvaluator, TaperedFeatureExtractor, WeightsLoader}
 import chess.codec.FenParserRegex
 import chess.model.board.{GameState, Move}
 
@@ -64,6 +64,41 @@ class SearchBenchmark:
 
   private val arrayTaperedEval: Evaluator =
     ArrayTaperedEvaluator(seedWeights)
+
+  // ----- production hybrid (HCE v8 + baked NNUE, α 0.3→0.5) -------------
+  // The REAL deployed eval: ArrayTaperedEvaluator(v8) blended with the baked
+  // NNUE via HybridEvaluator. The HCE-only benches above miss the NNUE
+  // accumulator/output cost; these profile the actual bot. `freshSearch`
+  // defaults to incrementalAccumulators=true at parallelism 1 → the production
+  // incremental-NNUE path (only the NNUE is incremental; the HCE half is
+  // recomputed per node).
+  private val v8Weights: Map[String, Int] =
+    UnsafeRuntime.run(WeightsLoader.load(8)).weights
+  private val bakedNnue: Evaluator =
+    chess.bot.engine.nnue.NnueEvaluator.loadResource("/nnue-v1.bin").get
+  private val hybridEval: Evaluator =
+    HybridEvaluator(ArrayTaperedEvaluator(v8Weights), bakedNnue, 0.3, 0.5)
+
+  @Benchmark
+  def evalNnueStart: Int = bakedNnue.evaluate(startingState)
+
+  @Benchmark
+  def evalHybridStart: Int = hybridEval.evaluate(startingState)
+
+  @Benchmark
+  def evalHybridKiwiPete: Int = hybridEval.evaluate(kiwiState)
+
+  @Benchmark
+  def hybridDepth4Start: Option[Move] =
+    UnsafeRuntime.run(freshSearch(hybridEval).bestMove(startingState, depth = 4))
+
+  @Benchmark
+  def hybridDepth4KiwiPete: Option[Move] =
+    UnsafeRuntime.run(freshSearch(hybridEval).bestMove(kiwiState, depth = 4))
+
+  @Benchmark
+  def hybridDepth5Start: Option[Move] =
+    UnsafeRuntime.run(freshSearch(hybridEval).bestMove(startingState, depth = 5))
 
   // Each `bestMove` benchmark creates a fresh [[Search]] inside the
   // body. The first invocation populates the transposition table; if
