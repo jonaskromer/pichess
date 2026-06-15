@@ -52,6 +52,28 @@ at their ceiling for the current architecture — see "Tapped levers" below):
   regression test + a 200-game budgeted A/B that now finishes in ~4.4 min (was a
   2 h+ hang). Also added matched time-budget self-play to `TournamentMain`
   (budget the champion too) for clean budgeted A/Bs.
+- **Allocation pass — depth-6 HCE 53.5→5.0 MB/op (−91%), hybrid 32→15.9 MB/op
+  (−50%), all bit-identical.** JMH `-prof gc`/`-prof jfr` (ObjectAllocationSample
+  by type, on the *real hybrid* bot) drove six behaviour-preserving GC-pressure
+  cuts on the search/move hot path: (1) `Ray.canReach` walks inline, no per-node
+  `List[Position]`; (2) repetition via a ply-indexed `long[]` path stack, not a
+  per-node `Set[Long]`+boxing; (3) `qSearch`/`searchMoves` move loops inlined, no
+  per-node closure + `IntRef`/`BooleanRef`; (4) `BoardState.movePiece` builds the
+  post-move board in ONE allocation (was 3 via `- from + (to->piece)`; castling
+  6→2, EP 4→2); (5) the TT is now a direct-mapped `AtomicReferenceArray` (key in
+  an internal `Slot`) — kills per-probe `Long` boxing AND the old
+  `ConcurrentHashMap` eviction-sweep key boxing (this was the biggest single win,
+  esp. for the fast HCE path); (6) `BoardState.apply` `getOrElse(throw)` →
+  `match` (the by-name arg allocated a `Function0` per call), pooled HCE
+  `ArraySink`, and `fillCapturesAndQuiets` packs its two counts into a `Long` (no
+  per-node `Tuple2[Int,Int]`). HCE search also got ~32% faster (4.5→3.0 ms/op)
+  from the reduced GC. Each guarded by targeted regression tests (determinism
+  golden, TT collision-soundness, `movePiece` equivalence) + the incremental-NNUE
+  equivalence spec. **Remaining:** the immutable board is now 61% of hybrid alloc
+  (`BoardState` 47% + `GameState` 14%) — only a mutable make/unmake architecture
+  can cut it (large refactor, deferred); then the `applyMoveInt` path (`Some` 10%
+  + `Move` 8% — decode + Option wrapper per move) via an Int-keyed, sentinel-
+  returning apply.
 
 ## Tapped levers (explored + grounded — no further gain found)
 
@@ -251,9 +273,14 @@ TSVs). Live redeploy is manual/VPN-gated (not done).
    cost-check first.
 7. **Search levers** — re-A/B off-by-default flags, LazySMP (~2 threads),
    eval-cache, Syzygy, correction history.
-8. **FINAL: perf profiling/optimization loop** — speed up the engine for the
-   2-core / 12 GB target (nodes/s → depth → Elo), Elo-guarded (fixed-depth ≈0 +
-   time-budget +). See *Final phase — perf optimization* above.
+8. **FINAL: perf profiling/optimization loop** — the allocation pass is DONE
+   (six bit-identical cuts, depth-6 HCE 53.5→5.0 MB/op, hybrid 32→15.9; see *Perf
+   + search hardening* above). Remaining perf levers: (a) **mutable board
+   make/unmake** — the immutable `BoardState`+`GameState` is now 61% of hybrid
+   alloc; the only way to cut it, but a large core-model refactor (deferred);
+   (b) Int-keyed sentinel-returning apply to drop the `applyMoveInt` `Some`+`Move`
+   (~18%); (c) **time-budget A/B vs SF** to bank the GC speedup as Elo (the cuts
+   are fixed-depth-neutral by construction — tests prove identical play).
 
 Excluded (tried, no worthwhile gain): NNUE ensemble, cleaner/relabelled teacher.
 
