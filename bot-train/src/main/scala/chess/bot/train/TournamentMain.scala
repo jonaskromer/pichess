@@ -65,6 +65,14 @@ object TournamentMain extends ZIOAppDefault:
         challengerBudgeted = cfg.challengerBudgetMs match
           case Some(ms) => () => Search.budgeted(challengerF(), ms)
           case None     => challengerF
+        // Self-play matched-budget: when a budget is set and the champion is
+        // one of our engines (not Stockfish), budget it identically so a
+        // pruning-flag A/B compares both sides at the SAME time control — the
+        // flag's payoff is speed→depth, invisible at fixed depth. (Vs-SF the
+        // opponent stays its own anchored control, so leave it unwrapped.)
+        championBudgeted = cfg.challengerBudgetMs match
+          case Some(ms) if !cfg.vsStockfish => () => Search.budgeted(championF(), ms)
+          case _                            => championF
         // Resolve the opening pool. Empty pool → all games start
         // from startpos (90%+ draws between similar bots). Non-
         // empty pool → diversifies games for a decisive signal.
@@ -83,7 +91,7 @@ object TournamentMain extends ZIOAppDefault:
         // parallel Elo readout trustworthy.
         report <- Tournament.playIsolated(
                     challengerFactory = challengerBudgeted,
-                    championFactory   = championF,
+                    championFactory   = championBudgeted,
                     games      = cfg.games,
                     depth      = cfg.depth,
                     parallelism = cfg.parallelism,
