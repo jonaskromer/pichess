@@ -3,7 +3,7 @@ package chess.bot.engine.nnue
 import java.nio.{ByteBuffer, ByteOrder}
 
 import chess.bot.engine.Evaluator
-import chess.model.board.{Bitboard, BoardLike, GameState}
+import chess.model.board.{Bitboard, BoardLike, PositionView}
 import chess.model.piece.Color
 
 /** NNUE inference for pichess — perspective net
@@ -48,14 +48,14 @@ final class NnueEvaluator private (
   /** From-scratch eval — rebuilds the accumulator then runs the output
     * layer. Identical result to the old implementation (this is just the
     * accumulator path composed). */
-  override def evaluate(state: GameState): Int =
+  override def evaluate(state: PositionView): Int =
     val acc = freshAccumulator()
     refreshInto(acc, state.board)
     evaluateFrom(acc, state.activeColor)
 
   // -- Incremental-eval capability (see [[Evaluator]]) --
   override def incrementalNet: Option[NnueEvaluator] = Some(this)
-  override def evaluateWith(acc: NnueAccumulator, state: GameState): Int =
+  override def evaluateWith(acc: NnueAccumulator, state: PositionView): Int =
     evaluateFrom(acc, state.activeColor)
 
   // ---------------------------------------------------------------------------

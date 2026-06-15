@@ -1,6 +1,6 @@
 package chess.bot.engine
 
-import chess.model.board.GameState
+import chess.model.board.PositionView
 
 /** Material-only evaluator. See [[Evaluator.materialOnly]] for context.
   *
@@ -16,7 +16,7 @@ private object MaterialEvaluator extends Evaluator:
   private inline val RookCp   = 500
   private inline val QueenCp  = 900
 
-  def evaluate(state: GameState): Int =
+  def evaluate(state: PositionView): Int =
     val b = state.board
     val whiteMaterial =
       b.pawnsW.popCount   * PawnCp   +

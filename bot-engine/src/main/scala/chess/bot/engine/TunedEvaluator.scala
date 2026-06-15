@@ -1,6 +1,6 @@
 package chess.bot.engine
 
-import chess.model.board.GameState
+import chess.model.board.PositionView
 
 /** Evaluator that combines a [[FeatureExtractor]] with a tuned weight
   * vector. The output is `Σ (feature_count × weight)` in centipawns,
@@ -20,7 +20,7 @@ object TunedEvaluator:
   /** Construct an evaluator over the given weights and extractor. */
   def apply(weights: Map[String, Int], extractor: FeatureExtractor): Evaluator =
     new Evaluator:
-      def evaluate(state: GameState): Int =
+      def evaluate(state: PositionView): Int =
         val features = extractor.features(state)
         var sum = 0
         val it = features.iterator

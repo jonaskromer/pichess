@@ -1,6 +1,6 @@
 package chess.bot.engine
 
-import chess.model.board.{BoardState, GameState}
+import chess.model.board.{BoardLike, PositionView}
 
 /** Single-number summary of how far into the endgame a position is.
   *
@@ -37,9 +37,9 @@ object GamePhase:
   private inline val KnightPhase = 1
   private inline val MaxPhase    = 24
 
-  def compute(state: GameState): Double = compute(state.board)
+  def compute(state: PositionView): Double = compute(state.board)
 
-  def compute(board: BoardState): Double =
+  def compute(board: BoardLike): Double =
     val raw =
       (board.queensW.popCount  + board.queensB.popCount ) * QueenPhase  +
       (board.rooksW.popCount   + board.rooksB.popCount  ) * RookPhase   +
