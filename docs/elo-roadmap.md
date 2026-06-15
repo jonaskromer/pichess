@@ -44,19 +44,50 @@ Mac-only Claude memory that wasn't transferred; this rebuilds it). Last updated
 
 ## Lever menu
 
-### Eval / net
-- **Gentle TSV fine-tune of eb8** (above) — confirmed +19, peak ~+37 near lr2e-4
-  (confirming). Cheap, near-term shippable.
-- **NNUE-256** — 2× hidden width. Needs `NnueEvaluator` to accept a 256-wide
-  `.bin` (infer `HiddenSize` from byte length: `H=(bytes/2−1)/771`) since it's a
-  compile-time constant today. Train multi-epoch (match eb8's ~3) to be a fair
-  capacity test. The 12 GB GPU + 342M positions can feed it.
-- **Endgame-boost / αEnd / endgame_pieces sweeps** — eb8 used boost 8 / α-end
-  0.5 / ≤7 pieces; endgame Elo was reportedly still rising at α0.5.
-- **NNUE ensemble** — `NnueEnsemble.loadBaked(k=3)` averages 3 nets
-  (`_NNUE_ENS` flag wired); cheap if several nets exist.
-- **Epoch count** — eb8 = 3 passes; sweep more epochs + A/B per epoch to find
-  diminishing returns (per-epoch checkpoints now emitted as `-epN.bin`).
+> **Deployment constraint:** the live bot runs on a RAM/CPU-limited VM
+> (manual/VPN-gated redeploy), so the net must stay **small + cheap to infer** —
+> cap hidden width ≈256–384, favour training-side gains (no inference cost) over
+> heavy architecture, and **no ensemble** (can't run multiple nets).
+> **Tried + abandoned (no worthwhile gain): NNUE ensemble, cleaner/relabelled
+> teacher** — don't repeat.
+
+### Eval — NNUE (the bigger lever)
+*Architecture (size-bounded by the constraint):*
+- **NNUE-256** — 2× hidden; cheapest capacity bump in budget. Needs
+  `NnueEvaluator` to infer `HiddenSize` from `.bin` length (`H=(bytes/2−1)/771`),
+  a compile-time constant today. Train multi-epoch (~3, match eb8). Width >~384
+  likely too costly.
+- **Output buckets** — ~8 buckets by piece count (opening/endgame specialise);
+  small added inference cost.
+- **Deeper net** — add a hidden layer (768→H→H2→1); modest cost.
+- **King-bucketed inputs (HalfKA/HalfKP)** — biggest strength upgrade, but grows
+  the feature transformer ~32–64× (~10–15 MB net) + king-move refreshes →
+  **borderline vs the RAM budget**; cost-check before committing.
+
+*Training / data (NO inference cost — favoured under the constraint):*
+- **WDL-blend targets** — `λ·outcome + (1−λ)·sigmoid(eval)` vs the current
+  eval-only; source outcomes via `PgnIngest` / `SelfPlay` / `NnueDataGen`.
+- **Self-play / domain-matched data** — positions the bot actually reaches,
+  labelled by a deeper search (tooling exists).
+- **Horizontal-mirror augmentation** — free 2× data (h-symmetry).
+- **Quiet-position filtering** — drop in-check / tactical positions.
+- **Gentle TSV fine-tune** — the adopted +38 curriculum; re-apply on top of new nets.
+- **Endgame-boost + epoch sweep** — per-epoch A/B for diminishing returns.
+
+### Eval — HCE (smaller, capped lever; cheap inference)
+- **Add missing features, then re-distill:** **passed pawns** (rank-scaled —
+  the biggest gap, currently absent), attacker-**weighted** king safety (today
+  just `king_attackers` count + `pawn_shield`), threats/hanging pieces,
+  rook-on-7th, backward pawns, space, pawn mobility. Already has: material, full
+  PST, N/B/R/Q mobility, isolated/doubled/connected pawns, `bishop_pair`,
+  `knight_outpost`, rook open/semi-open file, `tempo`.
+- **Fit K in the distill** — current `K=0.25` saturates ~±40cp (near sign-only);
+  a K-search → a magnitude-sensitive distill that moves the weights more usefully.
+
+### Hybrid / cross-cutting (cheapest — do first)
+- **α-schedule sweep** — phase-tapered 0.3→0.5 today; endgame Elo reportedly
+  still rising at α0.5. **A/B-only, no retrain.** Plus material/phase-bucketed α.
+- **Correction history** (`pawncorr` / `matcorr`, off) — learned eval corrections.
 
 ### Search (net-independent; all OFF by default in `TournamentMain` → re-A/B)
 - **Policy ordering** (`policy` flag) — `PolicyPriorMain` distills SF best-move +
@@ -109,17 +140,24 @@ Mac-only Claude memory that wasn't transferred; this rebuilds it). Last updated
 in `nnue-train/data/` (gitignored). Env is ready (`.venv-nnue`, shards, both
 TSVs). Live redeploy is manual/VPN-gated (not done).
 
-**Open levers, priority order:**
-1. **NNUE-256.** (a) Make `NnueEvaluator` infer `HiddenSize` from the `.bin`
-   length (`H=(bytes/2−1)/771`) so a 256-wide net loads. (b) Parity-check the
-   fast path: train a fresh **128** via `--tsv lichess-eval-raw.tsv.gz
-   --depth-norm 1 --endgame-boost 8 --epochs 3 --hidden 128` → A/B vs eb8
-   (expect ≈0). (c) Train **256** the same way; then apply the +38 curriculum
-   (gentle TSV fine-tune, `--init-from` + lr 2e-4 × 1 epoch) on top; A/B + (try
-   to) anchor.
-2. **Policy priors.** `make policy-prior` (PolicyPriorMain → `/policy-prior.bin`
-   from the processed TSV); A/B the `policy` search flag.
-3. **Search-flag re-A/B, LazySMP, eval-cache, Syzygy** (see lever menu).
+**Open levers, priority order** (constraint: keep the net small/cheap):
+1. **α-schedule sweep** — A/B-only, no retrain; endgame Elo still rising at α0.5.
+   Cheapest; do first.
+2. **NNUE training-side** (no inference cost): WDL-blend targets, self-play /
+   domain-matched data, horizontal-mirror augmentation, quiet-position filtering
+   — combined with the adopted +38 curriculum.
+3. **NNUE-256** (+ output buckets / deeper net) — capacity within the size
+   budget. Needs the `HiddenSize`-from-`.bin` change; parity-check a fresh-128
+   via the fast `--tsv` path first; multi-epoch (~3).
+4. **Policy priors** — `make policy-prior` + A/B the `policy` flag.
+5. **HCE** — add passed-pawns + attacker-weighted king-safety + threats, then
+   re-distill with a fitted K (capped upside; cheap inference).
+6. **King-bucketed inputs (HalfKA)** — biggest gain but borderline on RAM;
+   cost-check first.
+7. **Search levers** — re-A/B off-by-default flags, LazySMP, eval-cache, Syzygy,
+   correction history.
+
+Excluded (tried, no worthwhile gain): NNUE ensemble, cleaner/relabelled teacher.
 
 **Run rules:** one eval/training job at a time (no CPU/RAM overlap); monitor
 long jobs; `JAVA_TOOL_OPTIONS=-Xmx16G` for distill; ABSOLUTE paths for sbt
