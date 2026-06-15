@@ -71,15 +71,28 @@ at their ceiling for the current architecture — see "Tapped levers" below):
   golden, TT collision-soundness, `movePiece` equivalence) + the incremental-NNUE
   equivalence spec. A follow-up interned `MoveInt.decode`→`Move` via a pre-built
   flyweight table (like `Position.cached`) — the applyMoveInt path's one
-  separable alloc (hybrid → 14.9 MB/op). **Remaining (contained wins now
-  exhausted):** the rest is the immutable per-move state itself — the apply
-  `Option`/`Some` + `GameState` + `BoardState` ≈ 77% of hybrid — one thing,
-  removable only by a **mutable board make/unmake** architecture (which also
-  drops the apply `Option` via mutate-in-place + Boolean legality). Constraints:
-  NO `null`/sentinel returns, and the gateway's `Move`/`Option` public API stays
-  (the mutable path is search-internal only) — so the `Some` folds into that
-  refactor, not a standalone null/sentinel apply. It's the sole remaining perf
-  lever: a large core-model refactor, deferred pending a plan.
+  separable alloc (hybrid → 14.9 MB/op). The remaining ~77% was the immutable
+  per-move state itself — the apply `Option`/`Some` + `GameState` + `BoardState`.
+- **Copy-make search positions — hybrid depth-6 14.7→7.0 MB/op (−52%) and ~6%
+  FASTER, bit-identical.** The deferred make/unmake lever, landed as COPY-MAKE:
+  per-ply pre-allocated mutable buffers (`MutableBoard` + `SearchPos` in
+  `bot-engine/internal`, implementing the domain `BoardLike`/`PositionView` read
+  seams) reused as the search recurses — descending into a child copies the
+  parent buffer + applies the move in place, so the per-node `BoardState` +
+  `GameState` + apply-`Some` all vanish. `SearchPos.copyMakeInto(child,
+  moveInt): Boolean` returns legality (NO `null`/sentinel); the gateway
+  `Game.applyMove*` Move/Option public API is untouched (the mutable path is
+  search-internal only). Threaded through negamax / qSearch / searchMoves + the
+  sync & YBWC roots + the NNUE `withAcc`; null move via `copyNullMoveInto`.
+  Proven equivalent by `PerftSpec` (re-pointed at copy-make → identical published
+  perft counts), a field-level `SearchPos ≡ Game.applyMoveCoreSync` spec, the
+  determinism golden, and the incremental-NNUE↔rebuild spec; the dead immutable
+  `applyMoveInt` was removed. Re-profiled (JMH `-prof gc`, 2 forks): hybrid d6
+  14.68→7.04 MB/op + 58.9→55.2 ms/op, HCE d6 4.98→4.65 MB/op + 2.65→2.43 ms/op —
+  both statistically-significant SPEEDUPS (the `PositionView`/`BoardLike` trait
+  seam cost nothing). Residual ~7 MB/op hybrid is TT-entry/other alloc — a
+  separate lever. At FIXED depth play is bit-identical → the win banks only under
+  a TIME budget (faster search → more depth); a timed SF anchor surfaces it.
 
 ## Tapped levers (explored + grounded — no further gain found)
 

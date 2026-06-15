@@ -4,7 +4,8 @@ import zio.*
 import zio.test.*
 
 import chess.codec.FenParserRegex
-import chess.model.board.{BoardLike, GameState, MoveInt}
+import chess.model.board.{BoardLike, GameState, MoveInt, Position}
+import chess.model.piece.PieceType
 import chess.model.rules.Game
 
 /** Equivalence proof for the copy-make apply: [[SearchPos.copyMakeInto]]
@@ -104,4 +105,23 @@ object SearchPosSpec extends ZIOSpecDefault:
       "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
       3,
     ),
+    // Direct check of the BoardLike read seam the copy-make path relies on
+    // — `MutableBoard.get`/`contains` after `setFrom` must reflect placement.
+    test("MutableBoard read seam (get / contains) after setFrom matches placement") {
+      for state <- FenParserRegex.parse(
+                     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+                   )
+      yield
+        val pos = new SearchPos
+        pos.setFrom(state)
+        val b = pos.board
+        assertTrue(
+          b.contains(Position('a', 1)),  // white rook present
+          b.contains(Position('e', 8)),  // black king present
+          !b.contains(Position('e', 4)), // empty middle square
+          b.get(Position('e', 1)).exists(_.pieceType == PieceType.King),
+          b.get(Position('d', 1)).exists(_.pieceType == PieceType.Queen),
+          b.get(Position('e', 4)).isEmpty,
+        )
+    },
   )

@@ -85,15 +85,6 @@ private[engine] object RulesAdapter:
     val index = MoveValidator.legalDestinationsIndexSync(state)
     fillBuf(state, index, out)
 
-  /** Int-based apply: decode the packed move into a [[Move]] case
-    * class (one allocation per call, unavoidable until the rules
-    * layer accepts primitives directly) and run the existing
-    * `Game.applyMove`. The Move case class will fall out of the
-    * hot path once the rules layer's apply gets a primitive
-    * variant. */
-  def applyMoveInt(state: GameState, moveInt: Int): Option[GameState] =
-    applyMove(state, MoveInt.decode(moveInt))
-
   /** Two-stage variant of [[fillLegalMoves]]: writes captures into
     * `capturesOut` and quiet moves into `quietsOut`, returns the
     * counts as a tuple. ONE rules-layer call total — classification
