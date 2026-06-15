@@ -27,6 +27,47 @@ Mac-only Claude memory that wasn't transferred; this rebuilds it). Last updated
 - **Strength anchor:** pure-HCE depth-4 ≈ **1967 Elo** (vs Stockfish UCI_Elo,
   v8); the hybrid at the live budget is materially stronger.
 
+## Perf + search hardening (committed, pending deploy)
+
+A profiling + hardening pass on the engine (the eval/search levers are otherwise
+at their ceiling for the current architecture — see "Tapped levers" below):
+
+- **+13% search speedup, bit-identical.** Profiling the *real* hybrid bot (not
+  the HCE-only bench) showed the per-node NNUE accumulator update (`applyDiff`)
+  is the hot path, running scalar because of a `Short→Int` width mismatch.
+  Widening `featureWeights` to `Int[]` lets C2 auto-vectorize it (also fused
+  `evaluateFrom`'s two perspective loops + branchless `screlu`). hybridDepth4
+  start 7.6→6.65 ms. Identical eval (`NnueEvaluatorSpec`) → Elo-safe by
+  construction. Rejected eval-cache (slower — the incremental eval is too cheap
+  to beat a hash lookup). Deferred: explicit `jdk.incubator.vector` SIMD (~10%
+  more, but needs the incubator module + a `--add-modules` JVM flag on the live
+  bot + a deploy CPU with AVX — deploy-gated).
+- **Budgeted-search overshoot fix (live-bot time-safety).** `budgetedBestMove`
+  only checked the budget *between* ID iterations — a single deep iteration ran
+  to completion unbounded, worst in low-branching endgames where cheap early
+  iterations fool the `4×lastIter` projection. That's a real flag-on-time risk.
+  Added a per-thread mid-search deadline in `negamax` (node-tick + 1.5×-budget
+  cap → abort + unwind, with TT writes guarded so a partial tree can't poison
+  the table). Inert at fixed depth. Verified by a `BudgetedSearchSpec`
+  regression test + a 200-game budgeted A/B that now finishes in ~4.4 min (was a
+  2 h+ hang). Also added matched time-budget self-play to `TournamentMain`
+  (budget the champion too) for clean budgeted A/Bs.
+
+## Tapped levers (explored + grounded — no further gain found)
+
+- **HCE eval is saturated.** Passed-pawns / king-safety / mobility / PST / etc.
+  are already live + tuned in v8 (the earlier "missing passed pawns" note was
+  stale). The one extractor feature with no weights — threats — tunes to ~0 when
+  activated (v11), i.e. no signal a linear tapered eval can exploit. Gentle
+  re-distills (v9 / v10 / v11) stay flat-to-noisy vs v8.
+- **Search flags are already well-tuned.** `Search.alphaBeta` is the A/B-tuned
+  production config (quiescence / SEE / NMP / singular-ext / check-ext ON with
+  measured Elo; counter-move / ID / LMP / aspiration rejected). The remaining
+  untested flags don't help this engine: correction-history −207 (broken),
+  ordering (multi-ply + history-gravity) +2.9 (noise), RFP −19, razoring+IIR
+  −8.7 — all neutral-to-negative at a 100 ms budget. Untried: policy-ordering
+  net, LazySMP@2.
+
 ## Confirmed findings (this session, 2026-06-12)
 
 1. **HCE SF-distill was silently broken** — `FenParserRegex` needs 6-field FENs,
