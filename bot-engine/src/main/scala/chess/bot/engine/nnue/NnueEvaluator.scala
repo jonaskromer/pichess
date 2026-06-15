@@ -37,7 +37,7 @@ import chess.model.piece.Color
   * callers that don't thread an accumulator (and as the correctness
   * oracle the incremental path is tested against). */
 final class NnueEvaluator private (
-    private val featureWeights: Array[Short], // 768 × HiddenSize, column-major
+    private val featureWeights: Array[Int], // 768 × HiddenSize, column-major (int16 widened to int32 so the accumulator loops auto-vectorize)
     private val featureBias:    Array[Short], // HiddenSize
     private val outputWeights:  Array[Short], // 2 × HiddenSize
     private val outputBias:     Short,
@@ -180,14 +180,14 @@ final class NnueEvaluator private (
     val base = featureIdx * HiddenSize
     var i = 0
     while i < HiddenSize do
-      acc(i) += featureWeights(base + i).toInt
+      acc(i) += featureWeights(base + i)
       i += 1
 
   private inline def subColumn(featureIdx: Int, acc: Array[Int]): Unit =
     val base = featureIdx * HiddenSize
     var i = 0
     while i < HiddenSize do
-      acc(i) -= featureWeights(base + i).toInt
+      acc(i) -= featureWeights(base + i)
       i += 1
 
   /** Square clipped ReLU — clamp the QA-scale value to `[0, QA]`, then
@@ -243,10 +243,10 @@ object NnueEvaluator:
     )
     val bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
 
-    val featureWeights = new Array[Short](InputSize * HiddenSize)
+    val featureWeights = new Array[Int](InputSize * HiddenSize)
     var i = 0
     while i < featureWeights.length do
-      featureWeights(i) = bb.getShort
+      featureWeights(i) = bb.getShort.toInt // int16 on disk, widened to int32 in memory
       i += 1
 
     val featureBias = new Array[Short](HiddenSize)
