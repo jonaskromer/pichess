@@ -1546,12 +1546,13 @@ private[engine] final class AlphaBetaSearch(
                 val promoBonus = if isPromo then DeltaPromoBonus else 0
                 deltaBase + victimVal + promoBonus + DeltaSafetyMargin < alphaCur
             if !skipByDelta then
-              RulesAdapter.applyMoveInt(state, move).foreach { next =>
+              val nextOpt = RulesAdapter.applyMoveInt(state, move)
+              if nextOpt.isDefined then
+                val next = nextOpt.get
                 val score = -withAcc(bufs, state, next)(qSearch(next, -beta, -alphaCur, ply + 1, bufs))
                 if score > bestScore then bestScore = score
                 if score > alphaCur then alphaCur = score
                 if alphaCur >= beta then cutoff = true
-              }
             i -= 1
 
         // Under check we also need quiet escapes — blocking the
@@ -1560,12 +1561,13 @@ private[engine] final class AlphaBetaSearch(
           var i = 0
           while i < quietCount && !cutoff do
             val move = quietBuf(i)
-            RulesAdapter.applyMoveInt(state, move).foreach { next =>
+            val nextOpt = RulesAdapter.applyMoveInt(state, move)
+            if nextOpt.isDefined then
+              val next = nextOpt.get
               val score = -withAcc(bufs, state, next)(qSearch(next, -beta, -alphaCur, ply + 1, bufs))
               if score > bestScore then bestScore = score
               if score > alphaCur then alphaCur = score
               if alphaCur >= beta then cutoff = true
-            }
             i += 1
 
         bestScore
@@ -1601,9 +1603,10 @@ private[engine] final class AlphaBetaSearch(
     else 0
 
   /** Iterate candidates with α-β cutoff, write the result to the TT,
-    * return the best score. `historyWithThis` already contains the
-    * current node's Zobrist so children can detect repetitions
-    * against it.
+    * return the best score. `history` is the game history (+ root)
+    * carried unchanged down the tree; the current node's own Zobrist
+    * rides in `bufs.pathHashes(ply)` (written by [[negamax]]), so
+    * children detect repetitions against it via the path stack.
     *
     * Two-stage lazy move generation:
     *   - Stage 1: captures (MVV-LVA ordered via [[orderMovesInto]]).
@@ -1632,7 +1635,7 @@ private[engine] final class AlphaBetaSearch(
       beta: Int,
       ply: Int,
       hash: Long,
-      historyWithThis: Set[Long],
+      history: Set[Long],
       bufs: SearchBufs,
       prevMove: Int,
   ): Int =
@@ -1674,7 +1677,7 @@ private[engine] final class AlphaBetaSearch(
         RulesAdapter.applyMoveInt(state, move).foreach { next =>
           val score = -withAcc(bufs, state, next)(negamax(
             next, depth - 1 - MultiCutR, -beta, -beta + 1,
-            ply + 1, historyWithThis, bufs, move,
+            ply + 1, history, bufs, move,
           ))
           if score >= beta then cutsFound += 1
         }
@@ -1701,17 +1704,18 @@ private[engine] final class AlphaBetaSearch(
       var i = capCount - 1
       while i >= 0 && !cutoff do
         val move = MoveInt.fromPacked(scored(i))
-        RulesAdapter.applyMoveInt(state, move).foreach { next =>
+        val nextOpt = RulesAdapter.applyMoveInt(state, move)
+        if nextOpt.isDefined then
+          val next = nextOpt.get
           // Captures don't get reduced (always "loud" by definition).
           val childDepth = depth - 1 + (if move == seMove then seBonus else 0)
           if multiPlyContinuationEnabled then bufs.recursionMove(ply) = move
-          val score = -withAcc(bufs, state, next)(negamax(next, childDepth, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move))
+          val score = -withAcc(bufs, state, next)(negamax(next, childDepth, -beta, -alphaCur, ply + 1, history, bufs, move))
           if score > bestScore then
             bestScore = score
             bestMove = move
           if score > alphaCur then alphaCur = score
           if alphaCur >= beta then cutoff = true
-        }
         moveIndex += 1
         i -= 1
 
@@ -1781,7 +1785,9 @@ private[engine] final class AlphaBetaSearch(
           // Tick moveIndex / i below so the loop progresses.
           ()
         else
-          RulesAdapter.applyMoveInt(state, move).foreach { next =>
+          val nextOpt = RulesAdapter.applyMoveInt(state, move)
+          if nextOpt.isDefined then
+            val next = nextOpt.get
             val reduce =
               depth >= LmrMinDepth &&
                 moveIndex >= LmrMoveThreshold &&
@@ -1792,9 +1798,9 @@ private[engine] final class AlphaBetaSearch(
             val searchDepth = if reduce then baseDepth - 1 else baseDepth
             if multiPlyContinuationEnabled then bufs.recursionMove(ply) = move
             val score = withAcc(bufs, state, next) {
-              var s = -negamax(next, searchDepth, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
+              var s = -negamax(next, searchDepth, -beta, -alphaCur, ply + 1, history, bufs, move)
               if reduce && s > alphaCur then
-                s = -negamax(next, baseDepth, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
+                s = -negamax(next, baseDepth, -beta, -alphaCur, ply + 1, history, bufs, move)
               s
             }
             if score > bestScore then
@@ -1833,7 +1839,6 @@ private[engine] final class AlphaBetaSearch(
                 state.board.get(positionAt(prev2To)).foreach { p =>
                   continuationTable2(p.pieceType.ordinal * 64 + prev2To) = move
                 }
-          }
         moveIndex += 1
         i -= 1
 
