@@ -6,6 +6,16 @@ training/eval recipes and gotchas. Companion to
 Mac-only Claude memory that wasn't transferred; this rebuilds it). Last updated
 2026-06-12 on the RTX 4070 Ti box.
 
+> **⚠ CORRECTION (2026-06-15):** the "+38 raw→TSV fine-tune" reported below was a
+> **SELF-PLAY ARTIFACT**. Grounding vs a neutral Stockfish anchor (full-strength
+> **SF Skill 20 @ depth 4**) showed **old-eb8 49.4% vs the fine-tuned net 45.6%**
+> (400g each) → **eb8 is ~+26 Elo better vs neutral SF**. The fine-tune beat eb8
+> head-to-head but is absolutely weaker → **reverted to eb8** (commit eda2a3f).
+> LESSON: self-play ΔElo is unreliable here — **rank every eval candidate vs
+> full-SF-Skill20-depth4** (~400g). The UCI_Elo-*limited* SF anchor saturates
+> (~80%, doesn't bind even at depth 6); full-strength *shallow* SF un-saturates.
+> Treat the "+38 / shipping candidate" claims below as struck.
+
 ## Current shipped state
 
 - **Eval:** hybrid = `(1-α)·HCE + α·NNUE`, with **phase-tapered α 0.3→0.5** by
