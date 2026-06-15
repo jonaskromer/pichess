@@ -64,7 +64,7 @@ private[engine] object RulesAdapter:
     * [[MoveValidator.isInCheck]] (which is already sync). Lives here so
     * the engine has a single import for the rules surface.
     */
-  def isInCheck(state: GameState): Boolean =
+  def isInCheck(state: PositionView): Boolean =
     MoveValidator.isInCheck(state.board, state.activeColor)
 
   /** Hot-path variant of [[legalMoves]]: writes packed-Int moves

@@ -5,7 +5,7 @@ import zio.test.*
 import zio.test.Assertion.equalTo
 
 import chess.codec.FenParserRegex
-import chess.bot.engine.internal.RulesAdapter
+import chess.bot.engine.internal.{RulesAdapter, SearchPos}
 import chess.model.board.GameState
 
 /** Perft (move-path enumeration) — the gold-standard correctness check for
@@ -23,34 +23,38 @@ object PerftSpec extends ZIOSpecDefault:
 
   /** Count leaves of the legal move tree at `depth`, via the search's own
     * generator ([[RulesAdapter.fillCapturesAndQuiets]], under-promotions ON)
-    * and apply ([[RulesAdapter.applyMoveInt]] — `None` = the move left the
-    * king in check, i.e. illegal, so it's skipped). Move buffers are indexed
-    * by remaining depth (one per recursion level), so a child's generation
-    * can't clobber the list its parent is still iterating. */
+    * and the COPY-MAKE apply ([[SearchPos.copyMakeInto]] — returns `false`
+    * when the move left the king in check, i.e. illegal, so it's skipped).
+    * Re-pointed from the immutable `applyMoveInt` to copy-make: reproducing
+    * the published counts is the equivalence proof. Per-ply `SearchPos` +
+    * move buffers are indexed by remaining depth (one per recursion level),
+    * so a child's generation/apply can't clobber the list its parent is
+    * still iterating. */
   private def perft(state: GameState, depth: Int): Long =
+    val positions = Array.fill(depth + 1)(new SearchPos)
     val capBufs   = Array.fill(depth + 1)(new Array[Int](256))
     val quietBufs = Array.fill(depth + 1)(new Array[Int](256))
-    def rec(s: GameState, d: Int): Long =
+    positions(depth).setFrom(state)
+    def rec(pos: SearchPos, d: Int): Long =
       if d == 0 then 1L
       else
         val cap        = capBufs(d)
         val quiet      = quietBufs(d)
-        val packed     = RulesAdapter.fillCapturesAndQuiets(s, cap, quiet, underPromotion = true)
+        val packed     = RulesAdapter.fillCapturesAndQuiets(pos, cap, quiet, underPromotion = true)
         val capCount   = (packed >>> 32).toInt
         val quietCount = packed.toInt
+        val child      = positions(d - 1)
         var nodes = 0L
         var i = 0
         while i < capCount do
-          val child = RulesAdapter.applyMoveInt(s, cap(i))
-          if child.isDefined then nodes += rec(child.get, d - 1)
+          if pos.copyMakeInto(child, cap(i)) then nodes += rec(child, d - 1)
           i += 1
         i = 0
         while i < quietCount do
-          val child = RulesAdapter.applyMoveInt(s, quiet(i))
-          if child.isDefined then nodes += rec(child.get, d - 1)
+          if pos.copyMakeInto(child, quiet(i)) then nodes += rec(child, d - 1)
           i += 1
         nodes
-    rec(state, depth)
+    rec(positions(depth), depth)
 
   private def perftTest(name: String, fen: String, expected: (Int, Long)*) =
     test(name) {
