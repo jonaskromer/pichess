@@ -1,6 +1,6 @@
 package chess.bot.engine.internal
 
-import chess.model.board.{GameState, MoveInt}
+import chess.model.board.{MoveInt, PositionView}
 import chess.model.piece.Color
 import chess.model.rules.BitboardAttacks
 
@@ -35,7 +35,7 @@ import chess.model.rules.BitboardAttacks
 object BitboardMoveGen:
 
   def fillCapturesAndQuiets(
-      state: GameState,
+      state: PositionView,
       capBuf: Array[Int],
       quietBuf: Array[Int],
       underPromotion: Boolean = false,

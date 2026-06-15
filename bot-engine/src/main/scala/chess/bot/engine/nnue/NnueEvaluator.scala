@@ -3,7 +3,7 @@ package chess.bot.engine.nnue
 import java.nio.{ByteBuffer, ByteOrder}
 
 import chess.bot.engine.Evaluator
-import chess.model.board.{Bitboard, BoardState, GameState}
+import chess.model.board.{Bitboard, BoardLike, GameState}
 import chess.model.piece.Color
 
 /** NNUE inference for pichess — perspective net
@@ -67,7 +67,7 @@ final class NnueEvaluator private (
     new NnueAccumulator(biasArray(), biasArray())
 
   /** Rebuild both per-colour accumulators from scratch for `board`. */
-  def refreshInto(acc: NnueAccumulator, board: BoardState): Unit =
+  def refreshInto(acc: NnueAccumulator, board: BoardLike): Unit =
     resetToBias(acc.white)
     resetToBias(acc.black)
     var pc = 0
@@ -88,7 +88,7 @@ final class NnueEvaluator private (
     * `applyDiff(acc, child, parent)` to unmake it. Robust for every move
     * type (captures, castling, en passant, promotion) because it diffs
     * the raw piece bitboards rather than interpreting the move. */
-  def applyDiff(acc: NnueAccumulator, fromBoard: BoardState, toBoard: BoardState): Unit =
+  def applyDiff(acc: NnueAccumulator, fromBoard: BoardLike, toBoard: BoardLike): Unit =
     var pc = 0
     while pc < 12 do
       val color  = pc / 6
@@ -152,7 +152,7 @@ final class NnueEvaluator private (
 
   /** The 12 piece bitboards in (P,N,B,R,Q,K)×(white,black) order — the
     * same order the feature index encodes (`color*384 + ord*64 + sq`). */
-  private inline def pieceBitboard(b: BoardState, pc: Int): Bitboard = pc match
+  private inline def pieceBitboard(b: BoardLike, pc: Int): Bitboard = pc match
     case 0  => b.pawnsW
     case 1  => b.knightsW
     case 2  => b.bishopsW

@@ -3,7 +3,7 @@ package chess.model.rules
 import zio.*
 
 import chess.model.GameError
-import chess.model.board.{Board, GameState, Move, Position}
+import chess.model.board.{Board, BoardLike, GameState, Move, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 
 object MoveValidator:
@@ -235,7 +235,7 @@ object MoveValidator:
   // filter), which dominates gateway annotation-rebuild CPU.
 
   def isSquareAttacked(
-      board: Board,
+      board: BoardLike,
       square: Position,
       byOpponentOf: Color
   ): Boolean =
@@ -243,7 +243,7 @@ object MoveValidator:
     val attacker  = if byOpponentOf == Color.White then Color.Black else Color.White
     attackerBitboard(board, sqIdx, attacker) != 0L
 
-  def isInCheck(board: Board, color: Color): Boolean =
+  def isInCheck(board: BoardLike, color: Color): Boolean =
     val kingBb =
       if color == Color.White then board.kingW.raw else board.kingB.raw
     if kingBb == 0L then false
@@ -258,7 +258,7 @@ object MoveValidator:
     * type-specific queries.
     */
   private def attackerBitboard(
-      board: Board,
+      board: BoardLike,
       target: Int,
       byColor: Color
   ): Long =

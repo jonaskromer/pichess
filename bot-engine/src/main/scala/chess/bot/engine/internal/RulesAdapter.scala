@@ -2,7 +2,7 @@ package chess.bot.engine.internal
 
 import zio.{Runtime, Unsafe}
 
-import chess.model.board.{GameState, Move, MoveInt}
+import chess.model.board.{GameState, Move, MoveInt, PositionView}
 import chess.model.piece.PieceType
 import chess.model.rules.{Game, MoveValidator}
 
@@ -106,7 +106,7 @@ private[engine] object RulesAdapter:
     * move to the current en-passant target. Everything else is
     * quiet (including promotions to empty back-rank squares). */
   def fillCapturesAndQuiets(
-      state: GameState,
+      state: PositionView,
       capturesOut: Array[Int],
       quietsOut:   Array[Int],
       underPromotion: Boolean = false,
