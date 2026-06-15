@@ -26,6 +26,25 @@ object BudgetedSearchSpec extends ZIOSpecDefault:
         elapsedMs < 600,
       )
     },
+    test("stays within ~1.5x budget in a low-branching endgame (mid-iteration abort)") {
+      // Regression: budgeted ID had no mid-iteration deadline. In a
+      // low-branching position the cheap early iterations fool the
+      // `4 x lastIter` projection into starting an ever-deeper iteration
+      // that then runs to completion unbounded — observed as multi-second
+      // moves (a flag-on-time risk live). negamax now aborts the in-flight
+      // iteration at the 1.5x-budget deadline. Uses the expensive baked
+      // NNUE eval (production-like per-node cost) so a runaway deep
+      // iteration would actually overrun. Generous bound: a real overrun
+      // is seconds; the fix keeps it near 1.5x budget + node-check slack.
+      val search =
+        Search.alphaBeta(chess.bot.engine.nnue.NnueEvaluator.loadResource("/nnue-v1.bin").get)
+      for
+        state <- FenParserRegex.parse("8/6p1/5k2/8/8/2K5/1P6/8 w - - 0 1")
+        startNs = java.lang.System.nanoTime()
+        move   <- search.bestMoveWithBudget(state, budgetMillis = 100)
+        elapsedMs = (java.lang.System.nanoTime() - startNs) / 1_000_000L
+      yield assertTrue(move.isDefined, elapsedMs < 900)
+    },
     test("returns None at a checkmate position") {
       val search = Search.alphaBeta(Evaluator.materialOnly)
       for

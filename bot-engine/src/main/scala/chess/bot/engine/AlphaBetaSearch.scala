@@ -27,6 +27,16 @@ private final class SearchBufs(
   val staticEval:    Array[Int]         = Array.fill(maxPly + 1)(Int.MinValue)
   val recursionMove: Array[Int]         = Array.fill(maxPly + 1)(noKiller)
 
+  // Time-budget abort state, per-thread (each LazySMP fiber owns its
+  // SearchBufs). `budgetedBestMove` sets `deadlineNanos`; `negamax` ticks
+  // `nodeTick` and flips `aborted` once the deadline passes, which unwinds
+  // the in-progress iteration and suppresses TT writes so a partially
+  // searched tree can't poison the table. `deadlineNanos == Long.MaxValue`
+  // means "no budget" — the whole mechanism is then inert (fixed-depth path).
+  var deadlineNanos: Long    = Long.MaxValue
+  var aborted:       Boolean = false
+  var nodeTick:      Int     = 0
+
 /** Fixed-depth negamax α-β with TT support. Used via the public
   * factory [[Search.alphaBeta]].
   *
@@ -502,8 +512,11 @@ private[engine] final class AlphaBetaSearch(
     * would overflow the remaining budget, and returns the deepest
     * completed result. Cost prediction uses the EBF (effective
     * branching factor): `next ≈ this × ebf`; we use ebf=5 as a
-    * conservative default. A hard cap of `1.5 × budget` lets a
-    * single iteration overrun slightly without aborting mid-search.
+    * conservative default. A hard cap of `1.5 × budget` bounds the
+    * total search: the ID loop won't START an iteration past it, AND
+    * `negamax` aborts the in-progress iteration once the deadline passes
+    * (see `SearchBufs.deadlineNanos`), so a single deep iteration can't
+    * overrun the time control unbounded.
     *
     * Forced-mate short-circuits as usual (no point going deeper
     * once mate is found). */
@@ -566,73 +579,86 @@ private[engine] final class AlphaBetaSearch(
       history: Set[Long],
   ): UIO[Option[Move]] =
     val rootHash = Zobrist.hash(state)
-    val start = System.nanoTime()
+    ZIO.succeed {
+      val start = System.nanoTime()
+      // One thread-local buffer set for the whole budgeted search, carrying
+      // the mid-search deadline. Acquired here (inside the effect) so it's
+      // the executing thread's buffers — correct even when LazySMP runs this
+      // on a forked fiber. Abort once an iteration would push total time past
+      // 1.5× budget (matching the between-iteration hard cap) so a single
+      // deep iteration can't overrun the time control unbounded.
+      val searchBufs = acquireBufs()
+      searchBufs.deadlineNanos = start + (budgetMillis * 3L / 2L) * 1_000_000L
+      searchBufs.aborted  = false
+      searchBufs.nodeTick = 0
 
-    def runAtDepth(d: Int): Option[Move] =
-      if parallelism > 1 then
-        // Parallel path doesn't return synchronously — UIO needed.
-        // Skip it for budgeted variant; the budget is meant for
-        // single-thread, time-controlled play.
-        val bufs = acquireBufs()
-        syncBestMove(state, d, history, bufs).map(MoveInt.decode)
-      else
-        val bufs = acquireBufs()
-        syncBestMove(state, d, history, bufs).map(MoveInt.decode)
+      def runAtDepth(d: Int): Option[Move] =
+        syncBestMove(state, d, history, searchBufs).map(MoveInt.decode)
 
-    // `stableSoFar` counts how many consecutive iterations have
-    // produced the same best move with a small score swing. Used
-    // by the time-management upgrade path to allow an early stop
-    // when the search has clearly converged.
-    def loop(
-        d: Int,
-        last: Option[Move],
-        lastIterMs: Long,
-        lastScore: Int,
-        stableSoFar: Int,
-    ): Option[Move] =
-      val elapsedMs = (System.nanoTime() - start) / 1_000_000L
-      val projectedNext = lastIterMs * 4 // EBF proxy
-      val rootScore = tt.get(rootHash).map(_.score).getOrElse(lastScore)
-      val mateFound = math.abs(rootScore) >= MateScore - MaxPly
+      // `stableSoFar` counts how many consecutive iterations have
+      // produced the same best move with a small score swing. Used
+      // by the time-management upgrade path to allow an early stop
+      // when the search has clearly converged.
+      def loop(
+          d: Int,
+          last: Option[Move],
+          lastIterMs: Long,
+          lastScore: Int,
+          stableSoFar: Int,
+      ): Option[Move] =
+        val elapsedMs = (System.nanoTime() - start) / 1_000_000L
+        val projectedNext = lastIterMs * 4 // EBF proxy
+        val rootScore = tt.get(rootHash).map(_.score).getOrElse(lastScore)
+        val mateFound = math.abs(rootScore) >= MateScore - MaxPly
 
-      val outOfBudget =
-        if !timeManagementUpgradeEnabled then
-          elapsedMs + projectedNext > budgetMillis || elapsedMs > budgetMillis * 3 / 2
+        val outOfBudget =
+          if !timeManagementUpgradeEnabled then
+            elapsedMs + projectedNext > budgetMillis || elapsedMs > budgetMillis * 3 / 2
+          else
+            // Upgrade: scale the budget by stability (stable 2+ → 0.7×)
+            // and by score swing (drop > 30cp → 1.5×). The hard cap stays
+            // 1.5× of the unscaled budget so we don't blow past it.
+            val swing = math.abs(rootScore - lastScore)
+            val budgetScale: Double =
+              if stableSoFar >= 2 && swing < 30 then 0.7
+              else if swing > 30 then 1.5
+              else 1.0
+            val scaledBudget = (budgetMillis * budgetScale).toLong
+            elapsedMs + projectedNext > scaledBudget || elapsedMs > budgetMillis * 3 / 2
+
+        // Never return without a move when one exists. The early-exit
+        // conditions below (out of budget, or a mate already proven in the
+        // TT) may all be true on the FIRST iteration — `mateFound` reads a
+        // possibly-stale TT entry for the root, which is exactly the case
+        // when we're losing. Honouring it before any iteration has run
+        // would return `last` = None at a perfectly legal position, making
+        // the bot freeze/concede. So the soft stops only apply once we
+        // actually hold a move (`last.isDefined`); the depth cap is the
+        // only hard stop (and by then `last` is always defined, since the
+        // depth-1 search always yields a move at a legal position).
+        val softStop = (outOfBudget || mateFound) && last.isDefined
+        if d > MaxPly || softStop then last
         else
-          // Upgrade: scale the budget by stability (stable 2+ → 0.7×)
-          // and by score swing (drop > 30cp → 1.5×). The hard cap stays
-          // 1.5× of the unscaled budget so we don't blow past it.
-          val swing = math.abs(rootScore - lastScore)
-          val budgetScale: Double =
-            if stableSoFar >= 2 && swing < 30 then 0.7
-            else if swing > 30 then 1.5
-            else 1.0
-          val scaledBudget = (budgetMillis * budgetScale).toLong
-          elapsedMs + projectedNext > scaledBudget || elapsedMs > budgetMillis * 3 / 2
+          val iterStart = System.nanoTime()
+          val result = runAtDepth(d)
+          // A mid-iteration timeout leaves `result` from a partially searched
+          // tree — discard it and keep the last fully completed iteration.
+          if searchBufs.aborted then last.orElse(result)
+          else
+            val iterMs = (System.nanoTime() - iterStart) / 1_000_000L
+            val nextStable =
+              if result.isDefined && result == last && math.abs(rootScore - lastScore) < 30
+              then stableSoFar + 1
+              else 0
+            loop(d + 1, result.orElse(last), iterMs, rootScore, nextStable)
 
-      // Never return without a move when one exists. The early-exit
-      // conditions below (out of budget, or a mate already proven in the
-      // TT) may all be true on the FIRST iteration — `mateFound` reads a
-      // possibly-stale TT entry for the root, which is exactly the case
-      // when we're losing. Honouring it before any iteration has run
-      // would return `last` = None at a perfectly legal position, making
-      // the bot freeze/concede. So the soft stops only apply once we
-      // actually hold a move (`last.isDefined`); the depth cap is the
-      // only hard stop (and by then `last` is always defined, since the
-      // depth-1 search always yields a move at a legal position).
-      val softStop = (outOfBudget || mateFound) && last.isDefined
-      if d > MaxPly || softStop then last
-      else
-        val iterStart = System.nanoTime()
-        val result = runAtDepth(d)
-        val iterMs = (System.nanoTime() - iterStart) / 1_000_000L
-        val nextStable =
-          if result.isDefined && result == last && math.abs(rootScore - lastScore) < 30
-          then stableSoFar + 1
-          else 0
-        loop(d + 1, result.orElse(last), iterMs, rootScore, nextStable)
-
-    ZIO.succeed(loop(1, None, 0L, 0, 0))
+      try loop(1, None, 0L, 0, 0)
+      finally
+        // Disarm so a later fixed-depth search on this thread's buffers
+        // doesn't see a stale deadline and abort instantly.
+        searchBufs.deadlineNanos = Long.MaxValue
+        searchBufs.aborted = false
+    }
 
   /** Multi-PV: returns the top-K root moves with their scores in
     * descending order. Uses the sync path (single-thread) so the
@@ -1028,7 +1054,8 @@ private[engine] final class AlphaBetaSearch(
         if bestScore <= alphaInit then Kind.Upper
         else if bestScore >= betaInit then Kind.Lower
         else Kind.Exact
-      tt.put(rootHash, Entry(depth, bestScore, kind, Some(MoveInt.decode(best))))
+      if !bufs.aborted then
+        tt.put(rootHash, Entry(depth, bestScore, kind, Some(MoveInt.decode(best))))
       Some(best)
 
   /** Negamax core.
@@ -1063,6 +1090,16 @@ private[engine] final class AlphaBetaSearch(
       prevMove: Int,
       nullAllowed: Boolean = true,
   ): Int =
+    // Mid-search time check (only active under a budget). Tick every node;
+    // every 2048th, consult the wall clock. Once past the deadline, flip the
+    // per-thread abort flag and unwind immediately — the returned value is a
+    // throwaway (the root discards the whole aborted iteration). Inert at
+    // fixed depth, where deadlineNanos == Long.MaxValue.
+    if bufs.deadlineNanos != Long.MaxValue then
+      bufs.nodeTick += 1
+      if (bufs.nodeTick & 2047) == 0 && System.nanoTime() >= bufs.deadlineNanos then
+        bufs.aborted = true
+      if bufs.aborted then return alpha
     if state.halfmoveClock >= 100 then 0
     else
       val hash = Zobrist.hash(state)
@@ -1787,7 +1824,9 @@ private[engine] final class AlphaBetaSearch(
       else if bestScore >= beta then Kind.Lower
       else Kind.Exact
     val bestMoveOpt = if bestMove == NoKiller then None else Some(MoveInt.decode(bestMove))
-    tt.put(hash, Entry(depth, bestScore, kind, bestMoveOpt))
+    // Don't cache a node whose children were cut short by a budget abort —
+    // its bestScore was computed from throwaway sentinels.
+    if !bufs.aborted then tt.put(hash, Entry(depth, bestScore, kind, bestMoveOpt))
     // Train correction history on reliable signals only — Exact-bound
     // results where the search saw all moves. Cutoffs (Lower) and
     // all-moves-failed-low (Upper) misrepresent the position's true
