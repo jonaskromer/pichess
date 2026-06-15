@@ -99,7 +99,12 @@ object SfDistillMain extends ZIOAppDefault:
       iters    = intEnv("PICHESS_SFDISTILL_MAXITERS", 60)
       egPieces = intEnv("PICHESS_SFDISTILL_ENDGAME_PIECES", 7)
       egBoost  = doubleEnv("PICHESS_SFDISTILL_ENDGAME_BOOST", 1.0)
-      initial <- WeightsLoader.load(initV).mapError(e => new RuntimeException(e.toString)).map(_.weights)
+      initRaw <- WeightsLoader.load(initV).mapError(e => new RuntimeException(e.toString)).map(_.weights)
+      // Seed the full 696-key tapered set so features added to the extractor
+      // after initV was tuned (e.g. threat_by_*) are tuned from their default
+      // rather than silently excluded from the weight vector. v8's tuned
+      // values win on the keys it has; new features keep their seed.
+      initial  = TaperedFeatureExtractor.defaultSeedWeights ++ initRaw
       rows <- LichessEvalReader
                 .stream(Paths.get(tsv))
                 .zipWithIndex
