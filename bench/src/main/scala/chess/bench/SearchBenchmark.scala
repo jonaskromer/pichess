@@ -5,6 +5,7 @@ import java.util.concurrent.TimeUnit
 import org.openjdk.jmh.annotations.*
 
 import chess.bot.engine.{ArrayTaperedEvaluator, Evaluator, FeatureExtractor, HybridEvaluator, Search, TaperedEvaluator, TaperedFeatureExtractor, WeightsLoader}
+import chess.bot.train.SelfPlay
 import chess.codec.FenParserRegex
 import chess.model.board.{GameState, Move}
 
@@ -99,6 +100,44 @@ class SearchBenchmark:
   @Benchmark
   def hybridDepth5Start: Option[Move] =
     UnsafeRuntime.run(freshSearch(hybridEval).bestMove(startingState, depth = 5))
+
+  // ----- deep sweep (depth 6/7) ----------------------------------------
+  // The production search reaches ~d6-8 at the live budget, so these are the
+  // realistic bottleneck picture. Hybrid vs HCE-only at the SAME depth
+  // isolates the NNUE's marginal per-node cost as the tree grows.
+  @Benchmark
+  def hybridDepth6Start: Option[Move] =
+    UnsafeRuntime.run(freshSearch(hybridEval).bestMove(startingState, depth = 6))
+
+  // (arrayTaperedDepth6Start already exists in the HCE section below — reused
+  // for the hybrid-vs-HCE depth-6 comparison.)
+
+  @Benchmark
+  def hybridDepth6KiwiPete: Option[Move] =
+    UnsafeRuntime.run(freshSearch(hybridEval).bestMove(kiwiState, depth = 6))
+
+  @Benchmark
+  def arrayTaperedDepth6KiwiPete: Option[Move] =
+    UnsafeRuntime.run(freshSearch(arrayTaperedEval).bestMove(kiwiState, depth = 6))
+
+  @Benchmark
+  def hybridDepth7Start: Option[Move] =
+    UnsafeRuntime.run(freshSearch(hybridEval).bestMove(startingState, depth = 7))
+
+  @Benchmark
+  def arrayTaperedDepth7Start: Option[Move] =
+    UnsafeRuntime.run(freshSearch(arrayTaperedEval).bestMove(startingState, depth = 7))
+
+  // Representative "many games at depth 6" workload: full hybrid self-play
+  // games (varied openings → middlegames → endgames), the production eval.
+  // The target for CPU / allocation profiling — exercises positions a single
+  // fixed-position search never reaches (esp. endgames).
+  @Benchmark
+  @OutputTimeUnit(TimeUnit.SECONDS)
+  def hybridSelfPlayDepth6: SelfPlay.RoundResult =
+    UnsafeRuntime.run(
+      SelfPlay.round(freshSearch(hybridEval), freshSearch(hybridEval),
+        games = 6, depth = 6, maxPlies = 80, parallelism = 1))
 
   // eval-cache (CachedEvaluator, the _EVCACHE lever) over the hybrid. Fresh
   // cache per op (like the fresh TT) so the hit-rate reflects intra-search
