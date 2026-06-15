@@ -46,10 +46,16 @@ object SearchRegressionSpec extends ZIOSpecDefault:
     // chosen move vs an empty history — i.e. history is consulted, not blindly
     // applied. Guards against the path-stack scanning the wrong range.
     test("an unreachable history entry does not change the chosen move") {
+      // Fresh Search per call so the two searches have ISOLATED transposition
+      // tables — otherwise a shared TT makes the result order-dependent and
+      // the invariant (a never-matched history entry is a no-op) becomes a
+      // flaky artifact rather than a real guard.
+      val s1 = Search.alphaBeta(Evaluator.materialOnly)
+      val s2 = Search.alphaBeta(Evaluator.materialOnly)
       for
-        root    <- FenParserRegex.parse("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 1")
-        baseline <- search.bestMove(root, depth = 4)
-        withJunk <- search.bestMove(root, depth = 4, history = Set(0x1234abcdL))
+        root     <- FenParserRegex.parse("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 1")
+        baseline <- s1.bestMove(root, depth = 4)
+        withJunk <- s2.bestMove(root, depth = 4, history = Set(0x1234abcdL))
       yield assertTrue(baseline == withJunk)
     },
     // ── #2 + #3: search-result determinism (golden) ────────────────────
