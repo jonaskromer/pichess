@@ -53,13 +53,17 @@ Mac-only Claude memory that wasn't transferred; this rebuilds it). Last updated
 
 ### Eval — NNUE (the bigger lever)
 *Architecture (size-bounded by the constraint):*
-- **NNUE-256** — 2× hidden; cheapest capacity bump in budget. Needs
-  `NnueEvaluator` to infer `HiddenSize` from `.bin` length (`H=(bytes/2−1)/771`),
-  a compile-time constant today. Train multi-epoch (~3, match eb8). Width >~384
-  likely too costly.
+- **Deepen the 128 (try BEFORE widening)** — add a small output-head layer:
+  `concat 256 → Linear 256→H2 → SCReLU → Linear H2→1` (H2≈16–32) instead of the
+  current single `256→1`. Adds nonlinearity while the per-node **accumulator
+  stays 128-wide → cheaper inference than NNUE-256**. Needs trainer
+  (`train_nnue.Net` + `export_bin`) + `NnueEvaluator` (`parse` + `evaluateFrom`)
+  + a new quant scale for the extra layer.
+- **NNUE-256** — 2× hidden width; simpler change (scale arrays + infer
+  `HiddenSize` from `.bin` length `H=(bytes/2−1)/771`) but **2× the per-node
+  accumulator cost**. Multi-epoch (~3). Width >~384 likely too costly.
 - **Output buckets** — ~8 buckets by piece count (opening/endgame specialise);
   small added inference cost.
-- **Deeper net** — add a hidden layer (768→H→H2→1); modest cost.
 - **King-bucketed inputs (HalfKA/HalfKP)** — biggest strength upgrade, but grows
   the feature transformer ~32–64× (~10–15 MB net) + king-move refreshes →
   **borderline vs the RAM budget**; cost-check before committing.
@@ -146,9 +150,10 @@ TSVs). Live redeploy is manual/VPN-gated (not done).
 2. **NNUE training-side** (no inference cost): WDL-blend targets, self-play /
    domain-matched data, horizontal-mirror augmentation, quiet-position filtering
    — combined with the adopted +38 curriculum.
-3. **NNUE-256** (+ output buckets / deeper net) — capacity within the size
-   budget. Needs the `HiddenSize`-from-`.bin` change; parity-check a fresh-128
-   via the fast `--tsv` path first; multi-epoch (~3).
+3. **NNUE capacity (within size budget), in order:** first **deepen the 128**
+   (output-head layer, width stays 128 → cheaper inference), then **NNUE-256**
+   (width bump) + output buckets. Both need their NnueEvaluator/trainer/quant
+   changes; parity-check a fresh-128 via the fast `--tsv` path first; multi-epoch (~3).
 4. **Policy priors** — `make policy-prior` + A/B the `policy` flag.
 5. **HCE** — add passed-pawns + attacker-weighted king-safety + threats, then
    re-distill with a fitted K (capped upside; cheap inference).
