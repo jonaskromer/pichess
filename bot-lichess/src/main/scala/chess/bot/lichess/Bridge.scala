@@ -128,11 +128,19 @@ object Bridge:
         )
         search.bestMoveWithBudget(state, budgetMs, fallbackDepth = searchDepth).flatMap {
           case Some(move) =>
-            api
-              .makeMove(gameId, UciCodec.serialize(move))
-              .catchAll(err =>
-                ZIO.logWarning(s"Failed to POST move on $gameId: ${err.getMessage}")
-              )
+            val uci = UciCodec.serialize(move)
+            // Per-move log so the adaptive time-management is observable
+            // straight from the bot's own log — zero API polling (the per-game
+            // NDJSON stream already pushes us the clocks): chosen budget + both
+            // sides' remaining clock.
+            ZIO.logInfo(
+              s"$gameId move $uci  budget=${budgetMs}ms  clock=${ourTimeMs}ms/opp=${oppTimeMs}ms"
+            ) *>
+              api
+                .makeMove(gameId, uci)
+                .catchAll(err =>
+                  ZIO.logWarning(s"Failed to POST move on $gameId: ${err.getMessage}")
+                )
           case None =>
             ZIO.logWarning(
               s"Search returned no move on $gameId — not resigning; awaiting next event.",
@@ -141,6 +149,6 @@ object Bridge:
       case GameRunner.Action.MalformedEvent(reason) =>
         ZIO.logWarning(s"Malformed event on $gameId: $reason")
       case GameRunner.Action.GameOver =>
-        ZIO.unit
+        ZIO.logInfo(s"$gameId game over")
       case GameRunner.Action.None =>
         ZIO.unit
