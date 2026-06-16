@@ -19,6 +19,21 @@
       - apparmor # containerd uses it on Ubuntu
     state: present
 
+- name: Guard — refuse to authorize anything that is not an OpenSSH PUBLIC key
+  ansible.builtin.assert:
+    that:
+      - "'PRIVATE KEY' not in _pichess_authkey"
+      - _pichess_authkey is match('(ssh-|ecdsa-sha2-|sk-).+')
+    fail_msg: >-
+      ssh_public_key ({{ ssh_public_key }}) does not look like an OpenSSH public key.
+      Refusing to write it to authorized_keys on this shared, externally-managed host —
+      pass a *.pub file (e.g. a dedicated ~/.ssh/pichess_htwg.pub), never a private key.
+    success_msg: ssh_public_key is a public key — safe to authorize.
+    quiet: true
+  vars:
+    _pichess_authkey: "{{ lookup('file', ssh_public_key) }}"
+  when: ssh_public_key is defined and ssh_public_key | length > 0
+
 - name: Authorize the operator's SSH key (so later runs drop the password)
   ansible.posix.authorized_key:
     user: "{{ ansible_user }}"

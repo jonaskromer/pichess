@@ -37,6 +37,22 @@ Both playbooks are `hosts: "{{ target | default('local') }}"`, so a bare
 `ansible-playbook …` hits **Multipass**, never HTWG. Opt in explicitly with
 `-e target=htwg`.
 
+## Key hygiene (the HTWG VM is shared & externally managed — treat it as untrusted)
+
+Never put your personal/git SSH key on that box. Use a **dedicated, throwaway
+deploy key** instead:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/pichess_htwg -C pichess-deploy -N ''
+```
+
+`inventory.ini` already defaults `[local]` to `~/.ssh/pichess_htwg`. Pass the same
+`.pub` to `provision.yml` (see below) to drop the password on later runs. The
+`base` role *asserts* the file is a public key and refuses to authorize anything
+containing `PRIVATE KEY`, so a typo can't push private-key material to the VM.
+The pipeline never forwards your SSH agent, never runs `git` on the VM, and pulls
+images from **public** ghcr — so no personal credential ever needs to reach it.
+
 ## Validate — no host needed
 
 ```bash
@@ -49,7 +65,7 @@ ansible-lint                       # idempotency / best-practice lint
 
 ```bash
 multipass launch noble --name pichess-vm --cpus 4 --memory 4G --disk 20G \
-  --cloud-init <(echo "ssh_authorized_keys: [\"$(cat ~/.ssh/id_ed25519.pub)\"]")
+  --cloud-init <(echo "ssh_authorized_keys: [\"$(cat ~/.ssh/pichess_htwg.pub)\"]")
 # put its IP into inventory.ini [local]:  multipass info pichess-vm
 
 ansible-playbook provision.yml --check --diff      # dry run (module tasks; shell tasks skip)
@@ -65,7 +81,7 @@ can `multipass restore` back to a clean k3s box and iterate on `deploy.yml`.
 
 ```bash
 set -a; . ../../.env.local; set +a       # SERVER_IP / SSH_USERNAME / SSH_PW (VPN must be up)
-ansible-playbook provision.yml -e target=htwg -e ssh_public_key=~/.ssh/id_ed25519.pub
+ansible-playbook provision.yml -e target=htwg -e ssh_public_key=~/.ssh/pichess_htwg.pub
 ansible-playbook deploy.yml    -e target=htwg -e pichess_tier=mvp
 ```
 
