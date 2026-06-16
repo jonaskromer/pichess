@@ -18,8 +18,9 @@ Mac-only Claude memory that wasn't transferred; this rebuilds it). Last updated
 
 ## Current shipped state
 
-- **Eval:** hybrid = `(1-α)·HCE + α·NNUE`, with **phase-tapered α 0.3→0.5** by
-  `GamePhase` (`EngineBundle` default `hybridAlphaEndgame=0.5`).
+- **Eval:** hybrid = `(1-α)·HCE + α·NNUE`, with **phase-tapered α 0.4→0.6** by
+  `GamePhase` (`EngineBundle` defaults `hybridAlpha=0.4`/`hybridAlphaEndgame=0.6`,
+  re-tuned at the depth-6 production search — was 0.3→0.5 from the depth-4 tune).
 - **HCE:** `weights/v8.json` (Texel-tuned, 690 features, tapered mg/eg).
 - **NNUE:** baked `bot-engine/src/main/resources/nnue-v1.bin` = the **eb8** net
   (768→128, endgame-boosted direct-shard, **~3 epochs** of repeated shards
@@ -195,8 +196,12 @@ at their ceiling for the current architecture — see "Tapped levers" below):
   a K-search → a magnitude-sensitive distill that moves the weights more usefully.
 
 ### Hybrid / cross-cutting (cheapest — do first)
-- **α-schedule sweep** — phase-tapered 0.3→0.5 today; endgame Elo reportedly
-  still rising at α0.5. **A/B-only, no retrain.** Plus material/phase-bucketed α.
+- **α-schedule sweep — DONE (depth-6 re-tune): 0.3→0.5 ⇒ 0.4→0.6.** The depth-4
+  tune is sub-optimal at the depth-6 production search; 0.4→0.6 beats 0.3→0.5 by
+  **+35 Elo (800g self-play, 3.5σ)** AND **+21 vs full-SF-d6 (51.5% vs 48.4%)** —
+  both methods agree → real. Adopted as the `EngineBundle` default. (Note: the
+  depth-4 sweep's "raising α hurts" was depth-specific; the optimum rises with
+  depth as the stronger NNUE earns more blend.) Material/phase-bucketed α untested.
 - **Correction history** (`pawncorr` / `matcorr`, off) — learned eval corrections.
 
 ### Search (net-independent; all OFF by default in `TournamentMain` → re-A/B)
