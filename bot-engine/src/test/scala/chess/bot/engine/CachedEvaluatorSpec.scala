@@ -4,7 +4,7 @@ import zio.test.*
 
 import chess.bot.engine.nnue.{NnueAccumulator, NnueEvaluator}
 import chess.codec.FenParserRegex
-import chess.model.board.GameState
+import chess.model.board.PositionView
 
 object CachedEvaluatorSpec extends ZIOSpecDefault:
 
@@ -16,9 +16,9 @@ object CachedEvaluatorSpec extends ZIOSpecDefault:
   private final class Counting extends Evaluator:
     var evalCalls     = 0
     var evalWithCalls = 0
-    def evaluate(state: GameState): Int = { evalCalls += 1; 17 }
+    def evaluate(state: PositionView): Int = { evalCalls += 1; 17 }
     override def incrementalNet: Option[NnueEvaluator] = Some(nnue)
-    override def evaluateWith(acc: NnueAccumulator, state: GameState): Int =
+    override def evaluateWith(acc: NnueAccumulator, state: PositionView): Int =
       evalWithCalls += 1
       17
 

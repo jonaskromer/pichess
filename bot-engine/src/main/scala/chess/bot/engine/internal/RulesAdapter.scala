@@ -2,7 +2,7 @@ package chess.bot.engine.internal
 
 import zio.{Runtime, Unsafe}
 
-import chess.model.board.{GameState, Move, MoveInt}
+import chess.model.board.{GameState, Move, MoveInt, PositionView}
 import chess.model.piece.PieceType
 import chess.model.rules.{Game, MoveValidator}
 
@@ -64,7 +64,7 @@ private[engine] object RulesAdapter:
     * [[MoveValidator.isInCheck]] (which is already sync). Lives here so
     * the engine has a single import for the rules surface.
     */
-  def isInCheck(state: GameState): Boolean =
+  def isInCheck(state: PositionView): Boolean =
     MoveValidator.isInCheck(state.board, state.activeColor)
 
   /** Hot-path variant of [[legalMoves]]: writes packed-Int moves
@@ -85,15 +85,6 @@ private[engine] object RulesAdapter:
     val index = MoveValidator.legalDestinationsIndexSync(state)
     fillBuf(state, index, out)
 
-  /** Int-based apply: decode the packed move into a [[Move]] case
-    * class (one allocation per call, unavoidable until the rules
-    * layer accepts primitives directly) and run the existing
-    * `Game.applyMove`. The Move case class will fall out of the
-    * hot path once the rules layer's apply gets a primitive
-    * variant. */
-  def applyMoveInt(state: GameState, moveInt: Int): Option[GameState] =
-    applyMove(state, MoveInt.decode(moveInt))
-
   /** Two-stage variant of [[fillLegalMoves]]: writes captures into
     * `capturesOut` and quiet moves into `quietsOut`, returns the
     * counts as a tuple. ONE rules-layer call total — classification
@@ -106,11 +97,12 @@ private[engine] object RulesAdapter:
     * move to the current en-passant target. Everything else is
     * quiet (including promotions to empty back-rank squares). */
   def fillCapturesAndQuiets(
-      state: GameState,
+      state: PositionView,
       capturesOut: Array[Int],
       quietsOut:   Array[Int],
       underPromotion: Boolean = false,
-  ): (Int, Int) =
+  ): Long = // (captureCount << 32) | quietCount — packed to avoid a per-call Tuple2
+
     // Delegate to the bitboard-driven generator. It walks the
     // active-piece bitboards directly (knight / bishop / rook /
     // queen / king via `BitboardAttacks`; pawns + castling via

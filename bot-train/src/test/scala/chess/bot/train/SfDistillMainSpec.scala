@@ -60,4 +60,15 @@ object SfDistillMainSpec extends ZIOSpecDefault:
         tuned.weights.nonEmpty,
       )
     },
+    // regression: the Lichess-eval dataset FENs are 4-field (board, stm,
+    // castling, ep) with NO halfmove/fullmove counters, but FenParserRegex
+    // requires all 6 fields. Before the fix `toSample` returned None for every
+    // real row, so the corpus was empty and `tune` silently returned the init
+    // weights unchanged (loss 0.0, 0 iters) — the "distilled" net was just the
+    // input relabeled. `SfDistillMain.normalizeFen` pads the missing counters.
+    test("regression: toSample parses 4-field Lichess FENs (no move counters)") {
+      val fourField = "7r/1p3k2/p1bPR3/5p2/2B2P1p/8/PP4P1/3K4 b - -" // real shard FEN
+      val sample = SfDistillMain.toSample(SfDistillMain.DistillRow(fourField, 0.5, 1.0))
+      assertTrue(sample.isDefined, sample.exists(_.features.nonEmpty))
+    },
   )

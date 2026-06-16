@@ -225,14 +225,14 @@ object Game:
     ) == 2
 
   private def updatedBoard(state: GameState, move: Move, piece: Piece) =
-    val base = state.board - move.from + (move.to -> piece)
+    val base = state.board.movePiece(move.from, move.to, piece)
     if isCastling(move, piece) then
       val rank = move.from.row
       val kingSide = move.to.col > move.from.col
       val rookFrom = Position(if kingSide then 'h' else 'a', rank)
       val rookTo = Position(if kingSide then 'f' else 'd', rank)
       val rook = state.board(rookFrom)
-      base - rookFrom + (rookTo -> rook)
+      base.movePiece(rookFrom, rookTo, rook)
     else if isEnPassantCapture(state, move, piece) then
       base - Position(move.to.col, move.from.row)
     else base

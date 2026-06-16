@@ -1,6 +1,6 @@
 package chess.bot.engine
 
-import chess.model.board.{BoardState, GameState}
+import chess.model.board.{BoardLike, PositionView}
 import chess.model.piece.{Color, PieceType}
 
 /** Decorator that adds endgame-specific patches on top of the
@@ -22,11 +22,11 @@ import chess.model.piece.{Color, PieceType}
   * black to get side-to-move POV. */
 final class EndgameAwareEvaluator(inner: Evaluator) extends Evaluator:
 
-  override def evaluate(state: GameState): Int =
+  override def evaluate(state: PositionView): Int =
     val base = inner.evaluate(state)
     base + endgamePatch(state, base)
 
-  private def endgamePatch(state: GameState, base: Int): Int =
+  private def endgamePatch(state: PositionView, base: Int): Int =
     val b = state.board
     val pieces = b.occupancy.popCount
     if pieces > 8 then 0
@@ -45,7 +45,7 @@ final class EndgameAwareEvaluator(inner: Evaluator) extends Evaluator:
   /** White - black corner-drive bonus when one side has K+Q vs K.
     * Encourages corralling the losing king to a corner where mate
     * is forced in ≤ 10 plies. */
-  private def kingPlusQueenVsKing(b: BoardState): Int =
+  private def kingPlusQueenVsKing(b: BoardLike): Int =
     val wHas = b.queensW.nonEmpty && noOtherPieces(b, white = true, exceptQueen = true)
     val bBare = bareKing(b, white = false)
     val bHas = b.queensB.nonEmpty && noOtherPieces(b, white = false, exceptQueen = true)
@@ -56,7 +56,7 @@ final class EndgameAwareEvaluator(inner: Evaluator) extends Evaluator:
 
   /** Same shape for K+R vs K — drive to the edge (rooks mate via
     * confining to one rank/file). */
-  private def kingPlusRookVsKing(b: BoardState): Int =
+  private def kingPlusRookVsKing(b: BoardLike): Int =
     val wHas = b.rooksW.nonEmpty && noOtherPieces(b, white = true, exceptRook = true)
     val bBare = bareKing(b, white = false)
     val bHas = b.rooksB.nonEmpty && noOtherPieces(b, white = false, exceptRook = true)
@@ -69,7 +69,7 @@ final class EndgameAwareEvaluator(inner: Evaluator) extends Evaluator:
     * before it promotes, return a large bonus for the pawn's owner.
     * `dist(king, promoSquare) > dist(pawn, promoSquare)` means the
     * king arrives a tempo too late. */
-  private def kingPlusPawnVsKing(b: BoardState): Int =
+  private def kingPlusPawnVsKing(b: BoardLike): Int =
     val whiteWinning =
       b.pawnsW.popCount >= 1 && noOtherPieces(b, white = true, exceptPawn = true) &&
         bareKing(b, white = false)
@@ -80,7 +80,7 @@ final class EndgameAwareEvaluator(inner: Evaluator) extends Evaluator:
     else if blackWinning then -ruleOfSquareBonus(b, white = false)
     else 0
 
-  private def ruleOfSquareBonus(b: BoardState, white: Boolean): Int =
+  private def ruleOfSquareBonus(b: BoardLike, white: Boolean): Int =
     val pawns = if white then b.pawnsW.raw else b.pawnsB.raw
     val loneKingSq = if white then b.kingB.lowestBitIdx else b.kingW.lowestBitIdx
     var rem = pawns
@@ -101,7 +101,7 @@ final class EndgameAwareEvaluator(inner: Evaluator) extends Evaluator:
   /** OCB detected when both sides have ≥1 bishop, opposite colours,
     * and the rest of material is mostly minor pieces (no rooks /
     * queens, since those break OCB drawishness). */
-  private def oppositeColorBishopsBalanced(b: BoardState): Boolean =
+  private def oppositeColorBishopsBalanced(b: BoardLike): Boolean =
     val wB = b.bishopsW.raw
     val bB = b.bishopsB.raw
     if java.lang.Long.bitCount(wB) != 1 || java.lang.Long.bitCount(bB) != 1 then false
@@ -139,7 +139,7 @@ final class EndgameAwareEvaluator(inner: Evaluator) extends Evaluator:
     math.max(dr, dc)
 
   /** True when the side has only a king and nothing else. */
-  private def bareKing(b: BoardState, white: Boolean): Boolean =
+  private def bareKing(b: BoardLike, white: Boolean): Boolean =
     val rest =
       if white then b.pawnsW.raw | b.knightsW.raw | b.bishopsW.raw | b.rooksW.raw | b.queensW.raw
       else      b.pawnsB.raw | b.knightsB.raw | b.bishopsB.raw | b.rooksB.raw | b.queensB.raw
@@ -148,7 +148,7 @@ final class EndgameAwareEvaluator(inner: Evaluator) extends Evaluator:
   /** True when the side has no pieces other than king + the
     * specified single piece type. */
   private def noOtherPieces(
-      b: BoardState,
+      b: BoardLike,
       white: Boolean,
       exceptPawn: Boolean = false,
       exceptKnight: Boolean = false,
@@ -168,6 +168,6 @@ final class EndgameAwareEvaluator(inner: Evaluator) extends Evaluator:
     (exceptQueen  || queen  == 0L)
 
   /** Helper for KPK detection: side has only kings and pawns. */
-  private def kingAndPawnsOnly(b: BoardState): Boolean =
+  private def kingAndPawnsOnly(b: BoardLike): Boolean =
     (b.knightsW.isEmpty && b.bishopsW.isEmpty && b.rooksW.isEmpty && b.queensW.isEmpty) &&
     (b.knightsB.isEmpty && b.bishopsB.isEmpty && b.rooksB.isEmpty && b.queensB.isEmpty)

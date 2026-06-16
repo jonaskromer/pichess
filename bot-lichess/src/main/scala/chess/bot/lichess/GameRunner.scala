@@ -29,7 +29,9 @@ object GameRunner:
 
   enum Action:
     case None                                                       // nothing to do
-    case MoveFrom(state: GameState, ourTimeMs: Long, ourIncMs: Long) // our turn — search + POST
+    // our turn — search + POST. `oppTimeMs` is the opponent's remaining
+    // clock, carried so the time manager can spend our banked surplus.
+    case MoveFrom(state: GameState, ourTimeMs: Long, ourIncMs: Long, oppTimeMs: Long)
     case GameOver                                                   // status != "started"/"created"
     case MalformedEvent(reason: String)                             // bad event payload
 
@@ -133,9 +135,9 @@ object GameRunner:
       binc: Long,
   ): Action =
     if current.activeColor == ourColor then
-      val (ourTime, ourInc) =
-        if ourColor == Color.White then (wtime, winc) else (btime, binc)
-      Action.MoveFrom(current, ourTime, ourInc)
+      val (ourTime, ourInc, oppTime) =
+        if ourColor == Color.White then (wtime, winc, btime) else (btime, binc, wtime)
+      Action.MoveFrom(current, ourTime, ourInc, oppTime)
     else Action.None
 
   /** Lichess' status string is "created" before first move or

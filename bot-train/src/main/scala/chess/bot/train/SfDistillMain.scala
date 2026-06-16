@@ -62,9 +62,21 @@ object SfDistillMain extends ZIOAppDefault:
 
   private def whiteToMove(fen: String): Boolean = fen.contains(" w ")
 
+  /** Lichess-eval FENs are 4-field (board, stm, castling, ep) with NO
+    * halfmove/fullmove counters, but [[FenParserRegex]] requires all 6.
+    * Pad the missing counters (default `0 1`) so these rows parse; a no-op
+    * for FENs that already carry 6 fields. Without this, every real dataset
+    * row fails to parse → empty corpus → `tune` returns the init weights
+    * unchanged (the silent regression pinned in SfDistillMainSpec). */
+  private[train] def normalizeFen(fen: String): String =
+    fen.trim.split(" +").length match
+      case n if n >= 6 => fen
+      case 5           => s"$fen 1"
+      case _           => s"$fen 0 1"
+
   private def parseState(fen: String) =
     zio.Unsafe.unsafe { implicit u =>
-      zio.Runtime.default.unsafe.run(FenParserRegex.parse(fen).either).getOrThrow().toOption
+      zio.Runtime.default.unsafe.run(FenParserRegex.parse(normalizeFen(fen)).either).getOrThrow().toOption
     }
 
   /** A collected light row: fen + precomputed target + weight. Features are
@@ -87,7 +99,12 @@ object SfDistillMain extends ZIOAppDefault:
       iters    = intEnv("PICHESS_SFDISTILL_MAXITERS", 60)
       egPieces = intEnv("PICHESS_SFDISTILL_ENDGAME_PIECES", 7)
       egBoost  = doubleEnv("PICHESS_SFDISTILL_ENDGAME_BOOST", 1.0)
-      initial <- WeightsLoader.load(initV).mapError(e => new RuntimeException(e.toString)).map(_.weights)
+      initRaw <- WeightsLoader.load(initV).mapError(e => new RuntimeException(e.toString)).map(_.weights)
+      // Seed the full 696-key tapered set so features added to the extractor
+      // after initV was tuned (e.g. threat_by_*) are tuned from their default
+      // rather than silently excluded from the weight vector. v8's tuned
+      // values win on the keys it has; new features keep their seed.
+      initial  = TaperedFeatureExtractor.defaultSeedWeights ++ initRaw
       rows <- LichessEvalReader
                 .stream(Paths.get(tsv))
                 .zipWithIndex

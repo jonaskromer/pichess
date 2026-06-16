@@ -2,7 +2,8 @@ package chess.bot.lichess
 
 import zio.*
 
-import chess.bot.engine.Search
+import chess.bot.engine.{GamePhase, Search}
+import chess.model.rules.MoveValidator
 
 /** Top-level orchestrator: subscribe to the Lichess account event
   * stream, dispatch each event, and spawn a per-game fiber for every
@@ -22,11 +23,12 @@ import chess.bot.engine.Search
   */
 object Bridge:
 
-  /** Acceptance policy — Phase 2 only accepts standard chess. Variants
-    * (chess960, atomic, antichess, …) have different rules our engine
-    * doesn't implement. Casual / rated both fine. */
+  /** Acceptance policy — standard chess only (variants like chess960,
+    * atomic, antichess, … have rules our engine doesn't implement), and
+    * rated only: casual games still burn the daily game cap but don't move
+    * the rating, so accepting them would waste capacity. */
   def shouldAccept(c: ChallengeInfo): Boolean =
-    c.variant.key == "standard"
+    c.variant.key == "standard" && c.rated
 
   /** Run the top-level event loop forever. Returns only on stream
     * failure (which the caller usually wraps in
@@ -113,18 +115,33 @@ object Bridge:
       api: BotApiClient,
   ): IO[Throwable, Unit] =
     action match
-      case GameRunner.Action.MoveFrom(state, ourTimeMs, ourIncMs) =>
-        // Clock-aware budget instead of a flat time/move — sizes the search to
-        // the time actually left, so we don't flag in fast controls (and use
-        // our time in slow ones). `searchDepth` is only a fallback floor.
-        val budgetMs = TimeManager.budgetMs(ourTimeMs, ourIncMs)
+      case GameRunner.Action.MoveFrom(state, ourTimeMs, ourIncMs, oppTimeMs) =>
+        // Clock-aware, ADAPTIVE budget: sizes each search to the time left and
+        // spends our banked surplus where it matters — game stage (middlegame),
+        // clock advantage (we're ahead), and checks (forcing). `searchDepth`
+        // is only a fallback floor.
+        val budgetMs = TimeManager.budgetMs(
+          ourTimeMs,
+          ourIncMs,
+          oppTimeMs,
+          GamePhase.compute(state),
+          MoveValidator.isInCheck(state.board, state.activeColor),
+        )
         search.bestMoveWithBudget(state, budgetMs, fallbackDepth = searchDepth).flatMap {
           case Some(move) =>
-            api
-              .makeMove(gameId, UciCodec.serialize(move))
-              .catchAll(err =>
-                ZIO.logWarning(s"Failed to POST move on $gameId: ${err.getMessage}")
-              )
+            val uci = UciCodec.serialize(move)
+            // Per-move log so the adaptive time-management is observable
+            // straight from the bot's own log — zero API polling (the per-game
+            // NDJSON stream already pushes us the clocks): chosen budget + both
+            // sides' remaining clock.
+            ZIO.logInfo(
+              s"$gameId move $uci  budget=${budgetMs}ms  clock=${ourTimeMs}ms/opp=${oppTimeMs}ms"
+            ) *>
+              api
+                .makeMove(gameId, uci)
+                .catchAll(err =>
+                  ZIO.logWarning(s"Failed to POST move on $gameId: ${err.getMessage}")
+                )
           case None =>
             ZIO.logWarning(
               s"Search returned no move on $gameId — not resigning; awaiting next event.",
@@ -133,6 +150,6 @@ object Bridge:
       case GameRunner.Action.MalformedEvent(reason) =>
         ZIO.logWarning(s"Malformed event on $gameId: $reason")
       case GameRunner.Action.GameOver =>
-        ZIO.unit
+        ZIO.logInfo(s"$gameId game over")
       case GameRunner.Action.None =>
         ZIO.unit

@@ -33,4 +33,35 @@ object TimeManagerSpec extends ZIOSpecDefault:
       val b = TimeManager.budgetMs(remainingMs = 10_000, incMs = 5_000)
       assertTrue(b == 10_000 * TimeManager.MaxPercent / 100)
     },
+    // ── Adaptive factors (5-arg form) ──────────────────────────────────
+    test("the 2-arg form equals the neutral 5-arg form (backward compatible)") {
+      assertTrue(
+        TimeManager.budgetMs(180_000, 2_000) ==
+          TimeManager.budgetMs(180_000, 2_000, -1L, 1.0, false),
+        TimeManager.budgetMs(10_000, 5_000) ==
+          TimeManager.budgetMs(10_000, 5_000, -1L, 1.0, false),
+      )
+    },
+    test("middlegame gets more search time than the opening (same clock)") {
+      val mid  = TimeManager.budgetMs(120_000, 2_000, 120_000, phase = 0.5, inCheck = false)
+      val open = TimeManager.budgetMs(120_000, 2_000, 120_000, phase = 1.0, inCheck = false)
+      assertTrue(mid > open)
+    },
+    test("ahead on the clock spends more than behind (same position)") {
+      val ahead  = TimeManager.budgetMs(120_000, 2_000, oppRemainingMs = 20_000, phase = 1.0, inCheck = false)
+      val behind = TimeManager.budgetMs(120_000, 2_000, oppRemainingMs = 600_000, phase = 1.0, inCheck = false)
+      assertTrue(ahead > behind)
+    },
+    test("a check is given more time than a quiet position") {
+      val chk   = TimeManager.budgetMs(120_000, 2_000, 120_000, phase = 0.5, inCheck = true)
+      val quiet = TimeManager.budgetMs(120_000, 2_000, 120_000, phase = 0.5, inCheck = false)
+      assertTrue(chk > quiet)
+    },
+    test("all factors maxed still never flags (budget <= safe)") {
+      val checks = for r <- List(2_000L, 5_000L, 20_000L, 120_000L) yield
+        val b = TimeManager.budgetMs(r, 0, oppRemainingMs = 1L, phase = 0.5, inCheck = true)
+        b <= r - TimeManager.SafetyBufferMs ||
+          r <= TimeManager.SafetyBufferMs + TimeManager.MinBudgetMs
+      assertTrue(checks.forall(identity))
+    },
   )

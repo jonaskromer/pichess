@@ -1,7 +1,7 @@
 package chess.bot.engine
 
 import chess.bot.engine.nnue.{NnueAccumulator, NnueEvaluator}
-import chess.model.board.GameState
+import chess.model.board.PositionView
 
 /** Blends two evaluators into one score: `(1 − w)·base + w·other`.
   *
@@ -38,7 +38,7 @@ final class HybridEvaluator(
   // where it is strong, without raising its midgame weight. NaN → constant `w`.
   private val tapered = !java.lang.Double.isNaN(nnueWeightEndgame)
   private val wEnd    = if tapered then math.max(0.0, math.min(1.0, nnueWeightEndgame)) else w
-  private def weightAt(state: GameState): Double =
+  private def weightAt(state: PositionView): Double =
     if !tapered then w
     else
       val phase = GamePhase.compute(state)   // 1.0 opening .. 0.0 bare endgame
@@ -51,14 +51,14 @@ final class HybridEvaluator(
     case n: NnueEvaluator => Some(n)
     case _                => None
 
-  override def evaluate(state: GameState): Int =
+  override def evaluate(state: PositionView): Int =
     val ww = weightAt(state)
     math.round((1.0 - ww) * base.evaluate(state) + ww * other.evaluate(state)).toInt
 
   // -- Incremental-eval capability (see [[Evaluator]]). The HCE half is
   //    computed from `state`; the NNUE half reads the maintained acc. --
   override def incrementalNet: Option[NnueEvaluator] = net
-  override def evaluateWith(acc: NnueAccumulator, state: GameState): Int =
+  override def evaluateWith(acc: NnueAccumulator, state: PositionView): Int =
     net match
       case Some(n) =>
         val ww = weightAt(state)

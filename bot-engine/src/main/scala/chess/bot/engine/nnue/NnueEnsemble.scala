@@ -1,7 +1,7 @@
 package chess.bot.engine.nnue
 
 import chess.bot.engine.Evaluator
-import chess.model.board.GameState
+import chess.model.board.PositionView
 
 /** Ensemble of K NNUE evaluators — averages their `evaluate`
   * results. Variance reduction via the standard "wisdom of K
@@ -24,7 +24,7 @@ final class NnueEnsemble private (
     private val members: Array[NnueEvaluator],
 ) extends Evaluator:
 
-  override def evaluate(state: GameState): Int =
+  override def evaluate(state: PositionView): Int =
     var total = 0L
     var i = 0
     while i < members.length do

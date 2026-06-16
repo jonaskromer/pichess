@@ -123,5 +123,28 @@ object BoardSpec extends ZIOSpecDefault:
           entries.size == 32,
         )
       },
+      test("movePiece matches (- from + (to -> piece)) for every piece, quiet and capturing") {
+        // movePiece is the one-allocation rewrite of `this - from + (to -> piece)`
+        // on Game.updatedBoard's hot path. Pin that equivalence across all twelve
+        // (color, type) bitboards — which also drives every branch of the field
+        // match — for both a quiet move and a capture sitting on `to`.
+        val from = Position('d', 4)
+        val to   = Position('e', 5)
+        val pieces = for
+          color <- List(Color.White, Color.Black)
+          pt    <- List(
+                     PieceType.Pawn, PieceType.Knight, PieceType.Bishop,
+                     PieceType.Rook, PieceType.Queen, PieceType.King,
+                   )
+        yield Piece(color, pt)
+        val ok = pieces.forall { piece =>
+          val enemy = Piece(piece.color.opposite, PieceType.Queen)
+          val quiet = BoardState.Empty + (from -> piece)
+          val cap   = quiet + (to -> enemy)
+          quiet.movePiece(from, to, piece) == (quiet - from + (to -> piece)) &&
+          cap.movePiece(from, to, piece) == (cap - from + (to -> piece))
+        }
+        assertTrue(ok)
+      },
     )
   )

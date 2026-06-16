@@ -1,7 +1,7 @@
 package chess.bot.engine
 
 import chess.bot.engine.nnue.{NnueAccumulator, NnueEvaluator}
-import chess.model.board.GameState
+import chess.model.board.{GameState, PositionView}
 
 /** Static position evaluator.
   *
@@ -17,7 +17,7 @@ import chess.model.board.GameState
   * without touching the search code.
   */
 trait Evaluator:
-  def evaluate(state: GameState): Int
+  def evaluate(state: PositionView): Int
 
   /** Component breakdown of the eval — returns named contributions
     * (e.g., material / mobility / king-safety) so training data
@@ -42,7 +42,7 @@ trait Evaluator:
   /** Leaf eval that reads a search-maintained accumulator for the NNUE
     * component. The default ignores `acc` and does a full [[evaluate]]
     * (correct for evaluators without an NNUE half). */
-  def evaluateWith(acc: NnueAccumulator, state: GameState): Int =
+  def evaluateWith(acc: NnueAccumulator, state: PositionView): Int =
     evaluate(state)
 
 object Evaluator:

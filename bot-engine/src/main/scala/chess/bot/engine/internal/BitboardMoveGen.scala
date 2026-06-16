@@ -1,6 +1,6 @@
 package chess.bot.engine.internal
 
-import chess.model.board.{GameState, MoveInt}
+import chess.model.board.{MoveInt, PositionView}
 import chess.model.piece.Color
 import chess.model.rules.BitboardAttacks
 
@@ -28,16 +28,18 @@ import chess.model.rules.BitboardAttacks
   *
   * Contract / return: writes encoded `MoveInt`s into the
   * supplied buffers separately for captures and quiets, returns
-  * `(captureCount, quietCount)`. Same shape as
-  * `RulesAdapter.fillCapturesAndQuiets` callers expect. */
+  * the two counts packed into a `Long` — captureCount in the high
+  * 32 bits, quietCount in the low 32. Packing (vs a `Tuple2[Int,Int]`)
+  * avoids a per-call allocation on the search hot path; unpack with
+  * `(packed >>> 32).toInt` and `packed.toInt`. */
 object BitboardMoveGen:
 
   def fillCapturesAndQuiets(
-      state: GameState,
+      state: PositionView,
       capBuf: Array[Int],
       quietBuf: Array[Int],
       underPromotion: Boolean = false,
-  ): (Int, Int) =
+  ): Long =
     val board = state.board
     val white = state.activeColor == Color.White
 
@@ -337,7 +339,7 @@ object BitboardMoveGen:
         tryEmit(kFrom, 2 + rank * 8, MoveInt.NoPromotion,
                 capture = false, isKing = true, isEpCapture = false, isCastling = true)
 
-    (nc, nq)
+    (nc.toLong << 32) | (nq.toLong & 0xffffffffL)
 
   /** Bitboard of squares a pawn at `from` attacks (capture squares
     * only, no forward push). */

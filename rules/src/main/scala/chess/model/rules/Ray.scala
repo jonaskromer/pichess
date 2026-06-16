@@ -80,13 +80,41 @@ object Ray:
               loop(c, r, step + 1, pos :: acc)
     loop(origin.col, origin.row, 1, Nil)
 
-  /** Check if a piece at `from` can reach `target` via any of its rays. */
+  /** Check if a piece at `from` can reach `target` via any of its rays.
+    *
+    * Allocation-free: walks each ray inline with early-return rather than
+    * materialising the square list (the old `walk(...).contains(target)`
+    * built a `List[Position]` per ray just to test membership — a hot
+    * per-node alloc in move-legality checks). Same reachability result:
+    * `target` is reachable iff it lies on a ray before/at the first
+    * blocker (slider) or is the leaper's landing square. */
   def canReach(
       board: Board,
       from: Position,
       pieceType: PieceType,
       target: Position
   ): Boolean =
-    table(pieceType).exists { ray =>
-      walk(board, from, ray).contains(target)
-    }
+    var rs = table(pieceType)
+    while rs.nonEmpty do
+      if reaches(board, from, rs.head, target) then return true
+      rs = rs.tail
+    false
+
+  private def reaches(board: Board, from: Position, ray: Ray, target: Position): Boolean =
+    val tc = target.col.toInt
+    val tr = target.row
+    var c  = from.col.toInt
+    var r  = from.row
+    var step = 1
+    while step <= ray.maxLen do
+      c += ray.dc
+      r += ray.dr
+      if c < 'a'.toInt || c > 'h'.toInt || r < 1 || r > 8 then return false
+      if c == tc && r == tr then return true // reached target
+      ray.kind match
+        case RayKind.Leaper => return false // lands elsewhere, not the target
+        case RayKind.Slider =>
+          // First occupied square before the target blocks the ray.
+          if board.contains(Position(c.toChar, r)) then return false
+      step += 1
+    false

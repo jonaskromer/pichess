@@ -1,6 +1,6 @@
 package chess.bot.engine
 
-import chess.model.board.GameState
+import chess.model.board.PositionView
 
 /** Tapered version of [[TunedEvaluator]] — uses two weight tables
   * keyed by `_mg` / `_eg` suffixes and blends them by the position's
@@ -32,7 +32,7 @@ object TaperedEvaluator:
       extractor: FeatureExtractor,
   ): Evaluator =
     new Evaluator:
-      def evaluate(state: GameState): Int =
+      def evaluate(state: PositionView): Int =
         val features = extractor.features(state)
         val phase    = GamePhase.compute(state.board)
         var mgSum    = 0

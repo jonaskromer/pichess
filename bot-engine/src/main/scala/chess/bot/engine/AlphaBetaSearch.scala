@@ -2,8 +2,8 @@ package chess.bot.engine
 
 import zio.{UIO, ZIO}
 
-import chess.bot.engine.internal.{CounterMoveSeed, RulesAdapter, StaticExchange}
-import chess.model.board.{GameState, Move, MoveInt, Position}
+import chess.bot.engine.internal.{CounterMoveSeed, RulesAdapter, SearchPos, StaticExchange}
+import chess.model.board.{GameState, Move, MoveInt, Position, PositionView}
 import chess.model.piece.{Color, PieceType}
 import chess.model.rules.Zobrist
 
@@ -26,6 +26,27 @@ private final class SearchBufs(
   val scored:        Array[Array[Long]] = Array.fill(maxPly + 1)(new Array[Long](maxMoves))
   val staticEval:    Array[Int]         = Array.fill(maxPly + 1)(Int.MinValue)
   val recursionMove: Array[Int]         = Array.fill(maxPly + 1)(noKiller)
+  // Search-path Zobrist hashes by ply, for repetition detection WITHOUT the
+  // per-node immutable Set[Long] + boxed-Long alloc the search used to thread.
+  // negamax writes pathHashes(ply) at entry; a descendant scans pathHashes
+  // [1..ply-1] for a repeat. The root (ply 0) + pre-search game positions stay
+  // in the threaded Set (extended once at the root, not per node).
+  val pathHashes:    Array[Long]        = new Array[Long](maxPly + 2)
+  // Per-ply MUTABLE positions for copy-make. negamax/qSearch at `ply`
+  // read `positions(ply)` and apply each child move into `positions(ply+1)`
+  // (no per-node immutable GameState/BoardState/Some). Sized like the move
+  // buffers (one slot per recursion level); the root loads `positions(0)`.
+  val positions:     Array[SearchPos]   = Array.fill(maxPly + 2)(new SearchPos)
+
+  // Time-budget abort state, per-thread (each LazySMP fiber owns its
+  // SearchBufs). `budgetedBestMove` sets `deadlineNanos`; `negamax` ticks
+  // `nodeTick` and flips `aborted` once the deadline passes, which unwinds
+  // the in-progress iteration and suppresses TT writes so a partially
+  // searched tree can't poison the table. `deadlineNanos == Long.MaxValue`
+  // means "no budget" — the whole mechanism is then inert (fixed-depth path).
+  var deadlineNanos: Long    = Long.MaxValue
+  var aborted:       Boolean = false
+  var nodeTick:      Int     = 0
 
 /** Fixed-depth negamax α-β with TT support. Used via the public
   * factory [[Search.alphaBeta]].
@@ -255,7 +276,7 @@ private[engine] final class AlphaBetaSearch(
     * restored to `parent`. A no-op when incremental is off (the parallel
     * path and non-NNUE evals), so every make-move site can wrap
     * uniformly. */
-  private inline def withAcc[A](bufs: SearchBufs, parent: GameState, child: GameState)(body: => A): A =
+  private inline def withAcc[A](bufs: SearchBufs, parent: PositionView, child: PositionView)(body: => A): A =
     if useIncremental then
       incNet.applyDiff(bufs.accumulator, parent.board, child.board)
       val r = body
@@ -502,8 +523,11 @@ private[engine] final class AlphaBetaSearch(
     * would overflow the remaining budget, and returns the deepest
     * completed result. Cost prediction uses the EBF (effective
     * branching factor): `next ≈ this × ebf`; we use ebf=5 as a
-    * conservative default. A hard cap of `1.5 × budget` lets a
-    * single iteration overrun slightly without aborting mid-search.
+    * conservative default. A hard cap of `1.5 × budget` bounds the
+    * total search: the ID loop won't START an iteration past it, AND
+    * `negamax` aborts the in-progress iteration once the deadline passes
+    * (see `SearchBufs.deadlineNanos`), so a single deep iteration can't
+    * overrun the time control unbounded.
     *
     * Forced-mate short-circuits as usual (no point going deeper
     * once mate is found). */
@@ -566,73 +590,86 @@ private[engine] final class AlphaBetaSearch(
       history: Set[Long],
   ): UIO[Option[Move]] =
     val rootHash = Zobrist.hash(state)
-    val start = System.nanoTime()
+    ZIO.succeed {
+      val start = System.nanoTime()
+      // One thread-local buffer set for the whole budgeted search, carrying
+      // the mid-search deadline. Acquired here (inside the effect) so it's
+      // the executing thread's buffers — correct even when LazySMP runs this
+      // on a forked fiber. Abort once an iteration would push total time past
+      // 1.5× budget (matching the between-iteration hard cap) so a single
+      // deep iteration can't overrun the time control unbounded.
+      val searchBufs = acquireBufs()
+      searchBufs.deadlineNanos = start + (budgetMillis * 3L / 2L) * 1_000_000L
+      searchBufs.aborted  = false
+      searchBufs.nodeTick = 0
 
-    def runAtDepth(d: Int): Option[Move] =
-      if parallelism > 1 then
-        // Parallel path doesn't return synchronously — UIO needed.
-        // Skip it for budgeted variant; the budget is meant for
-        // single-thread, time-controlled play.
-        val bufs = acquireBufs()
-        syncBestMove(state, d, history, bufs).map(MoveInt.decode)
-      else
-        val bufs = acquireBufs()
-        syncBestMove(state, d, history, bufs).map(MoveInt.decode)
+      def runAtDepth(d: Int): Option[Move] =
+        syncBestMove(state, d, history, searchBufs).map(MoveInt.decode)
 
-    // `stableSoFar` counts how many consecutive iterations have
-    // produced the same best move with a small score swing. Used
-    // by the time-management upgrade path to allow an early stop
-    // when the search has clearly converged.
-    def loop(
-        d: Int,
-        last: Option[Move],
-        lastIterMs: Long,
-        lastScore: Int,
-        stableSoFar: Int,
-    ): Option[Move] =
-      val elapsedMs = (System.nanoTime() - start) / 1_000_000L
-      val projectedNext = lastIterMs * 4 // EBF proxy
-      val rootScore = tt.get(rootHash).map(_.score).getOrElse(lastScore)
-      val mateFound = math.abs(rootScore) >= MateScore - MaxPly
+      // `stableSoFar` counts how many consecutive iterations have
+      // produced the same best move with a small score swing. Used
+      // by the time-management upgrade path to allow an early stop
+      // when the search has clearly converged.
+      def loop(
+          d: Int,
+          last: Option[Move],
+          lastIterMs: Long,
+          lastScore: Int,
+          stableSoFar: Int,
+      ): Option[Move] =
+        val elapsedMs = (System.nanoTime() - start) / 1_000_000L
+        val projectedNext = lastIterMs * 4 // EBF proxy
+        val rootScore = tt.get(rootHash).map(_.score).getOrElse(lastScore)
+        val mateFound = math.abs(rootScore) >= MateScore - MaxPly
 
-      val outOfBudget =
-        if !timeManagementUpgradeEnabled then
-          elapsedMs + projectedNext > budgetMillis || elapsedMs > budgetMillis * 3 / 2
+        val outOfBudget =
+          if !timeManagementUpgradeEnabled then
+            elapsedMs + projectedNext > budgetMillis || elapsedMs > budgetMillis * 3 / 2
+          else
+            // Upgrade: scale the budget by stability (stable 2+ → 0.7×)
+            // and by score swing (drop > 30cp → 1.5×). The hard cap stays
+            // 1.5× of the unscaled budget so we don't blow past it.
+            val swing = math.abs(rootScore - lastScore)
+            val budgetScale: Double =
+              if stableSoFar >= 2 && swing < 30 then 0.7
+              else if swing > 30 then 1.5
+              else 1.0
+            val scaledBudget = (budgetMillis * budgetScale).toLong
+            elapsedMs + projectedNext > scaledBudget || elapsedMs > budgetMillis * 3 / 2
+
+        // Never return without a move when one exists. The early-exit
+        // conditions below (out of budget, or a mate already proven in the
+        // TT) may all be true on the FIRST iteration — `mateFound` reads a
+        // possibly-stale TT entry for the root, which is exactly the case
+        // when we're losing. Honouring it before any iteration has run
+        // would return `last` = None at a perfectly legal position, making
+        // the bot freeze/concede. So the soft stops only apply once we
+        // actually hold a move (`last.isDefined`); the depth cap is the
+        // only hard stop (and by then `last` is always defined, since the
+        // depth-1 search always yields a move at a legal position).
+        val softStop = (outOfBudget || mateFound) && last.isDefined
+        if d > MaxPly || softStop then last
         else
-          // Upgrade: scale the budget by stability (stable 2+ → 0.7×)
-          // and by score swing (drop > 30cp → 1.5×). The hard cap stays
-          // 1.5× of the unscaled budget so we don't blow past it.
-          val swing = math.abs(rootScore - lastScore)
-          val budgetScale: Double =
-            if stableSoFar >= 2 && swing < 30 then 0.7
-            else if swing > 30 then 1.5
-            else 1.0
-          val scaledBudget = (budgetMillis * budgetScale).toLong
-          elapsedMs + projectedNext > scaledBudget || elapsedMs > budgetMillis * 3 / 2
+          val iterStart = System.nanoTime()
+          val result = runAtDepth(d)
+          // A mid-iteration timeout leaves `result` from a partially searched
+          // tree — discard it and keep the last fully completed iteration.
+          if searchBufs.aborted then last.orElse(result)
+          else
+            val iterMs = (System.nanoTime() - iterStart) / 1_000_000L
+            val nextStable =
+              if result.isDefined && result == last && math.abs(rootScore - lastScore) < 30
+              then stableSoFar + 1
+              else 0
+            loop(d + 1, result.orElse(last), iterMs, rootScore, nextStable)
 
-      // Never return without a move when one exists. The early-exit
-      // conditions below (out of budget, or a mate already proven in the
-      // TT) may all be true on the FIRST iteration — `mateFound` reads a
-      // possibly-stale TT entry for the root, which is exactly the case
-      // when we're losing. Honouring it before any iteration has run
-      // would return `last` = None at a perfectly legal position, making
-      // the bot freeze/concede. So the soft stops only apply once we
-      // actually hold a move (`last.isDefined`); the depth cap is the
-      // only hard stop (and by then `last` is always defined, since the
-      // depth-1 search always yields a move at a legal position).
-      val softStop = (outOfBudget || mateFound) && last.isDefined
-      if d > MaxPly || softStop then last
-      else
-        val iterStart = System.nanoTime()
-        val result = runAtDepth(d)
-        val iterMs = (System.nanoTime() - iterStart) / 1_000_000L
-        val nextStable =
-          if result.isDefined && result == last && math.abs(rootScore - lastScore) < 30
-          then stableSoFar + 1
-          else 0
-        loop(d + 1, result.orElse(last), iterMs, rootScore, nextStable)
-
-    ZIO.succeed(loop(1, None, 0L, 0, 0))
+      try loop(1, None, 0L, 0, 0)
+      finally
+        // Disarm so a later fixed-depth search on this thread's buffers
+        // doesn't see a stale deadline and abort instantly.
+        searchBufs.deadlineNanos = Long.MaxValue
+        searchBufs.aborted = false
+    }
 
   /** Multi-PV: returns the top-K root moves with their scores in
     * descending order. Uses the sync path (single-thread) so the
@@ -678,12 +715,16 @@ private[engine] final class AlphaBetaSearch(
   ): List[(Move, Int)] =
     val capBuf   = bufs.captures(0)
     val quietBuf = bufs.quiets(0)
-    val (capCount, quietCount) = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
+    val moveCounts = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
+    val capCount   = (moveCounts >>> 32).toInt
+    val quietCount = moveCounts.toInt
     if capCount == 0 && quietCount == 0 then Nil
     else
       if useIncremental then incNet.refreshInto(bufs.accumulator, state.board)
       val rootHash = Zobrist.hash(state)
       val rootHistory = history + rootHash
+      val root = bufs.positions(0)
+      root.setFrom(state)
       val results = scala.collection.mutable.ArrayBuffer.empty[(Int, Int)]
       // Captures
       if capCount > 0 then
@@ -692,10 +733,10 @@ private[engine] final class AlphaBetaSearch(
         var i = capCount - 1
         while i >= 0 do
           val move = MoveInt.fromPacked(scored(i))
-          RulesAdapter.applyMoveInt(state, move).foreach { next =>
+          if root.copyMakeInto(bufs.positions(1), move) then
+            val next = bufs.positions(1)
             val score = -withAcc(bufs, state, next)(negamax(next, depth - 1, -Infinity, Infinity, ply = 1, rootHistory, bufs, prevMove = move))
             results += (move -> score)
-          }
           i -= 1
       // Quiets
       if quietCount > 0 then
@@ -704,10 +745,10 @@ private[engine] final class AlphaBetaSearch(
         var i = quietCount - 1
         while i >= 0 do
           val move = MoveInt.fromPacked(scored(i))
-          RulesAdapter.applyMoveInt(state, move).foreach { next =>
+          if root.copyMakeInto(bufs.positions(1), move) then
+            val next = bufs.positions(1)
             val score = -withAcc(bufs, state, next)(negamax(next, depth - 1, -Infinity, Infinity, ply = 1, rootHistory, bufs, prevMove = move))
             results += (move -> score)
-          }
           i -= 1
       results
         .sortBy(-_._2)
@@ -830,7 +871,9 @@ private[engine] final class AlphaBetaSearch(
     val rootBufs = acquireBufs()
     val capBuf   = rootBufs.captures(0)
     val quietBuf = rootBufs.quiets(0)
-    val (capCount, quietCount) = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
+    val moveCounts = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
+    val capCount   = (moveCounts >>> 32).toInt
+    val quietCount = moveCounts.toInt
     if capCount == 0 && quietCount == 0 then ZIO.none
     else
       val rootHash    = Zobrist.hash(state)
@@ -862,11 +905,12 @@ private[engine] final class AlphaBetaSearch(
 
       // Step 1: elder brother serial search.
       val elderMove = moves(0)
+      val root = rootBufs.positions(0)
+      root.setFrom(state)
       val elderScore: Int =
-        RulesAdapter.applyMoveInt(state, elderMove) match
-          case Some(next) =>
-            -negamax(next, depth - 1, -Infinity, Infinity, ply = 1, rootHistory, rootBufs, prevMove = elderMove)
-          case None       => -Infinity
+        if root.copyMakeInto(rootBufs.positions(1), elderMove) then
+          -negamax(rootBufs.positions(1), depth - 1, -Infinity, Infinity, ply = 1, rootHistory, rootBufs, prevMove = elderMove)
+        else -Infinity
 
       if total == 1 then ZIO.some(MoveInt.decode(elderMove))
       else
@@ -878,11 +922,12 @@ private[engine] final class AlphaBetaSearch(
             ZIO.succeed {
               val move = moves(idx)
               val bufs = acquireBufs()
+              val youngerRoot = bufs.positions(0)
+              youngerRoot.setFrom(state)
               val score: Int =
-                RulesAdapter.applyMoveInt(state, move) match
-                  case Some(next) =>
-                    -negamax(next, depth - 1, -Infinity, -elderScore, ply = 1, rootHistory, bufs, prevMove = move)
-                  case None       => -Infinity
+                if youngerRoot.copyMakeInto(bufs.positions(1), move) then
+                  -negamax(bufs.positions(1), depth - 1, -Infinity, -elderScore, ply = 1, rootHistory, bufs, prevMove = move)
+                else -Infinity
               (move, score)
             }
           }
@@ -967,7 +1012,9 @@ private[engine] final class AlphaBetaSearch(
   ): Option[Int] =
     val capBuf   = bufs.captures(0)
     val quietBuf = bufs.quiets(0)
-    val (capCount, quietCount) = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
+    val moveCounts = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
+    val capCount   = (moveCounts >>> 32).toInt
+    val quietCount = moveCounts.toInt
     if capCount == 0 && quietCount == 0 then None
     else
       // Build the incremental accumulator for this search root; every
@@ -975,6 +1022,8 @@ private[engine] final class AlphaBetaSearch(
       if useIncremental then incNet.refreshInto(bufs.accumulator, state.board)
       val rootHash = Zobrist.hash(state)
       val rootHistory = history + rootHash
+      val root = bufs.positions(0)
+      root.setFrom(state)
       var alpha = alphaInit
       val beta  = betaInit
       var bestScore = -Infinity
@@ -992,14 +1041,14 @@ private[engine] final class AlphaBetaSearch(
         var i = capCount - 1
         while i >= 0 && !cutoff do
           val move = MoveInt.fromPacked(scored(i))
-          RulesAdapter.applyMoveInt(state, move).foreach { next =>
+          if root.copyMakeInto(bufs.positions(1), move) then
+            val next = bufs.positions(1)
             val score = -withAcc(bufs, state, next)(negamax(next, depth - 1, -beta, -alpha, ply = 1, rootHistory, bufs, prevMove = move))
             if score > bestScore then
               bestScore = score
               best = move
             if score > alpha then alpha = score
             if alpha >= beta then cutoff = true
-          }
           i -= 1
 
       // Stage 2: quiets
@@ -1009,14 +1058,14 @@ private[engine] final class AlphaBetaSearch(
         var i = quietCount - 1
         while i >= 0 && !cutoff do
           val move = MoveInt.fromPacked(scored(i))
-          RulesAdapter.applyMoveInt(state, move).foreach { next =>
+          if root.copyMakeInto(bufs.positions(1), move) then
+            val next = bufs.positions(1)
             val score = -withAcc(bufs, state, next)(negamax(next, depth - 1, -beta, -alpha, ply = 1, rootHistory, bufs, prevMove = move))
             if score > bestScore then
               bestScore = score
               best = move
             if score > alpha then alpha = score
             if alpha >= beta then cutoff = true
-          }
           i -= 1
 
       // Aspiration support — stamp the root TT so the outer ID loop
@@ -1028,8 +1077,20 @@ private[engine] final class AlphaBetaSearch(
         if bestScore <= alphaInit then Kind.Upper
         else if bestScore >= betaInit then Kind.Lower
         else Kind.Exact
-      tt.put(rootHash, Entry(depth, bestScore, kind, Some(MoveInt.decode(best))))
+      if !bufs.aborted then
+        tt.put(rootHash, Entry(depth, bestScore, kind, Some(MoveInt.decode(best))))
       Some(best)
+
+  /** Has `hash` already occurred on the current search path (plies 1..ply-1)?
+    * The root (ply 0) + pre-search game positions live in the threaded Set;
+    * this scans only the in-tree ancestors — allocation-free, replacing the
+    * immutable `Set[Long]` that was extended (and boxed) at every node. */
+  private def pathRepeat(bufs: SearchBufs, ply: Int, hash: Long): Boolean =
+    var i = 1
+    while i < ply do
+      if bufs.pathHashes(i) == hash then return true
+      i += 1
+    false
 
   /** Negamax core.
     *
@@ -1053,7 +1114,7 @@ private[engine] final class AlphaBetaSearch(
     * search line would corrupt the result.
     */
   private def negamax(
-      state: GameState,
+      state: SearchPos,
       depth: Int,
       alpha: Int,
       beta: Int,
@@ -1063,11 +1124,22 @@ private[engine] final class AlphaBetaSearch(
       prevMove: Int,
       nullAllowed: Boolean = true,
   ): Int =
+    // Mid-search time check (only active under a budget). Tick every node;
+    // every 2048th, consult the wall clock. Once past the deadline, flip the
+    // per-thread abort flag and unwind immediately — the returned value is a
+    // throwaway (the root discards the whole aborted iteration). Inert at
+    // fixed depth, where deadlineNanos == Long.MaxValue.
+    if bufs.deadlineNanos != Long.MaxValue then
+      bufs.nodeTick += 1
+      if (bufs.nodeTick & 2047) == 0 && System.nanoTime() >= bufs.deadlineNanos then
+        bufs.aborted = true
+      if bufs.aborted then return alpha
     if state.halfmoveClock >= 100 then 0
     else
       val hash = Zobrist.hash(state)
-      if history.contains(hash) then 0
+      if history.contains(hash) || pathRepeat(bufs, ply, hash) then 0
       else
+        bufs.pathHashes(ply) = hash
         probeTt(hash, depth, alpha, beta) match
           case Some(score) => score
           case None =>
@@ -1168,10 +1240,11 @@ private[engine] final class AlphaBetaSearch(
               else if razorScore != Int.MinValue && razorScore < alpha then razorScore
               else if canNullMove then
                 val r = if iirDepth >= 6 then 3 else 2
-                val nullState = nullMoveState(state)
+                val nullChild = bufs.positions(ply + 1)
+                state.copyNullMoveInto(nullChild)
                 val nullScore = -negamax(
-                  nullState, iirDepth - 1 - r, -beta, -beta + 1,
-                  ply + 1, history + hash, bufs, prevMove = NoKiller,
+                  nullChild, iirDepth - 1 - r, -beta, -beta + 1,
+                  ply + 1, history, bufs, prevMove = NoKiller,
                   nullAllowed = false,
                 )
                 if nullScore >= beta then
@@ -1224,7 +1297,7 @@ private[engine] final class AlphaBetaSearch(
     * all legal moves. Extracted so [[negamax]]'s NMP path can fall
     * through to it on `nullScore < beta`. */
   private def fullSearch(
-      state: GameState,
+      state: SearchPos,
       hash: Long,
       depth: Int,
       alpha: Int,
@@ -1236,39 +1309,26 @@ private[engine] final class AlphaBetaSearch(
   ): Int =
     val capBuf   = bufs.captures(ply)
     val quietBuf = bufs.quiets(ply)
-    val (capCount, quietCount) =
-      RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
+    val moveCounts = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
+    val capCount   = (moveCounts >>> 32).toInt
+    val quietCount = moveCounts.toInt
     if capCount == 0 && quietCount == 0 then terminalScore(state, ply)
     else
       searchMoves(
         state, capBuf, capCount, quietBuf, quietCount,
-        depth, alpha, beta, ply, hash, history + hash, bufs, prevMove,
+        depth, alpha, beta, ply, hash, history, bufs, prevMove,
       )
 
   /** Side-to-move has at least one knight/bishop/rook/queen — the
     * cheap proxy for "this isn't a pure king-pawn endgame, NMP is
     * unlikely to mis-fire on zugzwang here". Inlined to avoid the
     * Color branch on every NMP probe. */
-  private def hasNonPawnMaterial(state: GameState): Boolean =
+  private def hasNonPawnMaterial(state: PositionView): Boolean =
     val b = state.board
     if state.activeColor == Color.White then
       (b.knightsW.raw | b.bishopsW.raw | b.rooksW.raw | b.queensW.raw) != 0L
     else
       (b.knightsB.raw | b.bishopsB.raw | b.rooksB.raw | b.queensB.raw) != 0L
-
-  /** Apply a null move — pass the turn without actually moving.
-    * Used by [[nullMovePruningEnabled]] to test whether the
-    * position is already so good that giving the opponent a free
-    * move still leaves us with ≥ β. */
-  private def nullMoveState(state: GameState): GameState =
-    state.copy(
-      activeColor     = if state.activeColor == Color.White then Color.Black else Color.White,
-      enPassantTarget = None,
-      halfmoveClock   = state.halfmoveClock + 1,
-      fullmoveNumber  = if state.activeColor == Color.Black then state.fullmoveNumber + 1
-                        else state.fullmoveNumber,
-      inCheck         = false,
-    )
 
   // Multi-cut pruning constants. Test the top-C captures at
   // depth-1-R; require M cutoffs to short-circuit. Conservative
@@ -1351,7 +1411,7 @@ private[engine] final class AlphaBetaSearch(
 
   private inline def corrSlot(key: Long): Int = (key & CorrHistMask).toInt
 
-  private inline def corrhistCorrection(state: GameState): Int =
+  private inline def corrhistCorrection(state: PositionView): Int =
     var corr = 0
     if pawnCorrHistEnabled then
       corr += pawnCorrHist.get()(corrSlot(Zobrist.pawnHash(state))) / CorrHistScale
@@ -1359,7 +1419,7 @@ private[engine] final class AlphaBetaSearch(
       corr += materialCorrHist.get()(corrSlot(Zobrist.materialKey(state))) / CorrHistScale
     corr
 
-  private def updateCorrhist(state: GameState, staticEval: Int, searchScore: Int, depth: Int): Unit =
+  private def updateCorrhist(state: PositionView, staticEval: Int, searchScore: Int, depth: Int): Unit =
     // Never train on mate scores — the (searchScore - staticEval)
     // delta is enormous (~30000 cp) and would slam the slot to the
     // clamp, corrupting the eval for every position sharing this
@@ -1385,7 +1445,7 @@ private[engine] final class AlphaBetaSearch(
     * The corrhist update path reads this directly so the recorded
     * delta is `search - rawEval`, not `search - (rawEval + correction)`
     * (which would converge to half the desired correction). */
-  private inline def leafEvalRaw(state: GameState): Int =
+  private inline def leafEvalRaw(state: PositionView): Int =
     // Incremental path: read the accumulator the search has been
     // maintaining on this thread (acquireBufs returns the same
     // thread-local SearchBufs the search loop holds). Off → full eval.
@@ -1397,7 +1457,7 @@ private[engine] final class AlphaBetaSearch(
   /** Static evaluation at a leaf node, normalised to side-to-move POV
     * and corrected by the active correction-history tables. The
     * Evaluator hands back white-POV centipawns; flip on black. */
-  private def leafEval(state: GameState): Int =
+  private def leafEval(state: PositionView): Int =
     val stm = leafEvalRaw(state)
     if pawnCorrHistEnabled || materialCorrHistEnabled then stm + corrhistCorrection(state) else stm
 
@@ -1412,7 +1472,7 @@ private[engine] final class AlphaBetaSearch(
     * position is "quiet" (no more captures, not in check) before
     * returning a static eval. */
   private def leafScore(
-      state: GameState,
+      state: SearchPos,
       alpha: Int,
       beta: Int,
       ply: Int,
@@ -1438,7 +1498,7 @@ private[engine] final class AlphaBetaSearch(
     * shouldn't shadow real depth-≥1 entries written by the main
     * negamax loop. */
   private def qSearch(
-      state: GameState,
+      state: SearchPos,
       alpha: Int,
       beta: Int,
       ply: Int,
@@ -1449,8 +1509,9 @@ private[engine] final class AlphaBetaSearch(
       val inCheck  = RulesAdapter.isInCheck(state)
       val capBuf   = bufs.captures(ply)
       val quietBuf = bufs.quiets(ply)
-      val (capCount, quietCount) =
-        RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
+      val moveCounts = RulesAdapter.fillCapturesAndQuiets(state, capBuf, quietBuf, underPromotionEnabled)
+      val capCount   = (moveCounts >>> 32).toInt
+      val quietCount = moveCounts.toInt
 
       if capCount == 0 && quietCount == 0 then
         // No legal moves: mate if in check, stalemate (draw) otherwise.
@@ -1491,12 +1552,12 @@ private[engine] final class AlphaBetaSearch(
                 val promoBonus = if isPromo then DeltaPromoBonus else 0
                 deltaBase + victimVal + promoBonus + DeltaSafetyMargin < alphaCur
             if !skipByDelta then
-              RulesAdapter.applyMoveInt(state, move).foreach { next =>
+              if state.copyMakeInto(bufs.positions(ply + 1), move) then
+                val next = bufs.positions(ply + 1)
                 val score = -withAcc(bufs, state, next)(qSearch(next, -beta, -alphaCur, ply + 1, bufs))
                 if score > bestScore then bestScore = score
                 if score > alphaCur then alphaCur = score
                 if alphaCur >= beta then cutoff = true
-              }
             i -= 1
 
         // Under check we also need quiet escapes — blocking the
@@ -1505,12 +1566,12 @@ private[engine] final class AlphaBetaSearch(
           var i = 0
           while i < quietCount && !cutoff do
             val move = quietBuf(i)
-            RulesAdapter.applyMoveInt(state, move).foreach { next =>
+            if state.copyMakeInto(bufs.positions(ply + 1), move) then
+              val next = bufs.positions(ply + 1)
               val score = -withAcc(bufs, state, next)(qSearch(next, -beta, -alphaCur, ply + 1, bufs))
               if score > bestScore then bestScore = score
               if score > alphaCur then alphaCur = score
               if alphaCur >= beta then cutoff = true
-            }
             i += 1
 
         bestScore
@@ -1522,7 +1583,7 @@ private[engine] final class AlphaBetaSearch(
       moveBuf: Array[Int],
       count: Int,
       scoredOut: Array[Long],
-      state: GameState,
+      state: PositionView,
   ): Unit =
     var i = 0
     while i < count do
@@ -1541,14 +1602,15 @@ private[engine] final class AlphaBetaSearch(
   /** Score for "the side to move has no legal moves". In-check → mate
     * (scaled by `ply` so shorter mates beat longer ones); not in check
     * → stalemate (draw). */
-  private def terminalScore(state: GameState, ply: Int): Int =
+  private def terminalScore(state: PositionView, ply: Int): Int =
     if RulesAdapter.isInCheck(state) then -(MateScore - ply)
     else 0
 
   /** Iterate candidates with α-β cutoff, write the result to the TT,
-    * return the best score. `historyWithThis` already contains the
-    * current node's Zobrist so children can detect repetitions
-    * against it.
+    * return the best score. `history` is the game history (+ root)
+    * carried unchanged down the tree; the current node's own Zobrist
+    * rides in `bufs.pathHashes(ply)` (written by [[negamax]]), so
+    * children detect repetitions against it via the path stack.
     *
     * Two-stage lazy move generation:
     *   - Stage 1: captures (MVV-LVA ordered via [[orderMovesInto]]).
@@ -1567,7 +1629,7 @@ private[engine] final class AlphaBetaSearch(
     * since captures are already ordered by MVV-LVA and don't
     * benefit from cross-node history reinforcement. */
   private def searchMoves(
-      state: GameState,
+      state: SearchPos,
       capBuf: Array[Int],
       capCount: Int,
       quietBuf: Array[Int],
@@ -1577,7 +1639,7 @@ private[engine] final class AlphaBetaSearch(
       beta: Int,
       ply: Int,
       hash: Long,
-      historyWithThis: Set[Long],
+      history: Set[Long],
       bufs: SearchBufs,
       prevMove: Int,
   ): Int =
@@ -1616,13 +1678,13 @@ private[engine] final class AlphaBetaSearch(
       var j = capCount - 1
       while j >= 0 && tested < MultiCutC && cutsFound < MultiCutM && !cutoff do
         val move = MoveInt.fromPacked(scored(j))
-        RulesAdapter.applyMoveInt(state, move).foreach { next =>
+        if state.copyMakeInto(bufs.positions(ply + 1), move) then
+          val next = bufs.positions(ply + 1)
           val score = -withAcc(bufs, state, next)(negamax(
             next, depth - 1 - MultiCutR, -beta, -beta + 1,
-            ply + 1, historyWithThis, bufs, move,
+            ply + 1, history, bufs, move,
           ))
           if score >= beta then cutsFound += 1
-        }
         tested += 1
         j -= 1
       if cutsFound >= MultiCutM then
@@ -1646,17 +1708,17 @@ private[engine] final class AlphaBetaSearch(
       var i = capCount - 1
       while i >= 0 && !cutoff do
         val move = MoveInt.fromPacked(scored(i))
-        RulesAdapter.applyMoveInt(state, move).foreach { next =>
+        if state.copyMakeInto(bufs.positions(ply + 1), move) then
+          val next = bufs.positions(ply + 1)
           // Captures don't get reduced (always "loud" by definition).
           val childDepth = depth - 1 + (if move == seMove then seBonus else 0)
           if multiPlyContinuationEnabled then bufs.recursionMove(ply) = move
-          val score = -withAcc(bufs, state, next)(negamax(next, childDepth, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move))
+          val score = -withAcc(bufs, state, next)(negamax(next, childDepth, -beta, -alphaCur, ply + 1, history, bufs, move))
           if score > bestScore then
             bestScore = score
             bestMove = move
           if score > alphaCur then alphaCur = score
           if alphaCur >= beta then cutoff = true
-        }
         moveIndex += 1
         i -= 1
 
@@ -1726,7 +1788,8 @@ private[engine] final class AlphaBetaSearch(
           // Tick moveIndex / i below so the loop progresses.
           ()
         else
-          RulesAdapter.applyMoveInt(state, move).foreach { next =>
+          if state.copyMakeInto(bufs.positions(ply + 1), move) then
+            val next = bufs.positions(ply + 1)
             val reduce =
               depth >= LmrMinDepth &&
                 moveIndex >= LmrMoveThreshold &&
@@ -1737,9 +1800,9 @@ private[engine] final class AlphaBetaSearch(
             val searchDepth = if reduce then baseDepth - 1 else baseDepth
             if multiPlyContinuationEnabled then bufs.recursionMove(ply) = move
             val score = withAcc(bufs, state, next) {
-              var s = -negamax(next, searchDepth, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
+              var s = -negamax(next, searchDepth, -beta, -alphaCur, ply + 1, history, bufs, move)
               if reduce && s > alphaCur then
-                s = -negamax(next, baseDepth, -beta, -alphaCur, ply + 1, historyWithThis, bufs, move)
+                s = -negamax(next, baseDepth, -beta, -alphaCur, ply + 1, history, bufs, move)
               s
             }
             if score > bestScore then
@@ -1778,7 +1841,6 @@ private[engine] final class AlphaBetaSearch(
                 state.board.get(positionAt(prev2To)).foreach { p =>
                   continuationTable2(p.pieceType.ordinal * 64 + prev2To) = move
                 }
-          }
         moveIndex += 1
         i -= 1
 
@@ -1787,7 +1849,9 @@ private[engine] final class AlphaBetaSearch(
       else if bestScore >= beta then Kind.Lower
       else Kind.Exact
     val bestMoveOpt = if bestMove == NoKiller then None else Some(MoveInt.decode(bestMove))
-    tt.put(hash, Entry(depth, bestScore, kind, bestMoveOpt))
+    // Don't cache a node whose children were cut short by a budget abort —
+    // its bestScore was computed from throwaway sentinels.
+    if !bufs.aborted then tt.put(hash, Entry(depth, bestScore, kind, bestMoveOpt))
     // Train correction history on reliable signals only — Exact-bound
     // results where the search saw all moves. Cutoffs (Lower) and
     // all-moves-failed-low (Upper) misrepresent the position's true
@@ -1815,7 +1879,7 @@ private[engine] final class AlphaBetaSearch(
       moveBuf: Array[Int],
       count: Int,
       scoredOut: Array[Long],
-      state: GameState,
+      state: PositionView,
       hash: Long,
       ply: Int,
       prevMove: Int,
@@ -1879,7 +1943,7 @@ private[engine] final class AlphaBetaSearch(
     *                         worst possible losing trade and below
     *                         every quiet. Tried last. */
   private def scoreMove(
-      state: GameState,
+      state: PositionView,
       move: Int,
       ttBest: Int,
       k0: Int,

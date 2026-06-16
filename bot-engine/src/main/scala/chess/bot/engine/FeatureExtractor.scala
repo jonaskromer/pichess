@@ -1,7 +1,7 @@
 package chess.bot.engine
 
 import chess.bot.engine.internal.PawnMasks
-import chess.model.board.GameState
+import chess.model.board.PositionView
 import chess.model.piece.Color
 import chess.model.rules.BitboardAttacks
 
@@ -17,7 +17,7 @@ import chess.model.rules.BitboardAttacks
   * extractors or extending this one.
   */
 trait FeatureExtractor:
-  def features(state: GameState): Map[String, Int]
+  def features(state: PositionView): Map[String, Int]
 
 object FeatureExtractor:
 
@@ -190,7 +190,7 @@ object FeatureExtractor:
   /** Mutates a pre-allocated `Array[Int]`. Zero allocation per
     * call. The caller is responsible for clearing the array before
     * each fill ([[FullFeatures.fillArray]] does so). */
-  private[engine] final class ArraySink(val arr: Array[Int]) extends FeatureSink:
+  private[engine] final class ArraySink(var arr: Array[Int]) extends FeatureSink:
     def add(idx: Int, value: Int): Unit = arr(idx) += value
 
   /** Accumulates into a `mutable.HashMap[String, Int]` keyed by the
@@ -207,7 +207,7 @@ object FeatureExtractor:
       acc(k) = acc.getOrElse(k, 0) + value
 
   private object MaterialFeatures extends FeatureExtractor:
-    def features(state: GameState): Map[String, Int] =
+    def features(state: PositionView): Map[String, Int] =
       val b = state.board
       Map(
         "pawn"   -> (b.pawnsW.popCount   - b.pawnsB.popCount),
@@ -219,22 +219,31 @@ object FeatureExtractor:
 
   private[engine] object FullFeatures extends FeatureExtractor:
 
-    def features(state: GameState): Map[String, Int] =
+    def features(state: PositionView): Map[String, Int] =
       val sink = new MapSink
       compute(state, sink)
       sink.acc.toMap
+
+    /** Per-thread reusable [[ArraySink]] — pooled so the hot eval loop
+      * doesn't allocate a wrapper per call. Its backing array is the
+      * caller's `out`, swapped in on each [[fillArray]]; safe because
+      * eval is synchronous and non-reentrant within a search thread. */
+    private val sinkLocal: ThreadLocal[ArraySink] =
+      ThreadLocal.withInitial(() => new ArraySink(null))
 
     /** Zero-allocation fast path: clears `out`, then fills feature
       * values at canonical indices. Used by [[ArrayTaperedEvaluator]]
       * on the search hot loop. The same geometric helpers as the
       * Map path — drift between the two is impossible. */
-    def fillArray(state: GameState, out: Array[Int]): Unit =
+    def fillArray(state: PositionView, out: Array[Int]): Unit =
       java.util.Arrays.fill(out, 0)
-      compute(state, new ArraySink(out))
+      val sink = sinkLocal.get()
+      sink.arr = out
+      compute(state, sink)
 
     /** Shared compute path. Writes to whichever sink the caller
       * supplies. */
-    private def compute(state: GameState, sink: FeatureSink): Unit =
+    private def compute(state: PositionView, sink: FeatureSink): Unit =
       val b = state.board
 
       addMaterial(sink, b)
@@ -250,21 +259,21 @@ object FeatureExtractor:
 
     // ── Material + PST + bishop pair (existing features) ──────────
 
-    private def addMaterial(sink: FeatureSink, b: chess.model.board.BoardState): Unit =
+    private def addMaterial(sink: FeatureSink, b: chess.model.board.BoardLike): Unit =
       sink.add(FeatureIndex.Pawn,   b.pawnsW.popCount   - b.pawnsB.popCount)
       sink.add(FeatureIndex.Knight, b.knightsW.popCount - b.knightsB.popCount)
       sink.add(FeatureIndex.Bishop, b.bishopsW.popCount - b.bishopsB.popCount)
       sink.add(FeatureIndex.Rook,   b.rooksW.popCount   - b.rooksB.popCount)
       sink.add(FeatureIndex.Queen,  b.queensW.popCount  - b.queensB.popCount)
 
-    private def addPstAllPieces(sink: FeatureSink, b: chess.model.board.BoardState): Unit =
+    private def addPstAllPieces(sink: FeatureSink, b: chess.model.board.BoardLike): Unit =
       addPst(sink, FeatureIndex.PstPawnBase,   b.pawnsW.raw,   b.pawnsB.raw)
       addPst(sink, FeatureIndex.PstKnightBase, b.knightsW.raw, b.knightsB.raw)
       addPst(sink, FeatureIndex.PstBishopBase, b.bishopsW.raw, b.bishopsB.raw)
       addPst(sink, FeatureIndex.PstRookBase,   b.rooksW.raw,   b.rooksB.raw)
       addPst(sink, FeatureIndex.PstQueenBase,  b.queensW.raw,  b.queensB.raw)
 
-    private def addBishopPair(sink: FeatureSink, b: chess.model.board.BoardState): Unit =
+    private def addBishopPair(sink: FeatureSink, b: chess.model.board.BoardLike): Unit =
       val whitePair = if b.bishopsW.popCount >= 2 then 1 else 0
       val blackPair = if b.bishopsB.popCount >= 2 then 1 else 0
       sink.add(FeatureIndex.BishopPair, whitePair - blackPair)
@@ -297,7 +306,7 @@ object FeatureExtractor:
     // learns ~3-5 cp per knight/bishop move, ~2 cp per rook/queen
     // move (queens have lots of moves so each is worth less).
 
-    private def addMobility(sink: FeatureSink, b: chess.model.board.BoardState): Unit =
+    private def addMobility(sink: FeatureSink, b: chess.model.board.BoardLike): Unit =
       val wOcc = b.whitePieces.raw
       val bOcc = b.blackPieces.raw
       val occ  = b.occupancy.raw
@@ -361,7 +370,7 @@ object FeatureExtractor:
     // Connected: pawn with at least one friendly pawn on an adjacent
     //            file within ±1 rank (defender or shoulder-mate).
 
-    private def addPawnStructure(sink: FeatureSink, b: chess.model.board.BoardState): Unit =
+    private def addPawnStructure(sink: FeatureSink, b: chess.model.board.BoardLike): Unit =
       val wPawns = b.pawnsW.raw
       val bPawns = b.pawnsB.raw
       val cache = PawnStructureCache.local.get()
@@ -463,7 +472,7 @@ object FeatureExtractor:
     //                 intersects the own king's zone, signed so
     //                 positive = white attacks more.
 
-    private def addKingSafety(sink: FeatureSink, b: chess.model.board.BoardState): Unit =
+    private def addKingSafety(sink: FeatureSink, b: chess.model.board.BoardLike): Unit =
       val wKingBb = b.kingW.raw
       val bKingBb = b.kingB.raw
       // Empty-king positions can occur in some test fixtures — guard
@@ -487,7 +496,7 @@ object FeatureExtractor:
       * covers multiple zone squares still adds 1. Cheap because the
       * iteration is over piece-typed bitboards. */
     private def kingZoneAttackers(
-        b: chess.model.board.BoardState,
+        b: chess.model.board.BoardLike,
         zone: Long,
         byWhite: Boolean,
     ): Int =
@@ -516,7 +525,7 @@ object FeatureExtractor:
 
     // ── Rook activity ────────────────────────────────────────────
 
-    private def addRookActivity(sink: FeatureSink, b: chess.model.board.BoardState): Unit =
+    private def addRookActivity(sink: FeatureSink, b: chess.model.board.BoardLike): Unit =
       val wPawns = b.pawnsW.raw
       val bPawns = b.pawnsB.raw
       val wPack = rookFileBonuses(b.rooksW.raw, wPawns, bPawns)
@@ -559,7 +568,7 @@ object FeatureExtractor:
     // the opponent's half (rank ≥ 5 for white, ≤ 4 for black) so
     // we don't credit knights in their own territory.
 
-    private def addKnightOutpost(sink: FeatureSink, b: chess.model.board.BoardState): Unit =
+    private def addKnightOutpost(sink: FeatureSink, b: chess.model.board.BoardLike): Unit =
       val whiteOutposts = countOutposts(
         knights      = b.knightsW.raw,
         ownPawns     = b.pawnsW.raw,
@@ -603,7 +612,7 @@ object FeatureExtractor:
     // the classic "loose piece" pattern. Three buckets by attacker
     // type. Diff is `bAttacked - wAttacked` so a positive feature
     // value means BLACK has more pieces in danger (favours white).
-    private def addThreats(sink: FeatureSink, b: chess.model.board.BoardState): Unit =
+    private def addThreats(sink: FeatureSink, b: chess.model.board.BoardLike): Unit =
       val occ = b.occupancy.raw
       val wPawnAttacks = BitboardAttacks.whitePawnAttacksFrom(b.pawnsW.raw)
       val bPawnAttacks = BitboardAttacks.blackPawnAttacksFrom(b.pawnsB.raw)

@@ -1,7 +1,7 @@
 package chess.bot.engine
 
 import chess.bot.engine.FeatureExtractor.{FeatureIndex, FullFeatures}
-import chess.model.board.GameState
+import chess.model.board.{GameState, PositionView}
 
 /** Zero-allocation tapered evaluator for the search hot path.
   *
@@ -44,7 +44,7 @@ final class ArrayTaperedEvaluator private (
   private val featureBuf: ThreadLocal[Array[Int]] =
     ThreadLocal.withInitial(() => new Array[Int](FeatureIndex.Count))
 
-  def evaluate(state: GameState): Int =
+  def evaluate(state: PositionView): Int =
     val featureBuf = this.featureBuf.get()
     FullFeatures.fillArray(state, featureBuf)
     val phase = GamePhase.compute(state.board)

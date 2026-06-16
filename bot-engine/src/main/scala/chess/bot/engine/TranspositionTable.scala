@@ -1,6 +1,6 @@
 package chess.bot.engine
 
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.{AtomicInteger, AtomicReferenceArray}
 
 import chess.model.board.Move
 
@@ -18,11 +18,15 @@ import chess.model.board.Move
   * returned directly. On miss the search runs normally and writes the
   * result back at the end.
   *
-  * The default `inMemory` impl is a [[ConcurrentHashMap]] capped at
-  * `maxEntries`; on overflow the oldest-inserted half is evicted in a
-  * single sweep. This is naive vs the classic two-bucket replacement
-  * schemes used by competitive engines, but at a few-megabyte cap it
-  * works perfectly well for a starter bot and keeps the code readable.
+  * The default `inMemory` impl is a fixed-size, power-of-two
+  * direct-mapped table (slot = `hash & mask`) over an
+  * [[AtomicReferenceArray]]. Each slot pairs the full Zobrist key with
+  * its entry, so a lookup is one atomic read plus a key compare — no
+  * per-probe key boxing (the old `ConcurrentHashMap[Long, Entry]`
+  * autoboxed the `Long` key on every get/put) and no torn reads under
+  * the parallel (LazySMP) search. Collisions replace under the same
+  * depth-preferred / aging policy as a same-key store; memory is
+  * bounded by the fixed slot count, so there is no eviction sweep.
   */
 trait TranspositionTable:
   def get(hash: Long): Option[TranspositionTable.Entry]
@@ -69,55 +73,66 @@ object TranspositionTable:
       generation: Int = 0,
   )
 
-  /** Default [[ConcurrentHashMap]]-backed table.
+  /** Default fixed-size direct-mapped table.
     *
-    * `maxEntries` caps the underlying map size; when exceeded, the
-    * eviction sweep drops every entry whose hash mod 2 matches a flag
-    * we toggle each sweep, halving the table in O(n). That's coarser
-    * than LRU but doesn't need an access-order data structure — the
-    * point is to bound memory, not to be optimally clever.
+    * `maxEntries` is rounded up to the next power of two to give the
+    * slot count; the index is `hash & (slots - 1)`. Memory is bounded
+    * by that slot count — there is no eviction sweep; a store into an
+    * occupied slot (same key or a colliding different key) replaces
+    * under the depth-preferred / aging policy below.
     */
   def inMemory(maxEntries: Int): TranspositionTable =
-    new ConcurrentHashMapTable(maxEntries)
+    new ArrayTable(maxEntries)
 
-  private final class ConcurrentHashMapTable(maxEntries: Int)
-      extends TranspositionTable:
-    private val table = new ConcurrentHashMap[Long, Entry](maxEntries * 2)
-    @volatile private var evictParity: Long = 0L
+  /** One occupied slot: the key it was stored under, plus its entry.
+    * The key lives here (not in [[Entry]]) so `Entry` equality stays
+    * key-agnostic for callers/tests and the search's `Entry(...)`
+    * construction needs no change. Immutable, so an
+    * [[AtomicReferenceArray]] read never sees a torn (key, entry) pair
+    * under the parallel search. */
+  private final class Slot(val key: Long, val entry: Entry)
+
+  private final class ArrayTable(maxEntries: Int) extends TranspositionTable:
+    private val slotCount: Int =
+      var c = 1
+      while c < math.max(1, maxEntries) do c <<= 1
+      c
+    private val mask  = slotCount - 1
+    private val slots = new AtomicReferenceArray[Slot](slotCount)
+    private val count = new AtomicInteger(0)
     @volatile private var generation: Int = 0
     @volatile private var agingEnabled: Boolean = false
 
     def get(hash: Long): Option[Entry] =
-      Option(table.get(hash))
+      val s = slots.get((hash & mask).toInt)
+      // Key compare guards against a slot collision returning another
+      // position's entry — a direct-mapped table maps many hashes to
+      // one slot, so this verification is what makes lookups sound.
+      if s != null && s.key == hash then Some(s.entry) else None
 
     def put(hash: Long, entry: Entry): Unit =
-      // Depth-preferred replacement: a shallower-depth entry MUST
-      // NOT overwrite a deeper one. Without this guard, iterative
-      // deepening was destructive — depth-1 entries from each
-      // iteration's first pass would clobber the depth-N entries
-      // left over from prior moves, and the supposedly "warm" TT
-      // ended up colder than running at depth N directly. Allowing
-      // equal-depth replacement keeps the freshest score when the
-      // same position is revisited at the same depth.
-      //
-      // With aging ON: a fresh-generation entry always wins over a
-      // stale-generation one, regardless of depth. Stale entries
-      // are from prior searches that scored a different game
-      // position; their depth is irrelevant for the current root.
-      // Only pay the `.copy()` allocation when aging is on and the
-      // caller didn't pre-tag the entry. The aging-off path stays
-      // identical to the historical zero-allocation put.
+      // Stamp the current generation when aging is on and the caller
+      // didn't pre-tag — one `.copy()` only on that path; the aging-off
+      // path stays allocation-equal to the historical put.
       val tagged =
         if agingEnabled && entry.generation == 0 then entry.copy(generation = generation)
         else entry
-      val existing = table.get(hash)
+      val idx      = (hash & mask).toInt
+      val existing = slots.get(idx)
+      // Replacement policy — identical for a same-key refresh and a
+      // different-key collision. A fresh-generation entry always wins
+      // (aging ON); otherwise keep the deeper search (depth-preferred),
+      // so a shallow probe can't evict a valuable deep entry. Without
+      // depth-preference, iterative deepening was self-defeating: each
+      // iteration's depth-1 first pass clobbered the deep entries left
+      // by prior moves.
       val accept =
         if existing == null then true
-        else if agingEnabled && tagged.generation != existing.generation then true
-        else tagged.depth >= existing.depth
+        else if agingEnabled && tagged.generation != existing.entry.generation then true
+        else tagged.depth >= existing.entry.depth
       if accept then
-        table.put(hash, tagged)
-        if table.size > maxEntries then evict()
+        slots.set(idx, new Slot(hash, tagged))
+        if existing == null then count.incrementAndGet()
 
     override def bumpGeneration(): Unit =
       generation = (generation + 1) & 0xff
@@ -125,18 +140,11 @@ object TranspositionTable:
     override def setAgingEnabled(enabled: Boolean): Unit =
       agingEnabled = enabled
 
-    def size: Int = table.size
+    def size: Int = count.get()
 
-    def clear(): Unit = table.clear()
-
-    /** Drop every key whose low bit matches the current sweep parity,
-      * then flip the parity. Sweeps alternate odd/even hashes so the
-      * eviction set rotates and we don't keep dropping the same half.
-      */
-    private def evict(): Unit =
-      val parity = evictParity
-      val it = table.keys()
-      while it.hasMoreElements do
-        val k = it.nextElement()
-        if (k & 1L) == parity then table.remove(k)
-      evictParity = parity ^ 1L
+    def clear(): Unit =
+      var i = 0
+      while i < slotCount do
+        slots.set(i, null)
+        i += 1
+      count.set(0)

@@ -2,7 +2,7 @@ package chess.model.rules
 
 import scala.util.Random
 
-import chess.model.board.{GameState, Position}
+import chess.model.board.{Position, PositionView}
 import chess.model.piece.{Color, Piece}
 
 /** Zobrist hashing for chess positions.
@@ -81,7 +81,7 @@ object Zobrist:
     * or `inCheck` — matching the contract of
     * [[chess.codec.FenSerializer.positionKey]].
     */
-  def hash(state: GameState): Long =
+  def hash(state: PositionView): Long =
     // Walk each of the 12 piece bitboards via primitive bit-iteration
     // instead of `state.board.foldLeft { case (acc, (pos, piece)) => … }`.
     // The foldLeft version constructed a Tuple3 + boxed Long
@@ -125,7 +125,7 @@ object Zobrist:
     * one search subtree, giving the corrhist signal enough
     * accumulations to converge.
     */
-  def pawnHash(state: GameState): Long =
+  def pawnHash(state: PositionView): Long =
     val bs = state.board
     hashBits(bs.pawnsW.raw, pieces(5)) ^ hashBits(bs.pawnsB.raw, pieces(11))
 
@@ -135,7 +135,7 @@ object Zobrist:
     * always returns the same Long, and different balances are very
     * unlikely to collide. Used as the second correction-history
     * index alongside [[pawnHash]]. */
-  def materialKey(state: GameState): Long =
+  def materialKey(state: PositionView): Long =
     val bs = state.board
     // 8 piece counts (skip kings — always 1 each) × 5 bits each = 40 bits.
     // Bishops sometimes exceed 4 (under-promotion), allow 5 bits to be safe.

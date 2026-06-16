@@ -54,10 +54,10 @@ object EngineBundle:
       * then HCE if any member is missing. */
     case NnueEns
     /** HCE + single-NNUE blend (see [[HybridEvaluator]]), mixed at
-      * `hybridAlpha` (≈0.3). The strongest option: the Stockfish-
-      * distilled NNUE is +17 Elo vs HCE standalone, and a 0.3 blend
-      * (HCE backbone + NNUE correction) beats pure HCE by ~+424 Elo
-      * at depth 4. Falls back to pure HCE if the NNUE resource is
+      * `hybridAlpha` (≈0.4 after the depth-6 re-tune). The strongest
+      * option: the Stockfish-distilled NNUE is +17 Elo vs HCE standalone,
+      * and the HCE-backbone-plus-NNUE-correction blend beats pure HCE by
+      * a wide margin. Falls back to pure HCE if the NNUE resource is
       * missing. */
     case Hybrid
 
@@ -80,18 +80,20 @@ object EngineBundle:
       tablebaseOracle: Option[Search] = None,
       tablebasePieceLimit: Int = 5,
       endgameHeuristicsEnabled: Boolean = false,
-      // Mixing weight on the NNUE when `evalSource = Hybrid`. With the
-      // Stockfish-distilled net (commit c6849ec) the depth-4 A/B
-      // optimum is α≈0.3 (+424 Elo vs pure HCE; broad strong plateau
-      // 0.3–0.5). A smaller NNUE correction on the HCE backbone beats
-      // a heavier blend even though the NNUE is now strong standalone.
-      hybridAlpha: Double = 0.3,
+      // Mixing weight on the NNUE when `evalSource = Hybrid`. The depth-4
+      // A/B optimum was α≈0.3, but a re-tune at depth 6 (the production
+      // search depth) shifts the optimum HIGHER: α 0.4→0.6 beats 0.3→0.5
+      // by +35 Elo (800g self-play, 3.5σ) AND +21 Elo vs full-strength
+      // Stockfish at depth 6 (51.5% vs 48.4%) — both methods agree on
+      // direction. Deeper search lets the stronger Stockfish-distilled
+      // NNUE earn more of the blend than the shallow-depth tune allowed.
+      hybridAlpha: Double = 0.4,
       // Endgame NNUE weight: α tapers `hybridAlpha` (opening) → this (bare
       // endgame) by game phase ([[HybridEvaluator]] / [[GamePhase]]). The
       // endgame-boosted net is ~+20 Elo in endgames at α0.5; tapering cashes
       // that into +19.7 Elo overall (1500g A/B vs the pre-taper deployment).
       // Set == hybridAlpha to disable the taper.
-      hybridAlphaEndgame: Double = 0.5,
+      hybridAlphaEndgame: Double = 0.6,
   ): IO[Throwable, EngineBundle] =
     for
       weights <- WeightsLoader.load(weightsVersion)
@@ -125,7 +127,7 @@ object EngineBundle:
       ensembleSize: Int,
       endgameHeuristics: Boolean,
       hybridAlpha: Double,
-      hybridAlphaEndgame: Double = 0.5,
+      hybridAlphaEndgame: Double = 0.6,
   ): Evaluator =
     val chosen = source match
       case EvalSource.Hce => hce
@@ -158,8 +160,8 @@ object EngineBundle:
       evalCacheEntries: Int = 1_000_000,
       ensembleSize: Int = 3,
       endgameHeuristicsEnabled: Boolean = false,
-      hybridAlpha: Double = 0.3,
-      hybridAlphaEndgame: Double = 0.5,
+      hybridAlpha: Double = 0.4,
+      hybridAlphaEndgame: Double = 0.6,
   ): UIO[(EngineBundle, Option[Throwable])] =
     fromResources(
       weightsVersion, maxBookPly, maxTtEntries,

@@ -1,6 +1,6 @@
 package chess.bot.engine.internal
 
-import chess.model.board.{GameState, MoveInt, Position}
+import chess.model.board.{MoveInt, Position, PositionView}
 import chess.model.piece.{Color, PieceType}
 import chess.model.rules.BitboardAttacks
 
@@ -50,7 +50,7 @@ private[engine] object StaticExchange:
     * caller is expected to pre-filter to captures, but the explicit
     * zero short-circuit makes accidental non-capture calls a no-op
     * rather than nonsense). */
-  def see(state: GameState, move: Int): Int =
+  def see(state: PositionView, move: Int): Int =
     val from = MoveInt.fromIdx(move)
     val to   = MoveInt.toIdx(move)
     val board = state.board

@@ -44,11 +44,45 @@ from huggingface_hub import hf_hub_download
 
 import sys
 sys.path.insert(0, os.path.dirname(__file__))
-from train_nnue import Net, fen_to_features, export_bin, H, IN, SCALE, PAD, MAXP
+from train_nnue import Net, fen_to_features, export_bin, H, IN, SCALE, QA, QB, PAD, MAXP
 
 REPO = "Lichess/chess-position-evaluations"
 NSHARDS = 17
 MATE_CP = 2000
+
+
+def load_bin_into(net, path, h):
+    """Warm-start `net` from an exported int16 .bin (the inverse of export_bin),
+    dequantizing back to float params. Lets us raw-pretrain a net, export it, then
+    continue-train (`--init-from`) on a second dataset. The dequant->requant of an
+    int16 value is exact (k/QA*QA rounds back to k), so init-from then immediate
+    export reproduces the source .bin byte-for-byte. `h` must match the .bin width."""
+    arr = np.fromfile(path, dtype='<i2').astype(np.float32)
+    expect = IN * h + h + 2 * h + 1
+    if arr.size != expect:
+        raise SystemExit(f"--init-from size {arr.size} != expected {expect} "
+                         f"(wrong --hidden {h} for this .bin?)")
+    o = 0
+    W1 = arr[o:o + IN * h].reshape(IN, h) / QA; o += IN * h
+    b1 = arr[o:o + h] / QA;                     o += h
+    W2 = arr[o:o + 2 * h] / QB;                 o += 2 * h
+    b2 = float(arr[o] / (QA * QB))
+    dev = net.ft.weight.device
+    with torch.no_grad():
+        net.ft.weight[:IN] = torch.from_numpy(W1).to(dev)
+        net.ft.weight[PAD].zero_()
+        net.ftb.copy_(torch.from_numpy(b1).to(dev))
+        net.out.weight[0] = torch.from_numpy(W2).to(dev)
+        net.out.bias[0] = b2
+
+
+def epoch_path(out, ep):
+    """Per-epoch checkpoint path: insert -ep{N} before the .bin suffix so a
+    multi-epoch run leaves a net at EVERY epoch (for an Elo-vs-epoch sweep to
+    find the point of diminishing returns), not just the final overwrite of --out."""
+    if out.endswith(".bin"):
+        return f"{out[:-4]}-ep{ep}.bin"
+    return f"{out}-ep{ep}.bin"
 
 
 def parse_batch(fens, cps, mates, prev_fen):
@@ -249,6 +283,10 @@ def main():
     ap.add_argument('--hidden', type=int, default=128,
                     help='NNUE hidden width. MUST match Scala NnueEvaluator.HiddenSize '
                          'for the .bin to load (128 = current shipped, 256 = 2x control)')
+    ap.add_argument('--init-from', default=None,
+                    help='warm-start the net from an existing exported .bin before '
+                         'training (dequantize int16 -> float params) — e.g. raw-pretrain '
+                         'then --tsv fine-tune on top. --hidden must match the .bin width.')
     ap.add_argument('--parse-workers', type=int,
                     default=max(1, (os.cpu_count() or 4) - 2),
                     help='parallel TSV-parse worker processes (--tsv mode). The parse '
@@ -272,6 +310,9 @@ def main():
            else 'mps' if torch.backends.mps.is_available() else 'cpu')
     print(f"device={dev}  hidden={a.hidden}", flush=True)
     net = Net(h=a.hidden).to(dev)
+    if a.init_from:
+        load_bin_into(net, a.init_from, a.hidden)
+        print(f"warm-started from {a.init_from}", flush=True)
     opt = torch.optim.Adam(net.parameters(), lr=a.lr, weight_decay=a.wd)
     lossf = nn.MSELoss()
 
@@ -338,6 +379,10 @@ def main():
                       f"(loss={tloss/max(tnb,1):.5f}, {time.time()-ts:.0f}s)", flush=True)
                 export_bin(net, a.out)
                 print(f"[epoch {ep}] checkpoint -> {a.out}", flush=True)
+                if a.epochs > 1:                  # keep every epoch's net for an Elo-vs-epoch sweep
+                    epp = epoch_path(a.out, ep + 1)
+                    export_bin(net, epp)
+                    print(f"[epoch {ep}] epoch-checkpoint -> {epp}", flush=True)
                 if a.lr_decay != 1.0:
                     for g in opt.param_groups:
                         g['lr'] *= a.lr_decay

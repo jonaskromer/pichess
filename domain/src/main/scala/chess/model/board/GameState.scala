@@ -11,7 +11,7 @@ case class GameState(
     status: GameStatus = GameStatus.Playing,
     halfmoveClock: Int = 0,
     fullmoveNumber: Int = 1
-):
+) extends PositionView:
   /** Transition to a terminal status. No-op if the game is already over —
     * terminal states are sticky by invariant. Use this helper at every
     * transition site so future terminal cases (Resignation, Timeout, …)

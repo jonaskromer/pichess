@@ -3,7 +3,7 @@ package chess.bot.engine.nnue
 import java.nio.{ByteBuffer, ByteOrder}
 
 import chess.bot.engine.Evaluator
-import chess.model.board.{Bitboard, BoardState, GameState}
+import chess.model.board.{Bitboard, BoardLike, PositionView}
 import chess.model.piece.Color
 
 /** NNUE inference for pichess — perspective net
@@ -37,7 +37,7 @@ import chess.model.piece.Color
   * callers that don't thread an accumulator (and as the correctness
   * oracle the incremental path is tested against). */
 final class NnueEvaluator private (
-    private val featureWeights: Array[Short], // 768 × HiddenSize, column-major
+    private val featureWeights: Array[Int], // 768 × HiddenSize, column-major (int16 widened to int32 so the accumulator loops auto-vectorize)
     private val featureBias:    Array[Short], // HiddenSize
     private val outputWeights:  Array[Short], // 2 × HiddenSize
     private val outputBias:     Short,
@@ -48,14 +48,14 @@ final class NnueEvaluator private (
   /** From-scratch eval — rebuilds the accumulator then runs the output
     * layer. Identical result to the old implementation (this is just the
     * accumulator path composed). */
-  override def evaluate(state: GameState): Int =
+  override def evaluate(state: PositionView): Int =
     val acc = freshAccumulator()
     refreshInto(acc, state.board)
     evaluateFrom(acc, state.activeColor)
 
   // -- Incremental-eval capability (see [[Evaluator]]) --
   override def incrementalNet: Option[NnueEvaluator] = Some(this)
-  override def evaluateWith(acc: NnueAccumulator, state: GameState): Int =
+  override def evaluateWith(acc: NnueAccumulator, state: PositionView): Int =
     evaluateFrom(acc, state.activeColor)
 
   // ---------------------------------------------------------------------------
@@ -67,7 +67,7 @@ final class NnueEvaluator private (
     new NnueAccumulator(biasArray(), biasArray())
 
   /** Rebuild both per-colour accumulators from scratch for `board`. */
-  def refreshInto(acc: NnueAccumulator, board: BoardState): Unit =
+  def refreshInto(acc: NnueAccumulator, board: BoardLike): Unit =
     resetToBias(acc.white)
     resetToBias(acc.black)
     var pc = 0
@@ -88,7 +88,7 @@ final class NnueEvaluator private (
     * `applyDiff(acc, child, parent)` to unmake it. Robust for every move
     * type (captures, castling, en passant, promotion) because it diffs
     * the raw piece bitboards rather than interpreting the move. */
-  def applyDiff(acc: NnueAccumulator, fromBoard: BoardState, toBoard: BoardState): Unit =
+  def applyDiff(acc: NnueAccumulator, fromBoard: BoardLike, toBoard: BoardLike): Unit =
     var pc = 0
     while pc < 12 do
       val color  = pc / 6
@@ -120,16 +120,18 @@ final class NnueEvaluator private (
     val whiteToMove = sideToMove == Color.White
     val stm = if whiteToMove then acc.white else acc.black
     val ntm = if whiteToMove then acc.black else acc.white
-    var out: Long = 0L
+    // Two independent accumulators (own- and other-perspective) over a
+    // single fused loop: halves loop overhead and gives the two reduction
+    // chains instruction-level parallelism. Bit-identical to the previous
+    // two sequential loops (integer addition is associative).
+    var outStm: Long = 0L
+    var outNtm: Long = 0L
     var i = 0
     while i < HiddenSize do
-      out += screlu(stm(i)).toLong * outputWeights(i).toInt
+      outStm += screlu(stm(i)).toLong * outputWeights(i).toInt
+      outNtm += screlu(ntm(i)).toLong * outputWeights(HiddenSize + i).toInt
       i += 1
-    var j = 0
-    while j < HiddenSize do
-      out += screlu(ntm(j)).toLong * outputWeights(HiddenSize + j).toInt
-      j += 1
-    val withBias = out / QA + outputBias.toInt
+    val withBias = (outStm + outNtm) / QA + outputBias.toInt
     val cp       = (withBias * Scale) / (QA * QB)
     (if whiteToMove then cp else -cp).toInt
 
@@ -150,7 +152,7 @@ final class NnueEvaluator private (
 
   /** The 12 piece bitboards in (P,N,B,R,Q,K)×(white,black) order — the
     * same order the feature index encodes (`color*384 + ord*64 + sq`). */
-  private inline def pieceBitboard(b: BoardState, pc: Int): Bitboard = pc match
+  private inline def pieceBitboard(b: BoardLike, pc: Int): Bitboard = pc match
     case 0  => b.pawnsW
     case 1  => b.knightsW
     case 2  => b.bishopsW
@@ -178,20 +180,20 @@ final class NnueEvaluator private (
     val base = featureIdx * HiddenSize
     var i = 0
     while i < HiddenSize do
-      acc(i) += featureWeights(base + i).toInt
+      acc(i) += featureWeights(base + i)
       i += 1
 
   private inline def subColumn(featureIdx: Int, acc: Array[Int]): Unit =
     val base = featureIdx * HiddenSize
     var i = 0
     while i < HiddenSize do
-      acc(i) -= featureWeights(base + i).toInt
+      acc(i) -= featureWeights(base + i)
       i += 1
 
   /** Square clipped ReLU — clamp the QA-scale value to `[0, QA]`, then
     * square. Output is at QA² scale. */
   private inline def screlu(x: Int): Int =
-    val y = if x < 0 then 0 else if x > QA then QA else x
+    val y = Math.max(0, Math.min(x, QA)) // branchless clamp to [0, QA]
     y * y
 
 /** Two turn-independent perspective accumulators (White-POV + Black-POV),
@@ -241,10 +243,10 @@ object NnueEvaluator:
     )
     val bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
 
-    val featureWeights = new Array[Short](InputSize * HiddenSize)
+    val featureWeights = new Array[Int](InputSize * HiddenSize)
     var i = 0
     while i < featureWeights.length do
-      featureWeights(i) = bb.getShort
+      featureWeights(i) = bb.getShort.toInt // int16 on disk, widened to int32 in memory
       i += 1
 
     val featureBias = new Array[Short](HiddenSize)
