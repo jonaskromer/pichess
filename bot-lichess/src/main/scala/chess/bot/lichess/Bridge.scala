@@ -23,11 +23,12 @@ import chess.model.rules.MoveValidator
   */
 object Bridge:
 
-  /** Acceptance policy — Phase 2 only accepts standard chess. Variants
-    * (chess960, atomic, antichess, …) have different rules our engine
-    * doesn't implement. Casual / rated both fine. */
+  /** Acceptance policy — standard chess only (variants like chess960,
+    * atomic, antichess, … have rules our engine doesn't implement), and
+    * rated only: casual games still burn the daily game cap but don't move
+    * the rating, so accepting them would waste capacity. */
   def shouldAccept(c: ChallengeInfo): Boolean =
-    c.variant.key == "standard"
+    c.variant.key == "standard" && c.rated
 
   /** Run the top-level event loop forever. Returns only on stream
     * failure (which the caller usually wraps in

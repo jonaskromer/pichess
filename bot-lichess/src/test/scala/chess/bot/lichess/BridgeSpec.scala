@@ -67,7 +67,7 @@ object BridgeSpec extends ZIOSpecDefault:
   private val humanPlayer = PlayerRef(Some("juu"),  Some("juu"))
 
   private val standardChallenge = ChallengeInfo(
-    id = "ch1", rated = false,
+    id = "ch1", rated = true,
     variant = VariantRef("standard"),
     speed = "blitz", timeControl = TimeControlRef("clock"),
     challenger = humanPlayer,
@@ -76,14 +76,21 @@ object BridgeSpec extends ZIOSpecDefault:
     id = "ch2",
     variant = VariantRef("chess960"),
   )
+  private val casualChallenge = standardChallenge.copy(
+    id = "ch3",
+    rated = false,
+  )
 
   def spec = suite("Bridge")(
     suite("acceptance policy")(
-      test("shouldAccept returns true for standard variant") {
+      test("shouldAccept returns true for a standard rated challenge") {
         assertTrue(Bridge.shouldAccept(standardChallenge))
       },
       test("shouldAccept returns false for chess960") {
         assertTrue(!Bridge.shouldAccept(chess960Challenge))
+      },
+      test("shouldAccept returns false for a casual challenge (would burn the daily cap for no rating)") {
+        assertTrue(!Bridge.shouldAccept(casualChallenge))
       },
     ),
     suite("account event dispatch")(
