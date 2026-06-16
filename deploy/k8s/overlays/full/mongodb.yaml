@@ -34,7 +34,10 @@ spec:
     spec:
       containers:
         - name: mongodb
-          image: mongo:7
+          # 4.4 is the last MongoDB without an AVX requirement — the HTWG QEMU
+          # vCPUs don't expose AVX, so mongo:5+ crash-loops (SERVER-54407). 4.4
+          # also predates mongosh, so the probe uses the legacy `mongo` shell.
+          image: mongo:4.4
           ports:
             - name: mongo
               containerPort: 27017
@@ -43,7 +46,7 @@ spec:
               mountPath: /data/db
           readinessProbe:
             exec:
-              command: ["mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+              command: ["mongo", "--quiet", "--eval", "db.adminCommand('ping')"]
             initialDelaySeconds: 10
             periodSeconds: 10
           resources:
