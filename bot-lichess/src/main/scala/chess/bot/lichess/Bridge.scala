@@ -2,7 +2,8 @@ package chess.bot.lichess
 
 import zio.*
 
-import chess.bot.engine.Search
+import chess.bot.engine.{GamePhase, Search}
+import chess.model.rules.MoveValidator
 
 /** Top-level orchestrator: subscribe to the Lichess account event
   * stream, dispatch each event, and spawn a per-game fiber for every
@@ -113,11 +114,18 @@ object Bridge:
       api: BotApiClient,
   ): IO[Throwable, Unit] =
     action match
-      case GameRunner.Action.MoveFrom(state, ourTimeMs, ourIncMs) =>
-        // Clock-aware budget instead of a flat time/move — sizes the search to
-        // the time actually left, so we don't flag in fast controls (and use
-        // our time in slow ones). `searchDepth` is only a fallback floor.
-        val budgetMs = TimeManager.budgetMs(ourTimeMs, ourIncMs)
+      case GameRunner.Action.MoveFrom(state, ourTimeMs, ourIncMs, oppTimeMs) =>
+        // Clock-aware, ADAPTIVE budget: sizes each search to the time left and
+        // spends our banked surplus where it matters — game stage (middlegame),
+        // clock advantage (we're ahead), and checks (forcing). `searchDepth`
+        // is only a fallback floor.
+        val budgetMs = TimeManager.budgetMs(
+          ourTimeMs,
+          ourIncMs,
+          oppTimeMs,
+          GamePhase.compute(state),
+          MoveValidator.isInCheck(state.board, state.activeColor),
+        )
         search.bestMoveWithBudget(state, budgetMs, fallbackDepth = searchDepth).flatMap {
           case Some(move) =>
             api

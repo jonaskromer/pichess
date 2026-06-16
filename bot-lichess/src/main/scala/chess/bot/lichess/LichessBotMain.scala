@@ -71,6 +71,10 @@ object LichessBotMain extends ZIOAppDefault:
                        val base = Search.alphaBeta(
                          bundle.eval, bundle.openingBook, MaxTtEntries,
                          lazySmpEnabled = lazySmp, budget = budget,
+                         // Adaptive in-search time use: think longer when the
+                         // root score is unstable, stop early once the best move
+                         // has settled. Complements TimeManager's per-move budget.
+                         timeManagementUpgradeEnabled = true,
                        )
                        tbOracle.fold(base)(o => new TbAugmentedSearch(base, o, TablebasePieceLimit))
                      Bridge
