@@ -1,0 +1,68 @@
+---
+# Stand up a single-node k3d cluster as the unprivileged user (Docker group, no
+# sudo). k3d + kubectl are dropped into a userspace bin dir; the cluster runs in
+# the host's (rootful) Docker. The existing deploy.yml/reset.yml then apply the
+# kustomize tiers via `pichess_kubectl` against this cluster — no manifest changes.
+
+- name: Ensure the userspace bin dir exists
+  ansible.builtin.file:
+    path: "{{ k3d_bin_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Install the k3d binary (userspace, no sudo)
+  ansible.builtin.get_url:
+    url: "https://github.com/k3d-io/k3d/releases/download/{{ k3d_version }}/k3d-linux-{{ k3d_arch }}"
+    dest: "{{ k3d_bin_dir }}/k3d"
+    mode: "0755"
+
+- name: Install kubectl (userspace, no sudo)
+  ansible.builtin.get_url:
+    url: "https://dl.k8s.io/release/{{ k3d_kubectl_version }}/bin/linux/{{ k3d_arch }}/kubectl"
+    dest: "{{ k3d_bin_dir }}/kubectl"
+    mode: "0755"
+
+- name: Fail early if Docker is rootless (kubelet can't start in a user namespace)
+  ansible.builtin.command: docker info --format '{{ "{{" }}.SecurityOptions{{ "}}" }}'
+  register: k3d_docker_info
+  changed_when: false
+  failed_when: "'rootless' in k3d_docker_info.stdout"
+
+- name: List existing k3d clusters
+  ansible.builtin.command: "{{ k3d_bin_dir }}/k3d cluster list -o json"
+  register: k3d_clusters
+  changed_when: false
+
+- name: Create the k3d cluster (single node; ingress mapped to host port)
+  ansible.builtin.command:
+    argv:
+      - "{{ k3d_bin_dir }}/k3d"
+      - cluster
+      - create
+      - "{{ k3d_cluster_name }}"
+      - --servers
+      - "1"
+      - -p
+      - "{{ k3d_ingress_host_port }}:80@loadbalancer"
+  # No --wait: it can hang on the readiness gate. We poll /readyz below instead.
+  when: k3d_cluster_name not in (k3d_clusters.stdout | from_json | map(attribute='name') | list)
+  changed_when: true
+
+- name: Write the cluster kubeconfig
+  ansible.builtin.command: "{{ k3d_bin_dir }}/k3d kubeconfig write {{ k3d_cluster_name }} --output {{ kubeconfig_path }}"
+  changed_when: false
+
+- name: Wait for the apiserver to report ready
+  ansible.builtin.command: "{{ k3d_bin_dir }}/kubectl --kubeconfig {{ kubeconfig_path }} get --raw=/readyz"
+  register: k3d_readyz
+  until: k3d_readyz.stdout == "ok"
+  retries: 30
+  delay: 5
+  changed_when: false
+
+- name: Show how to reach the cluster
+  ansible.builtin.debug:
+    msg: >-
+      k3d cluster '{{ k3d_cluster_name }}' ready. kubeconfig={{ kubeconfig_path }};
+      ingress on http://{{ ansible_host }}:{{ k3d_ingress_host_port }}/.
+      Deploy with:  ansible-playbook deploy.yml -e target={{ inventory_hostname }} -e pichess_tier=full

@@ -17,6 +17,16 @@ pichess_tiers_ordered: [mvp, lobbies, full]
 # default (a later upgrade rebinds them). Set true to also delete the volumes.
 pichess_wipe_data: false
 
+# How the deploy role talks to the cluster + whether it needs root. Defaults suit
+# a host k3s install (provision.yml, root). The k3d/no-sudo path (provision-k3d.yml)
+# overrides these in group_vars/htwg.yml. See deploy/ansible/README.md.
+pichess_kubectl: "k3s kubectl" # k3d overrides to "kubectl --kubeconfig <path>"
+pichess_become: true # k3d path sets false (Docker group, no sudo)
+pichess_ingress_port: 80 # host port the ingress is reachable on
+pichess_rollout_timeout: "300s" # rollout wait; generous for slow first image pulls
+k3d_bin_dir: "{{ ansible_env.HOME }}/.local/bin" # userspace k3d/kubectl (no sudo)
+kubeconfig_path: "{{ ansible_env.HOME }}/.kube/pichess.yaml" # k3d cluster kubeconfig
+
 # Public, multi-arch images pushed by .github/workflows/release.yml.
 image_registry: ghcr.io/jonaskromer
 image_tag: "0.0.2" # the released version to deploy (kustomize sets this tag)

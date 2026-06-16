@@ -12,3 +12,11 @@ ansible_host: "{{ lookup('env', 'SERVER_IP') }}"
 ansible_user: "{{ lookup('env', 'SSH_USERNAME') }}"
 ansible_password: "{{ lookup('env', 'SSH_PW') }}"
 ansible_become_password: "{{ lookup('env', 'SSH_PW') }}"
+
+# --- k3d deploy profile (HTWG = Docker group, NO sudo) ---
+# The chess user can't run host k3s (no root), so deploy via k3d instead. These
+# point the shared deploy.yml/reset.yml at the k3d cluster and drop privilege
+# escalation. Provision with provision-k3d.yml (not provision.yml).
+pichess_become: false
+pichess_kubectl: "{{ k3d_bin_dir }}/kubectl --kubeconfig {{ kubeconfig_path }}"
+manifests_dest: "{{ ansible_env.HOME }}/pichess/k8s"

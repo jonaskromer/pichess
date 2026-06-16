@@ -77,22 +77,42 @@ ansible-playbook deploy.yml                        # apply MVP
 After `provision.yml` succeeds on the VM, `multipass snapshot pichess-vm` so you
 can `multipass restore` back to a clean k3s box and iterate on `deploy.yml`.
 
-## HTWG (only once it's solid on Multipass)
+## Two provisioning paths
+
+The host you deploy to decides how Kubernetes gets there:
+
+- **`provision.yml`** (roles `base`, `k3s`) — installs **host k3s** via `curl|sh`.
+  Needs **root** (apt, systemd, ufw). Use on root-capable boxes (Multipass/Lima).
+- **`provision-k3d.yml`** (role `k3d`) — installs **k3d (k3s-in-Docker)** as an
+  unprivileged user (userspace k3d+kubectl, cluster in the Docker daemon). **No
+  sudo** — for Docker-group-only hosts like the **HTWG fleet** (where `chess` has
+  no root). Needs **rootful** Docker (the kubelet can't start under rootless/userns).
+
+`deploy.yml`/`reset.yml` are shared across both — `pichess_kubectl` + `pichess_become`
+(set per host in `group_vars/`) point them at host-k3s or the k3d cluster. The
+kustomize tiers apply **unchanged** either way. For a lighter, non-k8s option see
+`deploy/compose/` (docker-compose, same tiers).
+
+## HTWG (k3d — no sudo there; validate locally first)
 
 ```bash
 set -a; . ../../.env.local; set +a       # SERVER_IP / SSH_USERNAME / SSH_PW (VPN must be up)
-ansible-playbook provision.yml -e target=htwg -e ssh_public_key=~/.ssh/pichess_htwg.pub
-ansible-playbook deploy.yml    -e target=htwg -e pichess_tier=mvp
+ansible-playbook provision-k3d.yml -e target=htwg          # k3d cluster, unprivileged
+ansible-playbook deploy.yml         -e target=htwg -e pichess_tier=full
+ansible-playbook reset.yml          -e target=htwg -e pichess_tier=lobbies   # downgrade
 ```
 
-`provision.yml` fetches the cluster's kubeconfig to
-`deploy/ansible/kubeconfig-<host>.yaml` (server rewritten to the VM IP, **gitignored —
-it holds cluster credentials**) so you can `kubectl --kubeconfig … get pods` from your Mac.
+`group_vars/htwg.yml` carries the k3d profile (`pichess_become: false`,
+`pichess_kubectl: kubectl --kubeconfig …`, home-dir `manifests_dest`), so the same
+`deploy.yml`/`reset.yml` Just Work against the box. The cluster ingress is on the
+host port `k3d_ingress_host_port` (default 80) → browse `http://<host>/`.
 
 ## Notes / next
 
-- **Tiers:** `pichess_tier=mvp` is wired. `lobbies` and `full` overlays (and the
-  SOPS‑encrypted Secret the `full` tier needs for Mongo/Redis) are the next increment.
-- **Image tag** lives in two places kept in sync by hand: `image_tag` in
-  `group_vars/all.yml` and `newTag` in `k8s/base/kustomization.yaml`.
-- **Don't run against HTWG yet** — validate + Multipass first.
+- **All three tiers** (`mvp`/`lobbies`/`full`) + `reset.yml` (downgrade / wipe /
+  teardown) are wired and validated on host-k3s, k3d, and compose. No Secret is
+  needed — the `full`-tier datastores run unauthenticated by design.
+- **Image tag** lives in `image_tag` (`group_vars/all.yml`) + `newTag` in the
+  kustomizations (+ the compose `*.env`), kept in sync by hand.
+- **k3d/k3s arch** defaults to `amd64` (HTWG); pass `-e k3d_arch=arm64` for an
+  Apple-silicon local VM.

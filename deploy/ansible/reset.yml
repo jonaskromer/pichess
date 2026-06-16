@@ -12,8 +12,8 @@
 #   ansible-playbook reset.yml -e target=htwg -e pichess_tier=lobbies   # against the HTWG VM (opt-in)
 - name: Reset pichess (downgrade tier or tear down)
   hosts: "{{ target | default('local') }}"
-  become: true
-  gather_facts: false
+  become: "{{ pichess_become | default(true) }}" # k3d path (htwg) sets false
+  gather_facts: true # k3d path needs ansible_env.HOME for the kubeconfig/dest paths
   roles:
     - role: pichess
       pichess_prune: true

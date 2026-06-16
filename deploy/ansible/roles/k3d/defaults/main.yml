@@ -1,0 +1,13 @@
+---
+# k3d (k3s-in-Docker) provisioning for Docker-only, no-sudo hosts (HTWG fleet).
+# Pinned versions; arch defaults to amd64 (HTWG) — override to arm64 for a local
+# Apple-silicon VM. Needs ROOTFUL Docker on the host (the kubelet can't start
+# under rootless/userns: "/dev/kmsg: operation not permitted").
+k3d_version: v5.8.3
+k3d_kubectl_version: v1.31.5
+k3d_arch: amd64
+
+k3d_cluster_name: pichess
+# Host port the k3d loadbalancer maps to the cluster ingress (Traefik :80).
+k3d_ingress_host_port: 80
+# kubeconfig_path is defined in group_vars/all.yml (shared with deploy.yml).

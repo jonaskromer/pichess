@@ -1,0 +1,17 @@
+---
+# Provision k3d (k3s-in-Docker) on a Docker-only, no-sudo host — the HTWG fleet
+# norm (the `chess` user is in the docker group but has no sudo). Runs entirely
+# unprivileged; needs ROOTFUL Docker already present on the host.
+#
+#   ansible-playbook provision-k3d.yml -e target=htwg
+#   ansible-playbook deploy.yml        -e target=htwg -e pichess_tier=full
+#
+# This is the k3d counterpart to provision.yml (which installs host k3s and needs
+# root). deploy.yml/reset.yml are shared — group_vars/htwg.yml points them at the
+# k3d cluster (pichess_kubectl + a home-dir manifests_dest, become:false).
+- name: Provision k3d (k3s-in-Docker, no sudo)
+  hosts: "{{ target | default('local') }}"
+  become: false
+  gather_facts: true
+  roles:
+    - k3d

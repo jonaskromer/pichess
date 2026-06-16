@@ -1,6 +1,8 @@
 ---
-# Deploy the selected tier by copying the kustomize tree to the host and
-# applying it with k3s' bundled kubectl (built-in kustomize, `-k`). Idempotent.
+# Deploy the selected tier by copying the kustomize tree to the host and applying
+# it with kustomize (`-k`). Runtime-agnostic: `pichess_kubectl` is `k3s kubectl`
+# for a host k3s install (root) or `kubectl --kubeconfig <path>` for k3d (the
+# rootless/no-sudo path). Idempotent.
 #
 # deploy.yml runs this additively (converge UP). reset.yml sets pichess_prune=true
 # to converge DOWN — apply the target, then delete higher-tier workloads. Setting
@@ -8,7 +10,7 @@
 
 - name: Tear down the entire pichess namespace — destructive, opt-in (-e pichess_teardown=true)
   ansible.builtin.command:
-    cmd: k3s kubectl delete namespace {{ pichess_namespace }} --ignore-not-found --wait=true
+    cmd: "{{ pichess_kubectl }} delete namespace {{ pichess_namespace }} --ignore-not-found --wait=true"
   register: pichess_teardown_out
   changed_when: "'deleted' in pichess_teardown_out.stdout"
   when: pichess_teardown | default(false) | bool
@@ -26,7 +28,7 @@
 
 - name: Apply kustomize overlay {{ pichess_tier }}
   ansible.builtin.command:
-    cmd: k3s kubectl apply -k {{ manifests_dest }}/overlays/{{ pichess_tier }}
+    cmd: "{{ pichess_kubectl }} apply -k {{ manifests_dest }}/overlays/{{ pichess_tier }}"
   register: pichess_kustomize_apply
   # "created"/"configured" in the output => a real change. NB: on the full tier
   # kubectl always reports the Mongo/Kafka StatefulSets as "configured" on
@@ -38,14 +40,12 @@
 
 - name: Wait for all deployments in the namespace to roll out
   ansible.builtin.command:
-    cmd: >
-      k3s kubectl -n {{ pichess_namespace }}
-      rollout status deployment --timeout=180s
+    cmd: "{{ pichess_kubectl }} -n {{ pichess_namespace }} rollout status deployment --timeout={{ pichess_rollout_timeout }}"
   changed_when: false
 
 - name: Wait for StatefulSets (Mongo/Kafka) to roll out — full tier only
   ansible.builtin.command:
-    cmd: k3s kubectl -n {{ pichess_namespace }} rollout status statefulset --timeout=180s
+    cmd: "{{ pichess_kubectl }} -n {{ pichess_namespace }} rollout status statefulset --timeout={{ pichess_rollout_timeout }}"
   changed_when: false
   when: pichess_tier == "full"
 
@@ -58,16 +58,11 @@
 
 - name: Prune workloads from higher tiers (data volumes kept)
   ansible.builtin.command:
-    argv:
-      - k3s
-      - kubectl
-      - delete
-      - deployment,statefulset,service
-      - -n
-      - "{{ pichess_namespace }}"
-      - -l
-      - "pichess.tier in ({{ pichess_higher_tiers | join(',') }})"
-      - --ignore-not-found
+    argv: >-
+      {{ pichess_kubectl.split() +
+         ['delete', 'deployment,statefulset,service', '-n', pichess_namespace,
+          '-l', 'pichess.tier in (' ~ (pichess_higher_tiers | join(',')) ~ ')',
+          '--ignore-not-found'] }}
   register: pichess_prune_out
   changed_when: "'deleted' in pichess_prune_out.stdout"
   when:
@@ -76,16 +71,11 @@
 
 - name: Wipe data volumes from higher tiers — destructive, opt-in (-e pichess_wipe_data=true)
   ansible.builtin.command:
-    argv:
-      - k3s
-      - kubectl
-      - delete
-      - pvc
-      - -n
-      - "{{ pichess_namespace }}"
-      - -l
-      - "pichess.tier in ({{ pichess_higher_tiers | join(',') }})"
-      - --ignore-not-found
+    argv: >-
+      {{ pichess_kubectl.split() +
+         ['delete', 'pvc', '-n', pichess_namespace,
+          '-l', 'pichess.tier in (' ~ (pichess_higher_tiers | join(',')) ~ ')',
+          '--ignore-not-found'] }}
   register: pichess_pvc_out
   changed_when: "'deleted' in pichess_pvc_out.stdout"
   when:
@@ -95,4 +85,4 @@
 
 - name: Show the public entrypoint
   ansible.builtin.debug:
-    msg: "pichess ({{ pichess_tier }}) is up — browse http://{{ ansible_host }}/"
+    msg: "pichess ({{ pichess_tier }}) is up — browse http://{{ ansible_host }}:{{ pichess_ingress_port | default(80) }}/"
