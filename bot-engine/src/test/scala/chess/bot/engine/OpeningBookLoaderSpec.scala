@@ -14,16 +14,18 @@ object OpeningBookLoaderSpec extends ZIOSpecDefault:
 
   def spec = suite("OpeningBookLoader")(
     suite("loadDefault")(
-      test("loads the committed main-lines PGN and recognises the starting position") {
+      test(
+        "loads the committed main-lines PGN and recognises the starting position"
+      ) {
         for
-          book  <- OpeningBookLoader.loadDefault()
+          book <- OpeningBookLoader.loadDefault()
           state <- FenParserRegex.parse(startFen)
-          move  <- book.lookup(state)
+          move <- book.lookup(state)
         yield assertTrue(
           // The committed file's first game starts with 1.e4 or 1.d4
           // depending on order; either way the starting position
           // should be in book.
-          move.isDefined,
+          move.isDefined
         )
       },
       test("recognises a position several plies into a known main line") {
@@ -33,9 +35,9 @@ object OpeningBookLoaderSpec extends ZIOSpecDefault:
         val afterE4E5 =
           "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2"
         for
-          book  <- OpeningBookLoader.loadDefault()
+          book <- OpeningBookLoader.loadDefault()
           state <- FenParserRegex.parse(afterE4E5)
-          move  <- book.lookup(state)
+          move <- book.lookup(state)
         yield assertTrue(move.isDefined)
       },
       test("returns None for a position not in any main line") {
@@ -44,29 +46,38 @@ object OpeningBookLoaderSpec extends ZIOSpecDefault:
         val bongcloud =
           "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPPKPPP/RNBQ1BNR b kq - 1 2"
         for
-          book  <- OpeningBookLoader.loadDefault()
+          book <- OpeningBookLoader.loadDefault()
           state <- FenParserRegex.parse(bongcloud)
-          move  <- book.lookup(state)
+          move <- book.lookup(state)
         yield assertTrue(move.isEmpty)
       },
-      test("every committed main-line parses cleanly (no silently-skipped games)") {
+      test(
+        "every committed main-line parses cleanly (no silently-skipped games)"
+      ) {
         // The loader tolerates unparseable games (logs + skips), so a typo'd
         // line would vanish silently. This guards the committed book.
         val pgn = scala.io.Source
           .fromInputStream(
-            getClass.getClassLoader.getResourceAsStream("openings/main-lines.pgn"),
-            "UTF-8",
+            getClass.getClassLoader
+              .getResourceAsStream("openings/main-lines.pgn"),
+            "UTF-8"
           )
           .mkString
         val games = OpeningBookLoader.splitGames(pgn)
         for
-          results <- ZIO.foreach(games)(g => chess.codec.PgnParser.parse(g).either.map(g -> _))
+          results <- ZIO.foreach(games)(g =>
+            chess.codec.PgnParser.parse(g).either.map(g -> _)
+          )
           failures = results.collect { case (g, Left(err)) =>
-                       g.linesIterator.find(_.startsWith("[Event")).getOrElse("?") + " -> " + err.message
-                     }
-          _ <- ZIO.foreachDiscard(failures)(f => ZIO.logError(s"unparseable book line: $f"))
+            g.linesIterator
+              .find(_.startsWith("[Event"))
+              .getOrElse("?") + " -> " + err.message
+          }
+          _ <- ZIO.foreachDiscard(failures)(f =>
+            ZIO.logError(s"unparseable book line: $f")
+          )
         yield assertTrue(games.size >= 79, failures.isEmpty)
-      },
+      }
     ),
     suite("loadResource")(
       test("fails with MissingResource for a non-existent path") {
@@ -77,7 +88,7 @@ object OpeningBookLoaderSpec extends ZIOSpecDefault:
             case _                                    => false
           })
         )
-      },
+      }
     ),
     suite("historyToEntries")(
       test("emits one entry per (pre-state, move) pair") {
@@ -92,7 +103,7 @@ object OpeningBookLoaderSpec extends ZIOSpecDefault:
         yield assertTrue(
           OpeningBookLoader.historyToEntries(game).size == 3
         )
-      },
+      }
     ),
     suite("splitGames")(
       test("splits at the [Event marker") {
@@ -106,11 +117,11 @@ object OpeningBookLoaderSpec extends ZIOSpecDefault:
             |1. d4 *""".stripMargin
         assertTrue(
           OpeningBookLoader.splitGames(joined).size == 2,
-          OpeningBookLoader.splitGames(joined).head.contains("\"A\""),
+          OpeningBookLoader.splitGames(joined).head.contains("\"A\"")
         )
       },
       test("returns Nil for empty input") {
         assertTrue(OpeningBookLoader.splitGames("").isEmpty)
-      },
-    ),
+      }
+    )
   )

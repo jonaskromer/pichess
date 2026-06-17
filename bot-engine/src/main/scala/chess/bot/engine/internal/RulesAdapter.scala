@@ -8,17 +8,16 @@ import chess.model.rules.{Game, MoveValidator}
 
 /** Sync bridge over the IO-typed rules engine.
   *
-  * The search recurses thousands of times per top-level call; threading
-  * ZIO's effect system through every recursion would burn measurable
-  * scheduling overhead for no benefit (the work itself is pure CPU,
-  * fully sync). This adapter unsafe-runs the IO at the boundary and
-  * hands back plain values so the search loop can stay inside one
-  * synchronous frame.
+  * The search recurses thousands of times per top-level call; threading ZIO's
+  * effect system through every recursion would burn measurable scheduling
+  * overhead for no benefit (the work itself is pure CPU, fully sync). This
+  * adapter unsafe-runs the IO at the boundary and hands back plain values so
+  * the search loop can stay inside one synchronous frame.
   *
-  * The unsafe is encapsulated here so the rest of the engine module
-  * never sees `Unsafe.unsafe { … }` — search and eval code stays in the
-  * value world. The public engine surface (`Search.bestMove`) keeps a
-  * ZIO type so consumers don't pay this complexity either.
+  * The unsafe is encapsulated here so the rest of the engine module never sees
+  * `Unsafe.unsafe { … }` — search and eval code stays in the value world. The
+  * public engine surface (`Search.bestMove`) keeps a ZIO type so consumers
+  * don't pay this complexity either.
   */
 private[engine] object RulesAdapter:
 
@@ -26,12 +25,12 @@ private[engine] object RulesAdapter:
 
   /** Enumerate every legal move from `state` for the side to move.
     *
-    * Promotion behaviour: `MoveValidator.legalDestinationsIndex`
-    * collapses the four promotion targets to one destination per
-    * pawn-on-back-rank move. Phase 1 defaults the promotion choice to
-    * Queen — that's the optimal pick in the overwhelming majority of
-    * positions. Under-promotions (knight forks etc.) become a Phase ≥ 2
-    * concern once the engine is otherwise strong enough to notice.
+    * Promotion behaviour: `MoveValidator.legalDestinationsIndex` collapses the
+    * four promotion targets to one destination per pawn-on-back-rank move.
+    * Phase 1 defaults the promotion choice to Queen — that's the optimal pick
+    * in the overwhelming majority of positions. Under-promotions (knight forks
+    * etc.) become a Phase ≥ 2 concern once the engine is otherwise strong
+    * enough to notice.
     */
   def legalMoves(state: GameState): List[Move] =
     val index = MoveValidator.legalDestinationsIndexSync(state)
@@ -49,58 +48,57 @@ private[engine] object RulesAdapter:
       }
     buf.toList
 
-  /** Apply `move` to `state` returning the post-move state on success
-    * or `None` if the move was illegal.
+  /** Apply `move` to `state` returning the post-move state on success or `None`
+    * if the move was illegal.
     *
-    * Routes through [[Game.applyMoveCoreSync]] — the fully
-    * synchronous, no-status-detection, no-ZIO-runtime variant.
-    * Profile evidence: routing through the IO-typed
-    * `Game.applyMoveForSearch` was burning ~7% of total CPU at
-    * depth 4 just in `FiberRuntime.runLoop` overhead. */
+    * Routes through [[Game.applyMoveCoreSync]] — the fully synchronous,
+    * no-status-detection, no-ZIO-runtime variant. Profile evidence: routing
+    * through the IO-typed `Game.applyMoveForSearch` was burning ~7% of total
+    * CPU at depth 4 just in `FiberRuntime.runLoop` overhead.
+    */
   def applyMove(state: GameState, move: Move): Option[GameState] =
     Game.applyMoveCoreSync(state, move)
 
   /** Side-to-move-in-check predicate. Pure delegate to
-    * [[MoveValidator.isInCheck]] (which is already sync). Lives here so
-    * the engine has a single import for the rules surface.
+    * [[MoveValidator.isInCheck]] (which is already sync). Lives here so the
+    * engine has a single import for the rules surface.
     */
   def isInCheck(state: PositionView): Boolean =
     MoveValidator.isInCheck(state.board, state.activeColor)
 
-  /** Hot-path variant of [[legalMoves]]: writes packed-Int moves
-    * into `out` (see [[MoveInt]] for the encoding) and returns the
-    * number of moves written. No `Move` / `Option` / `List`
-    * allocations on the move side — only the underlying
-    * `Map[Position, List[Position]]` from the rules layer is
+  /** Hot-path variant of [[legalMoves]]: writes packed-Int moves into `out`
+    * (see [[MoveInt]] for the encoding) and returns the number of moves
+    * written. No `Move` / `Option` / `List` allocations on the move side — only
+    * the underlying `Map[Position, List[Position]]` from the rules layer is
     * allocated as today.
     *
-    * `out` must be sized ≥ 256 (an upper bound on the number of
-    * legal moves from any chess position; in practice ≤ 218).
-    * Caller pre-allocates one buffer per ply so the recursion is
-    * zero-alloc on the move-list path.
+    * `out` must be sized ≥ 256 (an upper bound on the number of legal moves
+    * from any chess position; in practice ≤ 218). Caller pre-allocates one
+    * buffer per ply so the recursion is zero-alloc on the move-list path.
     *
-    * Same promotion convention as [[legalMoves]] — Phase 1 always
-    * promotes to Queen; under-promotions come in a later phase. */
+    * Same promotion convention as [[legalMoves]] — Phase 1 always promotes to
+    * Queen; under-promotions come in a later phase.
+    */
   def fillLegalMoves(state: GameState, out: Array[Int]): Int =
     val index = MoveValidator.legalDestinationsIndexSync(state)
     fillBuf(state, index, out)
 
   /** Two-stage variant of [[fillLegalMoves]]: writes captures into
-    * `capturesOut` and quiet moves into `quietsOut`, returns the
-    * counts as a tuple. ONE rules-layer call total — classification
-    * (capture vs quiet) happens inline as we encode each (from,
-    * to) pair, so we don't allocate the intermediate
-    * `Map[Position, List[Position]]` pair that
+    * `capturesOut` and quiet moves into `quietsOut`, returns the counts as a
+    * tuple. ONE rules-layer call total — classification (capture vs quiet)
+    * happens inline as we encode each (from, to) pair, so we don't allocate the
+    * intermediate `Map[Position, List[Position]]` pair that
     * [[MoveValidator.legalCapturesAndQuiets]] would build.
     *
-    * Capture = destination occupied by an enemy piece, OR pawn
-    * move to the current en-passant target. Everything else is
-    * quiet (including promotions to empty back-rank squares). */
+    * Capture = destination occupied by an enemy piece, OR pawn move to the
+    * current en-passant target. Everything else is quiet (including promotions
+    * to empty back-rank squares).
+    */
   def fillCapturesAndQuiets(
       state: PositionView,
       capturesOut: Array[Int],
-      quietsOut:   Array[Int],
-      underPromotion: Boolean = false,
+      quietsOut: Array[Int],
+      underPromotion: Boolean = false
   ): Long = // (captureCount << 32) | quietCount — packed to avoid a per-call Tuple2
 
     // Delegate to the bitboard-driven generator. It walks the
@@ -110,17 +108,23 @@ private[engine] object RulesAdapter:
     // into the output buffers without allocating the
     // `List[Move]` + `Map[Position, List[Position]]` chain the
     // old path went through. See `BitboardMoveGen` for details.
-    BitboardMoveGen.fillCapturesAndQuiets(state, capturesOut, quietsOut, underPromotion)
+    BitboardMoveGen.fillCapturesAndQuiets(
+      state,
+      capturesOut,
+      quietsOut,
+      underPromotion
+    )
 
-  /** Iterate one of the sub-indices from [[legalCapturesAndQuiets]]
-    * (or [[legalDestinationsIndex]]) and pack each (from, to) pair
-    * into `out` using [[MoveInt]]. Returns the number of moves
-    * written. Shared between the [[fillLegalMoves]] (full set) and
-    * [[fillCapturesAndQuiets]] (split) entry points. */
+  /** Iterate one of the sub-indices from [[legalCapturesAndQuiets]] (or
+    * [[legalDestinationsIndex]]) and pack each (from, to) pair into `out` using
+    * [[MoveInt]]. Returns the number of moves written. Shared between the
+    * [[fillLegalMoves]] (full set) and [[fillCapturesAndQuiets]] (split) entry
+    * points.
+    */
   private def fillBuf(
       state: GameState,
       index: Map[chess.model.board.Position, List[chess.model.board.Position]],
-      out: Array[Int],
+      out: Array[Int]
   ): Int =
     var n = 0
     val it = index.iterator

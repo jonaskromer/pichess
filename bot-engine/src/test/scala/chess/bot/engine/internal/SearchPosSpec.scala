@@ -8,17 +8,17 @@ import chess.model.board.{BoardLike, GameState, MoveInt, Position}
 import chess.model.piece.PieceType
 import chess.model.rules.Game
 
-/** Equivalence proof for the copy-make apply: [[SearchPos.copyMakeInto]]
-  * must reproduce `Game.applyMoveCoreSync` exactly — same legality
-  * verdict and, when legal, the same board bitboards + side-to-move +
-  * en-passant target + castling rights + halfmove clock.
+/** Equivalence proof for the copy-make apply: [[SearchPos.copyMakeInto]] must
+  * reproduce `Game.applyMoveCoreSync` exactly — same legality verdict and, when
+  * legal, the same board bitboards + side-to-move + en-passant target +
+  * castling rights + halfmove clock.
   *
-  * Cross-checks every legal move (under-promotions ON) to a fixed depth
-  * over the standard perft positions, so castling, en passant (set then
-  * captured), promotion incl. under-promotion, captures, pins and the
-  * rights/clock bookkeeping are all exercised against the trusted
-  * immutable apply. Companion to `PerftSpec` (which proves the same
-  * equivalence at the leaf-count level). */
+  * Cross-checks every legal move (under-promotions ON) to a fixed depth over
+  * the standard perft positions, so castling, en passant (set then captured),
+  * promotion incl. under-promotion, captures, pins and the rights/clock
+  * bookkeeping are all exercised against the trusted immutable apply. Companion
+  * to `PerftSpec` (which proves the same equivalence at the leaf-count level).
+  */
 object SearchPosSpec extends ZIOSpecDefault:
 
   private def boardsEqual(mb: BoardLike, bs: BoardLike): Boolean =
@@ -32,17 +32,23 @@ object SearchPosSpec extends ZIOSpecDefault:
       mb.blackPieces.raw == bs.blackPieces.raw &&
       mb.occupancy.raw == bs.occupancy.raw
 
-  /** True when copy-make agrees with `applyMoveCoreSync` for every move
-    * in the tree under `state` to `depth`. Recurses on the immutable
-    * result; since copy-make is proven to match it on every field
-    * copy-make reads, that's a sound induction. */
+  /** True when copy-make agrees with `applyMoveCoreSync` for every move in the
+    * tree under `state` to `depth`. Recurses on the immutable result; since
+    * copy-make is proven to match it on every field copy-make reads, that's a
+    * sound induction.
+    */
   private def crossCheck(state: GameState, depth: Int): Boolean =
     if depth == 0 then true
     else
-      val cap    = new Array[Int](256)
-      val quiet  = new Array[Int](256)
-      val packed = RulesAdapter.fillCapturesAndQuiets(state, cap, quiet, underPromotion = true)
-      val capCount   = (packed >>> 32).toInt
+      val cap = new Array[Int](256)
+      val quiet = new Array[Int](256)
+      val packed = RulesAdapter.fillCapturesAndQuiets(
+        state,
+        cap,
+        quiet,
+        underPromotion = true
+      )
+      val capCount = (packed >>> 32).toInt
       val quietCount = packed.toInt
       val parent = new SearchPos
       parent.setFrom(state)
@@ -52,7 +58,7 @@ object SearchPosSpec extends ZIOSpecDefault:
       def checkMove(m: Int): Unit =
         if ok then
           val legal = parent.copyMakeInto(child, m)
-          val gm    = Game.applyMoveCoreSync(state, MoveInt.decode(m))
+          val gm = Game.applyMoveCoreSync(state, MoveInt.decode(m))
           if legal != gm.isDefined then ok = false
           else
             gm match
@@ -83,45 +89,47 @@ object SearchPosSpec extends ZIOSpecDefault:
     equivTest(
       "startposition (depth 3)",
       "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-      3,
+      3
     ),
     equivTest(
       "Kiwipete — castling + EP + captures (depth 2)",
       "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
-      2,
+      2
     ),
     equivTest(
       "position 3 — EP discoveries + checks (depth 3)",
       "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
-      3,
+      3
     ),
     equivTest(
       "position 4 — promotions + pins (depth 2)",
       "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
-      2,
+      2
     ),
     equivTest(
       "position 5 — under-promotion + cramped (depth 3)",
       "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
-      3,
+      3
     ),
     // Direct check of the BoardLike read seam the copy-make path relies on
     // — `MutableBoard.get`/`contains` after `setFrom` must reflect placement.
-    test("MutableBoard read seam (get / contains) after setFrom matches placement") {
+    test(
+      "MutableBoard read seam (get / contains) after setFrom matches placement"
+    ) {
       for state <- FenParserRegex.parse(
-                     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                   )
+          "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        )
       yield
         val pos = new SearchPos
         pos.setFrom(state)
         val b = pos.board
         assertTrue(
-          b.contains(Position('a', 1)),  // white rook present
-          b.contains(Position('e', 8)),  // black king present
+          b.contains(Position('a', 1)), // white rook present
+          b.contains(Position('e', 8)), // black king present
           !b.contains(Position('e', 4)), // empty middle square
           b.get(Position('e', 1)).exists(_.pieceType == PieceType.King),
           b.get(Position('d', 1)).exists(_.pieceType == PieceType.Queen),
-          b.get(Position('e', 4)).isEmpty,
+          b.get(Position('e', 4)).isEmpty
         )
-    },
+    }
   )

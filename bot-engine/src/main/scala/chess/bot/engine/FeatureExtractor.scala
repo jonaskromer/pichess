@@ -8,43 +8,42 @@ import chess.model.rules.BitboardAttacks
 /** Maps a [[GameState]] to a `Map[String, Int]` feature vector that
   * [[TunedEvaluator]] uses for its linear combination.
   *
-  * The Phase 5 extractor counts piece-type differences (white minus
-  * black) — same feature space as the hand-coded
-  * [[MaterialEvaluator]], so Texel tuning over [[features]] is
-  * directly comparable to that evaluator's hardcoded constants.
-  * Later phases will fold in piece-square tables (one feature per
-  * piece × square), mobility, pawn structure, etc., by adding new
-  * extractors or extending this one.
+  * The Phase 5 extractor counts piece-type differences (white minus black) —
+  * same feature space as the hand-coded [[MaterialEvaluator]], so Texel tuning
+  * over [[features]] is directly comparable to that evaluator's hardcoded
+  * constants. Later phases will fold in piece-square tables (one feature per
+  * piece × square), mobility, pawn structure, etc., by adding new extractors or
+  * extending this one.
   */
 trait FeatureExtractor:
   def features(state: PositionView): Map[String, Int]
 
 object FeatureExtractor:
 
-  /** Feature names emitted by [[material]]. Useful as the default
-    * key set when initialising a [[TexelTuner]]-equivalent weight
-    * vector. */
+  /** Feature names emitted by [[material]]. Useful as the default key set when
+    * initialising a [[TexelTuner]]-equivalent weight vector.
+    */
   val materialNames: List[String] =
     List("pawn", "knight", "bishop", "rook", "queen")
 
   /** All five piece types that appear in PST feature keys. */
   private val pieceNames: List[String] = materialNames
 
-  /** Material-only extractor: each feature is (white count) − (black
-    * count) for that piece type. The king is omitted — its count is
-    * always one per side and contributes nothing to the linear
-    * combination. */
+  /** Material-only extractor: each feature is (white count) − (black count) for
+    * that piece type. The king is omitted — its count is always one per side
+    * and contributes nothing to the linear combination.
+    */
   val material: FeatureExtractor = MaterialFeatures
 
-  /** Full extractor: a starter-engine-complete feature set. 345
-    * features total covering material, piece-square tables, mobility,
-    * pawn structure, king safety, rook + knight activity, and tempo:
+  /** Full extractor: a starter-engine-complete feature set. 345 features total
+    * covering material, piece-square tables, mobility, pawn structure, king
+    * safety, rook + knight activity, and tempo:
     *
-    *   - 5 material diffs                          (`pawn`...`queen`)
-    *   - 320 PST keys (5 pieces × 64 squares)      (`pawn_a2` etc.)
+    *   - 5 material diffs (`pawn`...`queen`)
+    *   - 320 PST keys (5 pieces × 64 squares) (`pawn_a2` etc.)
     *   - 1 bishop pair indicator
-    *   - 4 mobility counts                         (`knight_mobility`...)
-    *   - 6 passed-pawn by white-equivalent rank    (`passed_rank_2`...`_7`)
+    *   - 4 mobility counts (`knight_mobility`...)
+    *   - 6 passed-pawn by white-equivalent rank (`passed_rank_2`...`_7`)
     *   - 1 isolated pawn diff
     *   - 1 doubled pawn diff
     *   - 1 connected pawn diff
@@ -55,26 +54,31 @@ object FeatureExtractor:
     *   - 1 knight outpost diff
     *   - 1 tempo (side-to-move bonus)
     *
-    * All features are signed white-perspective: positive contributes
-    * to white's eval. Black pieces are mirrored to the white-
-    * equivalent square (e.g. a black pawn on rank 4 maps to white
-    * rank 5) so the tuner learns symmetric values.
+    * All features are signed white-perspective: positive contributes to white's
+    * eval. Black pieces are mirrored to the white- equivalent square (e.g. a
+    * black pawn on rank 4 maps to white rank 5) so the tuner learns symmetric
+    * values.
     *
-    * Black pieces in the PST mirror naturally cancel white pieces on
-    * the mirrored square — the starting position has 0 for every
-    * non-material feature, so the tuner only learns deviations from
-    * symmetry.
+    * Black pieces in the PST mirror naturally cancel white pieces on the
+    * mirrored square — the starting position has 0 for every non-material
+    * feature, so the tuner only learns deviations from symmetry.
     */
   val full: FeatureExtractor = FullFeatures
 
-  /** Every feature key the [[full]] extractor can emit, in canonical
-    * order. Useful for seeding a weight vector with zeros (or hand-
-    * picked initial values) for the Texel tuner. */
+  /** Every feature key the [[full]] extractor can emit, in canonical order.
+    * Useful for seeding a weight vector with zeros (or hand- picked initial
+    * values) for the Texel tuner.
+    */
   def allFeatureNames: Seq[String] =
     materialNames ++
       pstFeatureNames ++
       Seq("bishop_pair") ++
-      Seq("knight_mobility", "bishop_mobility", "rook_mobility", "queen_mobility") ++
+      Seq(
+        "knight_mobility",
+        "bishop_mobility",
+        "rook_mobility",
+        "queen_mobility"
+      ) ++
       (2 to 7).map(r => s"passed_rank_$r") ++
       Seq(
         "isolated_pawn",
@@ -88,24 +92,26 @@ object FeatureExtractor:
         "tempo",
         "threat_by_pawn",
         "threat_by_minor",
-        "threat_by_rook",
+        "threat_by_rook"
       )
 
-  /** Generate every PST feature key in canonical order. Useful when
-    * seeding a weight vector with zeros or printing a tuned table. */
+  /** Generate every PST feature key in canonical order. Useful when seeding a
+    * weight vector with zeros or printing a tuned table.
+    */
   def pstFeatureNames: Iterable[String] =
     for
       piece <- pieceNames
-      idx   <- 0 until 64
+      idx <- 0 until 64
     yield s"${piece}_${squareName(idx)}"
 
   /** Algebraic square name for a LERF bit index (0=a1, 63=h8). */
   private[engine] def squareName(idx: Int): String =
     s"${('a' + (idx % 8)).toChar}${(idx / 8) + 1}"
 
-  /** Mirror a LERF bit index across the horizontal centre (rank
-    * flip). Used to map black-piece squares onto white-coordinate
-    * PST keys so the tuner only learns one set of tables. */
+  /** Mirror a LERF bit index across the horizontal centre (rank flip). Used to
+    * map black-piece squares onto white-coordinate PST keys so the tuner only
+    * learns one set of tables.
+    */
   private[engine] inline def mirror(idx: Int): Int = idx ^ 56
 
   // ── Canonical feature index ─────────────────────────────────────
@@ -123,82 +129,87 @@ object FeatureExtractor:
   // so any drift between the two is caught at build time.
 
   private[engine] object FeatureIndex:
-    inline val Pawn   = 0
+    inline val Pawn = 0
     inline val Knight = 1
     inline val Bishop = 2
-    inline val Rook   = 3
-    inline val Queen  = 4
+    inline val Rook = 3
+    inline val Queen = 4
 
     // Each PST has 64 entries (a1=+0, h8=+63 LERF). Black pieces
     // contribute -1 at their mirrored square.
-    inline val PstPawnBase   = 5
+    inline val PstPawnBase = 5
     inline val PstKnightBase = 69
     inline val PstBishopBase = 133
-    inline val PstRookBase   = 197
-    inline val PstQueenBase  = 261
+    inline val PstRookBase = 197
+    inline val PstQueenBase = 261
 
-    inline val BishopPair    = 325
-    inline val KnightMob     = 326
-    inline val BishopMob     = 327
-    inline val RookMob       = 328
-    inline val QueenMob      = 329
+    inline val BishopPair = 325
+    inline val KnightMob = 326
+    inline val BishopMob = 327
+    inline val RookMob = 328
+    inline val QueenMob = 329
 
     // passed_rank_2 .. passed_rank_7 land at 330..335 (rank − 2 offset).
     inline val PassedRankBase = 330
 
-    inline val IsolatedPawn   = 336
-    inline val DoubledPawn    = 337
-    inline val ConnectedPawn  = 338
-    inline val PawnShield     = 339
-    inline val KingAttackers  = 340
-    inline val RookOpenFile   = 341
+    inline val IsolatedPawn = 336
+    inline val DoubledPawn = 337
+    inline val ConnectedPawn = 338
+    inline val PawnShield = 339
+    inline val KingAttackers = 340
+    inline val RookOpenFile = 341
     inline val RookSemiOpenFile = 342
-    inline val KnightOutpost  = 343
-    inline val Tempo          = 344
+    inline val KnightOutpost = 343
+    inline val Tempo = 344
 
     // Tactical threat features. Sign convention: a higher value
     // favours WHITE, so the diff is (black-pieces-threatened) minus
     // (white-pieces-threatened) — the tuner usually learns a
     // positive weight on each.
-    inline val ThreatByPawn   = 345  // enemy pawn attacks own knight/bishop/rook/queen
-    inline val ThreatByMinor  = 346  // enemy knight/bishop attacks own rook/queen
-    inline val ThreatByRook   = 347  // enemy rook attacks own queen
+    inline val ThreatByPawn =
+      345 // enemy pawn attacks own knight/bishop/rook/queen
+    inline val ThreatByMinor = 346 // enemy knight/bishop attacks own rook/queen
+    inline val ThreatByRook = 347 // enemy rook attacks own queen
 
-    inline val Count          = 348
+    inline val Count = 348
 
     /** Reverse lookup: idx → canonical key name. Built once from
-      * [[allFeatureNames]]. Used by the [[MapSink]] to convert
-      * array writes back into the Map[String, Int] shape. */
+      * [[allFeatureNames]]. Used by the [[MapSink]] to convert array writes
+      * back into the Map[String, Int] shape.
+      */
     val keyByIdx: Array[String] = allFeatureNames.toArray
 
-    /** Forward lookup: key → idx, for converting a `Map[String, Int]`
-      * weight vector into a pair of `Array[Int]` for the fast eval
-      * path. Returns -1 for keys outside the canonical set. */
+    /** Forward lookup: key → idx, for converting a `Map[String, Int]` weight
+      * vector into a pair of `Array[Int]` for the fast eval path. Returns -1
+      * for keys outside the canonical set.
+      */
     private val keyToIdx: Map[String, Int] =
       keyByIdx.iterator.zipWithIndex.toMap
 
     def indexOf(key: String): Int = keyToIdx.getOrElse(key, -1)
 
-  /** Storage abstraction used by the geometric helpers. The
-    * [[FullFeatures]] code does not care whether values land in a
-    * `Map[String, Int]` (legacy API path) or in an `Array[Int]`
-    * (fast eval path) — both implementations of [[FeatureSink]]
-    * preserve `acc(idx) += value` semantics. */
+  /** Storage abstraction used by the geometric helpers. The [[FullFeatures]]
+    * code does not care whether values land in a `Map[String, Int]` (legacy API
+    * path) or in an `Array[Int]` (fast eval path) — both implementations of
+    * [[FeatureSink]] preserve `acc(idx) += value` semantics.
+    */
   private[engine] sealed trait FeatureSink:
     def add(idx: Int, value: Int): Unit
 
-  /** Mutates a pre-allocated `Array[Int]`. Zero allocation per
-    * call. The caller is responsible for clearing the array before
-    * each fill ([[FullFeatures.fillArray]] does so). */
-  private[engine] final class ArraySink(var arr: Array[Int]) extends FeatureSink:
+  /** Mutates a pre-allocated `Array[Int]`. Zero allocation per call. The caller
+    * is responsible for clearing the array before each fill
+    * ([[FullFeatures.fillArray]] does so).
+    */
+  private[engine] final class ArraySink(var arr: Array[Int])
+      extends FeatureSink:
     def add(idx: Int, value: Int): Unit = arr(idx) += value
 
-  /** Accumulates into a `mutable.HashMap[String, Int]` keyed by the
-    * canonical names. Preserves the historical behaviour where
-    * `add(idx, 0)` still emits a `(key -> 0)` entry — the legacy
-    * test suite leans on that for the "always-emit" features
-    * (material, mobility, etc.). PST keys, which only see
-    * `add(idx, ±1)` for occupied squares, naturally stay sparse. */
+  /** Accumulates into a `mutable.HashMap[String, Int]` keyed by the canonical
+    * names. Preserves the historical behaviour where `add(idx, 0)` still emits
+    * a `(key -> 0)` entry — the legacy test suite leans on that for the
+    * "always-emit" features (material, mobility, etc.). PST keys, which only
+    * see `add(idx, ±1)` for occupied squares, naturally stay sparse.
+    */
   private[engine] final class MapSink extends FeatureSink:
     val acc: scala.collection.mutable.HashMap[String, Int] =
       scala.collection.mutable.HashMap.empty
@@ -210,11 +221,11 @@ object FeatureExtractor:
     def features(state: PositionView): Map[String, Int] =
       val b = state.board
       Map(
-        "pawn"   -> (b.pawnsW.popCount   - b.pawnsB.popCount),
+        "pawn" -> (b.pawnsW.popCount - b.pawnsB.popCount),
         "knight" -> (b.knightsW.popCount - b.knightsB.popCount),
         "bishop" -> (b.bishopsW.popCount - b.bishopsB.popCount),
-        "rook"   -> (b.rooksW.popCount   - b.rooksB.popCount),
-        "queen"  -> (b.queensW.popCount  - b.queensB.popCount),
+        "rook" -> (b.rooksW.popCount - b.rooksB.popCount),
+        "queen" -> (b.queensW.popCount - b.queensB.popCount)
       )
 
   private[engine] object FullFeatures extends FeatureExtractor:
@@ -224,25 +235,27 @@ object FeatureExtractor:
       compute(state, sink)
       sink.acc.toMap
 
-    /** Per-thread reusable [[ArraySink]] — pooled so the hot eval loop
-      * doesn't allocate a wrapper per call. Its backing array is the
-      * caller's `out`, swapped in on each [[fillArray]]; safe because
-      * eval is synchronous and non-reentrant within a search thread. */
+    /** Per-thread reusable [[ArraySink]] — pooled so the hot eval loop doesn't
+      * allocate a wrapper per call. Its backing array is the caller's `out`,
+      * swapped in on each [[fillArray]]; safe because eval is synchronous and
+      * non-reentrant within a search thread.
+      */
     private val sinkLocal: ThreadLocal[ArraySink] =
       ThreadLocal.withInitial(() => new ArraySink(null))
 
-    /** Zero-allocation fast path: clears `out`, then fills feature
-      * values at canonical indices. Used by [[ArrayTaperedEvaluator]]
-      * on the search hot loop. The same geometric helpers as the
-      * Map path — drift between the two is impossible. */
+    /** Zero-allocation fast path: clears `out`, then fills feature values at
+      * canonical indices. Used by [[ArrayTaperedEvaluator]] on the search hot
+      * loop. The same geometric helpers as the Map path — drift between the two
+      * is impossible.
+      */
     def fillArray(state: PositionView, out: Array[Int]): Unit =
       java.util.Arrays.fill(out, 0)
       val sink = sinkLocal.get()
       sink.arr = out
       compute(state, sink)
 
-    /** Shared compute path. Writes to whichever sink the caller
-      * supplies. */
+    /** Shared compute path. Writes to whichever sink the caller supplies.
+      */
     private def compute(state: PositionView, sink: FeatureSink): Unit =
       val b = state.board
 
@@ -255,37 +268,50 @@ object FeatureExtractor:
       addRookActivity(sink, b)
       addKnightOutpost(sink, b)
       addThreats(sink, b)
-      sink.add(FeatureIndex.Tempo, if state.activeColor == Color.White then 1 else -1)
+      sink.add(
+        FeatureIndex.Tempo,
+        if state.activeColor == Color.White then 1 else -1
+      )
 
     // ── Material + PST + bishop pair (existing features) ──────────
 
-    private def addMaterial(sink: FeatureSink, b: chess.model.board.BoardLike): Unit =
-      sink.add(FeatureIndex.Pawn,   b.pawnsW.popCount   - b.pawnsB.popCount)
+    private def addMaterial(
+        sink: FeatureSink,
+        b: chess.model.board.BoardLike
+    ): Unit =
+      sink.add(FeatureIndex.Pawn, b.pawnsW.popCount - b.pawnsB.popCount)
       sink.add(FeatureIndex.Knight, b.knightsW.popCount - b.knightsB.popCount)
       sink.add(FeatureIndex.Bishop, b.bishopsW.popCount - b.bishopsB.popCount)
-      sink.add(FeatureIndex.Rook,   b.rooksW.popCount   - b.rooksB.popCount)
-      sink.add(FeatureIndex.Queen,  b.queensW.popCount  - b.queensB.popCount)
+      sink.add(FeatureIndex.Rook, b.rooksW.popCount - b.rooksB.popCount)
+      sink.add(FeatureIndex.Queen, b.queensW.popCount - b.queensB.popCount)
 
-    private def addPstAllPieces(sink: FeatureSink, b: chess.model.board.BoardLike): Unit =
-      addPst(sink, FeatureIndex.PstPawnBase,   b.pawnsW.raw,   b.pawnsB.raw)
+    private def addPstAllPieces(
+        sink: FeatureSink,
+        b: chess.model.board.BoardLike
+    ): Unit =
+      addPst(sink, FeatureIndex.PstPawnBase, b.pawnsW.raw, b.pawnsB.raw)
       addPst(sink, FeatureIndex.PstKnightBase, b.knightsW.raw, b.knightsB.raw)
       addPst(sink, FeatureIndex.PstBishopBase, b.bishopsW.raw, b.bishopsB.raw)
-      addPst(sink, FeatureIndex.PstRookBase,   b.rooksW.raw,   b.rooksB.raw)
-      addPst(sink, FeatureIndex.PstQueenBase,  b.queensW.raw,  b.queensB.raw)
+      addPst(sink, FeatureIndex.PstRookBase, b.rooksW.raw, b.rooksB.raw)
+      addPst(sink, FeatureIndex.PstQueenBase, b.queensW.raw, b.queensB.raw)
 
-    private def addBishopPair(sink: FeatureSink, b: chess.model.board.BoardLike): Unit =
+    private def addBishopPair(
+        sink: FeatureSink,
+        b: chess.model.board.BoardLike
+    ): Unit =
       val whitePair = if b.bishopsW.popCount >= 2 then 1 else 0
       val blackPair = if b.bishopsB.popCount >= 2 then 1 else 0
       sink.add(FeatureIndex.BishopPair, whitePair - blackPair)
 
-    /** PST helper: each piece adds ±1 to its square's PST key;
-      * black squares mirror to white-coordinate keys so the tuner
-      * learns a single 64-square table per piece type. */
+    /** PST helper: each piece adds ±1 to its square's PST key; black squares
+      * mirror to white-coordinate keys so the tuner learns a single 64-square
+      * table per piece type.
+      */
     private def addPst(
         sink: FeatureSink,
         pstBase: Int,
         whiteBits: Long,
-        blackBits: Long,
+        blackBits: Long
     ): Unit =
       var w = whiteBits
       while w != 0L do
@@ -306,22 +332,33 @@ object FeatureExtractor:
     // learns ~3-5 cp per knight/bishop move, ~2 cp per rook/queen
     // move (queens have lots of moves so each is worth less).
 
-    private def addMobility(sink: FeatureSink, b: chess.model.board.BoardLike): Unit =
+    private def addMobility(
+        sink: FeatureSink,
+        b: chess.model.board.BoardLike
+    ): Unit =
       val wOcc = b.whitePieces.raw
       val bOcc = b.blackPieces.raw
-      val occ  = b.occupancy.raw
-      sink.add(FeatureIndex.KnightMob,
+      val occ = b.occupancy.raw
+      sink.add(
+        FeatureIndex.KnightMob,
         knightMobility(b.knightsW.raw, wOcc) -
-          knightMobility(b.knightsB.raw, bOcc))
-      sink.add(FeatureIndex.BishopMob,
+          knightMobility(b.knightsB.raw, bOcc)
+      )
+      sink.add(
+        FeatureIndex.BishopMob,
         bishopMobility(b.bishopsW.raw, occ, wOcc) -
-          bishopMobility(b.bishopsB.raw, occ, bOcc))
-      sink.add(FeatureIndex.RookMob,
+          bishopMobility(b.bishopsB.raw, occ, bOcc)
+      )
+      sink.add(
+        FeatureIndex.RookMob,
         rookMobility(b.rooksW.raw, occ, wOcc) -
-          rookMobility(b.rooksB.raw, occ, bOcc))
-      sink.add(FeatureIndex.QueenMob,
+          rookMobility(b.rooksB.raw, occ, bOcc)
+      )
+      sink.add(
+        FeatureIndex.QueenMob,
         queenMobility(b.queensW.raw, occ, wOcc) -
-          queenMobility(b.queensB.raw, occ, bOcc))
+          queenMobility(b.queensB.raw, occ, bOcc)
+      )
 
     private def knightMobility(pieces: Long, ownOcc: Long): Int =
       var total = 0
@@ -329,7 +366,9 @@ object FeatureExtractor:
       while rem != 0L do
         val sq = java.lang.Long.numberOfTrailingZeros(rem)
         rem &= rem - 1L
-        total += java.lang.Long.bitCount(BitboardAttacks.knightAttacks(sq) & ~ownOcc)
+        total += java.lang.Long.bitCount(
+          BitboardAttacks.knightAttacks(sq) & ~ownOcc
+        )
       total
 
     private def bishopMobility(pieces: Long, occ: Long, ownOcc: Long): Int =
@@ -338,7 +377,9 @@ object FeatureExtractor:
       while rem != 0L do
         val sq = java.lang.Long.numberOfTrailingZeros(rem)
         rem &= rem - 1L
-        total += java.lang.Long.bitCount(BitboardAttacks.bishopAttacks(sq, occ) & ~ownOcc)
+        total += java.lang.Long.bitCount(
+          BitboardAttacks.bishopAttacks(sq, occ) & ~ownOcc
+        )
       total
 
     private def rookMobility(pieces: Long, occ: Long, ownOcc: Long): Int =
@@ -347,7 +388,9 @@ object FeatureExtractor:
       while rem != 0L do
         val sq = java.lang.Long.numberOfTrailingZeros(rem)
         rem &= rem - 1L
-        total += java.lang.Long.bitCount(BitboardAttacks.rookAttacks(sq, occ) & ~ownOcc)
+        total += java.lang.Long.bitCount(
+          BitboardAttacks.rookAttacks(sq, occ) & ~ownOcc
+        )
       total
 
     private def queenMobility(pieces: Long, occ: Long, ownOcc: Long): Int =
@@ -357,7 +400,10 @@ object FeatureExtractor:
         val sq = java.lang.Long.numberOfTrailingZeros(rem)
         rem &= rem - 1L
         val attacks =
-          BitboardAttacks.bishopAttacks(sq, occ) | BitboardAttacks.rookAttacks(sq, occ)
+          BitboardAttacks.bishopAttacks(sq, occ) | BitboardAttacks.rookAttacks(
+            sq,
+            occ
+          )
         total += java.lang.Long.bitCount(attacks & ~ownOcc)
       total
 
@@ -370,7 +416,10 @@ object FeatureExtractor:
     // Connected: pawn with at least one friendly pawn on an adjacent
     //            file within ±1 rank (defender or shoulder-mate).
 
-    private def addPawnStructure(sink: FeatureSink, b: chess.model.board.BoardLike): Unit =
+    private def addPawnStructure(
+        sink: FeatureSink,
+        b: chess.model.board.BoardLike
+    ): Unit =
       val wPawns = b.pawnsW.raw
       val bPawns = b.pawnsB.raw
       val cache = PawnStructureCache.local.get()
@@ -389,34 +438,42 @@ object FeatureExtractor:
       while r < 6 do
         sink.add(FeatureIndex.PassedRankBase + r, data(base + r))
         r += 1
-      sink.add(FeatureIndex.IsolatedPawn,  data(base + 6))
-      sink.add(FeatureIndex.DoubledPawn,   data(base + 7))
+      sink.add(FeatureIndex.IsolatedPawn, data(base + 6))
+      sink.add(FeatureIndex.DoubledPawn, data(base + 7))
       sink.add(FeatureIndex.ConnectedPawn, data(base + 8))
 
-    /** Compute the 9 pawn-structure feature contributions (6 passed-
-      * rank bonuses, isolated, doubled, connected diffs) for the
-      * given pawn bitboards. Writes into `data[base..base+8]`.
-      * Mirrors what [[addPawnStructure]] used to call inline; the
-      * cache-miss path runs this and stores the result. */
+    /** Compute the 9 pawn-structure feature contributions (6 passed- rank
+      * bonuses, isolated, doubled, connected diffs) for the given pawn
+      * bitboards. Writes into `data[base..base+8]`. Mirrors what
+      * [[addPawnStructure]] used to call inline; the cache-miss path runs this
+      * and stores the result.
+      */
     private def computePawnContribs(
-        wPawns: Long, bPawns: Long, data: Array[Int], base: Int,
+        wPawns: Long,
+        bPawns: Long,
+        data: Array[Int],
+        base: Int
     ): Unit =
       var i = 0
       while i < 9 do
         data(base + i) = 0
         i += 1
-      passedContribs(wPawns, bPawns, white = true,  data, base)
+      passedContribs(wPawns, bPawns, white = true, data, base)
       passedContribs(bPawns, wPawns, white = false, data, base)
       data(base + 6) = isolatedCount(wPawns) - isolatedCount(bPawns)
-      data(base + 7) = doubledCount(wPawns)  - doubledCount(bPawns)
+      data(base + 7) = doubledCount(wPawns) - doubledCount(bPawns)
       data(base + 8) = connectedCount(wPawns) - connectedCount(bPawns)
 
-    /** Adapted from the old [[addPassedPawns]] body — accumulates
-      * each passed pawn into `data(base + (rank-2))` instead of
-      * directly into the sink, so the result can be cached. */
+    /** Adapted from the old [[addPassedPawns]] body — accumulates each passed
+      * pawn into `data(base + (rank-2))` instead of directly into the sink, so
+      * the result can be cached.
+      */
     private def passedContribs(
-        ownPawns: Long, enemyPawns: Long, white: Boolean,
-        data: Array[Int], base: Int,
+        ownPawns: Long,
+        enemyPawns: Long,
+        white: Boolean,
+        data: Array[Int],
+        base: Int
     ): Unit =
       var rem = ownPawns
       val sign = if white then 1 else -1
@@ -425,11 +482,11 @@ object FeatureExtractor:
         rem &= rem - 1L
         val mask =
           if white then PawnMasks.passedPawnMaskWhite(sq)
-          else          PawnMasks.passedPawnMaskBlack(sq)
+          else PawnMasks.passedPawnMaskBlack(sq)
         if (enemyPawns & mask) == 0L then
           val whiteEquivRank =
             if white then (sq / 8) + 1
-            else            (mirror(sq) / 8) + 1
+            else (mirror(sq) / 8) + 1
           if whiteEquivRank >= 2 && whiteEquivRank <= 7 then
             data(base + (whiteEquivRank - 2)) += sign
 
@@ -440,8 +497,7 @@ object FeatureExtractor:
         val pawnsOnFile = pawns & PawnMasks.fileMask(f)
         if pawnsOnFile != 0L then
           val neighbours = pawns & PawnMasks.adjacentFileMask(f)
-          if neighbours == 0L then
-            total += java.lang.Long.bitCount(pawnsOnFile)
+          if neighbours == 0L then total += java.lang.Long.bitCount(pawnsOnFile)
         f += 1
       total
 
@@ -472,7 +528,10 @@ object FeatureExtractor:
     //                 intersects the own king's zone, signed so
     //                 positive = white attacks more.
 
-    private def addKingSafety(sink: FeatureSink, b: chess.model.board.BoardLike): Unit =
+    private def addKingSafety(
+        sink: FeatureSink,
+        b: chess.model.board.BoardLike
+    ): Unit =
       val wKingBb = b.kingW.raw
       val bKingBb = b.kingB.raw
       // Empty-king positions can occur in some test fixtures — guard
@@ -482,38 +541,55 @@ object FeatureExtractor:
       else
         val wKingSq = java.lang.Long.numberOfTrailingZeros(wKingBb)
         val bKingSq = java.lang.Long.numberOfTrailingZeros(bKingBb)
-        val wShield = java.lang.Long.bitCount(PawnMasks.kingZone(wKingSq) & b.pawnsW.raw)
-        val bShield = java.lang.Long.bitCount(PawnMasks.kingZone(bKingSq) & b.pawnsB.raw)
+        val wShield =
+          java.lang.Long.bitCount(PawnMasks.kingZone(wKingSq) & b.pawnsW.raw)
+        val bShield =
+          java.lang.Long.bitCount(PawnMasks.kingZone(bKingSq) & b.pawnsB.raw)
         sink.add(FeatureIndex.PawnShield, wShield - bShield)
 
         // Count enemy non-pawn, non-king pieces attacking the king zone.
-        val whiteOnBlackKing = kingZoneAttackers(b, PawnMasks.kingZone(bKingSq), byWhite = true)
-        val blackOnWhiteKing = kingZoneAttackers(b, PawnMasks.kingZone(wKingSq), byWhite = false)
-        sink.add(FeatureIndex.KingAttackers, whiteOnBlackKing - blackOnWhiteKing)
+        val whiteOnBlackKing =
+          kingZoneAttackers(b, PawnMasks.kingZone(bKingSq), byWhite = true)
+        val blackOnWhiteKing =
+          kingZoneAttackers(b, PawnMasks.kingZone(wKingSq), byWhite = false)
+        sink.add(
+          FeatureIndex.KingAttackers,
+          whiteOnBlackKing - blackOnWhiteKing
+        )
 
-    /** Count enemy pieces (N/B/R/Q) whose attack-set intersects
-      * `kingZone`. Each attacker counted once; an attacker that
-      * covers multiple zone squares still adds 1. Cheap because the
-      * iteration is over piece-typed bitboards. */
+    /** Count enemy pieces (N/B/R/Q) whose attack-set intersects `kingZone`.
+      * Each attacker counted once; an attacker that covers multiple zone
+      * squares still adds 1. Cheap because the iteration is over piece-typed
+      * bitboards.
+      */
     private def kingZoneAttackers(
         b: chess.model.board.BoardLike,
         zone: Long,
-        byWhite: Boolean,
+        byWhite: Boolean
     ): Int =
       val knights = if byWhite then b.knightsW.raw else b.knightsB.raw
       val bishops = if byWhite then b.bishopsW.raw else b.bishopsB.raw
-      val rooks   = if byWhite then b.rooksW.raw   else b.rooksB.raw
-      val queens  = if byWhite then b.queensW.raw  else b.queensB.raw
-      val occ     = b.occupancy.raw
-      countAttackersOf(knights, zone) { sq => BitboardAttacks.knightAttacks(sq) } +
-        countAttackersOf(bishops, zone) { sq => BitboardAttacks.bishopAttacks(sq, occ) } +
-        countAttackersOf(rooks,   zone) { sq => BitboardAttacks.rookAttacks(sq, occ) } +
-        countAttackersOf(queens,  zone) { sq =>
-          BitboardAttacks.bishopAttacks(sq, occ) | BitboardAttacks.rookAttacks(sq, occ)
+      val rooks = if byWhite then b.rooksW.raw else b.rooksB.raw
+      val queens = if byWhite then b.queensW.raw else b.queensB.raw
+      val occ = b.occupancy.raw
+      countAttackersOf(knights, zone) { sq =>
+        BitboardAttacks.knightAttacks(sq)
+      } +
+        countAttackersOf(bishops, zone) { sq =>
+          BitboardAttacks.bishopAttacks(sq, occ)
+        } +
+        countAttackersOf(rooks, zone) { sq =>
+          BitboardAttacks.rookAttacks(sq, occ)
+        } +
+        countAttackersOf(queens, zone) { sq =>
+          BitboardAttacks.bishopAttacks(sq, occ) | BitboardAttacks.rookAttacks(
+            sq,
+            occ
+          )
         }
 
     private inline def countAttackersOf(pieces: Long, zone: Long)(
-        attacksOf: Int => Long,
+        attacksOf: Int => Long
     ): Int =
       var count = 0
       var rem = pieces
@@ -525,7 +601,10 @@ object FeatureExtractor:
 
     // ── Rook activity ────────────────────────────────────────────
 
-    private def addRookActivity(sink: FeatureSink, b: chess.model.board.BoardLike): Unit =
+    private def addRookActivity(
+        sink: FeatureSink,
+        b: chess.model.board.BoardLike
+    ): Unit =
       val wPawns = b.pawnsW.raw
       val bPawns = b.pawnsB.raw
       val wPack = rookFileBonuses(b.rooksW.raw, wPawns, bPawns)
@@ -534,28 +613,28 @@ object FeatureExtractor:
       val wSemi = wPack.toInt
       val bOpen = (bPack >>> 32).toInt
       val bSemi = bPack.toInt
-      sink.add(FeatureIndex.RookOpenFile,      wOpen - bOpen)
+      sink.add(FeatureIndex.RookOpenFile, wOpen - bOpen)
       sink.add(FeatureIndex.RookSemiOpenFile, wSemi - bSemi)
 
-    /** Per rook, count whether its file is open (no pawns of either
-      * side) or semi-open (no own pawns; enemy pawns ok). Returns
-      * the two counts packed into a Long (top 32 bits = open count,
-      * bottom 32 bits = semi-open count) so the call site doesn't
-      * pay a Tuple2[Integer, Integer] allocation per eval —
-      * profile-confirmed 28 boxToInteger samples here. */
+    /** Per rook, count whether its file is open (no pawns of either side) or
+      * semi-open (no own pawns; enemy pawns ok). Returns the two counts packed
+      * into a Long (top 32 bits = open count, bottom 32 bits = semi-open count)
+      * so the call site doesn't pay a Tuple2[Integer, Integer] allocation per
+      * eval — profile-confirmed 28 boxToInteger samples here.
+      */
     private def rookFileBonuses(
         rooks: Long,
         ownPawns: Long,
-        enemyPawns: Long,
+        enemyPawns: Long
     ): Long =
-      var open     = 0
+      var open = 0
       var semiOpen = 0
       var rem = rooks
       while rem != 0L do
         val sq = java.lang.Long.numberOfTrailingZeros(rem)
         rem &= rem - 1L
         val fileM = PawnMasks.fileMask(sq % 8)
-        val ownOnFile   = (fileM & ownPawns) != 0L
+        val ownOnFile = (fileM & ownPawns) != 0L
         val enemyOnFile = (fileM & enemyPawns) != 0L
         if !ownOnFile && !enemyOnFile then open += 1
         else if !ownOnFile then semiOpen += 1
@@ -568,18 +647,21 @@ object FeatureExtractor:
     // the opponent's half (rank ≥ 5 for white, ≤ 4 for black) so
     // we don't credit knights in their own territory.
 
-    private def addKnightOutpost(sink: FeatureSink, b: chess.model.board.BoardLike): Unit =
+    private def addKnightOutpost(
+        sink: FeatureSink,
+        b: chess.model.board.BoardLike
+    ): Unit =
       val whiteOutposts = countOutposts(
-        knights      = b.knightsW.raw,
-        ownPawns     = b.pawnsW.raw,
-        enemyPawns   = b.pawnsB.raw,
-        white        = true,
+        knights = b.knightsW.raw,
+        ownPawns = b.pawnsW.raw,
+        enemyPawns = b.pawnsB.raw,
+        white = true
       )
       val blackOutposts = countOutposts(
-        knights      = b.knightsB.raw,
-        ownPawns     = b.pawnsB.raw,
-        enemyPawns   = b.pawnsW.raw,
-        white        = false,
+        knights = b.knightsB.raw,
+        ownPawns = b.pawnsB.raw,
+        enemyPawns = b.pawnsW.raw,
+        white = false
       )
       sink.add(FeatureIndex.KnightOutpost, whiteOutposts - blackOutposts)
 
@@ -587,7 +669,7 @@ object FeatureExtractor:
         knights: Long,
         ownPawns: Long,
         enemyPawns: Long,
-        white: Boolean,
+        white: Boolean
     ): Int =
       var total = 0
       var rem = knights
@@ -598,11 +680,13 @@ object FeatureExtractor:
         val inEnemyHalf = if white then rank >= 4 else rank <= 3
         if inEnemyHalf then
           val defendedByPawn =
-            if white then (BitboardAttacks.whitePawnAttackersOf(sq) & ownPawns) != 0L
-            else          (BitboardAttacks.blackPawnAttackersOf(sq) & ownPawns) != 0L
+            if white then
+              (BitboardAttacks.whitePawnAttackersOf(sq) & ownPawns) != 0L
+            else (BitboardAttacks.blackPawnAttackersOf(sq) & ownPawns) != 0L
           val attackedByEnemyPawn =
-            if white then (BitboardAttacks.blackPawnAttackersOf(sq) & enemyPawns) != 0L
-            else          (BitboardAttacks.whitePawnAttackersOf(sq) & enemyPawns) != 0L
+            if white then
+              (BitboardAttacks.blackPawnAttackersOf(sq) & enemyPawns) != 0L
+            else (BitboardAttacks.whitePawnAttackersOf(sq) & enemyPawns) != 0L
           if defendedByPawn && !attackedByEnemyPawn then total += 1
       total
 
@@ -612,14 +696,19 @@ object FeatureExtractor:
     // the classic "loose piece" pattern. Three buckets by attacker
     // type. Diff is `bAttacked - wAttacked` so a positive feature
     // value means BLACK has more pieces in danger (favours white).
-    private def addThreats(sink: FeatureSink, b: chess.model.board.BoardLike): Unit =
+    private def addThreats(
+        sink: FeatureSink,
+        b: chess.model.board.BoardLike
+    ): Unit =
       val occ = b.occupancy.raw
       val wPawnAttacks = BitboardAttacks.whitePawnAttacksFrom(b.pawnsW.raw)
       val bPawnAttacks = BitboardAttacks.blackPawnAttacksFrom(b.pawnsB.raw)
 
       // (1) ThreatByPawn — enemy pawn attacks own knight/bishop/rook/queen.
-      val wMinorMajor = b.knightsW.raw | b.bishopsW.raw | b.rooksW.raw | b.queensW.raw
-      val bMinorMajor = b.knightsB.raw | b.bishopsB.raw | b.rooksB.raw | b.queensB.raw
+      val wMinorMajor =
+        b.knightsW.raw | b.bishopsW.raw | b.rooksW.raw | b.queensW.raw
+      val bMinorMajor =
+        b.knightsB.raw | b.bishopsB.raw | b.rooksB.raw | b.queensB.raw
       val wAttackedByPawn = java.lang.Long.bitCount(bPawnAttacks & wMinorMajor)
       val bAttackedByPawn = java.lang.Long.bitCount(wPawnAttacks & bMinorMajor)
       sink.add(FeatureIndex.ThreatByPawn, bAttackedByPawn - wAttackedByPawn)
@@ -636,12 +725,15 @@ object FeatureExtractor:
       // (3) ThreatByRook — enemy rook attacks own queen.
       val wRookAttacks = rookAttacksUnion(b.rooksW.raw, occ)
       val bRookAttacks = rookAttacksUnion(b.rooksB.raw, occ)
-      val wAttackedByRook = java.lang.Long.bitCount(bRookAttacks & b.queensW.raw)
-      val bAttackedByRook = java.lang.Long.bitCount(wRookAttacks & b.queensB.raw)
+      val wAttackedByRook =
+        java.lang.Long.bitCount(bRookAttacks & b.queensW.raw)
+      val bAttackedByRook =
+        java.lang.Long.bitCount(wRookAttacks & b.queensB.raw)
       sink.add(FeatureIndex.ThreatByRook, bAttackedByRook - wAttackedByRook)
 
-    /** Bitboard of all squares attacked by the given knights + bishops
-      * (given total occupancy for the sliding bishop walk). */
+    /** Bitboard of all squares attacked by the given knights + bishops (given
+      * total occupancy for the sliding bishop walk).
+      */
     private def minorAttacks(knights: Long, bishops: Long, occ: Long): Long =
       var attacks = 0L
       var rem = knights
@@ -686,9 +778,9 @@ object FeatureExtractor:
     // bitboards. Collisions just cause cache misses (correctness
     // is preserved because we verify both bitboards on hit).
     private[FullFeatures] object PawnStructureCache:
-      inline val SizeBits  = 12
-      inline val Size      = 1 << SizeBits
-      inline val Mask      = Size - 1
+      inline val SizeBits = 12
+      inline val Size = 1 << SizeBits
+      inline val Mask = Size - 1
       inline val EntrySize = 9
 
       // Pawn bitboards have bits set only on ranks 2..7 (bits 8..55).
@@ -699,11 +791,11 @@ object FeatureExtractor:
       final class ThreadCache:
         val keyW: Array[Long] = Array.fill(Size)(EmptyKey)
         val keyB: Array[Long] = Array.fill(Size)(EmptyKey)
-        val data: Array[Int]  = new Array[Int](Size * EntrySize)
+        val data: Array[Int] = new Array[Int](Size * EntrySize)
 
       val local: ThreadLocal[ThreadCache] =
         ThreadLocal.withInitial(() => new ThreadCache())
 
       inline def slot(w: Long, b: Long): Int =
-        val mix = w * 0x9E3779B97F4A7C15L + b * 0xBF58476D1CE4E5B9L
+        val mix = w * 0x9e3779b97f4a7c15L + b * 0xbf58476d1ce4e5b9L
         (((mix ^ (mix >>> 32)) & Mask).toInt)

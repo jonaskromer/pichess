@@ -8,8 +8,8 @@ import chess.model.board.{BoardLike, PositionView}
   *   - **1.0** — full opening / starting material (24 phase units)
   *   - **0.0** — bare kings + pawns (no minor or major pieces left)
   *
-  * The Texel-tuner / tapered-eval consumers use this to blend two
-  * weight sets: `score = phase * opening_eval + (1 - phase) * endgame_eval`.
+  * The Texel-tuner / tapered-eval consumers use this to blend two weight sets:
+  * `score = phase * opening_eval + (1 - phase) * endgame_eval`.
   *
   * Phase values per piece (Stockfish convention, slightly trimmed):
   *
@@ -25,24 +25,24 @@ import chess.model.board.{BoardLike, PositionView}
   *
   * Maximum is 2 sides × (4 + 2·2 + 2·1 + 2·1) = **24**.
   *
-  * The clamp at 1.0 protects the rare case where a side has been
-  * promoting (more queens than the starting 1) — that briefly pushes
-  * raw phase above 24, which we cap.
+  * The clamp at 1.0 protects the rare case where a side has been promoting
+  * (more queens than the starting 1) — that briefly pushes raw phase above 24,
+  * which we cap.
   */
 object GamePhase:
 
-  private inline val QueenPhase  = 4
-  private inline val RookPhase   = 2
+  private inline val QueenPhase = 4
+  private inline val RookPhase = 2
   private inline val BishopPhase = 1
   private inline val KnightPhase = 1
-  private inline val MaxPhase    = 24
+  private inline val MaxPhase = 24
 
   def compute(state: PositionView): Double = compute(state.board)
 
   def compute(board: BoardLike): Double =
     val raw =
-      (board.queensW.popCount  + board.queensB.popCount ) * QueenPhase  +
-      (board.rooksW.popCount   + board.rooksB.popCount  ) * RookPhase   +
-      (board.bishopsW.popCount + board.bishopsB.popCount) * BishopPhase +
-      (board.knightsW.popCount + board.knightsB.popCount) * KnightPhase
+      (board.queensW.popCount + board.queensB.popCount) * QueenPhase +
+        (board.rooksW.popCount + board.rooksB.popCount) * RookPhase +
+        (board.bishopsW.popCount + board.bishopsB.popCount) * BishopPhase +
+        (board.knightsW.popCount + board.knightsB.popCount) * KnightPhase
     math.min(raw, MaxPhase).toDouble / MaxPhase.toDouble

@@ -20,20 +20,21 @@ import chess.model.board.{GameState, Move}
   * search. This gives perfect endgame play with zero local tablebase files
   * (Syzygy is ~1 GB for 5-piece, ~150 GB for 6) and no Stockfish dependency.
   *
-  * Fail-safe by construction: any failure — network error, timeout, JSON
-  * parse, or a position the API doesn't cover — yields `None`, so the caller
+  * Fail-safe by construction: any failure — network error, timeout, JSON parse,
+  * or a position the API doesn't cover — yields `None`, so the caller
   * transparently falls back to the normal search. The bot never blocks on or
-  * breaks because of the external service. */
+  * breaks because of the external service.
+  */
 final class LichessTablebaseSearch(
     backend: SttpBackend[Task, ZioStreams],
     base: Uri = uri"https://tablebase.lichess.ovh",
-    probeTimeout: Duration = 1.second,
+    probeTimeout: Duration = 1.second
 ) extends Search:
 
   override def bestMove(
       state: GameState,
       depth: Int,
-      history: Set[Long] = Set.empty,
+      history: Set[Long] = Set.empty
   ): UIO[Option[Move]] =
     val fen = FenSerializer.serialize(state)
     val req = basicRequest
@@ -54,8 +55,11 @@ object LichessTablebaseSearch:
   private final case class TbResponse(moves: List[TbMove]) derives JsonDecoder
 
   /** Lichess sorts `moves` best-first for the side to move, so the head is the
-    * tablebase-best move to play. */
+    * tablebase-best move to play.
+    */
   def parseBestMove(json: String): Option[Move] =
-    json.fromJson[TbResponse].toOption
+    json
+      .fromJson[TbResponse]
+      .toOption
       .flatMap(_.moves.headOption)
       .flatMap(m => UciCodec.parse(m.uci).toOption)

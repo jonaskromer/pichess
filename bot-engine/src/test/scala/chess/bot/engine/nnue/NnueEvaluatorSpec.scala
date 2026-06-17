@@ -5,41 +5,43 @@ import zio.test.*
 
 import chess.codec.FenParserRegex
 
-/** Sanity checks for the NNUE inference: load the baked v1 net,
-  * evaluate a few hand-chosen positions, assert the magnitudes
-  * land in sensible centipawn ranges. Doesn't pin specific
-  * numerical values (the net is trained from a small dataset and
-  * its specific outputs will drift across re-trains); pinning
-  * inequalities is enough to catch a broken loader. */
+/** Sanity checks for the NNUE inference: load the baked v1 net, evaluate a few
+  * hand-chosen positions, assert the magnitudes land in sensible centipawn
+  * ranges. Doesn't pin specific numerical values (the net is trained from a
+  * small dataset and its specific outputs will drift across re-trains); pinning
+  * inequalities is enough to catch a broken loader.
+  */
 object NnueEvaluatorSpec extends ZIOSpecDefault:
 
   def spec = suite("NnueEvaluator")(
     test("loads the baked /nnue-v1.bin resource") {
       assertTrue(NnueEvaluator.loadResource("/nnue-v1.bin").isDefined)
     },
-    test("loadFile reads a net from a filesystem path (matches baked), None when absent") {
+    test(
+      "loadFile reads a net from a filesystem path (matches baked), None when absent"
+    ) {
       // The A/B harness loads candidate nets from /tmp via loadFile; it must
       // produce the same evaluator as the classpath loader for the same bytes.
       val baked = NnueEvaluator.loadResource("/nnue-v1.bin").get
       val bytes = getClass.getResourceAsStream("/nnue-v1.bin").readAllBytes()
-      val tmp   = java.nio.file.Files.createTempFile("nnue-ab", ".bin")
+      val tmp = java.nio.file.Files.createTempFile("nnue-ab", ".bin")
       java.nio.file.Files.write(tmp, bytes)
       val fromFile = NnueEvaluator.loadFile(tmp.toString)
       java.nio.file.Files.deleteIfExists(tmp)
       for state <- FenParserRegex.parse(
-                     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                   )
+          "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        )
       yield assertTrue(
         fromFile.isDefined,
         fromFile.get.evaluate(state) == baked.evaluate(state),
-        NnueEvaluator.loadFile("/no/such/net-does-not-exist.bin").isEmpty,
+        NnueEvaluator.loadFile("/no/such/net-does-not-exist.bin").isEmpty
       )
     },
     test("starting position evaluates close to zero (symmetric)") {
       val nnue = NnueEvaluator.loadResource("/nnue-v1.bin").get
       for state <- FenParserRegex.parse(
-                     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                   )
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+      )
       // First move advantage in this net could be ±100; just rule
       // out gross misloading where eval is in the thousands.
       yield assertTrue(math.abs(nnue.evaluate(state)) < 500)
@@ -62,30 +64,42 @@ object NnueEvaluatorSpec extends ZIOSpecDefault:
     // `refreshInto` on the resulting board (both perspectives), check
     // `evaluateFrom` matches `evaluate`, then unmake and check we're
     // back where we started.
-    test("incremental applyDiff == full refresh, reversible, eval-parity (all move types)") {
+    test(
+      "incremental applyDiff == full refresh, reversible, eval-parity (all move types)"
+    ) {
       val nnue = NnueEvaluator.loadResource("/nnue-v1.bin").get
       val pairs = List(
-        ("quiet (e2e4)",
+        (
+          "quiet (e2e4)",
           "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-          "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"),
-        ("capture (exd5)",
+          "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+        ),
+        (
+          "capture (exd5)",
           "rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2",
-          "rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2"),
-        ("castle (O-O)",
+          "rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2"
+        ),
+        (
+          "castle (O-O)",
           "r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1",
-          "r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R4RK1 b kq - 1 1"),
-        ("en passant (exf6)",
+          "r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R4RK1 b kq - 1 1"
+        ),
+        (
+          "en passant (exf6)",
           "rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3",
-          "rnbqkbnr/ppp1p1pp/5P2/3p4/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 3"),
-        ("promotion (a8=Q)",
+          "rnbqkbnr/ppp1p1pp/5P2/3p4/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 3"
+        ),
+        (
+          "promotion (a8=Q)",
           "4k3/P7/8/8/8/8/8/4K3 w - - 0 1",
-          "Q3k3/8/8/8/8/8/8/4K3 b - - 0 1"),
+          "Q3k3/8/8/8/8/8/8/4K3 b - - 0 1"
+        )
       )
       ZIO
         .foreach(pairs) { case (name, beforeFen, afterFen) =>
           for
             before <- FenParserRegex.parse(beforeFen)
-            after  <- FenParserRegex.parse(afterFen)
+            after <- FenParserRegex.parse(afterFen)
           yield
             val acc = nnue.freshAccumulator()
             nnue.refreshInto(acc, before.board)
@@ -112,5 +126,5 @@ object NnueEvaluatorSpec extends ZIOSpecDefault:
             assertTrue(matchesAfter, evalParity, reversible) ?? name
         }
         .map(_.reduce(_ && _))
-    },
+    }
   )

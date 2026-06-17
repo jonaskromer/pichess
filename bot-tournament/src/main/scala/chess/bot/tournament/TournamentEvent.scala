@@ -1,0 +1,142 @@
+package chess.bot.tournament
+
+import zio.json.*
+
+import chess.model.piece.Color
+
+/** Discriminated unions modelling the NDJSON events the NowChess tournament
+  * server (`maichess/tournament-server`) emits.
+  *
+  * Two streams (see `docs/tournament-integration.md`):
+  *   - the tournament stream (`GET /api/tournament/{id}/stream`) emits
+  *     [[TournamentEvent]] — round lifecycle + per-game `gameStart`.
+  *   - the per-game stream (`GET /api/tournament/{id}/game/{gameId}/stream`)
+  *     emits [[GameEvent]] — an initial state snapshot then one event per move
+  *     / status change.
+  *
+  * Unlike the Lichess Bot API (nested `gameFull { state }`), NowChess encodes
+  * every event **flat** with a `"type"` discriminator at the top level —
+  * verified against the server's `JsonCodecs.scala`. zio-json's
+  * `@jsonDiscriminator("type")` + `@jsonHint` matches that exactly.
+  *
+  * Two contract facts the decoders below pin:
+  *   - the per-game stream carries **no colour** — our colour comes from the
+  *     tournament stream's [[TournamentEvent.GameStart.color]] and is threaded
+  *     into the game fiber;
+  *   - clocks are **seconds** ([[GameClock]] is `Double`), and the increment is
+  *     absent from game events — it lives in the tournament [[Clock]].
+  */
+
+// `Color` lives in the pure domain with no JSON codec; the wire form is the
+// lowercase string "white"/"black". Defined top-level so the derived event
+// codecs in this file see it during derivation.
+given JsonDecoder[Color] = JsonDecoder[String].mapOrFail:
+  case "white" => Right(Color.White)
+  case "black" => Right(Color.Black)
+  case other   => Left(s"invalid color: $other")
+
+given JsonEncoder[Color] = JsonEncoder[String].contramap:
+  case Color.White => "white"
+  case Color.Black => "black"
+
+/** Tournament time control: base + increment, in **seconds**. Read from `GET
+  * /api/tournament/{id}` (`clock`); the increment is NOT present in the
+  * per-game events, so it must be carried from here.
+  */
+final case class TournamentClock(limit: Int, increment: Int)
+object TournamentClock:
+  given JsonDecoder[TournamentClock] = DeriveJsonDecoder.gen[TournamentClock]
+  given JsonEncoder[TournamentClock] = DeriveJsonEncoder.gen[TournamentClock]
+
+/** Per-game clock snapshot: each side's remaining time in **seconds**
+  * (fractional). Note: no increment here — see [[Clock]].
+  */
+final case class GameClock(whiteTime: Double, blackTime: Double)
+object GameClock:
+  given JsonDecoder[GameClock] = DeriveJsonDecoder.gen[GameClock]
+  given JsonEncoder[GameClock] = DeriveJsonEncoder.gen[GameClock]
+
+/** A bot's identity as it appears in tournament/game payloads. */
+final case class BotRef(id: String, name: String)
+object BotRef:
+  given JsonDecoder[BotRef] = DeriveJsonDecoder.gen[BotRef]
+  given JsonEncoder[BotRef] = DeriveJsonEncoder.gen[BotRef]
+
+// ── Tournament-level events ───────────────────────────────────────────
+
+@jsonDiscriminator("type")
+sealed trait TournamentEvent
+
+object TournamentEvent:
+
+  /** Round 1 pairings have been computed; games are about to start. */
+  @jsonHint("tournamentStarted")
+  case object TournamentStarted extends TournamentEvent
+
+  /** A new round began. */
+  @jsonHint("roundStarted")
+  final case class RoundStarted(round: Int) extends TournamentEvent
+
+  /** A game we're in has started. `color` is the colour WE play — the per-game
+    * stream never repeats it, so this is the only source.
+    */
+  @jsonHint("gameStart")
+  final case class GameStart(round: Int, gameId: String, color: Color)
+      extends TournamentEvent
+
+  /** All games in a round finished. */
+  @jsonHint("roundFinished")
+  final case class RoundFinished(round: Int) extends TournamentEvent
+
+  /** The tournament is over; `winner` is the champion. Terminates the
+    * tournament stream.
+    */
+  @jsonHint("tournamentFinished")
+  final case class TournamentFinished(winner: BotRef) extends TournamentEvent
+
+  given JsonDecoder[TournamentEvent] = DeriveJsonDecoder.gen[TournamentEvent]
+  given JsonEncoder[TournamentEvent] = DeriveJsonEncoder.gen[TournamentEvent]
+
+// ── Per-game events ───────────────────────────────────────────────────
+
+@jsonDiscriminator("type")
+sealed trait GameEvent
+
+object GameEvent:
+
+  /** The first event on every game stream (and on every reconnect): a full
+    * state snapshot. `fen` is the authoritative current position, so no move
+    * replay is needed. `status` is one of `pending` / `ongoing` / `checkmate` /
+    * `stalemate` / `draw` / `resigned` / `timeout`.
+    */
+  @jsonHint("gameState")
+  final case class StateSnapshot(
+      fen: String,
+      moves: String,
+      turn: Color,
+      clock: GameClock,
+      status: String,
+      winner: Option[Color]
+  ) extends GameEvent
+
+  /** A move was played (ours or the opponent's). `fen`/`turn` reflect the
+    * position AFTER the move; there is no `status` field — termination comes
+    * via [[GameEnded]].
+    */
+  @jsonHint("move")
+  final case class MovePlayed(
+      uci: String,
+      fen: String,
+      turn: Color,
+      clock: GameClock
+  ) extends GameEvent
+
+  /** The game ended. `winner` is `None` on a draw. Closes the game stream. */
+  @jsonHint("gameEnd")
+  final case class GameEnded(
+      winner: Option[Color],
+      status: String
+  ) extends GameEvent
+
+  given JsonDecoder[GameEvent] = DeriveJsonDecoder.gen[GameEvent]
+  given JsonEncoder[GameEvent] = DeriveJsonEncoder.gen[GameEvent]

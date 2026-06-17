@@ -11,17 +11,16 @@ import zio.json.*
 /** Loads [[WeightSnapshot]]s from the classpath at engine startup.
   *
   * The convention is `weights/vN.json` under any resource root on the
-  * classpath. Loading from a resource (rather than a filesystem path
-  * the user has to know about) means the weights are baked into the
-  * deployable jar — consumers don't need to ship a separate file or
-  * configure a path. Tests + dev runs read the same resource the
-  * production bot does.
+  * classpath. Loading from a resource (rather than a filesystem path the user
+  * has to know about) means the weights are baked into the deployable jar —
+  * consumers don't need to ship a separate file or configure a path. Tests +
+  * dev runs read the same resource the production bot does.
   *
   * Failure modes:
-  *   - resource missing  → `WeightsLoader.MissingResource`
-  *   - JSON malformed    → `WeightsLoader.MalformedJson`
-  * Both are surfaced as ZIO failures so callers can recover (e.g.
-  * fall back to a hardcoded snapshot) rather than aborting startup.
+  *   - resource missing → `WeightsLoader.MissingResource`
+  *   - JSON malformed → `WeightsLoader.MalformedJson`
+  * Both are surfaced as ZIO failures so callers can recover (e.g. fall back to
+  * a hardcoded snapshot) rather than aborting startup.
   */
 object WeightsLoader:
 
@@ -35,7 +34,8 @@ object WeightsLoader:
       )
       with LoadError
   final case class MalformedJson(path: String, reason: String)
-      extends RuntimeException(s"weights JSON malformed in $path: $reason") with LoadError
+      extends RuntimeException(s"weights JSON malformed in $path: $reason")
+      with LoadError
 
   /** Resource path convention. Override for tests with custom layouts. */
   val ResourceDir: String = "weights"
@@ -58,18 +58,21 @@ object WeightsLoader:
       .refineToOrDie[LoadError]
 
   private def parse(path: String, body: String): IO[LoadError, WeightSnapshot] =
-    ZIO.fromEither(body.fromJson[WeightSnapshot])
+    ZIO
+      .fromEither(body.fromJson[WeightSnapshot])
       .mapError(reason => MalformedJson(path, reason))
 
-  /** Write a snapshot to a `Path` as pretty-printed JSON. The
-    * companion of [[load]]: tuner runs call this to drop a new
-    * version next to the existing weights resources. The path is
-    * filesystem-typed (not a classpath resource) so the export step
-    * can write into the build's `src/main/resources/weights/`
-    * directory and be picked up by the next compile.
+  /** Write a snapshot to a `Path` as pretty-printed JSON. The companion of
+    * [[load]]: tuner runs call this to drop a new version next to the existing
+    * weights resources. The path is filesystem-typed (not a classpath resource)
+    * so the export step can write into the build's
+    * `src/main/resources/weights/` directory and be picked up by the next
+    * compile.
     */
-  def writeFile(snapshot: WeightSnapshot, target: java.nio.file.Path)
-      : IO[IOException, Unit] =
+  def writeFile(
+      snapshot: WeightSnapshot,
+      target: java.nio.file.Path
+  ): IO[IOException, Unit] =
     ZIO.attemptBlockingIO {
       val json = snapshot.toJsonPretty
       java.nio.file.Files.createDirectories(target.getParent)

@@ -6,141 +6,149 @@ import chess.model.board.{GameState, Move}
 
 /** Find the best move for the side to move in `state`.
   *
-  * The public surface is intentionally tiny — a search is "give me a
-  * state and a depth, get back a move". Implementations are free to
-  * choose how to find that move (α-β, iterative-deepening, MCTS, …);
-  * Phase 1 ships [[Search.alphaBeta]], a fixed-depth negamax search
-  * with a transposition table.
+  * The public surface is intentionally tiny — a search is "give me a state and
+  * a depth, get back a move". Implementations are free to choose how to find
+  * that move (α-β, iterative-deepening, MCTS, …); Phase 1 ships
+  * [[Search.alphaBeta]], a fixed-depth negamax search with a transposition
+  * table.
   *
   * Returns `None` only when `state` has no legal moves (checkmate or
-  * stalemate). At any legal position the search will always pick *a*
-  * move — even if every option loses, it picks the one that loses the
-  * latest / by the least material.
+  * stalemate). At any legal position the search will always pick *a* move —
+  * even if every option loses, it picks the one that loses the latest / by the
+  * least material.
   *
-  * `history` is the set of Zobrist hashes of positions that have
-  * already occurred in the game leading up to `state` (excluding
-  * `state` itself). The search treats any position whose Zobrist
-  * appears in `history` (or on the search path so far) as an
-  * immediate draw — engines normally collapse 2- and 3-fold this way
-  * because the opponent can claim the repetition. Pass `Set.empty`
-  * (the default) when the caller doesn't track history; tests + the
+  * `history` is the set of Zobrist hashes of positions that have already
+  * occurred in the game leading up to `state` (excluding `state` itself). The
+  * search treats any position whose Zobrist appears in `history` (or on the
+  * search path so far) as an immediate draw — engines normally collapse 2- and
+  * 3-fold this way because the opponent can claim the repetition. Pass
+  * `Set.empty` (the default) when the caller doesn't track history; tests + the
   * standalone engine entry points use that path.
   */
 trait Search:
   def bestMove(
       state: GameState,
       depth: Int,
-      history: Set[Long] = Set.empty,
+      history: Set[Long] = Set.empty
   ): UIO[Option[Move]]
 
-  /** Optional multi-PV: returns the top-K root moves sorted by
-    * score descending. Implementations that don't track multi-PV
-    * may return a singleton list wrapping `bestMove`'s result; for
-    * analysis use cases (UI, training-data dumps, MCTS bootstrap)
-    * the search-side override returns the real top-K.
+  /** Optional multi-PV: returns the top-K root moves sorted by score
+    * descending. Implementations that don't track multi-PV may return a
+    * singleton list wrapping `bestMove`'s result; for analysis use cases (UI,
+    * training-data dumps, MCTS bootstrap) the search-side override returns the
+    * real top-K.
     *
-    * Default behaviour falls through to `bestMove` so existing
-    * impls still compile. */
+    * Default behaviour falls through to `bestMove` so existing impls still
+    * compile.
+    */
   def bestMoves(
       state: GameState,
       depth: Int,
       k: Int,
-      history: Set[Long] = Set.empty,
+      history: Set[Long] = Set.empty
   ): UIO[List[(Move, Int)]] =
     bestMove(state, depth, history).map(_.toList.map(m => m -> 0))
 
-  /** Time-budgeted search. Runs iterative deepening until the
-    * deeper iteration is predicted to overflow `budgetMillis`, then
-    * returns the deepest completed iteration's best move.
+  /** Time-budgeted search. Runs iterative deepening until the deeper iteration
+    * is predicted to overflow `budgetMillis`, then returns the deepest
+    * completed iteration's best move.
     *
     * Default falls through to `bestMove(state, fallbackDepth)` so
-    * implementations without time management still compile;
-    * production callers should target the override on
-    * `AlphaBetaSearch`. */
+    * implementations without time management still compile; production callers
+    * should target the override on `AlphaBetaSearch`.
+    */
   def bestMoveWithBudget(
       state: GameState,
       budgetMillis: Long,
       history: Set[Long] = Set.empty,
-      fallbackDepth: Int = 6,
+      fallbackDepth: Int = 6
   ): UIO[Option[Move]] =
     bestMove(state, fallbackDepth, history)
 
   /** Search-derived eval of `state` at the given depth, from the
-    * **side-to-move's** POV (matches what `negamax` returns at the
-    * root and what we put into TT entries). Used for labelling
-    * NNUE training data with real eval targets (task #92 in the
-    * NNUE roadmap) and for analysis tooling.
+    * **side-to-move's** POV (matches what `negamax` returns at the root and
+    * what we put into TT entries). Used for labelling NNUE training data with
+    * real eval targets (task #92 in the NNUE roadmap) and for analysis tooling.
     *
-    * Default implementation calls `bestMove` and returns 0 — fine
-    * for non-α-β implementations that don't track scores. The
-    * `AlphaBetaSearch` override returns the TT-cached score after
-    * the search completes. */
+    * Default implementation calls `bestMove` and returns 0 — fine for non-α-β
+    * implementations that don't track scores. The `AlphaBetaSearch` override
+    * returns the TT-cached score after the search completes.
+    */
   def evaluate(
       state: GameState,
       depth: Int,
-      history: Set[Long] = Set.empty,
+      history: Set[Long] = Set.empty
   ): UIO[Int] =
     bestMove(state, depth, history).as(0)
 
-  /** Principal variation: the engine's expected line of play from
-    * `state` at the given depth, up to `maxLength` plies. Each
-    * move is what the engine expects each side to play given the
-    * TT-cached deepest analysis.
+  /** Principal variation: the engine's expected line of play from `state` at
+    * the given depth, up to `maxLength` plies. Each move is what the engine
+    * expects each side to play given the TT-cached deepest analysis.
     *
-    * Used by NNUE training-data emission (the PV-continuation
-    * column unblocks policy-net / planning-net training without a
-    * re-gen) and by analysis tooling.
+    * Used by NNUE training-data emission (the PV-continuation column unblocks
+    * policy-net / planning-net training without a re-gen) and by analysis
+    * tooling.
     *
-    * Default falls through to `bestMove` and returns a one-move
-    * PV. AlphaBetaSearch overrides with a TT walker. */
+    * Default falls through to `bestMove` and returns a one-move PV.
+    * AlphaBetaSearch overrides with a TT walker.
+    */
   def principalVariation(
       state: GameState,
       depth: Int,
       maxLength: Int = 8,
-      history: Set[Long] = Set.empty,
+      history: Set[Long] = Set.empty
   ): UIO[List[Move]] =
     bestMove(state, depth, history).map(_.toList)
 
 object Search:
 
   /** Sentinel score for "the position is mate, lost from this side's
-    * perspective". Real mate scores are `MateScore - ply` so the search
-    * prefers shorter mates (high ply = late = low score) and avoids
-    * being mated as long as possible (low ply = soon = highly negative).
+    * perspective". Real mate scores are `MateScore - ply` so the search prefers
+    * shorter mates (high ply = late = low score) and avoids being mated as long
+    * as possible (low ply = soon = highly negative).
     */
   inline val MateScore = 100_000
 
   /** Default α and β bounds — anything outside this is a mate score. */
   inline val Infinity = 1_000_000
 
-  /** Wrap a search so each fixed-depth `bestMove(state, depth)` call
-    * instead runs a **time-budgeted** iterative-deepening search of
-    * `budgetMillis`, with `depth` used only as the single-iteration
-    * fallback. This lets a fixed-depth driver (the tournament game loop,
-    * or the Lichess `Bridge`) play a time-managed engine identical to
-    * production — so a fixed-depth harness can measure the exact config
-    * the live bot uses (a 2 s/move budget). */
+  /** Wrap a search so each fixed-depth `bestMove(state, depth)` call instead
+    * runs a **time-budgeted** iterative-deepening search of `budgetMillis`,
+    * with `depth` used only as the single-iteration fallback. This lets a
+    * fixed-depth driver (the tournament game loop, or the Lichess `Bridge`)
+    * play a time-managed engine identical to production — so a fixed-depth
+    * harness can measure the exact config the live bot uses (a 2 s/move
+    * budget).
+    */
   def budgeted(underlying: Search, budgetMillis: Long): Search =
     new Search:
-      def bestMove(state: GameState, depth: Int, history: Set[Long]): UIO[Option[Move]] =
-        underlying.bestMoveWithBudget(state, budgetMillis, history, fallbackDepth = depth)
+      def bestMove(
+          state: GameState,
+          depth: Int,
+          history: Set[Long]
+      ): UIO[Option[Move]] =
+        underlying.bestMoveWithBudget(
+          state,
+          budgetMillis,
+          history,
+          fallbackDepth = depth
+        )
 
   /** Negamax α-β with transposition-table lookups.
     *
-    * Search proceeds as classical α-β: at each node, try every legal
-    * move, recurse with `(-β, -α)` because we're flipping sides, take
-    * the best score from this side's perspective. The TT shortcuts
-    * positions we've already searched to ≥ this depth.
+    * Search proceeds as classical α-β: at each node, try every legal move,
+    * recurse with `(-β, -α)` because we're flipping sides, take the best score
+    * from this side's perspective. The TT shortcuts positions we've already
+    * searched to ≥ this depth.
     *
-    * Move ordering: when a TT hit gives a `bestMove`, try that one
-    * first — it's the move most likely to cause a β-cutoff, which
-    * collapses the rest of the tree at this node. Captures and other
-    * "loud" moves get further reordering in later phases (MVV-LVA,
-    * killer moves, history heuristic).
+    * Move ordering: when a TT hit gives a `bestMove`, try that one first — it's
+    * the move most likely to cause a β-cutoff, which collapses the rest of the
+    * tree at this node. Captures and other "loud" moves get further reordering
+    * in later phases (MVV-LVA, killer moves, history heuristic).
     *
-    * @param maxTtEntries cap on the in-memory TT. ~1M is a few-MB
-    *                     footprint and avoids unbounded growth across
-    *                     multi-game sessions.
+    * @param maxTtEntries
+    *   cap on the in-memory TT. ~1M is a few-MB footprint and avoids unbounded
+    *   growth across multi-game sessions.
     */
   def alphaBeta(
       eval: Evaluator,
@@ -270,7 +278,7 @@ object Search:
       timeManagementUpgradeEnabled: Boolean = false,
       policyOrderingEnabled: Boolean = false,
       incrementalAccumulators: Boolean = true,
-      budget: ParallelismBudget = ParallelismBudget.Single,
+      budget: ParallelismBudget = ParallelismBudget.Single
   ): Search =
     // NAMED arguments — the constructor parameter order is not the
     // same as this factory's, so positional passing silently
@@ -311,17 +319,17 @@ object Search:
       timeManagementUpgradeEnabled = timeManagementUpgradeEnabled,
       policyOrderingEnabled = policyOrderingEnabled,
       incrementalAccumulators = incrementalAccumulators,
-      budget = budget,
+      budget = budget
     )
 
   /** Test-only factory that lets a caller inject the [[TranspositionTable]]
-    * instance, so a test can pre-seed entries to exercise the move-
-    * ordering and α/β-cutoff branches that don't fire on shallow
-    * searches starting from an empty cache. Not exposed publicly — the
-    * production [[alphaBeta]] factory owns its TT.
+    * instance, so a test can pre-seed entries to exercise the move- ordering
+    * and α/β-cutoff branches that don't fire on shallow searches starting from
+    * an empty cache. Not exposed publicly — the production [[alphaBeta]]
+    * factory owns its TT.
     */
   private[engine] def alphaBetaWith(
       eval: Evaluator,
       tt: TranspositionTable,
-      book: OpeningBook = OpeningBook.Empty,
+      book: OpeningBook = OpeningBook.Empty
   ): Search = new AlphaBetaSearch(eval, tt, book)

@@ -15,7 +15,7 @@ object WeightsLoaderSpec extends ZIOSpecDefault:
           snap.version == 1,
           snap.weights("pawn") == 100,
           snap.weights("knight") == 320,
-          snap.weights("queen") == 900,
+          snap.weights("queen") == 900
         )
       },
       test("fails with MissingResource for a non-existent version") {
@@ -26,7 +26,7 @@ object WeightsLoaderSpec extends ZIOSpecDefault:
             case _                                => false
           })
         )
-      },
+      }
     ),
     suite("loadPath")(
       test("fails with MissingResource when the path doesn't exist") {
@@ -37,24 +37,25 @@ object WeightsLoaderSpec extends ZIOSpecDefault:
             case _                                => false
           })
         )
-      },
+      }
     ),
     suite("writeFile + readResource round-trip")(
       test("writeFile produces a file the JSON parser can read back") {
         for
-          tmp <- ZIO.attempt(Files.createTempFile("pichess-weights-", ".json"))
-                   .ensuring(ZIO.unit)
+          tmp <- ZIO
+            .attempt(Files.createTempFile("pichess-weights-", ".json"))
+            .ensuring(ZIO.unit)
           snap = WeightSnapshot(
-                   version = 42,
-                   weights = Map("pawn" -> 105, "knight" -> 325),
-                 )
-          _      <- WeightsLoader.writeFile(snap, tmp)
-          bytes  <- ZIO.attempt(Files.readString(tmp))
+            version = 42,
+            weights = Map("pawn" -> 105, "knight" -> 325)
+          )
+          _ <- WeightsLoader.writeFile(snap, tmp)
+          bytes <- ZIO.attempt(Files.readString(tmp))
           parsed <- ZIO.fromEither(
-                      zio.json.JsonDecoder[WeightSnapshot].decodeJson(bytes)
-                    )
-          _      <- ZIO.attempt(Files.delete(tmp))
+            zio.json.JsonDecoder[WeightSnapshot].decodeJson(bytes)
+          )
+          _ <- ZIO.attempt(Files.delete(tmp))
         yield assertTrue(parsed == snap)
-      },
-    ),
+      }
+    )
   )

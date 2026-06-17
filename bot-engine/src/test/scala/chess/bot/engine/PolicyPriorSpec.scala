@@ -8,7 +8,7 @@ object PolicyPriorSpec extends ZIOSpecDefault:
     test("Empty is a zero-bonus no-op everywhere") {
       assertTrue(
         PolicyPrior.Empty.bonus(12, 28) == 0,
-        PolicyPrior.Empty.bonus(0, 63) == 0,
+        PolicyPrior.Empty.bonus(0, 63) == 0
       )
     },
     test("toBytes → parse round-trips the from→to table") {
@@ -19,10 +19,12 @@ object PolicyPriorSpec extends ZIOSpecDefault:
       assertTrue(
         p.bonus(12, 28) == 17_000,
         p.bonus(0, 0) == 3,
-        p.bonus(1, 1) == 0,
+        p.bonus(1, 1) == 0
       )
     },
     test("parse rejects a mis-sized buffer") {
-      assertTrue(scala.util.Try(PolicyPrior.parse(new Array[Byte](10))).isFailure)
-    },
+      assertTrue(
+        scala.util.Try(PolicyPrior.parse(new Array[Byte](10))).isFailure
+      )
+    }
   )

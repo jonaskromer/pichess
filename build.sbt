@@ -255,6 +255,26 @@ lazy val botLichess = project
     ),
   )
 
+// Tournament-server bot. Same shape as bot-lichess but speaks the NowChess
+// Tournament API (maichess/tournament-server): register → join → stream the
+// tournament → fork a budgeted search fiber per game → POST UCI moves. Reuses
+// bot-engine for move selection (incl. the shared TimeManager) and codec for
+// UCI/FEN. See docs/tournament-integration.md.
+lazy val botTournament = project
+  .in(file("bot-tournament"))
+  .dependsOn(domain.jvm, rules, codec, botEngine)
+  .settings(commonSettings)
+  .settings(
+    name := "pichess-bot-tournament",
+    // TournamentBotMain: runnable entry point — orchestration over
+    // already-tested pieces; excluded from coverage like the other *Main entrypoints.
+    coverageExcludedFiles := ".*TournamentBotMain.*",
+    libraryDependencies ++= Seq(
+      "com.softwaremill.sttp.client3" %% "zio"      % "3.11.0",
+      "dev.zio"                       %% "zio-json" % zioJsonVersion,
+    ),
+  )
+
 // Training-data layer. DuckDB-backed: a single .duckdb file is the
 // opening book at runtime AND the training corpus accumulator. JDBC
 // only (zio-jdbc 0.1.2 in the build pins zio-schema 0.4.x — too old

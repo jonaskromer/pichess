@@ -8,24 +8,24 @@ import chess.model.piece.Color
   *
   * Captures the three settings the user sees on the new-game form:
   *
-  *   - [[botSide]]:   which colour the bot plays. The player gets
-  *     the other side. White moves first by chess convention; if the
-  *     bot is white it plays the opening move immediately.
-  *   - [[allowUndo]]: whether the player is allowed to take back a
-  *     move pair (their move + the bot's reply). Casual play wants
-  *     this on; rated / training games want it off.
-  *   - [[difficulty]]: search-depth / noise level. See
-  *     [[Difficulty]] for the per-level details.
+  *   - [[botSide]]: which colour the bot plays. The player gets the other side.
+  *     White moves first by chess convention; if the bot is white it plays the
+  *     opening move immediately.
+  *   - [[allowUndo]]: whether the player is allowed to take back a move pair
+  *     (their move + the bot's reply). Casual play wants this on; rated /
+  *     training games want it off.
+  *   - [[difficulty]]: search-depth / noise level. See [[Difficulty]] for the
+  *     per-level details.
   *
-  * Lives in `bot-engine` (not `bot-data` or `api`) because the engine
-  * is the lowest layer that needs to read all three fields — the
-  * gateway and game-service compose this config from their own DTO
-  * shapes. zio-json codecs travel along for free.
+  * Lives in `bot-engine` (not `bot-data` or `api`) because the engine is the
+  * lowest layer that needs to read all three fields — the gateway and
+  * game-service compose this config from their own DTO shapes. zio-json codecs
+  * travel along for free.
   */
 final case class BotConfig(
     botSide: Color,
     difficulty: Difficulty,
-    allowUndo: Boolean,
+    allowUndo: Boolean
 )
 
 object BotConfig:

@@ -13,9 +13,9 @@ object DifficultySpec extends ZIOSpecDefault:
         // make the gamemode picker useless.
         assertTrue(
           Difficulty.Beginner.searchDepth < Difficulty.Easy.searchDepth,
-          Difficulty.Easy.searchDepth     < Difficulty.Medium.searchDepth,
-          Difficulty.Medium.searchDepth   < Difficulty.Hard.searchDepth,
-          Difficulty.Hard.searchDepth     < Difficulty.Expert.searchDepth,
+          Difficulty.Easy.searchDepth < Difficulty.Medium.searchDepth,
+          Difficulty.Medium.searchDepth < Difficulty.Hard.searchDepth,
+          Difficulty.Hard.searchDepth < Difficulty.Expert.searchDepth
         )
       },
       test("noise decreases or stays equal as difficulty increases") {
@@ -27,7 +27,7 @@ object DifficultySpec extends ZIOSpecDefault:
       },
       test("expert plays without randomness") {
         assertTrue(Difficulty.Expert.noise == 0.0)
-      },
+      }
     ),
     suite("JSON codec")(
       test("round-trips Medium") {
@@ -35,23 +35,23 @@ object DifficultySpec extends ZIOSpecDefault:
         val json = d.toJson
         assertTrue(
           json == "\"Medium\"",
-          json.fromJson[Difficulty] == Right(Difficulty.Medium),
+          json.fromJson[Difficulty] == Right(Difficulty.Medium)
         )
       },
       test("case-insensitive decode") {
         assertTrue(
-          "\"medium\"".fromJson[Difficulty]  == Right(Difficulty.Medium),
+          "\"medium\"".fromJson[Difficulty] == Right(Difficulty.Medium),
           "\"BEGINNER\"".fromJson[Difficulty] == Right(Difficulty.Beginner),
-          "\"hArD\"".fromJson[Difficulty]    == Right(Difficulty.Hard),
+          "\"hArD\"".fromJson[Difficulty] == Right(Difficulty.Hard)
         )
       },
       test("rejects unknown values") {
         assertTrue("\"impossible\"".fromJson[Difficulty].isLeft)
-      },
+      }
     ),
     suite("Default")(
       test("is Medium") {
         assertTrue(Difficulty.Default == Difficulty.Medium)
-      },
-    ),
+      }
+    )
   )

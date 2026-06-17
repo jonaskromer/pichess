@@ -1,17 +1,15 @@
 package chess.bot.engine.internal
 
-/** Precomputed bitboard masks for pawn-structure and king-safety
-  * features.
+/** Precomputed bitboard masks for pawn-structure and king-safety features.
   *
-  * All masks are LERF (a1 = 0, h8 = 63), matching every other bitboard
-  * in the codebase. Computed once at class load (~600 bytes total
-  * across the eight arrays); per-feature lookups are O(1) bit ops.
+  * All masks are LERF (a1 = 0, h8 = 63), matching every other bitboard in the
+  * codebase. Computed once at class load (~600 bytes total across the eight
+  * arrays); per-feature lookups are O(1) bit ops.
   *
-  * Internal to bot-engine because the masks are purely about
-  * eval-feature derivation. The rules layer doesn't need them and
-  * shouldn't be coupled to this representation; mobility uses
-  * [[chess.model.rules.BitboardAttacks]] for piece attack masks
-  * which is a separate concern.
+  * Internal to bot-engine because the masks are purely about eval-feature
+  * derivation. The rules layer doesn't need them and shouldn't be coupled to
+  * this representation; mobility uses [[chess.model.rules.BitboardAttacks]] for
+  * piece attack masks which is a separate concern.
   */
 private[engine] object PawnMasks:
 
@@ -29,9 +27,9 @@ private[engine] object PawnMasks:
       f += 1
     arr
 
-  /** Union of files (col-1) and (col+1), bounded to 0..7. Used for
-    * "is this pawn isolated" / "are there friendly pawns on adjacent
-    * files" queries. */
+  /** Union of files (col-1) and (col+1), bounded to 0..7. Used for "is this
+    * pawn isolated" / "are there friendly pawns on adjacent files" queries.
+    */
   val adjacentFileMask: Array[Long] =
     val arr = new Array[Long](8)
     var f = 0
@@ -43,32 +41,34 @@ private[engine] object PawnMasks:
       f += 1
     arr
 
-  /** Bitboard of every square a WHITE pawn at index `sq` "spans"
-    * ahead of itself on its own file. Excludes `sq` itself; includes
-    * every square from rank+1 to rank 8 on the same file. */
+  /** Bitboard of every square a WHITE pawn at index `sq` "spans" ahead of
+    * itself on its own file. Excludes `sq` itself; includes every square from
+    * rank+1 to rank 8 on the same file.
+    */
   val frontSpanWhite: Array[Long] = buildFrontSpan(white = true)
 
   /** Symmetric to [[frontSpanWhite]] for black (rank-1 down to rank 1). */
   val frontSpanBlack: Array[Long] = buildFrontSpan(white = false)
 
-  /** Squares an enemy pawn would need to be on to block a WHITE pawn
-    * at `sq` from being passed: the front span on its file PLUS the
-    * front spans on the two adjacent files. If
-    * `passedPawnMaskWhite(sq) & blackPawns == 0`, the white pawn is
-    * passed. */
+  /** Squares an enemy pawn would need to be on to block a WHITE pawn at `sq`
+    * from being passed: the front span on its file PLUS the front spans on the
+    * two adjacent files. If `passedPawnMaskWhite(sq) & blackPawns == 0`, the
+    * white pawn is passed.
+    */
   val passedPawnMaskWhite: Array[Long] = buildPassedMask(white = true)
 
   /** Symmetric to [[passedPawnMaskWhite]] for black pawns. */
   val passedPawnMaskBlack: Array[Long] = buildPassedMask(white = false)
 
-  /** King-zone mask: the 3×3 square around `sq`, clipped to the
-    * board. Used for "pawn shield" count and "enemy attackers near
-    * king" count. */
+  /** King-zone mask: the 3×3 square around `sq`, clipped to the board. Used for
+    * "pawn shield" count and "enemy attackers near king" count.
+    */
   val kingZone: Array[Long] = buildKingZone()
 
-  /** "Pawn neighbour" mask: every square on an adjacent file within
-    * ±1 rank. A pawn at `sq` is *connected* iff at least one of these
-    * squares holds a friendly pawn. */
+  /** "Pawn neighbour" mask: every square on an adjacent file within ±1 rank. A
+    * pawn at `sq` is *connected* iff at least one of these squares holds a
+    * friendly pawn.
+    */
   val pawnNeighbor: Array[Long] = buildPawnNeighbor()
 
   // ── builders ──────────────────────────────────────────────────────
@@ -98,7 +98,7 @@ private[engine] object PawnMasks:
     val arr = new Array[Long](64)
     var sq = 0
     while sq < 64 do
-      val file     = sq % 8
+      val file = sq % 8
       val frontSpan = if white then frontSpanWhite(sq) else frontSpanBlack(sq)
       // Front span on the adjacent files at the same and higher ranks.
       // Reuse frontSpan(adjacentSquare) for clean computation.
@@ -106,10 +106,10 @@ private[engine] object PawnMasks:
       if file > 0 then
         // Adjacent file to the left: sq - 1 is on the left file, same rank
         if white then bb |= frontSpanWhite(sq - 1) | (1L << (sq - 1))
-        else          bb |= frontSpanBlack(sq - 1) | (1L << (sq - 1))
+        else bb |= frontSpanBlack(sq - 1) | (1L << (sq - 1))
       if file < 7 then
         if white then bb |= frontSpanWhite(sq + 1) | (1L << (sq + 1))
-        else          bb |= frontSpanBlack(sq + 1) | (1L << (sq + 1))
+        else bb |= frontSpanBlack(sq + 1) | (1L << (sq + 1))
       // Self square is irrelevant — pawn isn't blocking itself.
       bb &= ~(1L << sq)
       arr(sq) = bb

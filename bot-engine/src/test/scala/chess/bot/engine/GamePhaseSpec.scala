@@ -12,7 +12,9 @@ object GamePhaseSpec extends ZIOSpecDefault:
 
   def spec = suite("GamePhase.compute")(
     test("starting position is fully opening (phase = 1.0)") {
-      for p <- phaseOf("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+      for p <- phaseOf(
+          "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        )
       yield assertTrue(p == 1.0)
     },
     test("bare-kings position is fully endgame (phase = 0.0)") {
@@ -41,13 +43,17 @@ object GamePhaseSpec extends ZIOSpecDefault:
     test("over-max raw (e.g. multiple queens after promotion) clamps to 1.0") {
       // Three white queens (one original + two promoted) plus normal black material.
       // raw = (3·4 + 1·4) + ... > 24. Should clamp to 1.0.
-      for p <- phaseOf("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RQBQKBQR w KQkq - 0 1")
+      for p <- phaseOf(
+          "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RQBQKBQR w KQkq - 0 1"
+        )
       yield assertTrue(p == 1.0)
     },
     test("compute(state) and compute(state.board) agree") {
       for state <- FenParserRegex.parse(
-                     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                   )
-      yield assertTrue(GamePhase.compute(state) == GamePhase.compute(state.board))
-    },
+          "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        )
+      yield assertTrue(
+        GamePhase.compute(state) == GamePhase.compute(state.board)
+      )
+    }
   )

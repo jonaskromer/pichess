@@ -10,9 +10,9 @@ object BotConfigSpec extends ZIOSpecDefault:
   def spec = suite("BotConfig")(
     test("round-trips through JSON with all three fields") {
       val cfg = BotConfig(
-        botSide    = Color.Black,
+        botSide = Color.Black,
         difficulty = Difficulty.Hard,
-        allowUndo  = false,
+        allowUndo = false
       )
       val json = cfg.toJson
       assertTrue(
@@ -39,5 +39,5 @@ object BotConfigSpec extends ZIOSpecDefault:
     test("rejects missing fields") {
       val sample = """{ "botSide": "white" }"""
       assertTrue(sample.fromJson[BotConfig].isLeft)
-    },
+    }
   )

@@ -11,22 +11,25 @@ import chess.model.rules.Zobrist
 
 /** End-to-end search behaviour, pinned by FEN fixtures.
   *
-  * Each test states a position the search must reason about ("there's
-  * exactly one legal move", "mate in 1 exists", …) and asserts the
-  * returned [[Move]] matches the expected square pair. Depth is set
-  * just high enough for the tactic; deeper would only slow tests down.
+  * Each test states a position the search must reason about ("there's exactly
+  * one legal move", "mate in 1 exists", …) and asserts the returned [[Move]]
+  * matches the expected square pair. Depth is set just high enough for the
+  * tactic; deeper would only slow tests down.
   *
-  * Material-only eval is the Phase 1 default. That's enough for the
-  * basic tactical fixtures here (captures, mates) but produces no
-  * meaningful preference between two equally-material moves — the
-  * search will pick the first one its move generator returns, which is
-  * deterministic per FEN. Tests rely on that determinism.
+  * Material-only eval is the Phase 1 default. That's enough for the basic
+  * tactical fixtures here (captures, mates) but produces no meaningful
+  * preference between two equally-material moves — the search will pick the
+  * first one its move generator returns, which is deterministic per FEN. Tests
+  * rely on that determinism.
   */
 object SearchSpec extends ZIOSpecDefault:
 
   private val search: Search = Search.alphaBeta(Evaluator.materialOnly)
 
-  private def bestMoveOf(fen: String, depth: Int): ZIO[Any, Throwable, Option[Move]] =
+  private def bestMoveOf(
+      fen: String,
+      depth: Int
+  ): ZIO[Any, Throwable, Option[Move]] =
     FenParserRegex.parse(fen).flatMap(s => search.bestMove(s, depth))
 
   def spec = suite("Search (α-β + TT)")(
@@ -36,7 +39,9 @@ object SearchSpec extends ZIOSpecDefault:
       for moveOpt <- bestMoveOf("6Qk/6PK/8/8/8/8/8/8 b - - 0 1", depth = 2)
       yield assertTrue(moveOpt.isEmpty)
     },
-    test("returns None at a stalemate position (no legal moves, not in check)") {
+    test(
+      "returns None at a stalemate position (no legal moves, not in check)"
+    ) {
       // Classic K+Q vs K stalemate: black king cornered at h1, white
       // king at f2, white queen at g3. The queen covers g1/g2/h2; the
       // king covers g1/g2; h1 itself isn't attacked. Black has no
@@ -75,12 +80,14 @@ object SearchSpec extends ZIOSpecDefault:
       // resulting `status` field, which only the full apply path
       // populates.
       for
-        state  <- FenParserRegex.parse("7k/8/6KQ/8/8/8/8/8 w - - 0 1")
+        state <- FenParserRegex.parse("7k/8/6KQ/8/8/8/8/8 w - - 0 1")
         moveOpt <- search.bestMove(state, depth = 2)
-        nextOpt <- ZIO.foreach(moveOpt)(m => chess.model.rules.Game.applyMove(state, m))
+        nextOpt <- ZIO.foreach(moveOpt)(m =>
+          chess.model.rules.Game.applyMove(state, m)
+        )
       yield assertTrue(
         moveOpt.isDefined,
-        nextOpt.exists(_.status == GameStatus.Checkmate(Color.White)),
+        nextOpt.exists(_.status == GameStatus.Checkmate(Color.White))
       )
     },
     test("prefers a promotion to queen over a same-side capture") {
@@ -100,7 +107,9 @@ object SearchSpec extends ZIOSpecDefault:
       )
     },
     suite("TT interaction")(
-      test("orderMoves places a seeded TT bestMove first in the candidate list") {
+      test(
+        "orderMoves places a seeded TT bestMove first in the candidate list"
+      ) {
         // Pre-seed the TT for the root position with a bestMove. The
         // search uses TT-suggested moves for ordering; that move should
         // be tried before the rest. We observe ordering indirectly via
@@ -109,20 +118,20 @@ object SearchSpec extends ZIOSpecDefault:
         // so we only need to verify the search succeeds and reports a
         // legal move. The branch coverage is the real assertion.
         val tt = TranspositionTable.inMemory(maxEntries = 32)
-        val s  = Search.alphaBetaWith(Evaluator.materialOnly, tt)
+        val s = Search.alphaBetaWith(Evaluator.materialOnly, tt)
         for
           state <- FenParserRegex.parse(
-                     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                   )
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+          )
           _ = tt.put(
-                chess.model.rules.Zobrist.hash(state),
-                TranspositionTable.Entry(
-                  depth = 0,
-                  score = 0,
-                  kind = TranspositionTable.Kind.Exact,
-                  bestMove = Some(Move(Position('g', 1), Position('f', 3), None)),
-                ),
-              )
+            chess.model.rules.Zobrist.hash(state),
+            TranspositionTable.Entry(
+              depth = 0,
+              score = 0,
+              kind = TranspositionTable.Kind.Exact,
+              bestMove = Some(Move(Position('g', 1), Position('f', 3), None))
+            )
+          )
           moveOpt <- s.bestMove(state, depth = 2)
         yield assertTrue(moveOpt.isDefined)
       },
@@ -133,27 +142,29 @@ object SearchSpec extends ZIOSpecDefault:
         // exercises the probeTt "Exact returns score" branch when the
         // recursion revisits a transposed position.
         val tt = TranspositionTable.inMemory(maxEntries = 32)
-        val s  = Search.alphaBetaWith(Evaluator.materialOnly, tt)
+        val s = Search.alphaBetaWith(Evaluator.materialOnly, tt)
         for
           state <- FenParserRegex.parse(
-                     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                   )
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+          )
           // Seed Exact entries at depth 10 (very high) for many
           // post-move positions; the next-level negamax will see those.
           _ = {
             val moves = chess.bot.engine.internal.RulesAdapter.legalMoves(state)
             moves.foreach { m =>
-              chess.bot.engine.internal.RulesAdapter.applyMove(state, m).foreach { next =>
-                tt.put(
-                  chess.model.rules.Zobrist.hash(next),
-                  TranspositionTable.Entry(
-                    depth = 10,
-                    score = 42,
-                    kind = TranspositionTable.Kind.Exact,
-                    bestMove = None,
-                  ),
-                )
-              }
+              chess.bot.engine.internal.RulesAdapter
+                .applyMove(state, m)
+                .foreach { next =>
+                  tt.put(
+                    chess.model.rules.Zobrist.hash(next),
+                    TranspositionTable.Entry(
+                      depth = 10,
+                      score = 42,
+                      kind = TranspositionTable.Kind.Exact,
+                      bestMove = None
+                    )
+                  )
+                }
             }
           }
           moveOpt <- s.bestMove(state, depth = 2)
@@ -166,25 +177,28 @@ object SearchSpec extends ZIOSpecDefault:
         // high Lower bounds; whichever the search visits first will
         // cutoff via that branch, instead of recursing.
         val tt = TranspositionTable.inMemory(maxEntries = 32)
-        val s  = Search.alphaBetaWith(Evaluator.materialOnly, tt)
+        val s = Search.alphaBetaWith(Evaluator.materialOnly, tt)
         for
           state <- FenParserRegex.parse(
-                     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                   )
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+          )
           _ = {
             val moves = chess.bot.engine.internal.RulesAdapter.legalMoves(state)
             moves.foreach { m =>
-              chess.bot.engine.internal.RulesAdapter.applyMove(state, m).foreach { next =>
-                tt.put(
-                  chess.model.rules.Zobrist.hash(next),
-                  TranspositionTable.Entry(
-                    depth = 10,
-                    score = Search.Infinity,  // pegged high → score ≥ β at any inner call
-                    kind = TranspositionTable.Kind.Lower,
-                    bestMove = None,
-                  ),
-                )
-              }
+              chess.bot.engine.internal.RulesAdapter
+                .applyMove(state, m)
+                .foreach { next =>
+                  tt.put(
+                    chess.model.rules.Zobrist.hash(next),
+                    TranspositionTable.Entry(
+                      depth = 10,
+                      score =
+                        Search.Infinity, // pegged high → score ≥ β at any inner call
+                      kind = TranspositionTable.Kind.Lower,
+                      bestMove = None
+                    )
+                  )
+                }
             }
           }
           moveOpt <- s.bestMove(state, depth = 2)
@@ -196,25 +210,27 @@ object SearchSpec extends ZIOSpecDefault:
         // the β threshold, so probeTt falls through and the search
         // recomputes. Coverage of the `case _ => None` arm.
         val tt = TranspositionTable.inMemory(maxEntries = 32)
-        val s  = Search.alphaBetaWith(Evaluator.materialOnly, tt)
+        val s = Search.alphaBetaWith(Evaluator.materialOnly, tt)
         for
           state <- FenParserRegex.parse(
-                     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                   )
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+          )
           _ = {
             val moves = chess.bot.engine.internal.RulesAdapter.legalMoves(state)
             moves.foreach { m =>
-              chess.bot.engine.internal.RulesAdapter.applyMove(state, m).foreach { next =>
-                tt.put(
-                  chess.model.rules.Zobrist.hash(next),
-                  TranspositionTable.Entry(
-                    depth = 10,
-                    score = 0,    // Lower bound at 0, well below +Infinity β
-                    kind = TranspositionTable.Kind.Lower,
-                    bestMove = None,
-                  ),
-                )
-              }
+              chess.bot.engine.internal.RulesAdapter
+                .applyMove(state, m)
+                .foreach { next =>
+                  tt.put(
+                    chess.model.rules.Zobrist.hash(next),
+                    TranspositionTable.Entry(
+                      depth = 10,
+                      score = 0, // Lower bound at 0, well below +Infinity β
+                      kind = TranspositionTable.Kind.Lower,
+                      bestMove = None
+                    )
+                  )
+                }
             }
           }
           moveOpt <- s.bestMove(state, depth = 2)
@@ -224,76 +240,85 @@ object SearchSpec extends ZIOSpecDefault:
         // Symmetric of the Lower case — Upper-bound entries with score
         // ≤ α cause the third probeTt branch to return a cutoff value.
         val tt = TranspositionTable.inMemory(maxEntries = 32)
-        val s  = Search.alphaBetaWith(Evaluator.materialOnly, tt)
+        val s = Search.alphaBetaWith(Evaluator.materialOnly, tt)
         for
           state <- FenParserRegex.parse(
-                     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                   )
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+          )
           _ = {
             val moves = chess.bot.engine.internal.RulesAdapter.legalMoves(state)
             moves.foreach { m =>
-              chess.bot.engine.internal.RulesAdapter.applyMove(state, m).foreach { next =>
-                tt.put(
-                  chess.model.rules.Zobrist.hash(next),
-                  TranspositionTable.Entry(
-                    depth = 10,
-                    score = -Search.Infinity,
-                    kind = TranspositionTable.Kind.Upper,
-                    bestMove = None,
-                  ),
-                )
-              }
+              chess.bot.engine.internal.RulesAdapter
+                .applyMove(state, m)
+                .foreach { next =>
+                  tt.put(
+                    chess.model.rules.Zobrist.hash(next),
+                    TranspositionTable.Entry(
+                      depth = 10,
+                      score = -Search.Infinity,
+                      kind = TranspositionTable.Kind.Upper,
+                      bestMove = None
+                    )
+                  )
+                }
             }
           }
           moveOpt <- s.bestMove(state, depth = 2)
         yield assertTrue(moveOpt.isDefined)
-      },
+      }
     ),
     suite("parallel root search")(
       test("parallel search returns a legal move") {
-        val parSearch = Search.alphaBeta(Evaluator.materialOnly, parallelism = 4)
+        val parSearch =
+          Search.alphaBeta(Evaluator.materialOnly, parallelism = 4)
         for
           state <- FenParserRegex.parse(
-                     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                   )
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+          )
           moveOpt <- parSearch.bestMove(state, depth = 2)
         yield assertTrue(
           moveOpt.isDefined,
-          moveOpt.exists(m => RulesAdapter.applyMove(state, m).isDefined),
+          moveOpt.exists(m => RulesAdapter.applyMove(state, m).isDefined)
         )
       },
-      test("parallel search returns None at a checkmate position (no legal moves)") {
-        val parSearch = Search.alphaBeta(Evaluator.materialOnly, parallelism = 4)
+      test(
+        "parallel search returns None at a checkmate position (no legal moves)"
+      ) {
+        val parSearch =
+          Search.alphaBeta(Evaluator.materialOnly, parallelism = 4)
         for
-          state   <- FenParserRegex.parse("6Qk/6PK/8/8/8/8/8/8 b - - 0 1")
+          state <- FenParserRegex.parse("6Qk/6PK/8/8/8/8/8/8 b - - 0 1")
           moveOpt <- parSearch.bestMove(state, depth = 2)
         yield assertTrue(moveOpt.isEmpty)
       },
-      test("parallel search picks the clear capture (the right move wins ties via score)") {
+      test(
+        "parallel search picks the clear capture (the right move wins ties via score)"
+      ) {
         // White rook captures undefended black queen on a8. The
         // tie-breaking across parallel fibers means we can't assert
         // exact move order, but the unique winning move (Rxa8)
         // should still be picked because its score dominates.
-        val parSearch = Search.alphaBeta(Evaluator.materialOnly, parallelism = 4)
+        val parSearch =
+          Search.alphaBeta(Evaluator.materialOnly, parallelism = 4)
         for
-          state   <- FenParserRegex.parse("q7/8/8/8/8/8/8/R6K w - - 0 1")
+          state <- FenParserRegex.parse("q7/8/8/8/8/8/8/R6K w - - 0 1")
           moveOpt <- parSearch.bestMove(state, depth = 2)
         yield assertTrue(
           moveOpt.contains(Move(Position('a', 1), Position('a', 8), None))
         )
-      },
+      }
     ),
     test("returns *some* legal move at the standard starting position") {
       // No tactical pressure → any legal move is acceptable. The
       // returned move must at least be legal; we verify by re-applying.
       for
         state <- FenParserRegex.parse(
-                   "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                 )
+          "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        )
         moveOpt <- search.bestMove(state, depth = 3)
       yield assertTrue(
         moveOpt.isDefined,
-        moveOpt.exists(m => RulesAdapter.applyMove(state, m).isDefined),
+        moveOpt.exists(m => RulesAdapter.applyMove(state, m).isDefined)
       )
     },
     suite("repetition + fifty-move")(
@@ -305,20 +330,22 @@ object SearchSpec extends ZIOSpecDefault:
         // parameter is threaded through search correctly and only
         // affects moves whose destinations match.
         for
-          state    <- FenParserRegex.parse("q7/7k/8/8/8/8/8/Q3K3 w - - 0 1")
+          state <- FenParserRegex.parse("q7/7k/8/8/8/8/8/Q3K3 w - - 0 1")
           freePick <- search.bestMove(state, depth = 2)
           unrelatedHistory = Set(0L, 12345L, -1L, Long.MaxValue)
           notBlocked <- search.bestMove(
-                          state,
-                          depth = 2,
-                          history = unrelatedHistory,
-                        )
+            state,
+            depth = 2,
+            history = unrelatedHistory
+          )
         yield assertTrue(
           freePick.isDefined,
-          freePick == notBlocked,
+          freePick == notBlocked
         )
       },
-      test("history containing the only-capture destination forces a quiet pick") {
+      test(
+        "history containing the only-capture destination forces a quiet pick"
+      ) {
         // Position with a single dominant capture (Qxa8 wins the
         // undefended black queen) and many quiet alternatives. With
         // Qxa8's destination seeded into history, the capture is
@@ -332,19 +359,19 @@ object SearchSpec extends ZIOSpecDefault:
         // direct correctness check is the equivalence-with-unrelated
         // history test above.
         for
-          state   <- FenParserRegex.parse("q7/7k/8/8/8/8/8/Q3K3 w - - 0 1")
-          capture  = Move(Position('a', 1), Position('a', 8), None)
+          state <- FenParserRegex.parse("q7/7k/8/8/8/8/8/Q3K3 w - - 0 1")
+          capture = Move(Position('a', 1), Position('a', 8), None)
           afterCap <- ZIO
-                       .fromOption(RulesAdapter.applyMove(state, capture))
-                       .orElseFail(new IllegalStateException("Qxa8 must be legal"))
+            .fromOption(RulesAdapter.applyMove(state, capture))
+            .orElseFail(new IllegalStateException("Qxa8 must be legal"))
           blocked <- search.bestMove(
-                       state,
-                       depth = 2,
-                       history = Set(Zobrist.hash(afterCap)),
-                     )
+            state,
+            depth = 2,
+            history = Set(Zobrist.hash(afterCap))
+          )
         yield assertTrue(
           blocked.isDefined,
-          blocked.exists(m => RulesAdapter.applyMove(state, m).isDefined),
+          blocked.exists(m => RulesAdapter.applyMove(state, m).isDefined)
         )
       },
       test("treats halfmoveClock ≥ 100 as a draw at non-root nodes") {
@@ -362,7 +389,7 @@ object SearchSpec extends ZIOSpecDefault:
         // queen move scores 0 because the child immediately reaches
         // the 50-move draw branch.
         for
-          state   <- FenParserRegex.parse("7k/r7/8/8/8/8/8/Q6K w - - 99 100")
+          state <- FenParserRegex.parse("7k/r7/8/8/8/8/8/Q6K w - - 99 100")
           moveOpt <- search.bestMove(state, depth = 2)
         yield assertTrue(
           moveOpt.contains(Move(Position('a', 1), Position('a', 7), None))
@@ -375,12 +402,12 @@ object SearchSpec extends ZIOSpecDefault:
         // still get a move back — but it confirms the boundary is
         // handled cleanly.
         for
-          state   <- FenParserRegex.parse("7k/8/8/8/8/8/8/Q6K w - - 100 51")
+          state <- FenParserRegex.parse("7k/8/8/8/8/8/8/Q6K w - - 100 51")
           moveOpt <- search.bestMove(state, depth = 2)
         yield assertTrue(
           moveOpt.isDefined,
-          moveOpt.exists(m => RulesAdapter.applyMove(state, m).isDefined),
+          moveOpt.exists(m => RulesAdapter.applyMove(state, m).isDefined)
         )
-      },
-    ),
+      }
+    )
   )

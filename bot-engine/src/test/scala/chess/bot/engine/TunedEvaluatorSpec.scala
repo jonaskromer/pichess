@@ -8,14 +8,15 @@ import chess.codec.FenParserRegex
 object TunedEvaluatorSpec extends ZIOSpecDefault:
 
   /** Weights matching the hand-coded [[MaterialEvaluator]] — so the
-    * tuned-evaluator over the material extractor agrees with it on
-    * every position. */
+    * tuned-evaluator over the material extractor agrees with it on every
+    * position.
+    */
   private val materialWeights: Map[String, Int] = Map(
-    "pawn"   -> 100,
+    "pawn" -> 100,
     "knight" -> 320,
     "bishop" -> 330,
-    "rook"   -> 500,
-    "queen"  -> 900,
+    "rook" -> 500,
+    "queen" -> 900
   )
 
   private val tuned: Evaluator =
@@ -24,21 +25,21 @@ object TunedEvaluatorSpec extends ZIOSpecDefault:
   def spec = suite("TunedEvaluator")(
     test("agrees with MaterialEvaluator at material-balanced positions") {
       for state <- FenParserRegex.parse(
-                     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                   )
+          "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        )
       yield assertTrue(
         tuned.evaluate(state) == Evaluator.materialOnly.evaluate(state),
-        tuned.evaluate(state) == 0,
+        tuned.evaluate(state) == 0
       )
     },
     test("matches MaterialEvaluator at material-imbalanced positions") {
       // Black missing the queen.
       for state <- FenParserRegex.parse(
-                     "rnb1kbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                   )
+          "rnb1kbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        )
       yield assertTrue(
         tuned.evaluate(state) == Evaluator.materialOnly.evaluate(state),
-        tuned.evaluate(state) == 900,
+        tuned.evaluate(state) == 900
       )
     },
     test("scales linearly with weight changes") {
@@ -46,11 +47,11 @@ object TunedEvaluatorSpec extends ZIOSpecDefault:
       val halfWeights = materialWeights.view.mapValues(_ / 2).toMap
       val halfTuned = TunedEvaluator(halfWeights, FeatureExtractor.material)
       for state <- FenParserRegex.parse(
-                     "rnb1kbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                   )
+          "rnb1kbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        )
       yield assertTrue(
-        tuned.evaluate(state)     == 900,
-        halfTuned.evaluate(state) == 450,
+        tuned.evaluate(state) == 900,
+        halfTuned.evaluate(state) == 450
       )
     },
     test("treats missing weights as 0 (extractor key without weight)") {
@@ -60,8 +61,8 @@ object TunedEvaluatorSpec extends ZIOSpecDefault:
       val pawnEval = TunedEvaluator(pawnOnly, FeatureExtractor.material)
       // Black missing the queen + a pawn.
       for state <- FenParserRegex.parse(
-                     "rnb1kbnr/1ppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                   )
+          "rnb1kbnr/1ppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        )
       yield assertTrue(pawnEval.evaluate(state) == 100)
-    },
+    }
   )

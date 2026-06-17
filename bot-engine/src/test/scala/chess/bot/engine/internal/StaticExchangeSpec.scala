@@ -8,14 +8,15 @@ import chess.model.board.{Move, MoveInt, Position}
 
 /** SEE correctness checks on classical textbook positions.
   *
-  * The fixtures are minimal — just enough material to drive a single
-  * exchange sequence — so the expected centipawn outcome is computable
-  * by hand. Each test names the trade and what SEE must report.
+  * The fixtures are minimal — just enough material to drive a single exchange
+  * sequence — so the expected centipawn outcome is computable by hand. Each
+  * test names the trade and what SEE must report.
   */
 object StaticExchangeSpec extends ZIOSpecDefault:
 
-  /** Encode a from→to move for SEE without going through the full
-    * Move case class machinery. Promotion-less. */
+  /** Encode a from→to move for SEE without going through the full Move case
+    * class machinery. Promotion-less.
+    */
   private def move(from: String, to: String): Int =
     MoveInt.encodeMove(Move(parsePos(from), parsePos(to), promotion = None))
 
@@ -38,8 +39,8 @@ object StaticExchangeSpec extends ZIOSpecDefault:
       // White pawn on e4, black pawn on d5, black knight on f6 defends d5.
       // White: PxP wins +100. Black: NxP wins +100 back. Net = 0.
       for state <- FenParserRegex.parse(
-        "rnbqkb1r/ppp1pppp/5n2/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1"
-      )
+          "rnbqkb1r/ppp1pppp/5n2/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1"
+        )
       yield assertTrue(StaticExchange.see(state, move("e4", "d5")) == 0)
     },
     test("RxB defended by P = losing trade (rook for bishop+pawn)") {
@@ -92,5 +93,5 @@ object StaticExchangeSpec extends ZIOSpecDefault:
       // king g8 — not in range). All white moves: PxQ wins clean = +900.
       for state <- FenParserRegex.parse("6k1/8/4q3/3P4/8/8/8/4K3 w - - 0 1")
       yield assertTrue(StaticExchange.see(state, move("d5", "e6")) == 900)
-    },
+    }
   )

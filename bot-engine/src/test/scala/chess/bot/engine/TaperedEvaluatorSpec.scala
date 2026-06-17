@@ -16,7 +16,7 @@ object TaperedEvaluatorSpec extends ZIOSpecDefault:
       // is purely the mg weight.
       val weights = Map(
         "bishop_pair_mg" -> 30,
-        "bishop_pair_eg" -> 60,
+        "bishop_pair_eg" -> 60
       )
       val eval = TaperedEvaluator(weights, FeatureExtractor.full)
       for
@@ -25,15 +25,17 @@ object TaperedEvaluatorSpec extends ZIOSpecDefault:
         // minus the missing bishops' contribution (2 phase units
         // gone, raw = 22 → phase = 22/24 ≈ 0.917).
         startish <- FenParserRegex.parse(
-                      "rn1qk1nr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                    )
+          "rn1qk1nr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        )
       yield
         val score = eval.evaluate(startish)
         // Mostly opening, so closer to 30 than 60. Allow a bit of
         // slack because the phase factor isn't exactly 1.
         assertTrue(score >= 25 && score <= 35)
     },
-    test("legacy (un-suffixed) weights fall back to the same value for both phases") {
+    test(
+      "legacy (un-suffixed) weights fall back to the same value for both phases"
+    ) {
       // A snapshot like v1.json carries `pawn = 100` with no
       // `_mg`/`_eg` siblings. The evaluator must use that value for
       // both branches, so the eval at any phase collapses to
@@ -43,8 +45,8 @@ object TaperedEvaluatorSpec extends ZIOSpecDefault:
       for
         // White up a pawn: difference of +1 pawn anywhere on the board.
         upOnePawn <- FenParserRegex.parse(
-                       "rnbqkbnr/1ppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                     )
+          "rnbqkbnr/1ppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        )
       yield
         val score = eval.evaluate(upOnePawn)
         // The exact score depends on which other features are
@@ -58,8 +60,8 @@ object TaperedEvaluatorSpec extends ZIOSpecDefault:
       val mixed = Map("pawn" -> 100, "pawn_mg" -> 200, "pawn_eg" -> 80)
       val eval = TaperedEvaluator(mixed, FeatureExtractor.full)
       for start <- FenParserRegex.parse(
-                     "rnbqkbnr/1ppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                   )
+          "rnbqkbnr/1ppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        )
       yield
         // Starting-position-shape → phase very close to 1. With
         // pawn_mg = 200 → eval ≈ +200 (one extra white pawn, all weight on mg).
@@ -69,8 +71,8 @@ object TaperedEvaluatorSpec extends ZIOSpecDefault:
     test("zero weights give zero eval everywhere") {
       val eval = TaperedEvaluator(Map.empty, FeatureExtractor.full)
       for state <- FenParserRegex.parse(
-                     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                   )
+          "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        )
       yield assertTrue(eval.evaluate(state) == 0)
-    },
+    }
   )

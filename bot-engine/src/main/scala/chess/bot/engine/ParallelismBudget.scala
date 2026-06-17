@@ -7,22 +7,24 @@ import java.util.concurrent.Semaphore
   * plays several games at once.
   *
   * The contract is deliberately asymmetric:
-  *   - A search's **main worker always runs** — it never touches the budget,
-  *     so an essential move is never delayed behind speculative work (no flag
+  *   - A search's **main worker always runs** — it never touches the budget, so
+  *     an essential move is never delayed behind speculative work (no flag
   *     risk).
-  *   - **LazySMP helpers** grab spare permits **non-blocking** ([[acquireHelpers]]):
-  *     they only spawn when cores are otherwise idle.
+  *   - **LazySMP helpers** grab spare permits **non-blocking**
+  *     ([[acquireHelpers]]): they only spawn when cores are otherwise idle.
   *
-  * So: one active game → it grabs all spare cores (full multi-core LazySMP);
-  * N active games → the first few exhaust the budget and the rest run
-  * main-only (single-thread + incremental). Adaptive, bounded, never blocks. */
+  * So: one active game → it grabs all spare cores (full multi-core LazySMP); N
+  * active games → the first few exhaust the budget and the rest run main-only
+  * (single-thread + incremental). Adaptive, bounded, never blocks.
+  */
 final class ParallelismBudget(val permits: Int):
 
   private val sem = new Semaphore(math.max(0, permits))
 
   /** Grab up to `maxHelpers` spare permits without blocking — returns how many
     * were actually acquired (`0..maxHelpers`). The caller's main worker runs
-    * regardless. Always pair the returned count with [[release]]. */
+    * regardless. Always pair the returned count with [[release]].
+    */
   def acquireHelpers(maxHelpers: Int): Int =
     var n = 0
     while n < maxHelpers && sem.tryAcquire() do n += 1
@@ -36,10 +38,14 @@ final class ParallelismBudget(val permits: Int):
 
 object ParallelismBudget:
 
-  /** No helpers — every search runs single-threaded (the default; LazySMP off). */
+  /** No helpers — every search runs single-threaded (the default; LazySMP off).
+    */
   val Single: ParallelismBudget = new ParallelismBudget(0)
 
   /** A budget sized to the machine, reserving `reserve` cores for the main
-    * workers + I/O. So total search threads ≈ availableProcessors. */
+    * workers + I/O. So total search threads ≈ availableProcessors.
+    */
   def ofCores(reserve: Int = 1): ParallelismBudget =
-    new ParallelismBudget(math.max(0, Runtime.getRuntime.availableProcessors() - reserve))
+    new ParallelismBudget(
+      math.max(0, Runtime.getRuntime.availableProcessors() - reserve)
+    )

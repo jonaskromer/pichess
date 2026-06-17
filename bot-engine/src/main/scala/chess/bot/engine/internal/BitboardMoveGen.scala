@@ -6,62 +6,60 @@ import chess.model.rules.BitboardAttacks
 
 /** Zero-allocation bitboard move generator.
   *
-  * Walks active piece bitboards via `BitboardAttacks` and emits
-  * packed `MoveInt`s directly into output buffers. Legality is
-  * checked inline with a pure-bitboard "post-move attacker
-  * probe": XOR the relevant bits into local Long copies of the
-  * piece bitboards + occupancy, compute attackers on the king
-  * square against those copies, accept the move iff no enemy
-  * piece attacks the king. No `Move` case-class, no `BoardState`
-  * copy, no `applyMoveCoreSync` allocation.
+  * Walks active piece bitboards via `BitboardAttacks` and emits packed
+  * `MoveInt`s directly into output buffers. Legality is checked inline with a
+  * pure-bitboard "post-move attacker probe": XOR the relevant bits into local
+  * Long copies of the piece bitboards + occupancy, compute attackers on the
+  * king square against those copies, accept the move iff no enemy piece attacks
+  * the king. No `Move` case-class, no `BoardState` copy, no `applyMoveCoreSync`
+  * allocation.
   *
-  * Special cases handled inline:
-  *   * en passant — the captured pawn lives on a different
-  *     square than the move target, so we XOR an additional pawn
-  *     bit out of the enemy pawn bitboard + occupancy
-  *   * promotion — emitted with `MoveInt.PromoQueen` (queens
-  *     only, matching the existing generator's contract)
-  *   * castling — emitted as a 2-square king step, then
-  *     validated by `validateCastling` which checks rights, the
-  *     in-between squares are empty, and the king doesn't pass
-  *     through / land on an attacked square
+  * Special cases handled inline: * en passant — the captured pawn lives on a
+  * different square than the move target, so we XOR an additional pawn bit out
+  * of the enemy pawn bitboard + occupancy * promotion — emitted with
+  * `MoveInt.PromoQueen` (queens only, matching the existing generator's
+  * contract) * castling — emitted as a 2-square king step, then validated by
+  * `validateCastling` which checks rights, the in-between squares are empty,
+  * and the king doesn't pass through / land on an attacked square
   *
-  * Contract / return: writes encoded `MoveInt`s into the
-  * supplied buffers separately for captures and quiets, returns
-  * the two counts packed into a `Long` — captureCount in the high
-  * 32 bits, quietCount in the low 32. Packing (vs a `Tuple2[Int,Int]`)
-  * avoids a per-call allocation on the search hot path; unpack with
-  * `(packed >>> 32).toInt` and `packed.toInt`. */
+  * Contract / return: writes encoded `MoveInt`s into the supplied buffers
+  * separately for captures and quiets, returns the two counts packed into a
+  * `Long` — captureCount in the high 32 bits, quietCount in the low 32. Packing
+  * (vs a `Tuple2[Int,Int]`) avoids a per-call allocation on the search hot
+  * path; unpack with `(packed >>> 32).toInt` and `packed.toInt`.
+  */
 object BitboardMoveGen:
 
   def fillCapturesAndQuiets(
       state: PositionView,
       capBuf: Array[Int],
       quietBuf: Array[Int],
-      underPromotion: Boolean = false,
+      underPromotion: Boolean = false
   ): Long =
     val board = state.board
     val white = state.activeColor == Color.White
 
-    val pawns    = if white then board.pawnsW.raw   else board.pawnsB.raw
-    val knights  = if white then board.knightsW.raw else board.knightsB.raw
-    val bishops  = if white then board.bishopsW.raw else board.bishopsB.raw
-    val rooks    = if white then board.rooksW.raw   else board.rooksB.raw
-    val queens   = if white then board.queensW.raw  else board.queensB.raw
-    val king     = if white then board.kingW.raw    else board.kingB.raw
-    val ownOcc   = if white then board.whitePieces.raw else board.blackPieces.raw
-    val enemyOcc = if white then board.blackPieces.raw else board.whitePieces.raw
-    val occ      = board.occupancy.raw
-    val notOwn   = ~ownOcc
+    val pawns = if white then board.pawnsW.raw else board.pawnsB.raw
+    val knights = if white then board.knightsW.raw else board.knightsB.raw
+    val bishops = if white then board.bishopsW.raw else board.bishopsB.raw
+    val rooks = if white then board.rooksW.raw else board.rooksB.raw
+    val queens = if white then board.queensW.raw else board.queensB.raw
+    val king = if white then board.kingW.raw else board.kingB.raw
+    val ownOcc = if white then board.whitePieces.raw else board.blackPieces.raw
+    val enemyOcc =
+      if white then board.blackPieces.raw else board.whitePieces.raw
+    val occ = board.occupancy.raw
+    val notOwn = ~ownOcc
 
-    val enemyPawns   = if white then board.pawnsB.raw   else board.pawnsW.raw
+    val enemyPawns = if white then board.pawnsB.raw else board.pawnsW.raw
     val enemyKnights = if white then board.knightsB.raw else board.knightsW.raw
     val enemyBishops = if white then board.bishopsB.raw else board.bishopsW.raw
-    val enemyRooks   = if white then board.rooksB.raw   else board.rooksW.raw
-    val enemyQueens  = if white then board.queensB.raw  else board.queensW.raw
-    val enemyKing    = if white then board.kingB.raw    else board.kingW.raw
+    val enemyRooks = if white then board.rooksB.raw else board.rooksW.raw
+    val enemyQueens = if white then board.queensB.raw else board.queensW.raw
+    val enemyKing = if white then board.kingB.raw else board.kingW.raw
 
-    val kingSq = if king == 0L then -1 else java.lang.Long.numberOfTrailingZeros(king)
+    val kingSq =
+      if king == 0L then -1 else java.lang.Long.numberOfTrailingZeros(king)
     val epToIdx: Int = state.enPassantTarget.fold(-1)(_.squareIdx)
     val epMask: Long = if epToIdx >= 0 then 1L << epToIdx else 0L
 
@@ -86,10 +84,10 @@ object BitboardMoveGen:
         fromIdx: Int,
         toIdx: Int,
         isKing: Boolean,
-        isEpCapture: Boolean,
+        isEpCapture: Boolean
     ): Boolean =
       val fromMask = 1L << fromIdx
-      val toMask   = 1L << toIdx
+      val toMask = 1L << toIdx
       // Post-move own occupancy: vacate `from`, occupy `to`.
       var occAfter = (occ & ~fromMask) | toMask
       // Enemy bitboards — strip the captured piece if any.
@@ -114,7 +112,7 @@ object BitboardMoveGen:
           // Normal capture: enemy piece on `to`. Remove from
           // whichever enemy-piece bitboard owns that square.
           if (enemyOcc & toMask) != 0L then
-            if      (ep & toMask) != 0L then ep &= ~toMask
+            if (ep & toMask) != 0L then ep &= ~toMask
             else if (en & toMask) != 0L then en &= ~toMask
             else if (eb & toMask) != 0L then eb &= ~toMask
             else if (er & toMask) != 0L then er &= ~toMask
@@ -134,43 +132,44 @@ object BitboardMoveGen:
       else
         val pawnAtkMask =
           if white then BitboardAttacks.blackPawnAttackersOf(kingSqAfter)
-          else          BitboardAttacks.whitePawnAttackersOf(kingSqAfter)
+          else BitboardAttacks.whitePawnAttackersOf(kingSqAfter)
         val bAtk = BitboardAttacks.bishopAttacks(kingSqAfter, occAfter)
         val rAtk = BitboardAttacks.rookAttacks(kingSqAfter, occAfter)
         val attackers =
-          (ep & pawnAtkMask)                                |
-          (en & BitboardAttacks.knightAttacks(kingSqAfter)) |
-          ((eb | eq) & bAtk)                                 |
-          ((er | eq) & rAtk)                                 |
-          (ek & BitboardAttacks.kingAttacks(kingSqAfter))
+          (ep & pawnAtkMask) |
+            (en & BitboardAttacks.knightAttacks(kingSqAfter)) |
+            ((eb | eq) & bAtk) |
+            ((er | eq) & rAtk) |
+            (ek & BitboardAttacks.kingAttacks(kingSqAfter))
         attackers == 0L
 
     inline def squareAttacked(sq: Int, occMask: Long): Boolean =
       val pawnAtkMask =
         if white then BitboardAttacks.blackPawnAttackersOf(sq)
-        else          BitboardAttacks.whitePawnAttackersOf(sq)
+        else BitboardAttacks.whitePawnAttackersOf(sq)
       val bAtk = BitboardAttacks.bishopAttacks(sq, occMask)
       val rAtk = BitboardAttacks.rookAttacks(sq, occMask)
       val attackers =
-        (enemyPawns & pawnAtkMask)                                 |
-        (enemyKnights & BitboardAttacks.knightAttacks(sq))         |
-        ((enemyBishops | enemyQueens) & bAtk)                       |
-        ((enemyRooks | enemyQueens) & rAtk)                         |
-        (enemyKing & BitboardAttacks.kingAttacks(sq))
+        (enemyPawns & pawnAtkMask) |
+          (enemyKnights & BitboardAttacks.knightAttacks(sq)) |
+          ((enemyBishops | enemyQueens) & bAtk) |
+          ((enemyRooks | enemyQueens) & rAtk) |
+          (enemyKing & BitboardAttacks.kingAttacks(sq))
       attackers != 0L
 
-    /** Castling-specific validation: rights still present, the
-      * in-between squares are empty, king not currently in check,
-      * king doesn't traverse / land on an attacked square. */
+    /** Castling-specific validation: rights still present, the in-between
+      * squares are empty, king not currently in check, king doesn't traverse /
+      * land on an attacked square.
+      */
     inline def isCastlingLegal(fromIdx: Int, toIdx: Int): Boolean =
       val rights = state.castlingRights
-      val rank   = if white then 0 else 7
+      val rank = if white then 0 else 7
       val kingside = toIdx == 6 + rank * 8
       val rightOk =
-        if white && kingside       then rights.whiteKingSide
-        else if white              then rights.whiteQueenSide
-        else if kingside           then rights.blackKingSide
-        else                            rights.blackQueenSide
+        if white && kingside then rights.whiteKingSide
+        else if white then rights.whiteQueenSide
+        else if kingside then rights.blackKingSide
+        else rights.blackQueenSide
       if !rightOk then false
       else
         // Squares between king and rook must be empty.
@@ -216,28 +215,28 @@ object BitboardMoveGen:
         capture: Boolean,
         isKing: Boolean,
         isEpCapture: Boolean,
-        isCastling: Boolean,
+        isCastling: Boolean
     ): Unit =
       val legal =
         if isCastling then isCastlingLegal(from, to)
         else isLegal(from, to, isKing, isEpCapture)
       if legal then pushMove(MoveInt.encode(from, to, promo), capture)
 
-    /** Emit pawn promotions. The promotion target (Q/N/R/B) does not
-      * affect move legality — the pawn leaves `from` and arrives at
-      * `to` identically for all four — so we run the legality check
-      * ONCE and then emit the encoded moves directly. This keeps the
-      * hot `fillCapturesAndQuiets` method from inlining `isLegal` four
-      * times per promotion square, which previously bloated it past
-      * HotSpot's huge-method compile threshold (→ interpreter → ~9×
-      * search slowdown). Queen-only when [[underPromotion]] is off,
-      * preserving the historical move-count contract. */
+    /** Emit pawn promotions. The promotion target (Q/N/R/B) does not affect
+      * move legality — the pawn leaves `from` and arrives at `to` identically
+      * for all four — so we run the legality check ONCE and then emit the
+      * encoded moves directly. This keeps the hot `fillCapturesAndQuiets`
+      * method from inlining `isLegal` four times per promotion square, which
+      * previously bloated it past HotSpot's huge-method compile threshold (→
+      * interpreter → ~9× search slowdown). Queen-only when [[underPromotion]]
+      * is off, preserving the historical move-count contract.
+      */
     inline def emitPromotions(
         from: Int,
         to: Int,
         capture: Boolean,
         isEpCapture: Boolean,
-        underPromotion: Boolean,
+        underPromotion: Boolean
     ): Unit =
       if isLegal(from, to, isKing = false, isEpCapture) then
         pushMove(MoveInt.encode(from, to, MoveInt.PromoQueen), capture)
@@ -247,9 +246,9 @@ object BitboardMoveGen:
           pushMove(MoveInt.encode(from, to, MoveInt.PromoBishop), capture)
 
     // ── Pawn moves ────────────────────────────────────────────
-    val pushStep   = if white then 8 else -8
-    val startRank  = if white then 1 else 6
-    val promoRank  = if white then 7 else 0
+    val pushStep = if white then 8 else -8
+    val startRank = if white then 1 else 6
+    val promoRank = if white then 7 else 0
     var p = pawns
     while p != 0L do
       val from = java.lang.Long.numberOfTrailingZeros(p)
@@ -258,29 +257,61 @@ object BitboardMoveGen:
       if pushTo >= 0 && pushTo < 64 && (occ & (1L << pushTo)) == 0L then
         val pushRank = pushTo >>> 3
         if pushRank == promoRank then
-          emitPromotions(from, pushTo, capture = false, isEpCapture = false, underPromotion)
+          emitPromotions(
+            from,
+            pushTo,
+            capture = false,
+            isEpCapture = false,
+            underPromotion
+          )
         else
-          tryEmit(from, pushTo, MoveInt.NoPromotion,
-                  capture = false, isKing = false, isEpCapture = false, isCastling = false)
+          tryEmit(
+            from,
+            pushTo,
+            MoveInt.NoPromotion,
+            capture = false,
+            isKing = false,
+            isEpCapture = false,
+            isCastling = false
+          )
           if (from >>> 3) == startRank then
             val pushTo2 = pushTo + pushStep
             if (occ & (1L << pushTo2)) == 0L then
-              tryEmit(from, pushTo2, MoveInt.NoPromotion,
-                      capture = false, isKing = false,
-                      isEpCapture = false, isCastling = false)
-      val attacks   = pawnAttacks(from, white)
+              tryEmit(
+                from,
+                pushTo2,
+                MoveInt.NoPromotion,
+                capture = false,
+                isKing = false,
+                isEpCapture = false,
+                isCastling = false
+              )
+      val attacks = pawnAttacks(from, white)
       val captureTo = attacks & (enemyOcc | epMask)
       var cb = captureTo
       while cb != 0L do
         val to = java.lang.Long.numberOfTrailingZeros(cb)
         cb &= cb - 1L
-        val toRank   = to >>> 3
-        val isEp     = (epMask & (1L << to)) != 0L
+        val toRank = to >>> 3
+        val isEp = (epMask & (1L << to)) != 0L
         if toRank == promoRank then
-          emitPromotions(from, to, capture = true, isEpCapture = isEp, underPromotion)
+          emitPromotions(
+            from,
+            to,
+            capture = true,
+            isEpCapture = isEp,
+            underPromotion
+          )
         else
-          tryEmit(from, to, MoveInt.NoPromotion,
-                  capture = true, isKing = false, isEpCapture = isEp, isCastling = false)
+          tryEmit(
+            from,
+            to,
+            MoveInt.NoPromotion,
+            capture = true,
+            isKing = false,
+            isEpCapture = isEp,
+            isCastling = false
+          )
 
     // ── Knight moves ──────────────────────────────────────────
     var n = knights
@@ -292,8 +323,15 @@ object BitboardMoveGen:
         val to = java.lang.Long.numberOfTrailingZeros(dests)
         dests &= dests - 1L
         val capture = (enemyOcc & (1L << to)) != 0L
-        tryEmit(from, to, MoveInt.NoPromotion,
-                capture, isKing = false, isEpCapture = false, isCastling = false)
+        tryEmit(
+          from,
+          to,
+          MoveInt.NoPromotion,
+          capture,
+          isKing = false,
+          isEpCapture = false,
+          isCastling = false
+        )
 
     // ── Bishop + queen diagonal moves ─────────────────────────
     var diag = bishops | queens
@@ -305,8 +343,15 @@ object BitboardMoveGen:
         val to = java.lang.Long.numberOfTrailingZeros(dests)
         dests &= dests - 1L
         val capture = (enemyOcc & (1L << to)) != 0L
-        tryEmit(from, to, MoveInt.NoPromotion,
-                capture, isKing = false, isEpCapture = false, isCastling = false)
+        tryEmit(
+          from,
+          to,
+          MoveInt.NoPromotion,
+          capture,
+          isKing = false,
+          isEpCapture = false,
+          isCastling = false
+        )
 
     // ── Rook + queen orthogonal moves ─────────────────────────
     var ortho = rooks | queens
@@ -318,8 +363,15 @@ object BitboardMoveGen:
         val to = java.lang.Long.numberOfTrailingZeros(dests)
         dests &= dests - 1L
         val capture = (enemyOcc & (1L << to)) != 0L
-        tryEmit(from, to, MoveInt.NoPromotion,
-                capture, isKing = false, isEpCapture = false, isCastling = false)
+        tryEmit(
+          from,
+          to,
+          MoveInt.NoPromotion,
+          capture,
+          isKing = false,
+          isEpCapture = false,
+          isCastling = false
+        )
 
     // ── King moves + castling ─────────────────────────────────
     if king != 0L then
@@ -329,20 +381,42 @@ object BitboardMoveGen:
         val to = java.lang.Long.numberOfTrailingZeros(kDests)
         kDests &= kDests - 1L
         val capture = (enemyOcc & (1L << to)) != 0L
-        tryEmit(kFrom, to, MoveInt.NoPromotion,
-                capture, isKing = true, isEpCapture = false, isCastling = false)
+        tryEmit(
+          kFrom,
+          to,
+          MoveInt.NoPromotion,
+          capture,
+          isKing = true,
+          isEpCapture = false,
+          isCastling = false
+        )
       val rank = if white then 0 else 7
       val kingStart = 4 + rank * 8
       if kFrom == kingStart then
-        tryEmit(kFrom, 6 + rank * 8, MoveInt.NoPromotion,
-                capture = false, isKing = true, isEpCapture = false, isCastling = true)
-        tryEmit(kFrom, 2 + rank * 8, MoveInt.NoPromotion,
-                capture = false, isKing = true, isEpCapture = false, isCastling = true)
+        tryEmit(
+          kFrom,
+          6 + rank * 8,
+          MoveInt.NoPromotion,
+          capture = false,
+          isKing = true,
+          isEpCapture = false,
+          isCastling = true
+        )
+        tryEmit(
+          kFrom,
+          2 + rank * 8,
+          MoveInt.NoPromotion,
+          capture = false,
+          isKing = true,
+          isEpCapture = false,
+          isCastling = true
+        )
 
     (nc.toLong << 32) | (nq.toLong & 0xffffffffL)
 
-  /** Bitboard of squares a pawn at `from` attacks (capture squares
-    * only, no forward push). */
+  /** Bitboard of squares a pawn at `from` attacks (capture squares only, no
+    * forward push).
+    */
   private inline def pawnAttacks(from: Int, white: Boolean): Long =
     val col = from % 8
     var bb = 0L
