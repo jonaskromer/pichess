@@ -66,8 +66,8 @@ object InMemoryLobbyRepositorySpec extends ZIOSpecDefault:
         byCode <- LobbyRepository.findByInviteCode(code)
       yield assertTrue(byId.isEmpty, byCode.isEmpty)
     },
-    suite("listPublicWaiting")(
-      test("returns only public + waiting lobbies, sorted by createdAt") {
+    suite("listPublicActive")(
+      test("returns public, non-closed lobbies sorted by createdAt") {
         val publicWaiting1 = baseLobby.copy(id = "L1", createdAt = 100L)
         val publicWaiting2 = baseLobby.copy(
           id = "L2",
@@ -80,24 +80,33 @@ object InMemoryLobbyRepositorySpec extends ZIOSpecDefault:
           visibility = LobbyVisibility.Private,
           createdAt = 25L
         )
+        // Full is a forming/running game — now surfaced for spectating.
         val publicFull = baseLobby.copy(
           id = "L4",
           inviteCode = InviteCode.unsafe("FULLAB"),
           status = LobbyStatus.Full,
           createdAt = 10L
         )
+        // Closed lobbies are tombstones — never surfaced.
+        val publicClosed = baseLobby.copy(
+          id = "L5",
+          inviteCode = InviteCode.unsafe("CLOSED"),
+          status = LobbyStatus.Closed,
+          createdAt = 5L
+        )
         for
           _      <- LobbyRepository.create(publicWaiting1)
           _      <- LobbyRepository.create(publicWaiting2)
           _      <- LobbyRepository.create(privateWaiting)
           _      <- LobbyRepository.create(publicFull)
-          result <- LobbyRepository.listPublicWaiting()
+          _      <- LobbyRepository.create(publicClosed)
+          result <- LobbyRepository.listPublicActive()
         yield assertTrue(
-          result.map(_.id) == List("L2", "L1") // sorted by createdAt asc
+          result.map(_.id) == List("L4", "L2", "L1") // createdAt asc
         )
       },
       test("returns an empty list when nothing matches") {
-        for result <- LobbyRepository.listPublicWaiting()
+        for result <- LobbyRepository.listPublicActive()
         yield assertTrue(result.isEmpty)
       }
     )

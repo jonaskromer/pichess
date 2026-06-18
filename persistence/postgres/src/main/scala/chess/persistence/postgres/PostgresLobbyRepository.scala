@@ -77,12 +77,12 @@ final class PostgresLobbyRepository(db: PostgresDatabase) extends LobbyRepositor
     db.run(Tables.lobbies.filter(_.id === id).delete).unit
       .mapError(toInfraError)
 
-  def listPublicWaiting(): IO[LobbyError, List[Lobby]] =
+  def listPublicActive(): IO[LobbyError, List[Lobby]] =
     db.run(
       Tables.lobbies
         .filter(l =>
           l.visibility === LobbyVisibility.Public.toString &&
-            l.status === LobbyStatus.Waiting.toString
+            l.status =!= LobbyStatus.Closed.toString
         )
         .sortBy(_.createdAt.asc)
         .result

@@ -27,10 +27,10 @@ import chess.persistence.LobbyRepository
   * Two-table writes are bundled into a logged batch so a partial-failure
   * doesn't leave the inverse table dangling.
   *
-  * `listPublicWaiting` uses `ALLOW FILTERING` against the main table — an
+  * `listPublicActive` uses `ALLOW FILTERING` against the main table — an
   * acceptable dev-only shortcut at the scale of an interactive lobby
   * browser. A production deployment would maintain a third denormalised
-  * `lobbies_public_waiting` table keyed by a composite partition and
+  * `lobbies_public_active` table keyed by a composite partition and
   * synchronise it on every write.
   */
 final class CassandraLobbyRepository(session: CqlSession) extends LobbyRepository:
@@ -51,9 +51,9 @@ final class CassandraLobbyRepository(session: CqlSession) extends LobbyRepositor
     session.prepare("SELECT * FROM lobbies WHERE lobby_id = ?")
   private val selectInverse =
     session.prepare("SELECT lobby_id FROM lobbies_by_invite WHERE invite_code = ?")
-  private val selectPublicWaiting =
+  private val selectPublicActive =
     session.prepare(
-      "SELECT * FROM lobbies WHERE visibility = ? AND status = ? ALLOW FILTERING"
+      "SELECT * FROM lobbies WHERE visibility = ? ALLOW FILTERING"
     )
   private val deleteLobby =
     session.prepare("DELETE FROM lobbies WHERE lobby_id = ?")
@@ -129,19 +129,22 @@ final class CassandraLobbyRepository(session: CqlSession) extends LobbyRepositor
                         .mapError(toInfraError)
     yield ()
 
-  def listPublicWaiting(): IO[LobbyError, List[Lobby]] =
+  def listPublicActive(): IO[LobbyError, List[Lobby]] =
     ZIO
       .fromCompletionStage(
         session.executeAsync(
-          selectPublicWaiting.bind(
-            LobbyVisibility.Public.toString,
-            LobbyStatus.Waiting.toString
-          )
+          selectPublicActive.bind(LobbyVisibility.Public.toString)
         )
       )
       .mapError(toInfraError)
       .map { rs =>
-        rs.currentPage().asScala.toList.flatMap(rowToLobby).sortBy(_.createdAt)
+        // CQL can't express `status != Closed` cheaply, so we bind on
+        // visibility only and drop closed lobbies in-app. Same bounded
+        // dev-scale assumption as the ALLOW FILTERING scan itself.
+        rs.currentPage().asScala.toList
+          .flatMap(rowToLobby)
+          .filter(_.status != LobbyStatus.Closed)
+          .sortBy(_.createdAt)
       }
 
   private def rowToLobby(row: Row): Option[Lobby] =

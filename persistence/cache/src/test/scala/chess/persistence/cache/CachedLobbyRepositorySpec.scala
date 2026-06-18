@@ -28,7 +28,7 @@ object CachedLobbyRepositorySpec extends ZIOSpecDefault:
       reads.update(_ + 1) *> inner.findByInviteCode(code)
     def update(lobby: Lobby) = updates.update(_ + 1) *> inner.update(lobby)
     def delete(id: LobbyId) = deletes.update(_ + 1) *> inner.delete(id)
-    def listPublicWaiting() = reads.update(_ + 1) *> inner.listPublicWaiting()
+    def listPublicActive() = reads.update(_ + 1) *> inner.listPublicActive()
 
   private object CountingLobbyRepository:
     def make
@@ -143,7 +143,7 @@ object CachedLobbyRepositorySpec extends ZIOSpecDefault:
         result <- decorated.findById(baseLobby.id)
       yield assertTrue(cu == 1, pu == 1, result.contains(joined))
     },
-    test("listPublicWaiting bypasses the cache and reads straight from primary") {
+    test("listPublicActive bypasses the cache and reads straight from primary") {
       // The public-lobby list intentionally skips the cache because
       // it's a low-frequency, always-changing aggregation — so a call
       // must NEVER increment the cache reads but MUST increment the
@@ -155,7 +155,7 @@ object CachedLobbyRepositorySpec extends ZIOSpecDefault:
         _ <- primary.create(baseLobby)
         cacheReadsBefore <- cacheReads.get
         primaryReadsBefore <- primaryReads.get
-        result <- decorated.listPublicWaiting()
+        result <- decorated.listPublicActive()
         cacheReadsAfter <- cacheReads.get
         primaryReadsAfter <- primaryReads.get
       yield assertTrue(
@@ -238,4 +238,4 @@ object CachedLobbyRepositorySpec extends ZIOSpecDefault:
     def findByInviteCode(code: InviteCode): IO[LobbyError, Option[Lobby]] = ZIO.fail(err)
     def update(lobby: Lobby): IO[LobbyError, Unit]                     = ZIO.fail(err)
     def delete(id: LobbyId): IO[LobbyError, Unit]                      = ZIO.fail(err)
-    def listPublicWaiting(): IO[LobbyError, List[Lobby]]               = ZIO.fail(err)
+    def listPublicActive(): IO[LobbyError, List[Lobby]]                = ZIO.fail(err)

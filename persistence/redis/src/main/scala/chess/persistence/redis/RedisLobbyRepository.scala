@@ -17,7 +17,7 @@ import chess.persistence.LobbyRepository
 /** Redis-backed `LobbyRepository`. Lobby state is JSON-encoded under
   * `lobby:l:{id}`; a secondary `lobby:invite:{code}` key maps invite codes
   * to lobby ids for the join lookup. The `lobby:l:` prefix lets
-  * `listPublicWaiting` SCAN just the payload keys without picking up the
+  * `listPublicActive` SCAN just the payload keys without picking up the
   * invite-map keys.
   *
   * Two-key writes here aren't atomic across the two SETs, but since invite
@@ -71,7 +71,7 @@ final class RedisLobbyRepository(redis: Redis) extends LobbyRepository:
                     case None => ZIO.unit
     yield ()
 
-  def listPublicWaiting(): IO[LobbyError, List[Lobby]] =
+  def listPublicActive(): IO[LobbyError, List[Lobby]] =
     // SCAN pages through all payload keys; cursor=0 starts a fresh
     // iteration, the loop terminates when Redis returns cursor=0 again.
     // Keys here are bounded (one per active lobby) so collecting in
@@ -96,7 +96,7 @@ final class RedisLobbyRepository(redis: Redis) extends LobbyRepository:
     yield lobbies
       .filter(l =>
         l.visibility == LobbyVisibility.Public &&
-          l.status == LobbyStatus.Waiting
+          l.status != LobbyStatus.Closed
       )
       .sortBy(_.createdAt)
 

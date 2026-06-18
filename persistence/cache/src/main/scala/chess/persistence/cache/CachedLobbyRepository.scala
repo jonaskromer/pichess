@@ -76,8 +76,8 @@ final class CachedLobbyRepository(
   /** The public-lobby list isn't worth caching: it's a low-frequency,
     * always-changing aggregation. Always read straight from primary.
     */
-  def listPublicWaiting(): IO[LobbyError, List[Lobby]] =
-    primary.listPublicWaiting()
+  def listPublicActive(): IO[LobbyError, List[Lobby]] =
+    primary.listPublicActive()
 
 object CachedLobbyRepository:
 

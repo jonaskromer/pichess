@@ -34,8 +34,8 @@ final class TracedLobbyRepository(
   def delete(id: LobbyId): IO[LobbyError, Unit] =
     span("db.lobby-repo.delete")(underlying.delete(id))
 
-  def listPublicWaiting(): IO[LobbyError, List[Lobby]] =
-    span("db.lobby-repo.listPublicWaiting")(underlying.listPublicWaiting())
+  def listPublicActive(): IO[LobbyError, List[Lobby]] =
+    span("db.lobby-repo.listPublicActive")(underlying.listPublicActive())
 
   private def span[A](name: String)(
       io: => IO[LobbyError, A]

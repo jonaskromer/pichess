@@ -85,7 +85,7 @@ abstract class LobbyRepositoryContract extends ZIOSpecDefault:
           byCode <- LobbyRepository.findByInviteCode(code)
         yield assertTrue(byId.isEmpty, byCode.isEmpty)
       },
-      test("listPublicWaiting filters by visibility + status") {
+      test("listPublicActive returns public lobbies that aren't closed") {
         val pub1 = baseLobby.copy(
           id = "pub-1",
           inviteCode = InviteCode.unsafe("PUBANE"),
@@ -101,23 +101,39 @@ abstract class LobbyRepositoryContract extends ZIOSpecDefault:
           inviteCode = InviteCode.unsafe("PRVATE"),
           visibility = LobbyVisibility.Private
         )
+        // Full + Started are forming / running public games — the browser
+        // surfaces them so they can be spectated, so they're included now.
         val fullLobby = baseLobby.copy(
           id = "full-1",
           inviteCode = InviteCode.unsafe("FULLAB"),
           status = LobbyStatus.Full
+        )
+        val startedLobby = baseLobby.copy(
+          id = "started-1",
+          inviteCode = InviteCode.unsafe("STARTD"),
+          status = LobbyStatus.Started
+        )
+        val closedLobby = baseLobby.copy(
+          id = "closed-1",
+          inviteCode = InviteCode.unsafe("CLOSED"),
+          status = LobbyStatus.Closed
         )
         for
           _    <- LobbyRepository.create(pub1)
           _    <- LobbyRepository.create(pub2)
           _    <- LobbyRepository.create(privateLobby)
           _    <- LobbyRepository.create(fullLobby)
-          rows <- LobbyRepository.listPublicWaiting()
+          _    <- LobbyRepository.create(startedLobby)
+          _    <- LobbyRepository.create(closedLobby)
+          rows <- LobbyRepository.listPublicActive()
           ids   = rows.map(_.id).toSet
         yield assertTrue(
           ids.contains("pub-1"),
           ids.contains("pub-2"),
+          ids.contains("full-1"),
+          ids.contains("started-1"),
           !ids.contains("priv-1"),
-          !ids.contains("full-1")
+          !ids.contains("closed-1")
         )
       }
     ).provideShared(repoLayer) @@ TestAspect.withLiveClock

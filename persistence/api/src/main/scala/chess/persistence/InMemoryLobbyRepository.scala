@@ -22,12 +22,12 @@ final class InMemoryLobbyRepository(store: Ref[Map[LobbyId, Lobby]])
   def delete(id: LobbyId): IO[LobbyError, Unit] =
     store.update(_ - id)
 
-  def listPublicWaiting(): IO[LobbyError, List[Lobby]] =
+  def listPublicActive(): IO[LobbyError, List[Lobby]] =
     store.get.map(
       _.values
         .filter(l =>
           l.visibility == LobbyVisibility.Public &&
-            l.status == LobbyStatus.Waiting
+            l.status != LobbyStatus.Closed
         )
         .toList
         .sortBy(_.createdAt)

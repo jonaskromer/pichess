@@ -57,14 +57,14 @@ final class MongoLobbyRepository(db: MongoDatabase) extends LobbyRepository:
       .runDiscard(collection.deleteOne(Filters.eq("_id", id)))
       .mapError(toInfraError)
 
-  def listPublicWaiting(): IO[LobbyError, List[Lobby]] =
+  def listPublicActive(): IO[LobbyError, List[Lobby]] =
     MongoOps
       .toList(
         collection
           .find(
             Filters.and(
               Filters.eq("visibility", LobbyVisibility.Public.toString),
-              Filters.eq("status", LobbyStatus.Waiting.toString)
+              Filters.ne("status", LobbyStatus.Closed.toString)
             )
           )
           .sort(Sorts.ascending("createdAt"))
