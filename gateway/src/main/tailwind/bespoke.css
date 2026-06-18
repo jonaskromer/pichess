@@ -1580,6 +1580,7 @@ body.is-dragging { cursor: grabbing; }
 .icon-forfeit { --icon-url: url(/web/doodle_icons/interface/flag.svg); }
 .icon-quit    { --icon-url: url(/web/doodle_icons/interface/logout.svg); }
 .icon-move    { --icon-url: url(/web/doodle_icons/arrows/arrow-single-right.svg); }
+.icon-spectate { --icon-url: url(/web/doodle_icons/interface/unhide.svg); }
 
 /* Export bullet list inside post-it 2 — buttons sit inside <li> so each
    format reads as a list entry rather than a row of identical bars. The
@@ -1601,6 +1602,93 @@ body.is-dragging { cursor: grabbing; }
   padding: 0.15rem 0.45rem;
 }
 
+/* ---- Spectators: header eye badge + share popover -------------------- */
+.spectator-widget {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.spectator-eye {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-family: var(--font-press);
+  font-size: 0.95rem;
+  line-height: 1;
+}
+.spectator-eye .icon { width: 1.2em; height: 1.2em; }
+.spectator-count { min-width: 1ch; }
+
+.share-popover {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  z-index: 60;
+  width: 20rem;
+  max-width: 80vw;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.85rem 1rem 1.05rem;
+  background: var(--color-post-yellow);
+  color: var(--color-post-text);
+  clip-path: var(--post-shape-a);
+  filter: var(--post-shadow-base) drop-shadow(0 0.5rem 0.9rem rgb(0 0 0 / 0.22));
+}
+.share-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.share-popover-title {
+  font-family: var(--font-logo);
+  font-size: 1.2rem;
+  color: var(--color-post-text);
+}
+.share-popover-hint { font-size: 0.8rem; opacity: 0.8; }
+.share-row { display: flex; align-items: center; gap: 0.4rem; }
+.share-label {
+  font-family: var(--font-press);
+  font-size: 0.8rem;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+.share-value {
+  font-family: var(--font-press);
+  font-size: 0.82rem;
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+
+/* ---- Status badges (lobby / game state) ------------------------------ */
+.status-badge {
+  display: inline-block;
+  padding: 0.2rem 0.55rem 0.28rem;
+  font-family: var(--font-press);
+  font-size: 0.72rem;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: var(--color-post-text);
+  background: var(--color-post-yellow);
+  clip-path: var(--torn-corners);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.status-badge.status-waiting { background: var(--color-post-cyan); }
+.status-badge.status-full    { background: var(--color-post-yellow); }
+.status-badge.status-live    { background: var(--color-post-coral); }
+
+/* ---- Public-game browser rows ---------------------------------------- */
+.public-host { font-family: var(--font-hand); font-size: 1.05rem; }
+.public-code {
+  font-family: var(--font-press);
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  letter-spacing: 0.04em;
+}
+
 
 .toast {
   position: fixed;
@@ -1609,17 +1697,26 @@ body.is-dragging { cursor: grabbing; }
   transform: translateX(-50%) translateY(1.25rem);
   background: var(--accent-strong);
   color: #fff;
-  padding: 0.75rem 1.5rem;
-  border-radius: 0.625rem;
-  font-size: 0.875rem;
-  font-weight: 600;
+  padding: 0.7rem 1.4rem 0.8rem;
+  /* Typewriter face + torn-paper edge, no rounded corners — consistent
+     with the move log and the rest of the page. drop-shadow (not
+     box-shadow) so the shadow follows the clipped silhouette. */
+  font-family: var(--font-press);
+  font-size: 0.85rem;
+  letter-spacing: 0.01em;
+  clip-path: var(--torn-corners);
   opacity: 0;
   transition: opacity 0.3s, transform 0.3s;
   pointer-events: none;
+  cursor: pointer;
   z-index: 100;
-  box-shadow: 0 0.25rem 1rem rgba(0,0,0,0.4);
+  filter: drop-shadow(0 0.3rem 0.6rem rgb(0 0 0 / 0.4));
 }
-.toast.visible { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+  pointer-events: auto;
+}
 .promotion-overlay {
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
@@ -1635,7 +1732,7 @@ body.is-dragging { cursor: grabbing; }
    Slice C3) so the host's CSS variables cascade into the SVG via <use>. */
 .promotion-dialog {
   position: relative;
-  border-radius: 0.75rem;
+  clip-path: var(--torn-corners);
   padding: 1.25rem;
   display: flex;
   gap: 0.75rem;
@@ -1667,7 +1764,7 @@ body.is-dragging { cursor: grabbing; }
 .modal.visible { display: flex; }
 .modal-dialog {
   position: relative;
-  border-radius: 0.75rem;
+  clip-path: var(--torn-corners);
   padding: 1.5rem;
   display: flex;
   flex-direction: column;
