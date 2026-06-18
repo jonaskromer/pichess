@@ -77,6 +77,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
                  client   <- ZIO.service[ZioGameService.GameServiceClient]
                  registry <- chess.controller.SessionRegistry.make
                  cache    <- chess.controller.AnnotationCache.make
+                 presence <- chess.controller.SpectatorPresence.make
                  // Tests don't exercise the lobby proxy — pass any URL.
                  // `stackInfo` defaults to the inmemory/no-extras/no-dev
                  // value; per-test override is the second arg list.
@@ -84,6 +85,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
                                client,
                                registry,
                                cache,
+                               presence,
                                "http://lobby-service:8092",
                                stackInfo,
                                lichessToken = lichessToken

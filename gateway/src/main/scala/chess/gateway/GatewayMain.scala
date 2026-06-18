@@ -12,6 +12,7 @@ import chess.controller.{
   AnnotationCache,
   LobbyProxy,
   SessionRegistry,
+  SpectatorPresence,
   StackInfo,
   WebController
 }
@@ -72,6 +73,7 @@ object GatewayMain extends ZIOAppDefault:
         client       <- ZIO.service[ZioGameService.GameServiceClient]
         registry     <- SessionRegistry.make
         cache        <- AnnotationCache.make
+        presence     <- SpectatorPresence.make
         lobbyBaseUrl <- LobbyProxy.baseUrlFromEnv
         stackInfo    <- StackInfo.fromEnv
         // Optional: enables the Lichess spectate bridge (POST /lichess/games)
@@ -94,6 +96,7 @@ object GatewayMain extends ZIOAppDefault:
                             client,
                             registry,
                             cache,
+                            presence,
                             lobbyBaseUrl,
                             stackInfo,
                             lichessToken

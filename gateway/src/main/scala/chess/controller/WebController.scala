@@ -15,6 +15,7 @@ import sttp.tapir.swagger.bundle.SwaggerInterpreter
 import sttp.tapir.ztapir.*
 import zio.*
 import zio.http.*
+import zio.stream.ZStream
 import zio.telemetry.opentelemetry.context.ContextStorage
 import zio.telemetry.opentelemetry.tracing.Tracing
 
@@ -49,6 +50,7 @@ object WebController:
       client: ZioGameService.GameServiceClient,
       registry: SessionRegistry,
       cache: AnnotationCache,
+      presence: SpectatorPresence,
       lobbyBaseUrl: String,
       stackInfo: StackInfo,
       lichessToken: Option[String]
@@ -57,8 +59,8 @@ object WebController:
       lichessToken match
         case Some(token) => LichessSpectate.routes(client, token)
         case None        => Routes.empty
-    tapirRoutes(client, registry, cache, stackInfo) ++
-      rawRoutes(client, stackInfo) ++
+    tapirRoutes(client, registry, cache, presence, stackInfo) ++
+      rawRoutes(client, presence, stackInfo) ++
       LobbyProxy.routes(lobbyBaseUrl) ++
       lichessRoutes
 
@@ -70,6 +72,7 @@ object WebController:
       client: ZioGameService.GameServiceClient,
       registry: SessionRegistry,
       cache: AnnotationCache,
+      presence: SpectatorPresence,
       stackInfo: StackInfo
   ): Routes[Any, Response] =
     val swagger = SwaggerInterpreter()
@@ -138,12 +141,16 @@ object WebController:
         Endpoints.postRegisterPlayers.zServerLogic[Any] { case (id, req) =>
           // Internal coordination from lobby-service. Overwrites any
           // previous local-only registration for `id` so both lobby
-          // players can mutate the game; spectators stay SSE-only.
-          req.guestSessionId match
-            case Some(guest) =>
-              registry.registerLobby(id, req.hostSessionId, guest)
-            case None =>
-              registry.registerLocal(id, req.hostSessionId)
+          // players can mutate the game; spectators stay SSE-only. The
+          // lobby's spectator policy (allowSpectate + limit) rides along
+          // so the SSE handler can admit or refuse watchers.
+          presence.setPolicy(id, req.allowSpectate, req.spectatorLimit) *> {
+            req.guestSessionId match
+              case Some(guest) =>
+                registry.registerLobby(id, req.hostSessionId, guest)
+              case None =>
+                registry.registerLocal(id, req.hostSessionId)
+          }
         },
         Endpoints.getStackInfo.zServerLogic[Any] { _ =>
           // Pure config lookup — no I/O, no game-service hop.
@@ -313,6 +320,7 @@ object WebController:
 
   private def rawRoutes(
       client: ZioGameService.GameServiceClient,
+      presence: SpectatorPresence,
       stackInfo: StackInfo
   ): Routes[Any, Response] =
     val core = Routes(
@@ -320,7 +328,13 @@ object WebController:
       Method.GET / "web" / trailing ->
         handler((rest: zio.http.Path, _: Request) => serveAsset(rest)),
       Method.GET / "api" / "games" / string("id") / "events" -> handler {
-        (id: String, _: Request) => serveEvents(client, id)
+        (id: String, req: Request) =>
+          // `?role=spectator` (set by the web-ui Watch screen) marks this
+          // connection as a spectator so it's counted in the live tally;
+          // players (Game screen) receive the count but aren't part of it.
+          val spectator =
+            req.url.queryParams.getAll("role").contains("spectator")
+          serveEvents(client, presence, id, spectator)
       }
     )
     // /dev/coverage/report/** and /dev/performance/report/** are baked
@@ -423,12 +437,14 @@ object WebController:
 
   private def serveEvents(
       client: ZioGameService.GameServiceClient,
-      id: String
+      presence: SpectatorPresence,
+      id: String,
+      spectator: Boolean
   ): ZIO[Any, Nothing, Response] =
     ZIO.succeed {
       val stateEvents = client
         .subscribeGame(GameIdRequest(id))
-        .catchAll(_ => zio.stream.ZStream.empty)
+        .catchAll(_ => ZStream.empty)
         .mapZIO(reply =>
           replyToDto(reply).either.map {
             case Right(dto) =>
@@ -442,5 +458,40 @@ object WebController:
           }
         )
         .collectSome
-      Response.fromServerSentEvents(stateEvents)
+
+      // The `spectators` SSE event carries the live count to every viewer.
+      val countEvents =
+        presence
+          .changes(id)
+          .map(n =>
+            ServerSentEvent(data = n.toString, eventType = Some("spectators"))
+          )
+
+      // A spectator must be admitted under the game's policy (allowSpectate
+      // + spectatorLimit): a refusal yields a single `spectator-denied`
+      // event and no board, and occupies no slot. Players read the count
+      // but never occupy a spectator slot. Admission is scoped to the SSE
+      // stream, so a disconnect releases the slot.
+      val body =
+        if spectator then
+          ZStream.unwrapScoped {
+            presence
+              .admit(id)
+              .foldZIO(
+                rejection =>
+                  ZIO.succeed(
+                    ZStream.succeed(
+                      ServerSentEvent(
+                        data = rejection.code,
+                        eventType = Some("spectator-denied")
+                      )
+                    )
+                  ),
+                _ => ZIO.succeed(stateEvents.merge(countEvents))
+              )
+          }
+        else
+          stateEvents.merge(countEvents)
+
+      Response.fromServerSentEvents(body)
     }
