@@ -321,3 +321,12 @@ object Components:
     * font + size + colour live in the `.screen-heading` bespoke rule. */
   def screenHeading(text: String): HtmlElement =
     h1(className := "screen-heading", text)
+
+  /** Small status pill — a torn-paper chip for lobby/game state (Open /
+    * Full / Live …). `variant` selects the colour via a `status-<variant>`
+    * modifier class defined in bespoke.css. */
+  def statusBadge(label: String, variant: String = ""): HtmlElement =
+    span(
+      className := s"status-badge${if variant.nonEmpty then s" status-$variant" else ""}",
+      label
+    )

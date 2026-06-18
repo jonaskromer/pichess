@@ -76,6 +76,15 @@ object Main:
 
   private val pendingPromotionVar: Var[Option[PendingPromotion]] = Var(None)
   private val toastVar: Var[Option[String]] = Var(None)
+  // Cancelable handle for the active toast's auto-dismiss timer, so a
+  // fresh toast (or a manual dismiss) clears the previous countdown
+  // instead of letting a stale timer wipe a newer message early.
+  private var toastTimer: Option[Int] = None
+  // Live spectator count for the active game, pushed over SSE as the
+  // `spectators` event and shown in the header eye badge.
+  private val spectatorCountVar: Var[Int] = Var(0)
+  // Whether the header spectator-share popover is open.
+  private val sharePanelOpenVar: Var[Boolean] = Var(false)
   private val flippedVar: Var[Boolean] = Var(false)
   /** Per-tab session id, generated on first load and persisted in
     * localStorage. Sent as `X-Session-Id` on every mutating request so the
@@ -305,9 +314,9 @@ object Main:
         currentScreenVar.signal.distinct.foreach {
           // Both Game and Watch open the SSE feed for an id; Watch just
           // renders it read-only. `enterGame` is idempotent + reusable.
-          case Screen.Game(id)  => enterGame(id)
-          case Screen.Watch(id) => enterGame(id)
-          case _                => ()
+          case Screen.Game(id)  => enterGame(id, spectator = false)
+          case Screen.Watch(id) => enterGame(id, spectator = true)
+          case _                => disconnectEvents()
         }(using ctx.owner)
         // Phase 3: any state change (move, undo, redo, SSE push) clears
         // the per-click preview and triggers a fresh /threats fetch
@@ -429,10 +438,10 @@ object Main:
     * navigation that lands on the same id won't double-subscribe because
     * `connectEvents` closes any existing stream first.
     */
-  private def enterGame(id: String): Unit =
+  private def enterGame(id: String, spectator: Boolean): Unit =
     gameIdVar.set(Some(id))
     getStateClient((id, None)).foreach(handleStateResult)
-    connectEvents(id)
+    connectEvents(id, spectator)
 
   private def mainUi(): HtmlElement =
     div(
@@ -646,19 +655,19 @@ object Main:
   /** Kick off a live Lichess bot-game on the server, then navigate to the
     * read-only spectator view of its mirror game. */
   private def startLichessWatch(): Unit =
-    toastVar.set(Some("Starting a Lichess bot-game…"))
+    showToast("Starting a Lichess bot-game…")
     fetchJson("POST", "/lichess/games", None).onComplete {
       case scala.util.Success(raw) =>
         try
           val obj      = js.JSON.parse(raw).asInstanceOf[js.Dynamic]
           val mirrorId = obj.mirrorId.asInstanceOf[String]
-          toastVar.set(None)
+          dismissToast()
           navigate(Screen.Watch(mirrorId))
         catch
           case _: Throwable =>
-            toastVar.set(Some("Couldn't start a game (bad response)."))
+            showToast("Couldn't start a game (bad response).")
       case scala.util.Failure(err) =>
-        toastVar.set(Some(s"Couldn't start a game: ${err.getMessage}"))
+        showToast(s"Couldn't start a game: ${err.getMessage}")
     }
 
   // --------------------------------------------------------------------------
@@ -699,6 +708,7 @@ object Main:
     // the header for navigation only and groups the destructive "reset
     // game state" action visually with the "make a move" input it
     // resets.
+    spectatorHeaderWidget(),
     themeToggleButton(),
     a(
       className := "header-link",
@@ -706,6 +716,69 @@ object Main:
       "Help"
     )
   )
+
+  /** Header control: an eye glyph + live spectator count that toggles a
+    * paper "invite spectators" popover. Only meaningful on the Game /
+    * Watch screens, which are the only screens that render the header. */
+  private def spectatorHeaderWidget(): HtmlElement =
+    div(
+      className := "spectator-widget",
+      button(
+        typ := "button",
+        className := "btn-icon spectator-eye",
+        title := "Spectators — click to share",
+        onClick --> { _ => sharePanelOpenVar.update(!_) },
+        icon("spectate"),
+        span(
+          className := "spectator-count",
+          child.text <-- spectatorCountVar.signal.map(_.toString)
+        )
+      ),
+      child <-- sharePanelOpenVar.signal.map {
+        case true  => sharePopover()
+        case false => emptyNode
+      }
+    )
+
+  /** Anchored share popover: the read-only watch link (works for any
+    * game) plus the invite code when we know the lobby this game came
+    * from. Both copy to the clipboard. */
+  private def sharePopover(): HtmlElement =
+    val gid       = gameIdVar.now().getOrElse("")
+    val watchLink = s"${dom.window.location.origin}/#watch/$gid"
+    div(
+      className := "share-popover",
+      div(
+        className := "share-popover-head",
+        h3(className := "share-popover-title", "Invite spectators"),
+        Components.iconButton("✕") { _ => sharePanelOpenVar.set(false) }
+      ),
+      p(
+        className := "share-popover-hint",
+        "Anyone with this link can watch the game live."
+      ),
+      div(
+        className := "share-row",
+        span(className := "share-value", watchLink),
+        Components.iconButton("⧉") { _ =>
+          copyToClipboard(watchLink)
+          showToast("Spectator link copied")
+        }
+      ),
+      child <-- currentLobbyVar.signal.map {
+        case Some(l) if l.gameId.toOption.contains(gid) =>
+          div(
+            className := "share-row",
+            span(className := "share-label", "Code"),
+            span(className := "share-value", l.inviteCode),
+            Components.iconButton("⧉") { _ =>
+              copyToClipboard(l.inviteCode)
+              showToast("Invite code copied")
+            }
+          )
+        case _ => emptyNode
+      }
+    )
 
   // --------------------------------------------------------------------------
   // Board
@@ -1240,6 +1313,8 @@ object Main:
       className <-- toastVar.signal.map(t =>
         if t.isDefined then "toast visible" else "toast"
       ),
+      title := "Click to dismiss",
+      onClick --> { _ => dismissToast() },
       child.text <-- toastVar.signal.map(_.getOrElse(""))
     )
 
@@ -1489,14 +1564,30 @@ object Main:
       case Right(snapshot) =>
         gameIdVar.set(Some(snapshot.id))
         stateVar.set(Some(snapshot.state))
-        connectEvents(snapshot.id)
+        connectEvents(snapshot.id, spectator = false)
       case Left(err) =>
         showToast(err.error)
     }
 
-  private def connectEvents(gameId: String): Unit =
+  /** Tear down the live feed when leaving the board for a non-game
+    * screen. Closing the EventSource drops our gateway-side spectator
+    * membership immediately, so the live count stays honest instead of
+    * lingering until the tab closes. */
+  private def disconnectEvents(): Unit =
     sseHandle.foreach(_.close())
-    val source = new dom.EventSource(s"/api/games/$gameId/events")
+    sseHandle = None
+    spectatorCountVar.set(0)
+    sharePanelOpenVar.set(false)
+
+  private def connectEvents(gameId: String, spectator: Boolean): Unit =
+    sseHandle.foreach(_.close())
+    sharePanelOpenVar.set(false)
+    spectatorCountVar.set(0)
+    // `role` lets the gateway tally spectators apart from players: the
+    // Watch screen connects as a spectator (counted in the eye badge),
+    // the Game screen as a player (sees the count but isn't in it).
+    val role   = if spectator then "spectator" else "player"
+    val source = new dom.EventSource(s"/api/games/$gameId/events?role=$role")
     sseHandle = Some(source)
     source.addEventListener(
       "state",
@@ -1504,6 +1595,29 @@ object Main:
         e.data.asInstanceOf[String].fromJson[BoardStateDto] match
           case Right(state) => stateVar.set(Some(state))
           case Left(err)    => showToast(s"Bad state payload: $err")
+    )
+    // Live spectator count for this game — the payload is a bare integer.
+    source.addEventListener(
+      "spectators",
+      (e: dom.MessageEvent) =>
+        e.data.asInstanceOf[String].trim.toIntOption
+          .foreach(spectatorCountVar.set)
+    )
+    // The gateway refuses a spectator when the game disallows watching or
+    // its spectator limit is full. Close the feed (so the EventSource
+    // doesn't auto-reconnect into the same refusal), tell the user, and
+    // bounce back to Start — they can't watch this one.
+    source.addEventListener(
+      "spectator-denied",
+      (e: dom.MessageEvent) => {
+        val reason = e.data.asInstanceOf[String]
+        disconnectEvents()
+        showToast(
+          if reason == "full" then "This game's spectator slots are full."
+          else "This game isn't open to spectators."
+        )
+        navigate(Screen.Start)
+      }
     )
 
   private def handleStateResult(
@@ -1560,9 +1674,18 @@ object Main:
       case Left(err) => showToast(err.error)
     }
 
+  /** Show a transient message. Cancels any in-flight auto-dismiss timer
+    * first so a burst of toasts can't let an older countdown clear a
+    * newer message; the toast is also click-to-dismiss (`toastElement`). */
   private def showToast(msg: String): Unit =
+    toastTimer.foreach(dom.window.clearTimeout)
     toastVar.set(Some(msg))
-    dom.window.setTimeout(() => toastVar.set(None), 3000)
+    toastTimer = Some(dom.window.setTimeout(() => dismissToast(), 5000))
+
+  private def dismissToast(): Unit =
+    toastTimer.foreach(dom.window.clearTimeout)
+    toastTimer = None
+    toastVar.set(None)
 
   private def copyToClipboard(text: String): Unit =
     val nav = dom.window.navigator.asInstanceOf[js.Dynamic]
@@ -2218,13 +2341,7 @@ object Main:
           ),
           ul(
             className := "public-list flex flex-col gap-1 list-none p-0",
-            children <-- publicLobbiesVar.signal.map(_.map { l =>
-              li(
-                className := "public-list-item flex flex-row items-center justify-between gap-3",
-                span(s"${l.hostNickname} — ${l.inviteCode}"),
-                Components.linkButton("Join") { _ => joinByCode(l.inviteCode) }
-              )
-            })
+            children <-- publicLobbiesVar.signal.map(_.map(publicLobbyRow))
           )
         )
       )
@@ -2238,30 +2355,124 @@ object Main:
         showToast(s"Could not fetch lobbies: ${err.getMessage}")
     }
 
+  /** One row in the public-game browser: host + a state badge, plus the
+    * action that fits the lobby's state — an open seat offers "Play", a
+    * running spectatable game offers "Spectate". */
+  private def publicLobbyRow(l: LobbyJson): HtmlElement =
+    val (badgeLabel, badgeVariant) = l.status match
+      case "Waiting" => ("Open", "waiting")
+      case "Full"    => ("Full", "full")
+      case "Started" => ("Live", "live")
+      case other     => (other, "")
+    li(
+      className := "public-list-item flex flex-row items-center justify-between gap-3",
+      div(
+        className := "flex flex-col gap-1 min-w-0",
+        span(className := "public-host", l.hostNickname),
+        span(className := "public-code", l.inviteCode)
+      ),
+      div(
+        className := "flex flex-row items-center gap-2 flex-shrink-0",
+        Components.statusBadge(badgeLabel, badgeVariant),
+        publicLobbyAction(l)
+      )
+    )
+
+  /** The state-appropriate action for a browser row, or nothing when
+    * there's no action (a full lobby yet to start, or a running game
+    * that disallows spectators). */
+  private def publicLobbyAction(l: LobbyJson): HtmlElement =
+    l.status match
+      case "Waiting" =>
+        Components.linkButton("Play") { _ => joinByCode(l.inviteCode) }
+      case "Started" =>
+        l.gameId.toOption match
+          case Some(gid) if l.allowSpectate =>
+            Components.linkButton("Spectate") { _ =>
+              navigate(Screen.Watch(gid))
+            }
+          case _ => span()
+      case _ => span()
+
+  /** Enter a lobby by invite code. We look the lobby up first (a
+    * read-only GET) and branch on its state instead of blindly POSTing a
+    * player-join: a `Waiting` lobby takes us as the second player
+    * (first-come-first-served), a `Started` game drops us into the
+    * read-only spectator view, and a `Full` lobby parks us on the lobby
+    * screen to await the start. This is what lets a spectator join a
+    * game that's already running. */
   private def joinByCode(rawCode: String): Unit =
     val code = rawCode.trim.toUpperCase
     if code.isEmpty then showToast("Enter an invite code first")
     else
-      val payload = js.JSON.stringify(
-        js.Dynamic.literal(
-          guestNickname = nicknameVar.now(),
-          guestSessionId = sessionId
-        )
-      )
-      fetchJson(
-        "POST",
-        s"$lobbyBaseUrl/lobbies/by-code/$code/join",
-        Some(payload)
-      ).onComplete {
+      fetchJson("GET", s"$lobbyBaseUrl/lobbies/by-code/$code", None).onComplete {
         case scala.util.Success(raw) =>
           parseLobbyJson(raw) match
-            case Some(l) =>
-              currentLobbyVar.set(Some(l))
-              navigate(Screen.Lobby(l.inviteCode))
-            case None => showToast("Bad lobby payload")
-        case scala.util.Failure(err) =>
-          showToast(s"Join failed: ${err.getMessage}")
+            case Some(l) => routeIntoLobby(l)
+            case None    => showToast("Couldn't read that lobby")
+        case scala.util.Failure(_) =>
+          showToast(s"No lobby with code $code")
       }
+
+  /** Decide where an invite code takes us, from the lobby's state and
+    * whether our own session is already one of its players. */
+  private def routeIntoLobby(l: LobbyJson): Unit =
+    currentLobbyVar.set(Some(l))
+    val isPlayer = l.hostSessionId == sessionId ||
+      l.guestSessionId.toOption.contains(sessionId)
+    l.status match
+      case "Waiting" =>
+        joinLobbyAsPlayer(l.inviteCode) // open seat — claim it
+      case "Full" =>
+        if isPlayer || l.allowSpectate then
+          // We're a player, or we'll wait here as a spectator — the
+          // poller routes us to the board once the host starts it.
+          navigate(Screen.Lobby(l.inviteCode))
+        else showToast("This game is full and not open to spectators")
+      case "Started" =>
+        l.gameId.toOption match
+          case Some(gid) if isPlayer        => navigate(Screen.Game(gid))
+          case Some(gid) if l.allowSpectate => navigate(Screen.Watch(gid))
+          case Some(_)                      =>
+            showToast("This game isn't open to spectators")
+          case None                         => showToast("Game is starting…")
+      case _ => showToast("This lobby is closed")
+
+  /** POST the player-join (claim the open seat). On a lost race — someone
+    * took the seat between our look-up and our join — re-resolve the
+    * lobby so we still land somewhere sensible (spectating) rather than
+    * at a dead-end error. */
+  private def joinLobbyAsPlayer(inviteCode: String): Unit =
+    val payload = js.JSON.stringify(
+      js.Dynamic.literal(
+        guestNickname = nicknameVar.now(),
+        guestSessionId = sessionId
+      )
+    )
+    fetchJson(
+      "POST",
+      s"$lobbyBaseUrl/lobbies/by-code/$inviteCode/join",
+      Some(payload)
+    ).onComplete {
+      case scala.util.Success(raw) =>
+        parseLobbyJson(raw) match
+          case Some(l) =>
+            currentLobbyVar.set(Some(l))
+            navigate(Screen.Lobby(l.inviteCode))
+          case None => showToast("Bad lobby payload")
+      case scala.util.Failure(_) =>
+        fetchJson(
+          "GET",
+          s"$lobbyBaseUrl/lobbies/by-code/$inviteCode",
+          None
+        ).onComplete {
+          case scala.util.Success(raw) =>
+            parseLobbyJson(raw) match
+              case Some(l) if l.status != "Waiting" => routeIntoLobby(l)
+              case _ => showToast("Couldn't join — the lobby may be full")
+          case scala.util.Failure(_) => showToast("Couldn't join the lobby")
+        }
+    }
 
   // -- Lobby waiting room ---------------------------------------------------
 
@@ -2360,11 +2571,16 @@ object Main:
       case scala.util.Success(raw) =>
         parseLobbyJson(raw).foreach { l =>
           currentLobbyVar.set(Some(l))
-          // If the host pressed Start while we were watching, jump straight
-          // to the game screen. Both host (still here from create) and
-          // guest (still here from join) get auto-routed via this code path.
-          if l.status == "Started" && l.gameId.isDefined then
-            navigate(Screen.Game(l.gameId.get))
+          // Once the host starts the game, auto-route off the lobby
+          // screen: players to the interactive board, everyone else to
+          // the read-only spectator view (when spectating is allowed).
+          if l.status == "Started" then
+            l.gameId.toOption.foreach { gid =>
+              val isPlayer = l.hostSessionId == sessionId ||
+                l.guestSessionId.toOption.contains(sessionId)
+              if isPlayer then navigate(Screen.Game(gid))
+              else if l.allowSpectate then navigate(Screen.Watch(gid))
+            }
         }
       case scala.util.Failure(_) => ()  // swallow — screen stays on "Loading…"
     }
