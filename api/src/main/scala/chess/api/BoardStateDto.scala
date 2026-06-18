@@ -180,7 +180,13 @@ object GameSnapshot:
   */
 final case class RegisterPlayersRequest(
     hostSessionId: String,
-    guestSessionId: Option[String]
+    guestSessionId: Option[String],
+    // The lobby's spectator policy, forwarded so the gateway can admit or
+    // refuse watchers on the SSE feed. Defaulted for backward-compatible
+    // decoding (an older/absent policy reads as open + uncapped); a
+    // non-positive `spectatorLimit` means "no cap".
+    allowSpectate: Boolean = true,
+    spectatorLimit: Int = 0
 )
 
 object RegisterPlayersRequest:

@@ -23,7 +23,9 @@ object LobbyServiceSpec extends ZIOSpecDefault:
     def registerPlayers(
         gameId: String,
         hostSessionId: String,
-        guestSessionId: Option[String]
+        guestSessionId: Option[String],
+        allowSpectate: Boolean,
+        spectatorLimit: Int
     ): IO[Throwable, Unit] =
       ref.update(_ :+ ((gameId, hostSessionId, guestSessionId)))
 
@@ -33,7 +35,9 @@ object LobbyServiceSpec extends ZIOSpecDefault:
       def registerPlayers(
           gameId: String,
           hostSessionId: String,
-          guestSessionId: Option[String]
+          guestSessionId: Option[String],
+          allowSpectate: Boolean,
+          spectatorLimit: Int
       ): IO[Throwable, Unit] = ZIO.unit
     )
 
@@ -187,7 +191,9 @@ object LobbyServiceSpec extends ZIOSpecDefault:
           def registerPlayers(
               gameId: String,
               hostSessionId: String,
-              guestSessionId: Option[String]
+              guestSessionId: Option[String],
+              allowSpectate: Boolean,
+              spectatorLimit: Int
           ): IO[Throwable, Unit] =
             ZIO.fail(new RuntimeException("gateway down"))
         for
@@ -221,7 +227,7 @@ object LobbyServiceSpec extends ZIOSpecDefault:
       }
     ),
     suite("listPublic")(
-      test("returns only public + waiting lobbies") {
+      test("returns public, non-closed lobbies") {
         val privateInput =
           sampleInput.copy(visibility = LobbyVisibility.Private)
         for
@@ -266,7 +272,9 @@ object LobbyServiceSpec extends ZIOSpecDefault:
             def registerPlayers(
                 gameId: String,
                 hostSessionId: String,
-                guestSessionId: Option[String]
+                guestSessionId: Option[String],
+                allowSpectate: Boolean,
+                spectatorLimit: Int
             ): IO[Throwable, Unit] = ZIO.unit
           svc  = LobbyServiceLive(repo, gw)
           lobby <- svc.createLobby(sampleInput)
@@ -284,7 +292,9 @@ object LobbyServiceSpec extends ZIOSpecDefault:
             def registerPlayers(
                 gameId: String,
                 hostSessionId: String,
-                guestSessionId: Option[String]
+                guestSessionId: Option[String],
+                allowSpectate: Boolean,
+                spectatorLimit: Int
             ): IO[Throwable, Unit] = ZIO.unit
           svc  = LobbyServiceLive(repo, gw)
           exit <- svc.createLobby(sampleInput).exit
@@ -314,7 +324,7 @@ object LobbyServiceSpec extends ZIOSpecDefault:
     override def update(lobby: Lobby) = ZIO.unit
     override def delete(id: chess.model.LobbyId) = ZIO.unit
     override def findById(id: chess.model.LobbyId) = ZIO.none
-    override def listPublicWaiting() = ZIO.succeed(Nil)
+    override def listPublicActive() = ZIO.succeed(Nil)
     override def findByInviteCode(code: InviteCode) =
       counter.getAndUpdate(_ + 1).map { n =>
         if n < collisionsBeforeFree then

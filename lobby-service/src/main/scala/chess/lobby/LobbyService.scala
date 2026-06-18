@@ -177,7 +177,7 @@ final class LobbyServiceLive(
     repo.findByInviteCode(code)
 
   def listPublic(): IO[LobbyError, List[Lobby]] =
-    repo.listPublicWaiting()
+    repo.listPublicActive()
 
   def startGame(id: LobbyId, gameId: GameId): IO[LobbyError, Lobby] =
     for
@@ -195,7 +195,9 @@ final class LobbyServiceLive(
                     .registerPlayers(
                       gameId,
                       started.hostSessionId,
-                      started.guestSessionId
+                      started.guestSessionId,
+                      started.allowSpectate,
+                      started.spectatorLimit
                     )
                     .mapError(t =>
                       LobbyError.InfrastructureError(

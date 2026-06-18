@@ -70,7 +70,9 @@ object GatewayCoordinatorSpec extends ZIOSpecDefault:
             def registerPlayers(
                 gameId: String,
                 hostSessionId: String,
-                guestSessionId: Option[String]
+                guestSessionId: Option[String],
+                allowSpectate: Boolean,
+                spectatorLimit: Int
             ): IO[Throwable, Unit] =
               captured.set(Some((gameId, hostSessionId, guestSessionId)))
           _ <- GatewayCoordinator

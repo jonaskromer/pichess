@@ -25,7 +25,9 @@ trait GatewayCoordinator:
   def registerPlayers(
       gameId: String,
       hostSessionId: String,
-      guestSessionId: Option[String]
+      guestSessionId: Option[String],
+      allowSpectate: Boolean = true,
+      spectatorLimit: Int = 0
   ): IO[Throwable, Unit]
 
 object GatewayCoordinator:
@@ -35,10 +37,18 @@ object GatewayCoordinator:
   def registerPlayers(
       gameId: String,
       hostSessionId: String,
-      guestSessionId: Option[String]
+      guestSessionId: Option[String],
+      allowSpectate: Boolean = true,
+      spectatorLimit: Int = 0
   ): ZIO[GatewayCoordinator, Throwable, Unit] =
     ZIO.serviceWithZIO[GatewayCoordinator](
-      _.registerPlayers(gameId, hostSessionId, guestSessionId)
+      _.registerPlayers(
+        gameId,
+        hostSessionId,
+        guestSessionId,
+        allowSpectate,
+        spectatorLimit
+      )
     )
 
   /** Build a coordinator from an explicit base URI + sttp backend. The
@@ -80,10 +90,22 @@ private final class LiveGatewayCoordinator(
   def registerPlayers(
       gameId: String,
       hostSessionId: String,
-      guestSessionId: Option[String]
+      guestSessionId: Option[String],
+      allowSpectate: Boolean,
+      spectatorLimit: Int
   ): IO[Throwable, Unit] =
     val request =
-      client.apply((gameId, RegisterPlayersRequest(hostSessionId, guestSessionId)))
+      client.apply(
+        (
+          gameId,
+          RegisterPlayersRequest(
+            hostSessionId,
+            guestSessionId,
+            allowSpectate,
+            spectatorLimit
+          )
+        )
+      )
     backend
       .send(request)
       .map(_.body)
