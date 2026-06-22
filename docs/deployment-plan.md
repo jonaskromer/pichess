@@ -213,6 +213,21 @@ Image pulls need **no** pull‑secret either: the ghcr packages are **public**.
 
 ## 6. Run it
 
+> **Pre-deploy checklist** (each of these has bitten a real deploy):
+> 1. **The release images must exist on GHCR.** A deploy pulls
+>    `ghcr.io/jonaskromer/pichess-{gateway,game-service,repository,lobby-service}:<version>`,
+>    published by `release.yml` **only if its 100%-coverage gate passed** — a coverage
+>    failure on the tagged commit means no images and the deploy `ImagePullBackOff`s.
+>    Verify first: `for i in gateway game-service repository lobby-service; do docker manifest inspect ghcr.io/jonaskromer/pichess-$i:<version> >/dev/null 2>&1 && echo "$i ok" || echo "$i MISSING"; done`
+> 2. **Bump the image tag** to `<version>`: set `newTag` in `deploy/k8s/base/kustomization.yaml`
+>    (gateway, game-service), `overlays/lobbies/kustomization.yaml` (lobby-service), and
+>    `overlays/full/kustomization.yaml` (repository). The kustomize `newTag` is what the
+>    deploy applies — `image_tag` in `group_vars/all.yml` is reference-only. Keep
+>    `deploy/compose/*.env` in sync.
+> 3. **HTWG uses key auth** (no `sshpass` on the Mac): append
+>    `-e ansible_password= -e ansible_ssh_private_key_file=~/.ssh/pichess_htwg` to the
+>    `target=htwg` runs below.
+
 ```bash
 # one-time
 brew install ansible
