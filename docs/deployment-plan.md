@@ -1,203 +1,312 @@
-# piChess — HTWG Deployment Plan
+# piChess — HTWG Deployment
 
-Plan to deploy piChess to an assigned HTWG virtual server, following lecture
-[09‑Deployment](https://markoboger.github.io/HTWG-AIN-BOGER-slides/lectures/software-architecture/09-Deployment.html).
-**Status: PARTIALLY IMPLEMENTED.** CI/CD image publishing has landed —
-`.github/workflows/release.yml` builds **multi-arch (amd64 + arm64)** images for
-`gateway`, `game-service`, `repository`, and `lobby-service` and **pushes them to
-GHCR** on every `v*` tag (gated by the full `test.yml` coverage suite). What's
-still missing is everything Kubernetes: no k8s/k3s manifests, no cluster, no
-deploy job. The k3s rollout below is the remaining work.
+Deploying piChess to the assigned HTWG virtual server, following lecture
+[09‑Deployment](https://markoboger.github.io/HTWG-AIN-BOGER-slides/lectures/software-architecture/09-Deployment.html)
+— the progression **Docker → Docker Compose → Kubernetes → k3s → k3d → Keycloak**.
 
----
+**Status: IMPLEMENTED.** The path is built and validated end‑to‑end (local
+Multipass host‑k3s, local k3d, and the prod‑compose fallback), and has been
+exercised against the real HTWG box — the `mongo:4.4` pin in §8 was discovered by
+watching `mongo:5+` crash‑loop on its AVX‑less QEMU vCPUs. What exists today:
 
-## 1. What the lecture requires (the assignment)
+- **CI publishes images** — `.github/workflows/release.yml` builds multi‑arch
+  (amd64 + arm64) images for `gateway`, `game-service`, `repository`, and
+  `lobby-service` and pushes them to **GHCR** on every `v*` tag (gated by the
+  `test.yml` coverage suite).
+- **Kubernetes manifests** — a **Kustomize** base + three nested overlays
+  (`mvp` ⊂ `lobbies` ⊂ `full`) under `deploy/k8s/`.
+- **A local‑driven Ansible pipeline** (`deploy/ansible/`) — provisions a cluster
+  (**host k3s** *or* **k3d / k3s‑in‑Docker** for no‑sudo hosts) and applies a
+  tier; `reset.yml` downgrades / wipes / tears down.
+- **A prod docker‑compose fallback** (`deploy/compose/`) — mirrors the same three
+  tiers without a Kubernetes control plane, for Docker‑only hosts.
 
-The deck teaches the progression **Docker → Docker Compose → Kubernetes → k3s → k3d → Keycloak**
-and asks students to:
+The one deviation from the original plan: deployment is **driven locally from the
+operator's Mac, not from CI** — the HTWG VM sits behind a 2FA campus VPN a GitHub
+runner can't reach (§7).
 
-1. Review the project's Dockerfiles.
-2. Extend Docker Compose for local multi‑service testing. *(already done — we have a 12‑service compose)*
-3. Create a **k3d** cluster locally and deploy the same stack with **Kubernetes manifests** (Deployment + Service, `kubectl apply -f`).
-4. **Deploy on the assigned virtual server** (lecture installs k3s via `curl -sfL https://get.k3s.io | sh -`).
-5. *Optional:* add **Keycloak** for access management (realm + client + test user).
-
-### What the slides do NOT give us (must come from the instructor)
-I fetched the deck twice — it contains only **generic, example** commands. It does **not** specify:
-
-- the assigned VM hostname / IP, SSH user, or whether you have sudo/root;
-- any HTWG‑provided container registry (it only references `ghcr.io/example/...` as an example);
-- a public domain / ingress hostname pattern;
-- firewall/open‑port policy.
-
-**→ Action item: obtain these from Boger / the course org before Phase 4.** See §8.
+> This file is the **as‑built** overview. The runnable how‑tos live next to the
+> code: [`deploy/ansible/README.md`](../deploy/ansible/README.md) and
+> [`deploy/compose/README.md`](../deploy/compose/README.md).
 
 ---
 
-## 2. Decisions for this plan (from your answers + lecture defaults)
+## 1. What the lecture required — and how we satisfied it
 
-| Topic | Decision | Rationale |
-|---|---|---|
-| **Orchestrator / target** | Bare VM + SSH, **install k3s** ourselves | Lecture's canonical path; assumed until instructor says otherwise |
-| **Registry** | **ghcr.io** (`ghcr.io/<gh-user>/pichess-*`) | The registry the slides reference; free for the repo; works with GitHub Actions |
-| **Infra scope** | **mongo + redis + kafka + gateway + game‑service + repository + lobby‑service** | "Full capability without obs/analytics." AI bot is embedded in game‑service |
-| **CI/CD** | **GitHub Actions: build → push → deploy** | Your choice |
-| **Excluded** | opening‑service, analytics‑service, postgres, cassandra, neo4j, clickhouse, prometheus, grafana, jaeger, tui, k6 | Not in scope; opening needs neo4j, analytics needs clickhouse |
+The deck teaches **Docker → Docker Compose → Kubernetes → k3s → k3d → Keycloak**:
 
----
+| Lecture step | piChess |
+|---|---|
+| Review the Dockerfiles | `sbt-native-packager` per service (`eclipse-temurin:23-jre`, layered) |
+| Extend Docker Compose | dev `docker-compose.yml` (12 services) + prod `deploy/compose/` (tiered) |
+| k3d cluster + k8s manifests (`kubectl apply`) | `deploy/k8s/` Kustomize base+overlays; `provision-k3d.yml` stands up k3d |
+| Deploy on the assigned VM (k3s) | `provision*.yml` + `deploy.yml -e target=htwg` (k3d there — no sudo) |
+| *(optional)* Keycloak | deferred (§10) |
 
-## 3. Current state vs. what's missing
-
-**We have:** working Dockerfiles via `sbt-native-packager` (`sbt dockerBuildAll` → `pichess-*:latest` on `eclipse-temurin:23-jre`), a full `docker-compose.yml`, a `mongo+redis` production backend already validated (`docs/db-selection-report.md`), all services 12‑factor‑ish (config from env vars), and — new — **GitHub Actions CI/CD that builds multi-arch images and pushes them to GHCR on tagged releases** (`release.yml`, gated by `test.yml`).
-
-**Done since the first draft:**
-
-- ✅ **Registry publishing** — `release.yml` builds `linux/amd64,linux/arm64` via buildx and pushes `ghcr.io/<owner>/pichess-{gateway,game-service,repository,lobby-service}` tagged `:<version>` + `:sha-<sha>`, then cuts a GitHub Release. (build.sbt still only does `Docker/publishLocal`; the multi-arch push lives in the workflow, not sbt's `dockerRepository`.)
-- ✅ **GitHub Actions** — `.github/workflows/` now holds `test.yml` (coverage gate, every push/PR), `release.yml` (tag → build-push), and `metrics.yml` (badge data).
-
-**Still missing (the k3s work):**
-
-1. **Kubernetes manifests** — none exist (`find` for k8s/k3s/helm = empty).
-2. **k3s on the VM** — not provisioned.
-3. **A deploy job** — `release.yml` publishes images but does **not** roll them out to a cluster (no SSH/kubeconfig step yet).
-4. **Secrets/config story for k8s** — currently env vars in compose; need ConfigMap + Secret.
-5. **Kafka‑in‑k8s listeners**, **Mongo persistence (PVC)**, **Ingress** for the gateway.
+What the slides do **not** give us still holds — they ship only generic example
+commands. The HTWG specifics we had to discover ourselves are now pinned down in §8.
 
 ---
 
-## 4. Target architecture on k3s (single node)
+## 2. What's built
+
+### 2.1 CI — image publishing (`.github/workflows/`)
+- `test.yml` — coverage gate on every push / PR (also `workflow_call`).
+- `release.yml` — on a `v*` tag: re‑runs `test.yml`, then for the four deployable
+  services runs `sbt <svc>/Docker/stage` and `docker buildx build --platform
+  linux/amd64,linux/arm64 --push`, tagging `:<version>` **and** `:sha-<sha>` under
+  `ghcr.io/jonaskromer/pichess-*`, and cuts a GitHub Release.
+- `metrics.yml` — README badge data.
+- **No deploy job** — image build/push and rollout are deliberately separate (§7).
+
+### 2.2 Kubernetes manifests — Kustomize tiers (`deploy/k8s/`)
 
 ```
-            Internet
-               │  :80/:443
-        ┌──────▼───────┐  Traefik Ingress (ships with k3s)
-        │   Ingress    │  host: pichess.<vm>.  → gateway
+deploy/k8s/
+  base/                       # the MVP, as raw Deployments/Services + a ConfigMap generator
+    namespace.yaml            #   pichess
+    gateway.yaml              #   Deployment + Service :8090 (web UI + REST + SSE), probes, limits
+    game-service.yaml         #   Deployment + Service :9000 gRPC (embeds the NNUE engine)
+    ingress.yaml              #   Traefik Ingress, host-less (matches the raw IP or *.nip.io)
+    kustomization.yaml        #   configMapGenerator pichess-config (inmemory) + image newTag
+  overlays/
+    mvp/      = base as-is
+    lobbies/  = mvp + lobby-service + a gateway patch (PICHESS_LOBBY_URL)
+    full/     = lobbies + mongodb + redis + kafka + repository, ConfigMap merged to mongo+redis+kafka
+```
+
+Two Kustomize features carry real weight:
+
+- **Hashed `configMapGenerator` → automatic rollout.** `pichess-config` is a
+  *generated* ConfigMap, so the `full` overlay's `inmemory → mongo` flip yields a
+  new **hashed** ConfigMap name; Kustomize rewrites every `envFrom` reference, the
+  pod spec changes, and the JVM pods roll automatically — no manual
+  `rollout restart`, and no churn when nothing changed.
+- **`pichess.tier` labels.** `lobbies`/`full` workloads (and their PVCs) carry a
+  `pichess.tier` label so `reset.yml` can select and prune the workloads of every
+  tier *above* a downgrade target (§2.3).
+
+The image tag is pinned per release via `newTag` in the kustomizations (currently
+`0.0.2`), kept in sync **by hand** with `image_tag` in `group_vars/all.yml` and
+`PICHESS_IMAGE_TAG` in the compose `*.env` files.
+
+### 2.3 Ansible — the deploy pipeline (`deploy/ansible/`)
+
+Local‑driven (runs from your Mac, not CI), idempotent (re‑run after a dropped VPN —
+completed tasks report `ok`, not `changed`), and **defaults to the local Multipass
+target** so you can't hit HTWG by accident (`-e target=htwg` opts in).
+
+**Two provisioning paths — the host decides which:**
+
+| Playbook | Roles | Installs | Privilege | For |
+|---|---|---|---|---|
+| `provision.yml` | `base`, `k3s` | host **k3s** via `curl \| sh` | needs **root** (apt/systemd/ufw) | root‑capable boxes (Multipass/Lima testbed) |
+| `provision-k3d.yml` | `k3d` | **k3d** (k3s‑in‑Docker), userspace | **no sudo** (Docker group only) | the **HTWG fleet** — needs rootful Docker |
+
+**Shared apply/reset** — both paths feed the same two playbooks, which stay
+runtime‑agnostic through `pichess_kubectl` (`k3s kubectl` vs
+`kubectl --kubeconfig …`) and `pichess_become` (set per host in `group_vars/`):
+
+- `deploy.yml` (role `pichess`) — copy the kustomize tree to the host,
+  `kubectl apply -k overlays/<tier>`, wait for the rollout. **Additive** — only
+  ever converges *up*.
+- `reset.yml` (role `pichess`, `pichess_prune=true`) — **authoritative**: apply the
+  target tier, then delete the workloads of every higher tier (by `pichess.tier`).
+  Data PVCs are **kept** (a later upgrade rebinds them) unless
+  `-e pichess_wipe_data=true`; `-e pichess_teardown=true` deletes the whole namespace.
+
+**Targets** (`inventory.ini`): `local` (Multipass) and `htwg`. HTWG connection vars
+(`SERVER_IP` / `SSH_USERNAME` / `SSH_PW`) are read from the environment via
+`group_vars/htwg.yml` (sourced from `.env.local`) — **nothing secret is committed**.
+`group_vars/htwg.yml` also carries the k3d profile (`pichess_become: false`,
+`pichess_kubectl: kubectl --kubeconfig …`, a home‑dir `manifests_dest`).
+
+**Key hygiene** (the HTWG box is shared & externally managed): use a dedicated
+throwaway deploy key, never your git key; the `base` role *asserts* the authorized
+file is a public key (refuses anything containing `PRIVATE KEY`); the pipeline never
+forwards your SSH agent, never runs `git` on the VM, and pulls only from **public**
+ghcr — so no personal credential ever reaches the host.
+
+### 2.4 Prod compose fallback (`deploy/compose/`)
+
+A root‑less, Docker‑only path for hosts with the `docker` group but no k3s/k3d. It
+pulls the same ghcr images and mirrors the three tiers one‑for‑one via per‑tier
+env‑files (`mvp.env` / `lobbies.env` / `full.env`, each setting `COMPOSE_PROFILES`
+**and** the backend env). Only the gateway is published (`:8090`); a downgrade is
+two steps (bring up the lower tier, then `rm -sf` the higher‑tier services — named
+data volumes survive). Distinct from the **root `docker-compose.yml`**, which is the
+dev rig (local builds, polyglot persistence + obs + perf profiles).
+
+---
+
+## 3. Target architecture on the cluster (the `full` tier)
+
+```
+            Internet  :80
+        ┌──────▼───────┐  Traefik Ingress (ships with k3s/k3d), host-less
+        │   Ingress    │  → gateway:8090
         └──────┬───────┘
         ┌──────▼───────┐
-        │   gateway    │ Deployment, Svc :8090  (web UI + REST + SSE)
-        └──────┬───────┘ gRPC
-        ┌──────▼───────┐   Kafka     ┌─────────────┐
-        │ game-service │──────────▶  │   kafka     │ StatefulSet :9092 (KRaft, PVC)
-        │  :9000 gRPC  │             └──────┬──────┘
-        │ (+ AI engine)│                    │ consume
-        └──────┬───────┘             ┌──────▼──────┐
-               │ mongo               │ repository  │ Deployment, Svc :8091
-        ┌──────▼───────┐            └──────┬──────┘
-        │   mongodb    │ StatefulSet :27017 ◀────────┘ mongo
-        │   (PVC)      │            ┌─────────────┐
-        └──────────────┘            │ lobby-svc   │ Deployment, Svc :8092
-        ┌──────────────┐            └─────────────┘
-        │    redis     │ Deployment/Svc :6379 (cache; PVC optional)
-        └──────────────┘
+        │   gateway    │ Deployment, Svc :8090  (web UI + REST + SSE)   [mvp]
+        └──┬────────┬──┘
+     gRPC  │        │ HTTP (PICHESS_LOBBY_URL)
+   ┌───────▼──┐  ┌──▼───────────┐
+   │  game-   │  │ lobby-service│ Deployment, Svc :8092               [lobbies]
+   │ service  │  └──────────────┘
+   │ :9000    │      Kafka     ┌─────────────┐
+   │ (+engine)│──────────────▶ │   kafka     │ StatefulSet :9092/:9093 (KRaft, PVC) [full]
+   └────┬─────┘    publish     └──────┬──────┘
+        │ mongo                       │ consume
+   ┌────▼─────┐                ┌──────▼──────┐
+   │ mongodb  │ StatefulSet    │ repository  │ Deployment, Svc :8091          [full]
+   │ :27017   │ (PVC, 4.4)     └──────┬──────┘
+   └──────────┘ ◀──────────────────── ┘ mongo
+   ┌──────────┐
+   │  redis   │ Deployment, Svc :6379 (cache decorator; ephemeral, no PVC)    [full]
+   └──────────┘
 ```
 
-**Service exposure:** only `gateway` is public (Ingress). `game-service` (gRPC), `repository`, `lobby-service`, `mongodb`, `redis`, `kafka` are `ClusterIP` (internal). Optionally expose `repository`/`lobby` via extra Ingress paths if you want to demo their REST.
-
-**k8s DNS names** replace the compose hostnames: `game-service:9000`, `kafka:9092`, `mongodb:27017`, `redis:6379` (within the `pichess` namespace).
-
----
-
-## 5. Work breakdown (phased)
-
-### Phase 0 — Prep & info gathering
-- Collect VM details + decide ingress hostname (§8). If no real domain, use `nip.io` (`pichess.<VM-IP>.nip.io`).
-- Confirm GitHub repo location → fixes the ghcr namespace `ghcr.io/<owner>/`.
-
-### Phase 1 — Registry‑ready images  ✅ *largely done (see §3)*
-> `release.yml` already builds multi-arch images and pushes them to GHCR with
-> version + `sha-` tags. The remaining nuance below (driving tags through sbt
-> rather than the workflow) is optional polish, not a blocker.
-
-- Add to each Docker‑enabled module in `build.sbt`:
-  - `dockerRepository := Some("ghcr.io")`, `dockerUsername := Some("<owner>")`.
-  - Tag with the **git SHA** (not just `latest`) so k8s rollouts are deterministic — e.g. drive `Docker / version` from an env var / sbt‑dynver.
-- Add a `dockerPublishAll` alias (mirrors `dockerBuildAll` but `Docker/publish`) for the **in‑scope** services only: gateway, game‑service, repository, lobby‑service.
-- Verify: `docker login ghcr.io`, push, pull from another host.
-
-### Phase 2 — Local k3d dry‑run (lecture step 3, de‑risks the VM)
-- `k3d cluster create pichess --agents 1` → `kubectl config use-context k3d-pichess`.
-- Author manifests under **`deploy/k8s/`** (raw YAML, matching the slides; Kustomize base/overlay optional):
-  - `00-namespace.yaml` (`pichess`)
-  - `10-config.yaml` — ConfigMap: `PICHESS_BACKEND=mongo`, `PICHESS_CACHE=redis`, `KAFKA_BOOTSTRAP_SERVERS=kafka:9092`, `GAME_SERVICE_GRPC=game-service:9000`, ports, mongo/redis hosts.
-  - `11-secrets.yaml` — Secret: mongo user/password, redis password, ghcr `imagePullSecret` (dockerconfigjson), (later) Lichess token.
-  - `20-mongodb.yaml` — StatefulSet + headless Service + PVC.
-  - `21-redis.yaml` — Deployment + Service (+ optional PVC).
-  - `22-kafka.yaml` — StatefulSet + Service, **single‑node KRaft**; set `KAFKA_ADVERTISED_LISTENERS` to the in‑cluster DNS name (the #1 gotcha). PVC for the log dir.
-  - `30-game-service.yaml`, `31-repository.yaml`, `32-lobby-service.yaml`, `33-gateway.yaml` — Deployment + Service each; set `resources.requests/limits` and `readiness/liveness` probes.
-  - `40-ingress.yaml` — Traefik Ingress → `gateway:8090`, host = chosen domain.
-- Bring up DBs/Kafka first, then services; `kubectl apply -f deploy/k8s/`.
-- Smoke test: `kubectl port-forward svc/gateway 8090:8090` → play a game vs the bot, confirm Kafka→repository→mongo flow.
-
-### Phase 3 — JVM right‑sizing for one VM
-- Four JVM services + Kafka (JVM) + Mongo on a single VM is the real risk. Set `-Xmx` per service (compose/.jvmopts give a starting point) and matching k8s memory `requests/limits`. Budget RAM before Phase 4 (rough: ~512 MB × 4 services + ~1 GB Kafka + ~512 MB Mongo + overhead ≈ **needs ≥ 6–8 GB VM**).
-
-### Phase 4 — Provision the HTWG VM
-- SSH in; install k3s: `curl -sfL https://get.k3s.io | sh -` (Traefik ingress + local‑path storage included).
-- Copy kubeconfig to your laptop (`/etc/rancher/k3s/k3s.yaml`, rewrite server IP) for `kubectl`.
-- Create the ghcr `imagePullSecret` (or make the ghcr packages public to skip auth).
-- `kubectl apply -f deploy/k8s/` → verify pods, ingress, public URL.
-
-### Phase 5 — GitHub Actions CI/CD  ✅ *build-push done; deploy job pending*
-> The **build‑push** half exists today as `release.yml` (tag‑triggered, not
-> push‑to‑`main`): it gates on `test.yml`, builds multi-arch, and pushes to GHCR.
-> What's left is the **deploy job** that rolls those images onto the k3s box.
-
-- `.github/workflows/deploy.yml`, on push to `main`:
-  - **build‑push job:** checkout → JDK 23 + sbt cache → `make tailwind-build` → `docker/login-action` (ghcr, `GITHUB_TOKEN`) → `sbt dockerPublishAll` (tag = `${{ github.sha }}` + `latest`).
-  - **deploy job (needs build‑push):** either (a) **SSH** to the VM (`appleboy/ssh-action`, key in secrets) and `kubectl -n pichess set image ...`/`rollout restart` + `kubectl apply -f deploy/k8s`, or (b) **kubeconfig secret** + `kubectl` from the runner. SSH is simplest for a self‑managed k3s box.
-- Secrets needed in GitHub: `GHCR` is covered by `GITHUB_TOKEN`; add `SSH_HOST`, `SSH_USER`, `SSH_KEY` (or `KUBECONFIG`).
-
-### Phase 6 — *(optional)* Keycloak
-- Add a `keycloak` Deployment/Service + Ingress; protect the gateway via Traefik forward‑auth or in‑app OIDC. Create realm/client/test user. Defer unless required for the grade.
+**Exposure:** only `gateway` is public (Ingress). Everything else
+(`game-service` gRPC, `repository`, `lobby-service`, `mongodb`, `redis`, `kafka`) is
+`ClusterIP`/headless and internal to the `pichess` namespace. Compose hostnames
+become k8s Service names (`game-service:9000`, `kafka:9092`, `mongodb:27017`,
+`redis:6379`). **gRPC stays in‑cluster** (gateway→game‑service), so there's no
+HTTP/2‑through‑Ingress headache.
 
 ---
 
-## 6. Manifests to author (inventory)
+## 4. The tier model
 
-| File | Kind(s) | Notes |
+The overlays are **strictly nested**, so a deploy/upgrade/downgrade is just "pick a
+tier". Each higher tier needs more RAM (the table below sizes the JVMs + datastores;
+`full` is why the HTWG VM was bumped 4 → 12 GB, see §8).
+
+| Tier | Adds | Backend | Roughly needs |
+|---|---|---|---|
+| `mvp` | gateway + game‑service | in‑memory | ~1.5 GB |
+| `lobbies` | + lobby‑service | in‑memory | ~2 GB |
+| `full` | + repository + kafka + mongo + redis | mongo + redis, Kafka event log | **~8–12 GB** (5 JVMs + Kafka + Mongo) |
+
+Per‑pod `resources.requests/limits` are set on every workload (e.g. game‑service
+`512Mi–1Gi` and up to 2 CPU for search; mongo/kafka `~1Gi` each) — see the manifests.
+
+---
+
+## 5. Config & secrets wiring
+
+Services already read everything from env vars, so the compose→k8s move was
+mechanical and lives entirely in the **`configMapGenerator`**: `PICHESS_BACKEND`,
+`PICHESS_CACHE`, `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_CONSUMER_GROUP`,
+`GAME_SERVICE_GRPC`, mongo/redis hosts, and the service ports. The base sets the
+in‑memory values; the `full` overlay *merges* the durable ones over them (which is
+what triggers the hashed‑ConfigMap rollout in §2.2).
+
+**No Secret object exists — by design.** The `full`‑tier datastores (Mongo, Redis,
+Kafka) run **unauthenticated**: they're ClusterIP‑only, never exposed past the
+Ingress, and carry demo data. That removes the credential‑management surface
+entirely for the assignment. (If Mongo/Redis auth or a Lichess token were ever
+needed, a `Secret` referenced via `envFrom` is the drop‑in spot.)
+
+Image pulls need **no** pull‑secret either: the ghcr packages are **public**.
+
+---
+
+## 6. Run it
+
+```bash
+# one-time
+brew install ansible
+cd deploy/ansible
+ansible-galaxy collection install -r requirements.yml -p collections
+
+# validate — no host needed
+ansible-playbook provision.yml --syntax-check
+ansible-playbook deploy.yml    --syntax-check
+ansible-lint
+
+# local Multipass testbed (host k3s — default target, no -e needed)
+ansible-playbook provision.yml          # OS baseline + k3s
+ansible-playbook deploy.yml             # apply mvp
+ansible-playbook deploy.yml -e pichess_tier=full   # upgrade to full
+
+# HTWG (k3d — no sudo; VPN must be up; validate locally first)
+set -a; . ../../.env.local; set +a      # SERVER_IP / SSH_USERNAME / SSH_PW
+ansible-playbook provision-k3d.yml -e target=htwg
+ansible-playbook deploy.yml        -e target=htwg -e pichess_tier=full
+ansible-playbook reset.yml         -e target=htwg -e pichess_tier=lobbies   # downgrade, keep data
+
+# no-Kubernetes fallback (Docker-only host)
+cd ../compose
+docker compose --env-file full.env -f docker-compose.prod.yml up -d --remove-orphans
+```
+
+Browse the result at `http://<host>/` (cluster ingress on host port 80) or
+`http://<host>:8090/` (compose). On the k3s path the playbook fetches the kubeconfig
+back to `deploy/ansible/kubeconfig-<host>.yaml` for `kubectl` from your Mac.
+
+---
+
+## 7. Why local Ansible, not a CI deploy job
+
+The original plan's Phase 5 imagined a GitHub Actions `deploy.yml` (push to `main` →
+SSH/kubeconfig → `kubectl set image`). We **deliberately did not build that**: the
+HTWG VM is reachable only through the **campus VPN, which requires 2FA**, so a GitHub
+runner can't reach it. Instead:
+
+- **CI's job stops at "an image exists"** — `release.yml` builds & pushes to ghcr on
+  a tag. That keeps *tested* (every push) and *released* (a tagged image) cleanly
+  separate.
+- **Rollout is a human‑initiated, idempotent Ansible run** from inside the VPN. If
+  the VPN drops mid‑run, re‑run — completed steps are `ok`, not `changed`.
+
+If HTWG ever exposed a reachable endpoint (or a self‑hosted runner inside the VPN),
+the deploy job becomes a thin wrapper over the exact same `deploy.yml`.
+
+---
+
+## 8. HTWG specifics (the things the slides didn't tell us)
+
+| Item | Reality | Consequence |
 |---|---|---|
-| `deploy/k8s/00-namespace.yaml` | Namespace | `pichess` |
-| `deploy/k8s/10-config.yaml` | ConfigMap | non‑secret env (backend, kafka, grpc, ports) |
-| `deploy/k8s/11-secrets.yaml` | Secret ×N | mongo/redis creds, ghcr pull secret |
-| `deploy/k8s/20-mongodb.yaml` | StatefulSet, Service, PVC | persistent |
-| `deploy/k8s/21-redis.yaml` | Deployment, Service | PVC optional |
-| `deploy/k8s/22-kafka.yaml` | StatefulSet, Service, PVC | KRaft, advertised listeners |
-| `deploy/k8s/30..33-*.yaml` | Deployment, Service ×4 | game‑service, repository, lobby, gateway |
-| `deploy/k8s/40-ingress.yaml` | Ingress | gateway public |
+| Access | VPN + 2FA, SSH as `chess` | deploy from the Mac, not CI (§7) |
+| Privileges | `chess` is in the **docker group, no sudo** | can't install host k3s → **k3d** path (`provision-k3d.yml`) |
+| Docker mode | must be **rootful** | k3d's kubelet can't start under rootless/userns (`/dev/kmsg`) — the role fails fast if it detects rootless |
+| CPU | QEMU vCPUs **without AVX** | `mongo:5+` crash‑loops (SERVER‑54407) → pinned **`mongo:4.4`** + the legacy `mongo` shell health probe |
+| RAM | bumped **4 → 12 GB** | enough for the `full` tier (5 JVMs + Kafka + Mongo) |
+| Registry | public **ghcr** is fine | no pull‑secret needed |
+| Ingress | Traefik on host port 80, **host‑less** rule | reach it at the raw IP (or a `*.nip.io` name) |
+
+Pinned versions: **k3s `v1.31.5+k3s1`**, **k3d `v5.8.3`** + **kubectl `v1.31.5`**,
+arch `amd64` (pass `-e k3d_arch=arm64` for an Apple‑silicon local VM).
 
 ---
 
-## 7. Config translation (compose → k8s)
+## 9. Key risks — and how they're handled now
 
-Services already read config from env vars (see `docker-compose.yml`), so the move is mechanical:
-`PICHESS_BACKEND`, `PICHESS_CACHE`, `KAFKA_BOOTSTRAP_SERVERS`, `GAME_SERVICE_GRPC`, `HTTP_PORT`,
-`REPOSITORY_PORT`, lobby port, mongo/redis connection settings → split into **ConfigMap** (non‑secret)
-and **Secret** (credentials), referenced via `envFrom`. Compose hostnames become k8s Service names.
-
----
-
-## 8. Open items to get from the instructor / HTWG (blockers for Phase 4)
-
-1. **Assigned VM**: hostname/IP, SSH user, key, and whether you have **sudo/root** (needed for k3s).
-2. **Public access**: is there a DNS name / domain, or do we use the raw IP + `nip.io`? Are ports **80/443/22** open inbound?
-3. **Registry**: is there an HTWG‑provided registry, or is **ghcr.io** fine? (affects pull‑secret + build.sbt).
-4. **VM size**: vCPU / RAM / disk — drives the right‑sizing in Phase 3 (need ≥ ~6–8 GB RAM realistically).
-5. **Keycloak**: required for the grade, or optional?
+- **Resource pressure** on one VM (5 JVMs + Kafka + Mongo) → the **tier model** lets
+  you run `mvp`/`lobbies` cheaply; `full` is gated on the 12 GB upgrade, with per‑pod
+  `requests/limits` set.
+- **Kafka advertised listeners** (the #1 single‑node‑KRaft failure) → solved: a
+  **headless Service with `publishNotReadyAddresses: true`** so DNS resolves `kafka`
+  before the broker is Ready, advertised + controller‑quorum both at `kafka:9092/:9093`.
+- **Stateful data** → k3s local‑path PVCs for Mongo & Kafka (2 Gi each); a tier
+  downgrade keeps them so games survive (node‑local, fine for single‑node).
+- **Mongo on AVX‑less HTWG QEMU** → `mongo:4.4` (§8).
+- **Image pull auth** → sidestepped: public ghcr packages.
 
 ---
 
-## 9. Key risks
+## 10. What's left / optional
 
-- **Resource pressure** on a single VM (4 JVMs + Kafka + Mongo). Mitigate with `-Xmx` + k8s limits; drop redis‑cache or co‑locate if RAM is tight.
-- **Kafka advertised listeners** in‑cluster — most common single‑node KRaft failure; get the DNS name right.
-- **Stateful data** — use PVCs (k3s local‑path) so a pod restart doesn't wipe games; understand it's node‑local (fine for single‑node).
-- **gRPC through Ingress** is avoided here (gateway→game‑service stays in‑cluster), so no HTTP/2 ingress headaches.
-- **Image pull auth** — simplest is to make the ghcr packages public; otherwise the `imagePullSecret` must exist before apply.
-
----
-
-## 10. Suggested order of execution
-
-`Phase 0 (info) → 1 (registry images) → 2 (local k3d, prove manifests) → 3 (sizing) → 4 (VM + k3s) → 5 (CI/CD) → 6 (Keycloak, optional)`
-
-Phases 1–3 need no HTWG access and can start immediately. Phase 4 is gated on §8.
+- **Keycloak** access management (lecture's optional step) — not built; a
+  `keycloak` Deployment + Traefik forward‑auth is the drop‑in spot. Deferred unless
+  required for the grade.
+- **CI‑driven deploy** — intentionally not built (§7); revisit only if a runner can
+  reach the VPN‑gated box.
+- **Image‑tag automation** — the release tag is propagated to three places
+  (`group_vars/all.yml`, the kustomizations' `newTag`, the compose `*.env`) **by
+  hand**; a small sync script/`make` target would remove the foot‑gun.
+- **game‑service restart resilience** — replay `chess.game-events` on startup to
+  rebuild in‑memory state (tracked in the roadmap, not strictly a deployment item).
+</content>
+</invoke>

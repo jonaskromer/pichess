@@ -13,13 +13,15 @@ deploy/
     ansible.cfg            # VPN-drop-tolerant SSH (ControlPersist, keepalive, retries)
     inventory.ini          # `local` (Multipass) + `htwg` hosts
     group_vars/all.yml     # tier, image tag, k3s version, firewall, paths
-    group_vars/htwg.yml    # HTWG connection — read from .env.local env, nothing committed
-    provision.yml          # OS baseline + k3s   (roles: base, k3s)
-    deploy.yml             # apply the tier      (role: pichess)
-    roles/{base,k3s,pichess}/
+    group_vars/htwg.yml    # HTWG connection + k3d profile — read from .env.local env, nothing committed
+    provision.yml          # OS baseline + host k3s (root)   (roles: base, k3s)
+    provision-k3d.yml      # k3d / k3s-in-Docker (no sudo)   (role: k3d)
+    deploy.yml             # apply the tier   (additive)     (role: pichess)
+    reset.yml              # downgrade / wipe / teardown      (role: pichess, prune)
+    roles/{base,k3s,k3d,pichess}/
   k8s/
     base/                  # MVP: namespace, config, game-service, gateway, ingress
-    overlays/mvp/          # = base   (lobbies / full overlays: TODO)
+    overlays/{mvp,lobbies,full}/   # nested tiers (mvp = base; full adds mongo+redis+kafka+repository)
 ```
 
 ## Prerequisites (one‑time)
