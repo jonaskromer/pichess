@@ -1,5 +1,7 @@
 package chess.spark.session
 
+import zio.json.*
+
 import chess.spark.schema.MoveEventRow
 
 /** Per-game accumulator carried across micro-batches by Spark's
@@ -13,7 +15,10 @@ final case class GameState(
     result: String
 )
 
-/** The record emitted once, when a game completes. */
+/** The record emitted once, when a game completes. This is also the payload
+  * published to the `chess.analytics` topic for the live web-ui panel — hence
+  * the zio-json encoder.
+  */
 final case class GameSummary(
     gameId: String,
     totalMoves: Int,
@@ -22,6 +27,13 @@ final case class GameSummary(
     result: String,
     avgThinkTimeMs: Double
 )
+
+object GameSummary:
+  /** Speed-layer output topic — Spark publishes completed-game summaries here,
+    * the gateway relays them to the web-ui over SSE. */
+  val Topic: String = "chess.analytics"
+
+  given JsonEncoder[GameSummary] = DeriveJsonEncoder.gen
 
 /** Pure sessionization logic — folding a game's event stream into running state
   * and projecting a summary on completion. Kept Spark-free so it is unit
