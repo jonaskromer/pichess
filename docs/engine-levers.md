@@ -12,8 +12,9 @@ A/B-validated** — see [Validation strategy](#validation-strategy).
 
 - **Eval:** HCE + NNUE **hybrid**. The HCE is a tapered (`_mg`/`_eg` by material
   `GamePhase`) linear evaluator over the v8 tuned weights; the NNUE is a
-  Stockfish-distilled `(768→128)×2→1` perspective net (~193 KB). Blended at
-  `hybridAlpha = 0.3` (NNUE weight).
+  Stockfish-distilled `(768→128)×2→1` perspective net (~193 KB). Blended at a
+  **phase-tapered** NNUE weight `hybridAlpha` **0.4 (opening) → 0.6 (endgame)**
+  (depth-6 re-tune; was a flat 0.3 at the depth-4 tune — `EngineBundle` default).
 - **Search:** alpha-beta + TT, quiescence, SEE, null-move pruning, singular &
   check extensions, MVV-LVA / killer / history / counter-move ordering,
   **incremental NNUE accumulators**, optional **LazySMP**.
@@ -99,8 +100,10 @@ because A/B outcomes are entangled with eval quality. Three buckets:
    artifact exists until `make nnue-data` runs; untestable, not false negatives.
 2. **Value scales with eval quality/cost → false-negative risk now**
    - Eval cache (#3): payoff grows with eval cost → bigger net flips it.
-   - `hybridAlpha` (#7): optimum *shifts* with NNUE strength (already moved
-     0.5→0.3 with the SF net) — re-tune on the **final** net.
+   - `hybridAlpha` (#7): optimum *shifts* with NNUE strength **and search depth**
+     (0.5→0.3 with the SF net, then **re-tuned UP to a tapered 0.4→0.6** at the
+     depth-6 production search — adopted, commit 8cc04dd) — re-tune on the
+     **final** net.
    - **Eval-margin prunings** (RFP, razoring, delta, futility): key on
      `static_eval ± margin`; a sharper eval makes them work.
 3. **Data-independent → validate now (as floors)**: incremental NNUE (#1),
@@ -135,6 +138,8 @@ AND the session's perf levers via dedicated env: incremental
 
 `TournamentMain` defaults **every** search flag OFF. To reproduce production set:
 `CHALLENGER_Q=true CHALLENGER_SEE=true CHALLENGER_NMP=true CHALLENGER_SE=true
-CHALLENGER_FLAGS=checkext CHALLENGER=8 CHALLENGER_HYBRID_ALPHA=0.3`. Use
-`PICHESS_TOURNAMENT_BUDGET_MS` to A/B at the live time budget. For LazySMP, A/B at
-game-parallelism 1 + a budget (the parallel tournament already saturates cores).
+CHALLENGER_FLAGS=checkext CHALLENGER=8 CHALLENGER_HYBRID_ALPHA=0.4
+CHALLENGER_HYBRID_ALPHA_END=0.6` (check-extension is ON in production; α 0.4→0.6
+is the current depth-6-tuned blend). Use `PICHESS_TOURNAMENT_BUDGET_MS` to A/B at
+the live time budget. For LazySMP, A/B at game-parallelism 1 + a budget (the
+parallel tournament already saturates cores).

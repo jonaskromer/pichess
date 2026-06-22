@@ -85,7 +85,7 @@ e8=Q    — SAN: pawn to e8, promote to queen
 - Either player can claim a draw by typing `draw` when the halfmove clock has reached 100 (50 full moves with no pawn advance and no capture).
 - If the clock hasn't reached 100, the command fails with a message explaining how many moves remain.
 - The draw is not automatic — the game continues unless a player explicitly claims it.
-- On the web GUI, use the Draw button or `POST /api/draw` endpoint.
+- On the web GUI, use the Draw button or `POST /api/games/{id}/draw` endpoint.
 
 ### Insufficient Material
 - The game is automatically drawn when neither side has enough material to deliver checkmate.
@@ -94,7 +94,7 @@ e8=Q    — SAN: pawn to e8, promote to queen
 ### Undo / Redo
 - **Undo** (`undo`): reverts the last move. The previous state is restored from the state history stack (O(1)). The undone move and its state are pushed onto a redo stack.
 - **Redo** (`redo`): reapplies the most recently undone move from the redo stack (O(1)). Making a new move clears the redo stack.
-- Both commands are available in the TUI and via the web GUI (buttons and `/api/undo`, `/api/redo` endpoints).
+- Both commands are available in the TUI and via the web GUI (buttons and `/api/games/{id}/undo`, `/api/games/{id}/redo` endpoints).
 
 ### Move Counters
 - **Halfmove clock**: counts consecutive moves with no pawn advance and no capture. Resets to 0 on any pawn move or capture (including en passant). Used for the 50-move draw rule.

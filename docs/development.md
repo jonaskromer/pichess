@@ -103,17 +103,28 @@
 | opening-service   | `KAFKA_BOOTSTRAP_SERVERS` | (required when running) |
 | opening-service   | `KAFKA_CONSUMER_GROUP`    | `pichess-opening` |
 | opening-service   | `METRICS_PORT`            | `9105` |
+| opening-service   | `PICHESS_NEO4J_URL`       | `bolt://localhost:7687` |
+| opening-service   | `PICHESS_NEO4J_USER`      | `neo4j` |
+| opening-service   | `PICHESS_NEO4J_PASSWORD`  | `password` |
 | analytics-service | `ANALYTICS_PORT`          | `8093` |
 | analytics-service | `KAFKA_BOOTSTRAP_SERVERS` | (required when running) |
 | analytics-service | `KAFKA_CONSUMER_GROUP`    | `pichess-analytics` |
 | analytics-service | `METRICS_PORT`            | `9106` |
+| analytics-service | `PICHESS_CLICKHOUSE_URL`      | `jdbc:clickhouse://localhost:8123/default` |
+| analytics-service | `PICHESS_CLICKHOUSE_USER`     | `default` |
+| analytics-service | `PICHESS_CLICKHOUSE_PASSWORD` | (empty) |
+| tui               | `PICHESS_GATEWAY_URL`     | `http://localhost:8090` |
+| tui               | `PICHESS_SESSION_ID`      | (random UUID minted per process) |
+| tui               | `PICHESS_NICKNAME`        | `Anonymous` |
+| bot-train         | `PICHESS_DUCKDB_PATH`     | `./chess-bot-training.duckdb` |
 | **all services**  | `PICHESS_PROFILE`         | unset (`sampling` enables zio-profiling — requires a profile-tagged build, see [performance.md](performance.md) "Layer 3") |
 | **all services**  | `TRACING_ENABLED`         | unset (truthy → live OTLP exporter to Jaeger at `OTEL_EXPORTER_OTLP_ENDPOINT`) |
 | **all services**  | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://jaeger:4317` (only read when `TRACING_ENABLED` is truthy) |
+| **all services**  | `OTEL_SERVICE_NAME`       | (per-service default, e.g. `gateway`; override for multi-instance fan-out) |
 
 ### Multi-Project Tips
 
-The project has 31 SBT sub-projects (run `sbt projects` for the full list; `domain` and `api` each show up twice there, as JVM + JS variants). To run commands against a single module, prefix with the module name: `sbt codec/test`, `sbt gateway/compile`, etc. `sbt test` runs tests across all modules.
+The project has 32 SBT sub-projects (run `sbt projects` for the full list; `domain` and `api` each show up twice there, as JVM + JS variants). To run commands against a single module, prefix with the module name: `sbt codec/test`, `sbt gateway/compile`, etc. `sbt test` runs tests across all modules.
 
 Coverage is enforced at 100% on all JVM modules. The build fails if any line is uncovered. Scala.js modules (`web-ui`, `domain.js`, `api.js`) have coverage disabled since scoverage doesn't instrument JS output. The `proto` module has coverage disabled (generated code) and `KafkaGameEventProducer`/`KafkaGameEventConsumer`/`GameServiceMain`/`GatewayMain` are excluded via `coverageExcludedFiles` (they need a live broker / port to exercise; covered by docker-compose smoke tests instead). Use `scripts/check-coverage.py` after a `coverageReport` run to inspect uncovered lines per file.
 
@@ -249,7 +260,7 @@ The persistence selection happens via `PICHESS_BACKEND` (read by every service M
 
 ## Adding a New Move Rule
 
-> For the list of rules not yet implemented, see [game-rules.md — Not Yet Implemented](game-rules.md#not-yet-implemented).
+> For the full catalogue of rules already implemented, see [game-rules.md — Implemented Rules](game-rules.md#implemented-rules).
 
 All chess logic lives in `chess.model.rules`:
 
@@ -284,7 +295,7 @@ Parsers live in `chess.codec` and implement the `FenParser` trait:
 
 ```scala
 trait FenParser:
-  def parse(input: String): Either[String, GameState]
+  def parse(input: String): IO[GameError, GameState]
 ```
 
 Three reference implementations exist side-by-side, one per parsing technique requested by SA-03:
@@ -297,7 +308,7 @@ All three tokenize into six raw FEN fields and then call **`FenBuilder.build`** 
 
 Key rules:
 
-- Public method returns `Either[String, T]` — never expose `ParseResult` directly.
+- Public method returns `IO[GameError, T]` — never expose `ParseResult` directly.
 - Combinator-style parsers must use `parseAll` (not `parse`) so trailing input is an error.
 - Match the parser result against `case ns: NoSuccess` (type binding), not `case NoSuccess(msg, next)` (extractor) — Scala 3's exhaustiveness checker only sees the first form as covering both `Failure` and `Error`.
 - For shared validation across parser implementations, factor it into a builder object so all parsers stay observationally equivalent.
@@ -348,7 +359,7 @@ To add a new endpoint:
    ```
 4. The endpoint automatically appears in the Swagger UI at `/docs`.
 
-SSE (`/api/events`) is the one endpoint implemented as raw zio-http (not Tapir) because Tapir's typed model doesn't fit streaming.
+SSE (`/api/games/{id}/events`) is the one endpoint implemented as raw zio-http (not Tapir) because Tapir's typed model doesn't fit streaming.
 
 URL design rules (from lecture):
 - **Nouns not verbs** — `/games` not `/getGame`

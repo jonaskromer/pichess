@@ -35,8 +35,14 @@ Every script reads its target URLs from env (`lib/config.js`):
 | `K6_LOBBY_URL`      | `http://localhost:8092` | browser (lobby flow) |
 | `K6_KAFKA_BROKERS`  | `localhost:29092`       | kafka — the host-side `PLAINTEXT_HOST` listener |
 | `K6_GRPC_TARGET`    | `localhost:9000`        | grpc — game-service's host-mapped port |
-| `K6_VUS`            | `5`                     | all (concurrent virtual users) |
-| `K6_DURATION`       | `30s`                   | all |
+| `PICHESS_K6_VUS`      | `5`                   | all (concurrent virtual users) |
+| `PICHESS_K6_DURATION` | `30s`                 | all |
+
+The load-shape vars are deliberately `PICHESS_`-prefixed: the bare `K6_VUS` /
+`K6_DURATION` are k6-reserved and would force a default `constant-vus` scenario,
+overriding each script's own `scenarios: { … }` block (and silently disabling
+the browser type for the lobby flow). The URL / broker / target vars keep their
+plain `K6_` names — only VUs and duration collide.
 
 Thresholds (SLA assertions) live in `lib/thresholds.js` so every surface
 shares the same pass/fail criteria.

@@ -2,7 +2,7 @@
 
 πChess accepts two notation styles: **coordinate notation** and **Standard Algebraic Notation (SAN)**. Both can be used interchangeably.
 
-Internally, notation parsing is handled by the `chess.notation` package, which provides a resolver for each style. The controller layer (`MoveParser`) chains the resolvers and returns the first match.
+Internally, notation parsing is handled by the `chess.notation` package, which provides a resolver for each style. A `MoveParser` (in the same package) chains the resolvers and returns the first match.
 
 ---
 

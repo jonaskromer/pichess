@@ -102,14 +102,18 @@ on PATH; `apt install stockfish` on Linux), fixed depth, parallelism forced to 1
 Pick the SF UCI_Elo so the bot scores ~50% — SF@2500 ceilinged at ~80% (too weak).
 
 ## 5. State — what's settled (don't re-derive)
-- **Adopted & in-repo:** eb8 net + phase-tapered α (0.3 opening → 0.5 endgame, by
-  `GamePhase`), **+19.7 Elo / 2.9σ (1500g)** vs the prior deployment. `EngineBundle`
-  defaults `hybridAlphaEndgame=0.5`.
+- **Adopted & in-repo:** eb8 net + phase-tapered α (by `GamePhase`), **+19.7 Elo /
+  2.9σ (1500g)** vs the prior deployment. α was the **0.3→0.5** blend when eb8 was
+  A/B'd (recipe below); it has **since been re-tuned to the shipping 0.4 → 0.6** —
+  `EngineBundle` now defaults `hybridAlpha=0.4` / `hybridAlphaEndgame=0.6`.
 - **REFUTED (don't repeat):** data refinement via the depth-weighted **TSV** pipeline —
   refined / uniform / clean per-analysis nets all ~−120 Elo standalone. The shipped
   direct-shard recipe (`parse_batch`, unweighted, 1 pass) reproduces ~0 → the trainer
   is sound; the **TSV extraction recipe** was the regression. HCE-v9 distill reads the
-  same TSV → likely also compromised; deprioritize.
+  same TSV → likely also compromised; deprioritize. *(Update: `elo-roadmap.md`
+  Findings #1/#3 later traced this −120 to a FEN 4-vs-6-field bug in the TSV reader —
+  not the data itself — after which re-distilled HCE nets improved; check there
+  before deprioritizing.)*
 - **The lever that worked was EVAL-side, not data:** endgame up-weighting + phase-tapered α.
 
 ## 6. Open agenda (all build on the WORKING direct-shard recipe)

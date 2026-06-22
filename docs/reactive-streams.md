@@ -20,7 +20,7 @@ out of the MongoDB driver. Every piece below is load-bearing in production.
 | `Flow[A, B, _]` | `ZPipeline[R, E, A, B]` | TUI SSE decode pipeline: bytes → UTF-8 → lines → events (`TuiEventStream.scala:45`) |
 | `Sink[A, _]` | `ZSink[R, E, A, _, _]` / `runDrain` | Kafka offset-commit sink (`KafkaGameEventConsumer.scala:86`); Kafka producer as terminal sink (`KafkaGameEventProducer.scala:49`) |
 | `RunnableGraph` / `.run()` | `stream.run* ` | `.runDrain` on the consumer (`KafkaGameEventConsumer.scala:86`) |
-| Fan-out (`Broadcast`) | `SubscriptionRef.changes` → N subscribers | One game's state Source fans out to every SSE subscriber (`GrpcServer.scala:171`) |
+| Fan-out (`Broadcast`) | `SubscriptionRef.changes` → N subscribers | One game's state Source fans out to every SSE subscriber (`GrpcServer.scala:171`); the gateway's live spectator count fans out the same way (`SpectatorPresence.changes`, `SpectatorPresence.scala:55`) |
 | Backpressure | demand-driven `ZStream` pull + `aggregateAsync` | Kafka consumer batches commits under load (`KafkaGameEventConsumer.scala:84`) |
 | Reactive Streams SPI (`Publisher`/`Subscriber`) | `zio-interop-reactivestreams` | MongoDB driver `Publisher[T]` → `ZStream` (`MongoOps.scala:16`) |
 | `via` / `to` composition | `.via(pipeline)` / `>>>` | `.via(ZPipeline.utf8Decode).via(ZPipeline.splitLines)` (`TuiEventStream.scala:48`) |
@@ -44,6 +44,18 @@ def subscribeGame(request: GameIdRequest, ctx: RequestContext)
       ref.changes.mapZIO(state => GrpcMappers.toStateReply(request.gameId, state))
     }
 ```
+
+The gateway hosts a **second** live Source of the same shape. `SpectatorPresence`
+keeps a `SubscriptionRef[Int]` per game; `SpectatorPresence.changes` emits the
+current spectator count and then every subsequent change
+(`SpectatorPresence.scala:55`). `WebController.serveEvents` `.merge`s it into the
+per-game SSE feed (count Source built at `WebController.scala:463`, merged at
+`:490`/`:494`), so every viewer receives `spectators` count events interleaved
+with the `state` events above. A connection that asks to watch
+(`?role=spectator`, `WebController.scala:336`) is first run through
+`SpectatorPresence.admit` (`SpectatorPresence.scala:64`), which seats it under the
+lobby's `allowSpectate` + `limit` policy; a refusal emits a single
+`spectator-denied` frame instead of a board (`WebController.scala:476`).
 
 ### 2. Flow — composable transformation pipeline
 
@@ -127,7 +139,8 @@ MakeMove RPC
        │              └─ aggregateAsync → commit → Mongo  (Flow → Sink)
        │                   └─ MongoOps Publisher bridge    (Reactive Streams SPI)
        └─ ref.changes → GrpcServer.subscribeGame    (Source, fan-out)
-            └─ WebController.serveEvents             (Flow: state → ServerSentEvent)
+            └─ WebController.serveEvents             (Flow: state → ServerSentEvent `state`)
+                 ├─ SpectatorPresence.changes        (2nd Source, .merge → `spectators` events)
                  └─ Response.fromServerSentEvents    (Sink: HTTP SSE response)
                       └─ TuiEventStream.subscribe    (Source + Flow: decode pipeline)
 ```

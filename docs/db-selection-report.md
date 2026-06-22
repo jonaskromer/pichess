@@ -265,7 +265,14 @@ once you're at that scale.
 
 ---
 
-## Decision
+## Decision (r2 — superseded by r3)
+
+> The current shipping default is **`PICHESS_BACKEND=mongo`,
+> `PICHESS_CACHE=redis`** — see the r3 TL;DR and recommendation at the top of
+> this report. The r2 decision below is retained for its historical reasoning
+> but no longer reflects the shipping configuration (verified in
+> `docker-compose.yml`, `deploy/k8s/overlays/full/kustomization.yaml`, and
+> `deploy/compose/full.env`).
 
 **Default `PICHESS_BACKEND=postgres`, `PICHESS_CACHE=none`.**
 

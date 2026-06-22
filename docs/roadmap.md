@@ -49,7 +49,7 @@ Console chess game with full move validation, en passant, pawn promotion, ANSI b
 
 **Status:** Complete. JSON and PGN codecs were added in the same package alongside the three FEN parsers — see [ADR 009](adr/009-recompute-derived-state-on-import.md) for the import-validation strategy shared across all formats.
 
-The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural import/export format for the REST API in Phase 4 — `POST /games` with a FEN body, `GET /games/:id` returning a FEN string.
+The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural import/export format for the REST API in Phase 4 — `POST /games` with a FEN body, `GET /games/:id` returning a FEN inside a JSON `GameStateEnvelope`.
 
 - New package `chess.codec`
 - Three implementations of the same `FenParser` trait:
@@ -59,7 +59,7 @@ The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural
 - All three tokenize into six raw fields and share `FenBuilder` for semantic validation, so the implementations are observationally identical.
 - `FenSerializer` is the round-trip counterpart and emits the canonical FEN.
 - `inCheck` is recomputed on import via `MoveValidator.isInCheck` so imported positions render correctly.
-- Public API returns `Either[String, GameState]` per the SA-03 addendum's "return type" rule.
+- Public API originally returned `Either[String, GameState]` per the SA-03 addendum's "return type" rule (the FEN parsers were later migrated to `IO[GameError, GameState]` — see [ADR 005](adr/005-pure-domain-model-zio-at-boundaries.md)).
 - No changes to `chess.model`, `chess.service`, or `chess.repository`.
 
 ---
@@ -73,7 +73,7 @@ The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural
 - New `gateway` module — the project's REST view layer (same role as TUI: calls `GameService` / `GameController`, no domain logic)
 - Built on **zio-http** instead of Akka HTTP (for consistency with the ZIO stack); endpoint contracts described with **Tapir** in the cross-compiled `api` module
 - Wire DTOs (`BoardStateDto`, `MoveRequest`, `LoadRequest`, …) live in `api` and are shared by the gateway encoder and the Scala.js web-ui decoder via zio-json — single source of truth for the contract
-- Session-scoped endpoints (one in-flight game per process, mirroring the TUI):
+- Session-scoped endpoints (one in-flight game per process, mirroring the TUI) — **later superseded** by per-game `/api/games/{id}/…` routes in the microservices split (the current gateway holds no game state; see [architecture.md → Gateway HTTP / SSE surface](architecture.md)):
   - `GET  /api/state`              → current `BoardStateDto`
   - `POST /api/move`               → apply a move (coordinate or SAN)
   - `POST /api/undo` / `/api/redo` → reverse / replay the last half-move
@@ -95,11 +95,11 @@ The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural
 
 **Lecture task:** Start each microservice using Docker. Then start the entire application using Docker Compose.
 
-- The Phase-5 SBT split introduced the multi-service skeleton (it has since grown to **31 modules** as later phases added persistence, the bot, the lobby, and the projections — see [architecture.md](architecture.md) for the full map):
+- The Phase-5 SBT split introduced the multi-service skeleton (it has since grown to **32 modules** as later phases added persistence, the bot, the lobby, the projections, and the tournament bot — see [architecture.md](architecture.md) for the full map):
   - `domain` (cross JVM/JS), `api` (cross JVM/JS), `rules`, `codec`, `repositoryApi` — libraries (no Docker)
   - `events` — Kafka event ADT + zio-json codecs (new in this phase)
   - `proto` — generated zio-grpc stubs (new in this phase; `coverageEnabled := false` for generated code)
-  - `repository` (svc, port 8091) — REST surface for read-side queries; Kafka consumer for the `chess.game-events` topic (write side)
+  - `repository` (svc, port 8091) — legacy CRUD REST surface (`/games/{id}` save/load/delete; exercised by Gatling and health checks, not the live read path); Kafka consumer for the `chess.game-events` topic (write side)
   - `game-service` (svc, gRPC :9000) — authoritative in-memory game state; zio-grpc server; Kafka producer
   - `gateway` (svc, HTTP :8090) — public Tapir REST + SSE + Laminar web-ui static; gRPC client to game-service
   - `tui` — terminal client; now runs interactively against the gateway (`make tui`)
@@ -130,7 +130,7 @@ The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural
 **Status:** Complete — and generalised into a multi-backend persistence layer.
 
 - **Web UI** (`web-ui` module — Scala.js + Laminar):
-  - Drag-and-drop, promotion dialog, move log, board flip, undo/redo, draw-claim, FEN/PGN/JSON load and export
+  - Drag-and-drop, promotion dialog, move log, board flip, undo/redo, draw-claim, FEN/PGN/JSON load and export; plus a **public-lobby browser** (over `LobbyRepository.listPublicActive`) and a read-only **spectator (Watch) view**
   - Live state sync with the TUI via `SubscriptionRef[SessionState]` and the gateway's SSE endpoint — moves in either UI appear instantly in the other
   - Coordinated shutdown via `Promise[Nothing, Unit]` — quit from any surface ends both
   - Pure board-logic helpers extracted into `Logic.scala` so they're unit-testable in plain `zio-test` even though scoverage doesn't instrument Scala.js output
@@ -160,8 +160,8 @@ The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural
 **Goal:** Add a computer opponent.
 
 - `bot-engine` is a pure engine library: negamax **α-β + transposition table**, quiescence, null-move pruning, SEE ordering, singular + check extensions, and a time-budgeted iterative-deepening mode
-- **Hybrid HCE + NNUE evaluation** (Stockfish-distilled net) + weighted-random opening book + a Syzygy tablebase oracle — measured at **≈2350 Elo** against UCI_Elo-anchored Stockfish
-- `game-service` embeds the engine for vs-computer play; `bot-lichess` runs it online as [pichess-htwg](https://lichess.org/@/pichess-htwg)
+- **Hybrid HCE + NNUE evaluation** (Stockfish-distilled net) + weighted-random opening book + a Lichess online 7-piece tablebase oracle the Lichess bot uses for endgames (on by default there; not wired into the core engine) — measured at **≈2350 Elo** against UCI_Elo-anchored Stockfish
+- `game-service` embeds the engine for vs-computer play; `bot-lichess` runs it online as [pichess-htwg](https://lichess.org/@/pichess-htwg), and `bot-tournament` can play the same engine in external **NowChess** tournaments (tournament protocol implemented and locally end-to-end tested; see [tournament-integration.md](tournament-integration.md))
 - Offline training + the Elo harness live in `bot-train` (Texel tuning, self-play, `TournamentMain`) and the Python `nnue-train/` trainer
 - **See [bot.md](bot.md)** for the engine reference and how Elo is correctly measured, and [engine-levers.md](engine-levers.md) for the search/eval A/B history
 
@@ -173,7 +173,8 @@ The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural
 
 **Lecture task:** Create a stream with Source, Flow, and Sink. Source can be keyboard, file, website, or data in external DSL form.
 
-- The gateway's **SSE endpoint** (`/api/events`) streams `SubscriptionRef.changes` (Source) through a JSON-encoding `Flow` to the connected browser (Sink) — live multi-client board sync
+- The gateway's **SSE endpoint** (`/api/games/{id}/events`) streams `SubscriptionRef.changes` (Source) through a JSON-encoding `Flow` to the connected browser (Sink) — live multi-client board sync
+- The same per-game SSE feed also carries **live spectator presence** — a gateway-owned `SubscriptionRef[Int]` per game (`SpectatorPresence`) streamed as `spectators` events to every viewer; a `?role=spectator` watcher is gated by the lobby's per-game policy (`allowSpectate` + `limit`), and a refusal is delivered as a `spectator-denied` event
 - The repository and both projection services consume `chess.game-events` as **zio-kafka** streams (Source = topic, Sink = the persistence layer / Neo4j / ClickHouse), with stream-level failures interrupting the service via the supervising scope
 - `GameService.makeMove` returns `(newState, event)` — the publishing seam the producer stream drains into Kafka
 
@@ -186,7 +187,7 @@ The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural
 **Lecture task:** Write a Kafka Producer and Consumer connected to your microservices via your data stream.
 
 - Single topic: `chess.game-events`, partition key = `gameId`, KRaft mode (no Zookeeper).
-- Event ADT lives in the new `events` SBT module (`chess.events.GameDomainEvent`): `GameStarted | GameLoaded | MoveMade | Undone | Redone | DrawClaimed | Forfeited | GameEnded`. Every event carries a `resultingFen` field — the canonical "what to persist after this event" — so the consumer is type-agnostic.
+- Event ADT lives in the new `events` SBT module (`chess.events.GameDomainEvent`): `GameStarted | GameLoaded | MoveMade | Undone | Redone | DrawClaimed | Forfeited | GameEnded`. `GameEnded` is defined in the ADT but **not currently emitted** by game-service — terminal outcomes ride on the `resultingFen` of `MoveMade` / `DrawClaimed` / `Forfeited`. Every event carries a `resultingFen` field — the canonical "what to persist after this event" — so the consumer is type-agnostic.
 - Producer: **`game-service`** (`KafkaGameEventProducer`, zio-kafka) publishes after every successful state transition with `acks=all` and idempotence on. The MakeMove rpc returns to the gateway only after the produce future resolves.
 - Consumer: **`repository`** (`KafkaGameEventConsumer`) subscribes with consumer group `pichess-repository`, applies each event idempotently via `repo.save(gameId, fen)`. Stream-level failures interrupt the service via the supervising scope.
 - Serialization: zio-json over the wire (no schema registry — see [ADR 012](adr/012-zio-json-event-serialization-no-schema-registry.md)).

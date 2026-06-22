@@ -130,7 +130,7 @@ at their ceiling for the current architecture — see "Tapped levers" below):
 2. **HCE re-distill (fixed):** small net gain over v8. SF@2000 anchor (600g):
    v8 45.3% (~1967), v9-processed 47.0% (~1979), v10-raw 49.3% (~1995).
    Processed-vs-raw is within 600g noise; both ≥ v8.
-3. **Sequential "raw → gentle TSV fine-tune" (WIN).** Warm-start the baked eb8
+3. **Sequential "raw → gentle TSV fine-tune" (self-play +38 — STRUCK; lost to eb8 vs neutral SF, see top correction).** Warm-start the baked eb8
    (`--init-from`), then a *gentle* 1-epoch fine-tune on the processed TSV.
    Non-monotonic in LR — A/B vs eb8 in the production hybrid (both HCE v8,
    α 0.3→0.5; only the net differs):
@@ -182,16 +182,15 @@ at their ceiling for the current architecture — see "Tapped levers" below):
   labelled by a deeper search (tooling exists).
 - **Horizontal-mirror augmentation** — free 2× data (h-symmetry).
 - **Quiet-position filtering** — drop in-check / tactical positions.
-- **Gentle TSV fine-tune** — the adopted +38 curriculum; re-apply on top of new nets.
+- **Gentle TSV fine-tune** — the +38 curriculum (a self-play artifact, **not** adopted — see top correction; the dose insight may still help on new nets).
 - **Endgame-boost + epoch sweep** — per-epoch A/B for diminishing returns.
 
 ### Eval — HCE (smaller, capped lever; cheap inference)
-- **Add missing features, then re-distill:** **passed pawns** (rank-scaled —
-  the biggest gap, currently absent), attacker-**weighted** king safety (today
-  just `king_attackers` count + `pawn_shield`), threats/hanging pieces,
+- **Add missing features, then re-distill:** attacker-**weighted** king safety
+  (today just `king_attackers` count + `pawn_shield`), threats/hanging pieces,
   rook-on-7th, backward pawns, space, pawn mobility. Already has: material, full
-  PST, N/B/R/Q mobility, isolated/doubled/connected pawns, `bishop_pair`,
-  `knight_outpost`, rook open/semi-open file, `tempo`.
+  PST, N/B/R/Q mobility, **passed pawns** (`passed_rank_2..7`), isolated/doubled/
+  connected pawns, `bishop_pair`, `knight_outpost`, rook open/semi-open file, `tempo`.
 - **Fit K in the distill** — current `K=0.25` saturates ~±40cp (near sign-only);
   a K-search → a magnitude-sensitive distill that moves the weights more usefully.
 
@@ -254,9 +253,10 @@ regressing any eval Elo gained above.** Loop, ONE optimization at a time:
 - **NNUE train/fine-tune:** `train_incremental.py`; `--init-from <bin>` warm-
   starts (dequant round-trips exactly); `--tsv` path parallel-parses (fast);
   `--depth-norm 1` ≈ unweighted; per-epoch nets saved when `--epochs>1`.
-- **A/B (NNUE):** both sides HCE v8 + `_HYBRID_ALPHA=0.3` `_HYBRID_ALPHA_END=0.5`
-  + `_Q/_SEE/_NMP/_SE=true` + `_FLAGS=checkext`; challenger net via
-  `_CHALLENGER_NNUE_PATH` (absolute), champion baked. 600g≈±25 Elo, 2000g≈±15.
+- **A/B (NNUE):** both sides HCE v8 + `_HYBRID_ALPHA=0.4` `_HYBRID_ALPHA_END=0.6`
+  (the adopted production blend) + `_Q/_SEE/_NMP/_SE=true` + `_FLAGS=checkext`;
+  challenger net via `_CHALLENGER_NNUE_PATH` (absolute), champion baked.
+  600g≈±25 Elo, 2000g≈±15.
 - **A/B (pure HCE):** as above but NO `_NNUE`/`_HYBRID_ALPHA` → `ArrayTapered`.
 - **SF anchor:** `STOCKFISH_BIN=C:\Users\nope\stockfish\...avx2.exe`,
   `_VS_STOCKFISH=true _STOCKFISH_ELO=<n>` (parallelism forced 1).
@@ -274,15 +274,18 @@ regressing any eval Elo gained above.** Loop, ONE optimization at a time:
 
 ## Resume / next session
 
-**Banked (2026-06-12):** +38 NNUE adopted as `nnue-v1.bin` on branch
-`feat/nnue-rawtsv-finetune` (commits c75b146 fix, f9f80fc adopt). Old eb8 →
-`nnue-train/data/nnue-128-eb8-backup.bin`; fine-tune variants + HCE v9/v10 also
-in `nnue-train/data/` (gitignored). Env is ready (`.venv-nnue`, shards, both
-TSVs). Live redeploy is manual/VPN-gated (not done).
+**Banked (2026-06-12, since CORRECTED):** the +38 fine-tune was briefly adopted
+as `nnue-v1.bin` (branch `feat/nnue-rawtsv-finetune`, commits c75b146 / f9f80fc)
+but then **REVERTED to eb8** (commit eda2a3f) — the +38 was a self-play artifact
+(neutral SF anchor: eb8 +26; see the top correction). **`nnue-v1.bin` is the eb8
+net.** Fine-tune variants + HCE v9/v10 remain in `nnue-train/data/` (gitignored).
+The depth-6 **α 0.4→0.6** re-tune (commit 8cc04dd) *was* banked. Env is ready
+(`.venv-nnue`, shards, both TSVs). Live redeploy is manual/VPN-gated (not done).
 
 **Open levers, priority order** (constraint: keep the net small/cheap):
-1. **α-schedule sweep** — A/B-only, no retrain; endgame Elo still rising at α0.5.
-   Cheapest; do first.
+1. **α-schedule sweep — DONE.** The depth-6 re-tune adopted a tapered **0.4→0.6**
+   (was 0.3→0.5): +35 Elo self-play (3.5σ) AND +21 vs full-SF-depth-6; now the
+   `EngineBundle` default (commit 8cc04dd). See *Hybrid / cross-cutting* above.
 2. **NNUE training-side** (no inference cost): WDL-blend targets, self-play /
    domain-matched data, horizontal-mirror augmentation, quiet-position filtering
    — combined with the adopted +38 curriculum.
@@ -291,8 +294,8 @@ TSVs). Live redeploy is manual/VPN-gated (not done).
    (width bump) + output buckets. Both need their NnueEvaluator/trainer/quant
    changes; parity-check a fresh-128 via the fast `--tsv` path first; multi-epoch (~3).
 4. **Policy priors** — `make policy-prior` + A/B the `policy` flag.
-5. **HCE** — add passed-pawns + attacker-weighted king-safety + threats, then
-   re-distill with a fitted K (capped upside; cheap inference).
+5. **HCE** — add attacker-weighted king-safety + threats (passed pawns are already
+   in v8), then re-distill with a fitted K (capped upside; cheap inference).
 6. **King-bucketed inputs (HalfKA)** — biggest gain but borderline on RAM;
    cost-check first.
 7. **Search levers** — re-A/B off-by-default flags, LazySMP (~2 threads),
@@ -300,13 +303,16 @@ TSVs). Live redeploy is manual/VPN-gated (not done).
 8. **FINAL: perf profiling/optimization loop** — the allocation pass is DONE
    (six bit-identical cuts + a `MoveInt.decode` flyweight follow-up; depth-6 HCE
    53.5→5.0 MB/op, hybrid 32→14.9; see *Perf + search hardening* above).
-   Contained wins are now exhausted. Remaining perf levers: (a) **mutable board
-   make/unmake** — the immutable `BoardState`+`GameState`+apply-`Option` is now
-   ~77% of hybrid alloc; the only way to cut it (mutate-in-place + Boolean
-   legality drops all three), but a large core-model refactor that must keep the
-   Move-based public API — deferred pending a plan; (b) **time-budget A/B vs SF**
-   to bank the GC speedup as Elo (the cuts are fixed-depth-neutral by
-   construction — tests prove identical play).
+   (a) **mutable board make/unmake — DONE.** Landed as COPY-MAKE
+   (`MutableBoard`/`SearchPos` over the domain `BoardLike`/`PositionView` read
+   seams; commits 47ec272, dd1fb83): the immutable `BoardState`+`GameState`+apply-
+   `Option` per node vanishes → hybrid depth-6 14.7→7.0 MB/op (−52%) and ~6%
+   FASTER, bit-identical (perft + field-equivalence + determinism golden); the
+   dead immutable `applyMoveInt` was removed, and the Move-based public API kept
+   (the mutable path is search-internal). See *Copy-make search positions* above.
+   (b) **time-budget A/B vs SF** to bank the GC + copy-make speedup as Elo (the
+   cuts are fixed-depth-neutral by construction — tests prove identical play) —
+   still pending.
 
 Excluded (tried, no worthwhile gain): NNUE ensemble, cleaner/relabelled teacher.
 

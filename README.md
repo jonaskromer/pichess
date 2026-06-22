@@ -79,7 +79,7 @@ Kafka- and gRPC-server-Main code is excluded from unit coverage (it needs a live
 - 🍑 **[Performance & Profiling](docs/performance.md)** — Gatling, JMH, async-profiler, zio-profiling, Prometheus, Grafana, Jaeger, and the `make perf` harness.
 - 🍑 **[Bot & Engine](docs/bot.md)** — search + NNUE/hybrid evaluation, the Lichess client, and **how the bot's Elo is correctly measured** (UCI_Elo-anchored Stockfish). See also **[engine-levers.md](docs/engine-levers.md)** for the search/eval A/B history.
 - 🍑 **[Persistence](docs/db-selection-report.md)** — the backend×cache×workload selection report behind the `mongo + redis` production default.
-- 🍑 **[Deployment Plan](docs/deployment-plan.md)** — the (planned) k3s rollout to the HTWG VM.
+- 🍑 **[Deployment](docs/deployment-plan.md)** — the k3s/k3d rollout to the HTWG VM: Kustomize tiers + a local-driven Ansible pipeline (+ a prod-compose fallback).
 - 🍑 **[Roadmap](docs/roadmap.md)** — the 14-phase evolution plan.
 
 ## 🛠️ Current Status
@@ -96,22 +96,23 @@ The 14-phase HTWG Software-Architecture plan (see the **[Roadmap](docs/roadmap.m
 *Engine / bot*
 - Alpha-beta search with a transposition table, quiescence, null-move pruning, SEE move ordering, singular + check extensions, and an iterative-deepening time budget
 - **Hybrid HCE + NNUE evaluation** (Stockfish-distilled net) — measured at **~2350 Elo** against UCI_Elo-anchored Stockfish
-- Weighted-random opening book + a Syzygy tablebase oracle for endgames
-- Plays live on Lichess as [**pichess-htwg**](https://lichess.org/@/pichess-htwg); offline training + the Elo harness live in `bot-train` / `nnue-train`
+- Weighted-random opening book + a Lichess online 7-piece tablebase oracle the Lichess bot uses for endgames (on by default there via `LICHESS_TABLEBASE`; not wired into the core engine, game-service, or the tournament bot)
+- Plays live on Lichess as [**pichess-htwg**](https://lichess.org/@/pichess-htwg); the `bot-tournament` module can also play external **NowChess** tournaments (same engine, different protocol — tournament protocol implemented and locally end-to-end tested); offline training + the Elo harness live in `bot-train` / `nnue-train`
 
 *Platform*
-- Microservices: **gateway** (REST + Swagger UI at `/docs` + SSE + web UI), **game-service** (zio-grpc; embeds the engine for vs-computer), **repository** (event-sourced write side), **lobby-service** (multiplayer invite flow)
+- Microservices: **gateway** (REST + Swagger UI at `/docs` + SSE + web UI), **game-service** (zio-grpc; embeds the engine for vs-computer), **repository** (event-sourced write side), **lobby-service** (multiplayer invite flow + public-lobby listing)
 - **Pluggable persistence** behind a DAO trait — Postgres (Slick), MongoDB, Redis, Cassandra, or in-memory, with an optional Redis cache decorator; the backend is chosen by a single env var (`PICHESS_BACKEND`)
 - **Kafka event log** (`chess.game-events`, KRaft mode) consumed by the repository, plus two optional projections: opening tree → **Neo4j**, analytics → **ClickHouse**
-- Browser GUI (Scala.js + Laminar) — drag-and-drop, promotion dialog, and live multi-client sync via SSE
+- Browser GUI (Scala.js + Laminar) — drag-and-drop, promotion dialog, live multi-client sync via SSE, a **public-lobby browser**, and a read-only **spectator (Watch) view** with a live watcher count (gateway-owned spectator presence + per-game policy)
 - **Observability** on every service — Prometheus metrics, Grafana dashboards, Jaeger tracing
 - **Performance harness** — cross-backend Gatling load tests, k6 (browser / gRPC / Kafka surfaces), JMH microbenchmarks, async-profiler
-- **31 sbt modules** (`domain` + `api` cross-compile to JVM + JS) with **per-service** Docker images and layered packaging
+- **32 sbt modules** (`domain` + `api` cross-compile to JVM + JS) with **per-service** Docker images and layered packaging
 - Typed error handling with `IO[GameError, A]` throughout, and a **100% statement-coverage gate** on JVM modules (generated / Kafka-Main / gRPC-Main paths excluded)
 - CI on every push (test + coverage gate); tagged releases publish multi-arch images to **GHCR**
+- **k3s/k3d deployment** to the HTWG VM — Kustomize base + three nested tiers (`mvp` ⊂ `lobbies` ⊂ `full`), driven by a local Ansible pipeline (`provision`/`deploy`/`reset`), with a prod docker-compose fallback (see **[deployment-plan.md](docs/deployment-plan.md)**)
 
 **What's deferred:**
-- **k3s deployment** to the HTWG VM — manifests + a CI deploy job are planned, not yet built (see **[deployment-plan.md](docs/deployment-plan.md)**)
+- **CI-driven deploy** — rollout is a local Ansible run, not a GitHub Actions job, because the HTWG VM sits behind a 2FA campus VPN a runner can't reach (the manifests + pipeline themselves are built — see **[deployment-plan.md](docs/deployment-plan.md)** §7)
 - **game-service restart resilience** — replay the Kafka topic on startup to rebuild in-memory state
 - **Keycloak** access management — optional, deferred
 

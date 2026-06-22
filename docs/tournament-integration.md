@@ -4,9 +4,14 @@ How to make the piChess bot participate in tournaments hosted by
 [`maichess/tournament-server`](https://github.com/maichess/tournament-server)
 (the "NowChess Tournament API", v2.0.0, modelled on the Lichess API style).
 
-> **Status: implemented.** The `bot-tournament` sbt module is built and tested
-> (100% statement + branch coverage). What follows is the design + the verified
-> protocol it speaks; the "Open operational questions" at the end remain.
+> **Status: implemented & live-tested.** The `bot-tournament` sbt module is built
+> and unit-tested (100% statement + branch coverage), and has been run **end-to-end
+> against a locally-running `tournament-server`**: two `TournamentBridge` clients
+> registered, joined, played a full game and reached a server-validated **checkmate
+> (94 plies)** — proving register → join → broadcast-`gameStart` → colour
+> self-filter → `getGame` → stream → turn-loop → `makeMove` (accepted) → `gameEnd`.
+> See "Server quirks found in live testing" below; the "Open operational
+> questions" at the end remain.
 >
 > **Verified** against a local clone of the server (`../tournament-server`):
 > `api/openapi.yaml`, `http/codec/JsonCodecs.scala`, `domain/event/*`,
@@ -102,27 +107,29 @@ always a synthesized `gameState` snapshot, then live events:
 | **UCI move format**  | ✅ Match. Castling = king two-square (`e1g1`/`e1c1`), promotion `e7e8q`, EP diagonal. piChess's `chess.codec.UciCodec.serialize` emits exactly this; server `ChessRules.isPseudoLegalKingMove` expects exactly this. |
 | **Position source**  | ✅ Easier than Lichess — every event carries the post-move `fen`, so no move replay; parse `fen` directly with `SyncCodec`. |
 | **Standard chess**   | ✅ Variant is hardcoded `"standard"`. Custom/thematic start positions possible — engine plays from the given FEN (opening book just won't match; harmless). |
-| **Engine / search**  | ✅ `bot-engine` reused 100 % (search, HCE+NNUE hybrid, TT, tablebase). No changes. |
+| **Engine / search**  | ✅ `bot-engine` reused 100 % (search, HCE+NNUE hybrid eval, TT). No changes. The Lichess Syzygy **tablebase oracle is deliberately NOT wired** here (`TournamentBotMain:26` — an external HTTP API we don't assume is reachable from a tournament host); the NNUE-backed search stands alone. |
 | **Never-resign**     | ✅ No bot resign/abort endpoint exists; piChess already never resigns. |
 | **Reconnect safety** | ✅ Plain NDJSON, no heartbeats. Per-game streams **retry on drop** (`retry(Schedule.fixed(5s))`); the server re-emits the `gameState` snapshot and we recompute from `fen`, so play resumes (the per-game `search`/TT is reused across reconnects). The tournament stream has no replay, but per-game fibers are `forkDaemon`ed so they survive a tournament-stream reconnect too — no duplicate forks, no dropped games. |
 | **gameStart fan-out** | ⚠️ Handled. Broadcast both-colours-every-game ⇒ bot self-filters by registered id + dedupes by gameId (see note above). |
 
-## The plan
+## How it's built
 
-Net work ≈ a second protocol adapter the size of `bot-lichess` **minus the
-engine**. No engine, search, or eval changes. (Decision per session: a new
-`bot-tournament` sbt module.)
+The `bot-tournament` module is a second protocol adapter the size of
+`bot-lichess` **minus the engine** — no engine, search, or eval changes.
 
-### Phase 1 — New `bot-tournament` module
+### The `bot-tournament` module
 
-Mirror `bot-lichess` in `build.sbt`: `dependsOn(domain.jvm, rules, codec,
-botEngine)`, deps `sttp.client3 %% "zio"` + `zio-json`.
+A new sbt project `botTournament` (`name := "pichess-bot-tournament"`, package
+`chess.bot.tournament`) mirrors `bot-lichess` in `build.sbt`:
+`dependsOn(domain.jvm, rules, codec, botEngine)`, deps `sttp.client3 %% "zio"` +
+`zio-json` (`build.sbt:263-275`).
 
 - **`TournamentApiClient`** (trait + sttp impl) — `register(name)`,
+  `listTournaments` (the `created`/joinable list, for auto-pick),
   `getTournament(id)` (to read `clock.increment`), `getGame(id, gameId)` (to read
   the players → our colour), `joinTournament(id)`, `streamTournament(id)`,
   `streamGame(id, gameId)`, `makeMove(id, gameId, uci)`. Bearer = the JWT from
-  `register`, held in a `Ref` it populates; reuse the sttp NDJSON-stream and
+  `register`, held in a `Ref` it populates; reuses the sttp NDJSON-stream and
   `postExpectOk` patterns from `BotApiClient`.
 - **`TournamentEvent.scala`** — zio-json ADTs for the two streams. Events are
   **flat** with a `type` discriminator (`@jsonDiscriminator("type")` +
@@ -139,30 +146,60 @@ botEngine)`, deps `sttp.client3 %% "zio"` + `zio-json`.
   the game, match our registered id against `white`/`black` → our colour (or skip
   if not ours / duplicate). Then fork a per-game fiber (fresh-isolated
   `searchFactory`), drive `TournamentRunner`, POST moves. Never resign.
-- **`TournamentBotMain`** — entrypoint. Env: `TOURNAMENT_BASE_URL`,
-  `TOURNAMENT_ID` (or auto-pick a `created` tournament from `GET /api/tournament`),
-  `TOURNAMENT_BOT_NAME`; reuse the weights/budget/LazySMP/tablebase knobs from
-  `LichessBotMain`.
+- **`TournamentBotMain`** — entrypoint (`ZIOAppDefault`). Env:
+  `TOURNAMENT_BASE_URL`, `TOURNAMENT_ID` (or auto-pick the first `created`
+  tournament via `listTournaments`), `TOURNAMENT_BOT_NAME` (default `pichess`),
+  `TOURNAMENT_WEIGHTS_VERSION` (default `8`), `TOURNAMENT_MOVE_DEPTH` (fallback
+  depth, default `6`), `TOURNAMENT_LAZYSMP` (default on). Reuses the
+  weights/budget/LazySMP wiring from `LichessBotMain`; **no tablebase oracle** is
+  wired (`TournamentBotMain:26`).
 
-### Phase 2 — Clock handling (the one real gotcha)
+### Clock handling (the one real gotcha)
 
 Feed `TimeManager.budgetMs` in **ms**: convert `clock.whiteTime/blackTime`
 (seconds, `Double`) ×1000, and thread the tournament `clock.increment` (seconds,
 fetched once via `getTournament`) ×1000, since per-move events omit it.
 
-### Phase 3 — Tests + deploy
+### Tests & running
 
-Mirror `bot-lichess`'s spec style: stub `TournamentApiClient`; unit-test
-`TournamentRunner` decisions (snapshot/move/end, pending-wait, colour/turn) and
-event-codec round-trips against the exact JSON the server emits (keep the 100 %
-coverage gate). Add a `dev-bot-tournament` run target and a Docker image
-alongside the existing bot images.
+Four ZIO Test specs mirror `bot-lichess`'s style, all against a stubbed
+`TournamentApiClient` (no live server needed): `TournamentRunnerSpec` (decision
+table — snapshot/move/end, pending-wait, colour/turn), `TournamentBridgeSpec`
+(self-filter + dedupe, per-game orchestration, stream-drop reconnect,
+never-resign), `TournamentApiClientSpec` (URL composition, runtime bearer,
+NDJSON decode, error surfacing) and `TournamentEventCodecSpec` (literal-decode
+contract against the exact server JSON). `TournamentBotMain` is coverage-excluded
+like the other `*Main` entrypoints (`build.sbt:271`).
+
+Run it like the Lichess bot — straight from sbt:
+`TOURNAMENT_ID=… sbt 'botTournament/run'`. **Still open:** there is no dedicated
+Make target or Docker image yet — neither bot is containerised today (both run
+from sbt).
 
 ### Reusable as-is
 
-`bot-engine` (all of it), `chess.codec.UciCodec`, `SyncCodec`, `TimeManager`
-(with the s→ms conversion), the `searchFactory` / LazySMP / tablebase wiring,
-the never-resign policy.
+`bot-engine` (all of it: search, HCE+NNUE hybrid eval, TT), `chess.codec`
+(`UciCodec` + the `FenParserRegex` FEN parser), `TimeManager` (with the s→ms
+conversion), the `searchFactory` / LazySMP wiring, the never-resign policy. The
+one new helper is the module's own `internal.SyncCodec` — a thinner sync
+FEN-parse adapter than the Lichess one (NowChess always sends a real FEN, so no
+`"startpos"` special-case).
+
+## Server quirks found in live testing
+
+Two server-side issues surfaced while running a real game. **Neither affects our
+bot's correctness** — they're the server's, and noted here for the integration:
+
+- **Concurrent `join` race.** `TournamentService.join` is a non-atomic
+  get→modify→save over the in-memory repo, so two bots that `join` at the exact
+  same instant can clobber each other and one is silently dropped (observed:
+  `nbPlayers` stuck at 1). We deploy a single bot joining once, so this won't bite
+  us — but if joins are scripted in parallel, stagger them.
+- **`Pairing` JSON shape ≠ OpenAPI.** The spec shows a top-level
+  `pairing.gameId`, but the real encoder nests it under `pairing.matches[].gameId`
+  (no top-level `gameId`). Irrelevant to our bot (it gets `gameId` from
+  `gameStart`), but anything reading `GET /api/tournament/{id}/round/{n}` must
+  read `matches[].gameId`.
 
 ## Open operational questions (not blockers)
 
