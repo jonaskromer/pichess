@@ -49,6 +49,40 @@ val cassandraDriverVersion = "4.17.0"
 val neo4jDriverVersion     = "5.28.5"
 val clickhouseJdbcVersion  = "0.9.0"
 val zioJdbcVersion         = "0.1.2"
+// zio-spark's git `v0.13.0` tag (Spark 3.5.1) was never published to Maven
+// Central — the latest *released* artifact is 0.12.0, which targets Spark 3.3.1
+// (built on Scala 3.2.1, zio 2.0.5). We pin to what actually resolves and match
+// its Spark line. Notably zio-spark has NO zio-json dependency, so there is no
+// codec-version clash with the `events` module's zio-json 0.9.0.
+val sparkVersion           = "3.3.1"
+val zioSparkVersion        = "0.12.0"
+
+// Spark 3.3 reflects into JDK internals that Java 17+ seals by default; these
+// are the same `--add-opens` Spark's own launcher injects (its
+// `JavaModuleOptions`). Required for the forked `sparkAnalytics/run` on a
+// modern JDK. (Spark 3.3 officially supports Java 8/11/17; we run it on 21 —
+// the closest JDK installed — which works for these local jobs with the opens.)
+val sparkRunJavaOptions = Seq(
+  // Hadoop's security layer (pulled by Spark) calls `Subject.getSubject`, which
+  // Java 18+ refuses unless a security manager is explicitly allowed. Java 17
+  // still permitted it; since we run on 21, opt in. (No SecurityManager is
+  // actually installed — this just unblocks the legacy call.)
+  "-Djava.security.manager=allow",
+  "--add-opens=java.base/java.lang=ALL-UNNAMED",
+  "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+  "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+  "--add-opens=java.base/java.io=ALL-UNNAMED",
+  "--add-opens=java.base/java.net=ALL-UNNAMED",
+  "--add-opens=java.base/java.nio=ALL-UNNAMED",
+  "--add-opens=java.base/java.util=ALL-UNNAMED",
+  "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+  "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED",
+  "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+  "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
+  "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
+  "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
+  "--add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED",
+)
 val gatlingVersion         = "3.13.5"
 val zioMetricsConnectorsVersion = "2.5.6"
 val zioOpenTelemetryVersion     = "3.0.0-RC24"
@@ -694,6 +728,82 @@ lazy val analyticsService = project
       ".*AnalyticsMain.*;.*Kafka.*;.*ClickHouse.*;.*AnalyticsServer.*;" +
         ".*AnalyticsEndpoints.*;.*AnalyticsProjection.*;.*LiveAnalyticsService.*;" +
         ".*AnalyticsSchema.*",
+  )
+
+// Spark analytics — Lambda-architecture read-side projection over the same
+// `chess.game-events` log. Batch job reads an archived event dump from file;
+// the streaming job connects Spark Structured Streaming to Kafka. Both feed the
+// same `Aggregations` transforms.
+//
+// Scala-version note: Spark has no Scala 3 build, so spark-core/spark-sql are
+// pulled as their Scala 2.13 artifacts via `.cross(CrossVersion.for3Use2_13)`,
+// kept `% Provided` (the Spark runtime supplies them on a real cluster).
+//
+// This module pins **Scala 3.3 (LTS)**, NOT the repo's 3.8.2, for one concrete
+// reason: Spark's runtime encoders use `scala-reflect:2.13.8`, whose
+// `JavaUniverse` must reflect over a *genuine* 2.13 standard library. Scala
+// 3.7+ publishes its own standalone `scala-library:3.x` (which carries Scala-3
+// stdlib classes like `scala.deriving.Mirror`), and scala-reflect chokes on it
+// ("class Array does not have a member apply" at init). The 3.3 LTS line still
+// depends on a genuine `scala-library:2.13.16`, giving Spark the coherent 2.13
+// toolchain it needs — and it's the exact line zio-spark 0.12.0 was built on.
+//
+// Consequence: a 3.3 compiler can't read the 3.8.2 TASTy of `events`/`codec`,
+// so this module does NOT `dependsOn` them. The schema boundary is instead a
+// standalone re-declaration (`schema/RawGameEvent`) — a minimal zio-json mirror
+// of the canonical `chess.events.GameDomainEvent` JSON. Spark drags in a large,
+// jackson/netty-heavy transitive closure, so the module is kept OUT of the root
+// aggregate — build it with `sparkAnalytics/compile`.
+lazy val sparkAnalytics = project
+  .in(file("spark-analytics"))
+  .settings(commonSettings)
+  .settings(
+    name         := "pichess-spark-analytics",
+    scalaVersion := "3.3.6",
+    libraryDependencies ++= Seq(
+      "dev.zio"           %% "zio-json"             % zioJsonVersion,
+      "io.univalence"     %% "zio-spark"            % zioSparkVersion,
+      ("org.apache.spark" %% "spark-core"           % sparkVersion % Provided)
+        .cross(CrossVersion.for3Use2_13),
+      ("org.apache.spark" %% "spark-sql"            % sparkVersion % Provided)
+        .cross(CrossVersion.for3Use2_13),
+      ("org.apache.spark" %% "spark-sql-kafka-0-10" % sparkVersion)
+        .cross(CrossVersion.for3Use2_13),
+    ),
+    // Spark ships `scala-reflect:2.13.8`; match it to the genuine 2.13.16 stdlib
+    // that scala3-library 3.3.6 pulls, so the reflection toolchain is coherent
+    // (an older reflect over a newer 2.13 library can still misfire).
+    dependencyOverrides += "org.scala-lang" % "scala-reflect" % "2.13.16",
+    // Spark assemblies bundle their own Scala 2.13 stdlib + jackson; this
+    // module is an isolated island talking only over Kafka/files, so it isn't
+    // unit-covered here (jobs are exercised against a local SparkSession).
+    coverageEnabled := false,
+    // `run`/`runMain` against a local SparkSession: fork a JVM with the Spark
+    // module-opens, and put `% Provided` Spark jars on the run classpath (they
+    // are excluded from the default `Runtime` classpath but supplied by the
+    // cluster in production — locally we are the cluster). Uses `fullClasspath`
+    // (= Compile classpath, which includes Provided).
+    fork := true,
+    // Spark 3.3 requires Java 17 (Java 21+ removed DirectByteBuffer(long,int)
+    // that Spark's Platform reflects into). The JVM running sbt may be newer,
+    // so pin the forked run's JDK via PICHESS_SPARK_JAVA_HOME when set.
+    Compile / run / javaHome :=
+      sys.env.get("PICHESS_SPARK_JAVA_HOME").map(file),
+    javaOptions ++= sparkRunJavaOptions,
+    // Forked runs default their working dir to the module dir; pin it to the
+    // repo root so repo-root-relative data paths (spark-analytics/data/...)
+    // resolve the same way whether invoked from root or the module.
+    Compile / run / baseDirectory := (LocalRootProject / baseDirectory).value,
+    Compile / run := Defaults
+      .runTask(
+        Compile / fullClasspath,
+        Compile / run / mainClass,
+        Compile / run / runner
+      )
+      .evaluated,
+    Compile / runMain := Defaults
+      .runMainTask(Compile / fullClasspath, Compile / run / runner)
+      .evaluated,
   )
 
 // New microservice for lobby management. REST-only on :8092 — no gRPC, no
