@@ -1,9 +1,12 @@
 # Application performance test report
 
-> Application-level perf analysis with **redis** as the chosen
-> persistence backend (rationale: see
-> [`db-selection-report.md`](db-selection-report.md)). Methodology for
-> the perf stack: [`perf-experiments.md`](perf-experiments.md).
+> Application-level perf analysis run against the **redis** backend. _(NB: redis
+> was an earlier candidate; the shipping default is now **mongo + redis** —
+> [`db-selection-report.md`](db-selection-report.md) r3. The findings below are
+> game-service-internal — FEN/SAN/`Position` allocation in the response path —
+> and therefore **backend-agnostic**, so they still hold; only the "chosen
+> backend" framing is dated.)_ Methodology for the perf stack:
+> [`perf-experiments.md`](perf-experiments.md).
 >
 > This report's job:
 >
@@ -97,7 +100,7 @@ From the DB-matrix run, `redis+none` under both workloads:
 
 Notable: game-service does ~85 % of the CPU work and ~73 % of the GC
 time under Stress. Gateway is in the "fast plumbing" regime; lobby
-and repository sit cool. Everything below this section is about
+and repository sit cool. Everything below is about
 **game-service**.
 
 ---
@@ -184,8 +187,8 @@ The numbers still triangulate the same range.
 
 `Ray.walk` runs in **~340 ns**. The profile shows `Position.apply`
 inside it allocating per step — the bench measures wall-clock per
-walk, not allocation rate. Per-walk cost is the kind of thing the
-JMH alloc profile would tell us; that's a follow-up.
+walk, not allocation rate. Per-walk allocation is a JMH
+alloc-profile follow-up.
 
 ---
 
@@ -207,7 +210,7 @@ JMH alloc profile would tell us; that's a follow-up.
 (samples 23 + 17 + 16 + 14 + 12 + 12 = 94 of the top-10 total ~190).
 Redis I/O is the next-largest non-idle, non-GC bucket. The
 application itself (chess rules, FEN, gRPC handlers) shows up
-*below* the GC frames, which says the heavy lift in the hot path is
+*below* the GC frames — the hot path's heavy lift is
 allocation-driven, not compute-driven.
 
 ### game-service — top **allocation** samples (alloc event, 30 s)
@@ -245,7 +248,7 @@ allocation-driven, not compute-driven.
    the full move log; each entry includes its SAN string, which is
    computed lazily on the way out.
 
-The pattern is clear: **the response path is the allocator**. The
+**The response path is the allocator**. The
 move-validation walk + the FEN serialisation + the SAN derivation
 all run on every successful `MakeMove`, and all three allocate
 proportionally to the number of legal moves / board cells / move-log
@@ -331,8 +334,8 @@ Ranked by user-facing-latency contribution × frequency.
 
 Postgres isn't the chosen backend, so this A/B is *informational*
 rather than load-bearing for the redis recommendation. The Phase C
-infrastructure is in place; the Phase B prediction said HikariCP
-pooling would help. The smoke run from Phase C said otherwise:
+infrastructure is in place; Phase B predicted HikariCP pooling
+would help, but the Phase C smoke run said otherwise:
 
 | Workload | `PICHESS_OPT_PG_POOL=default` (HikariCP) | `=baseline` (`forURL`) |
 |---|---:|---:|
@@ -362,7 +365,6 @@ This finding **doesn't refute Phase B**; it refines it:
 **The `Optimisation[T]` typeclass survives this finding intact** —
 it correctly let us run the A/B without code churn. We just discovered
 that *one* of the two implementations is worse on *this* workload.
-That's exactly what perf experiments are for.
 
 ---
 

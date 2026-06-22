@@ -7,43 +7,39 @@
 
 ## 1. Why this document exists
 
-Until now each screen has been styled in isolation. Adjacent screens
-ended up with different button shapes, different padding rhythms,
-different ways of handling tilt, different ways of building forms.
-Each one looked OK on its own; together they read as inconsistent.
+Each screen was styled in isolation, so adjacent screens drifted into
+different button shapes, padding rhythms, tilts, and form patterns —
+each fine alone, inconsistent together.
 
 The fix is upstream: define a small set of layout primitives,
 components, and tokens, and require every new screen to compose from
-that set. The doc below is that set.
+that set. This doc is that set.
 
-The aesthetic decisions stay simple — _pixar-coded notebook page,
-casually pinned together, hand-drawn vibe_ — but the surface area for
-new bespoke pieces shrinks to near zero. If you find yourself
-inventing a new button shape on a new screen, the answer is almost
-always "use the existing primitive" or "extend the spec here first,
-then implement everywhere".
+The aesthetic stays simple — _pixar-coded notebook page, casually
+pinned together, hand-drawn vibe_ — but the surface area for new
+bespoke pieces shrinks to near zero. Inventing a new button shape is
+almost always wrong: use the existing primitive, or extend the spec
+here first, then implement everywhere.
 
 ## 2. Aesthetic principles
 
 1. **The page is a notebook**, not an app. Every surface is a paper
-   scrap; every interactive element is the kind of mark you'd make on
-   paper (handwritten label, marker highlight, sticky note, taped
-   clipping).
-2. **Static "casually pinned" tilts**, not random ones. Two scraps
-   adjacent to each other counter-lean. Tilts are small (≤ 2°) for
-   primary surfaces, larger (≤ 8°) for stickers / decorations.
+   scrap; every interactive element is a mark you'd make on paper
+   (handwritten label, marker highlight, sticky note, taped clipping).
+2. **Static "casually pinned" tilts**, not random ones. Adjacent
+   scraps counter-lean. Tilts are small (≤ 2°) for primary surfaces,
+   larger (≤ 8°) for stickers / decorations.
 3. **Type carries the brand**. Caveat / Caveat Brush is the
-   handwriting layer; Special Elite is the typewriter layer for
-   "printed" data (move logs, FEN, code, raw IDs). Headings and
-   buttons live in the handwriting layer; system data lives in the
-   typewriter layer.
+   handwriting layer (headings, buttons); Special Elite is the
+   typewriter layer for "printed" system data (move logs, FEN, code,
+   raw IDs).
 4. **Colour is reserved for hierarchy.** Most ink is the warm dark
    `--post-text` brown. Yellow = primary action. Cyan = secondary.
    Coral = destructive. Newsprint = navigation link. Anything else is
    a one-off and should justify itself.
 5. **Decorations are ambient, not load-bearing.** Doodles, scribbles,
-   marginalia, and the chess-piece shelf at the bottom are texture —
-   never required to understand or operate the screen.
+   marginalia, and the chess-piece shelf are texture — never required
+   to understand or operate the screen.
 
 ## 3. Design tokens
 
@@ -144,8 +140,8 @@ flow through.
 | `--post-yellow-shadow` etc. | Per-sticker colour halo — paired with `var(--post-*)` for the soft outer glow |
 
 Always use **filter: drop-shadow(...)** on the wrapper of any clipped
-element — `clip-path` clips `box-shadow` away. (Already a comment in
-the CSS; restated here as a rule.)
+element — `clip-path` clips `box-shadow` away. (Also a comment in the
+CSS.)
 
 **Post-its stack two layers**: a sharp dark contact shadow
 (`--post-shadow-base`) plus a softer colour-tinted halo. Composed at
@@ -157,9 +153,9 @@ the call site:
 }
 ```
 
-The base layer reads as "the paper is actually on top of the page";
-the colour layer ties the shadow tint to the sticker's own pastel.
-Single-layer post-its look flat — both layers always.
+The base layer reads as "the paper is on top of the page"; the colour
+layer ties the shadow tint to the sticker's own pastel. Single-layer
+post-its look flat — always use both.
 
 ### 3.6 Tilt scale
 
@@ -177,26 +173,26 @@ card leans right; menu card leans right → side post-it leans right
 
 ## 4. Layout primitives
 
-These are the building blocks every screen composes. They live in
-CSS as classes; in Scala they're rendered through helper functions.
+The building blocks every screen composes. In CSS they're classes; in
+Scala, helper functions.
 
 ### 4.1 `.page-bg` — page background
 
 The crumpled paper texture, mounted **once** at the App root (next to
 `toastElement()`), `position: fixed; z-index: -1`. Every screen
-inherits it; never re-mount it inside a screen.
+inherits it; never re-mount inside a screen.
 
 ### 4.2 `paperLayer()` + `.paper-wrap` — paper card
 
 A "scrap of paper" surface. The wrapper (`.paper-wrap`) is
-`position: relative` so the paper SVG inside it (`<div class="paper-layer">`)
-absolutely fills the box, with content rendered as additional children
-that sit above (z-index handled by a global `:not(.paper-layer)` rule).
+`position: relative` so the paper SVG (`<div class="paper-layer">`)
+absolutely fills the box; content renders as additional children that
+sit above (z-index via a global `:not(.paper-layer)` rule).
 
 Every paper card needs:
 - `--paper-color: var(--paper-grid)` override (gridded surface)
-- `--grid-minor-size` / `--grid-major-size` so the grid renders at the
-  intended visible scale
+- `--grid-minor-size` / `--grid-major-size` for the intended visible
+  grid scale
 - `filter: drop-shadow(var(--panel-shadow))` to recover the shadow
   that `clip-path` would otherwise eat
 - A `clip-path: var(--torn-...)` on `> .paper-layer > svg`
@@ -208,12 +204,11 @@ Every paper card needs:
 
 Two corner pseudo-elements (`::before` + `::after`) on any card that
 should look "pinned". The shared rule lives near the top of `style.css`
-— append a card class to that selector list rather than duplicating
-the rule.
+— append a card class to that selector list rather than duplicating it.
 
-When tape needs to bridge a gap (e.g. menu card → title card above),
-override `top` and `height` on the card's `::before/::after` so the
-strip visibly spans both surfaces.
+To bridge a gap (e.g. menu card → title card above), override `top`
+and `height` on the card's `::before/::after` so the strip spans both
+surfaces.
 
 ### 4.4 Post-it sticker
 
@@ -254,16 +249,15 @@ transition: background-size 0.18s ease-in-out;
 ### 4.6 Piece shelf
 
 The chess-piece row at the bottom of the start screen. Reusable on
-any "landing" screen via `pieceShelf()` — it's purely decorative and
-always has `pointer-events: none`. Don't put it on screens with
-content near the bottom edge (lobby room, settings) since it crowds
-the active controls.
+any "landing" screen via `pieceShelf()` — purely decorative, always
+`pointer-events: none`. Don't put it on screens with content near the
+bottom edge (lobby room, settings); it crowds the controls.
 
 ## 5. Component system
 
-Every interactive element on every screen MUST be one of the
-following. If a need genuinely doesn't fit, extend this section
-*first*, implement *second*.
+Every interactive element MUST be one of the following. If a need
+genuinely doesn't fit, extend this section *first*, implement
+*second*.
 
 ### 5.1 Buttons
 
@@ -308,15 +302,15 @@ tab is `opacity: 0.5` with `cursor: not-allowed` and no marker stripe.
 
 ### 5.4 Screen heading
 
-A single `.screen-heading` element (`<h1>`, logo font, 2.75 rem). Sits
-inside the title card. **Never** more than one per screen.
+A single `.screen-heading` (`<h1>`, logo font, 2.75 rem), inside the
+title card. **Never** more than one per screen.
 
 ### 5.5 Back link
 
 `.back-link` — a `.btn-icon` rendering "← Back" (or "←" alone). Goes
-either inside the title card on the left, or as the very first child
-of the screen (top-left). Behaviour is `dom.window.history.back()`
-with a `Screen.Start` fallback when the history stack is empty.
+inside the title card on the left, or as the screen's first child
+(top-left). Behaviour: `dom.window.history.back()` with a
+`Screen.Start` fallback when the history stack is empty.
 
 ### 5.6 Toast
 
@@ -325,14 +319,14 @@ re-render per screen. Use `showToast(...)` from any handler.
 
 ### 5.7 Modal / dialog
 
-`.modal-dialog` paper-card variant — same primitives as a regular
-card (paperLayer + tape + drop-shadow), centred in a `.modal-overlay`
-that holds the `--overlay-bg` scrim. Existing rules in `style.css`.
+`.modal-dialog` paper-card variant — same primitives as a card
+(paperLayer + tape + drop-shadow), centred in a `.modal-overlay` that
+holds the `--overlay-bg` scrim. Existing rules in `style.css`.
 
-**Scroll lock is mandatory.** Whenever any modal is open, the page
-beneath must not scroll. The web-ui solves this with one shared rule
-(`body.modal-open { overflow: hidden; }`) toggled from a derived
-signal that combines every modal's open-state Var:
+**Scroll lock is mandatory.** While any modal is open, the page
+beneath must not scroll. One shared rule
+(`body.modal-open { overflow: hidden; }`) is toggled from a derived
+signal combining every modal's open-state Var:
 
 ```scala
 Signal
@@ -350,8 +344,8 @@ Signal
   }
 ```
 
-When adding a new modal, add its open-state Var to that combine list
-(or — better, see §13.4 — register it through a single
+When adding a modal, add its open-state Var to that combine list (or —
+better, see §13.4 — register it through a single
 `registerModal(signal)` helper).
 
 ## 6. Screen skeleton
@@ -369,8 +363,8 @@ lobby, settings, help, docs) MUST follow this skeleton:
 ```
 
 The **game screen** (`#game/<id>`) is a workspace, not a configuration
-screen — the board IS the content, there's no meaningful "heading".
-It uses its own pattern:
+screen — the board IS the content, with no meaningful "heading". Its
+own pattern:
 
 ```
 .app-shell                      ← header strip + game body (no centered cards)
@@ -413,10 +407,10 @@ Buttons / form controls / modals INSIDE the game shell still use the
   (preserves the right edge for any side post-it to attach to)
 - `transform: rotate(1.1deg)` (counter-tilt)
 - Padding: `1.5rem 2rem 1.75rem`
-- `min-width: 22rem` so the card has enough horizontal room to
-  predictably hold a tab strip + the longest form row
+- `min-width: 22rem` to predictably hold a tab strip + the longest
+  form row
 - `display: flex; flex-direction: column; gap: 1.25rem` for vertical
-  rhythm between sections
+  section rhythm
 
 ### 6.4 Side post-it (optional, per screen)
 
@@ -428,8 +422,7 @@ Buttons / form controls / modals INSIDE the game shell still use the
 ### 6.5 Decoration slot (optional)
 
 `pieceShelf()` along the bottom **only** on landing-style screens
-where the bottom area is otherwise empty (Start). Don't crowd
-controls.
+where the bottom is otherwise empty (Start). Don't crowd controls.
 
 ## 7. Tilt + rotation conventions
 
@@ -440,8 +433,7 @@ Recap of §3.6 with the rules:
    surfaces.
 2. **Tape rotation matches the card it sits on.** The shared tape
    rule rotates `::before` by -4° and `::after` by +4°; don't override
-   per card unless the card itself is rotated by a magnitude that
-   visually conflicts.
+   per card unless the card's own rotation visually conflicts.
 3. **A sticker on a card leans the same direction as the card.**
    Doubling the lean reads as "casual addition". The side post-it
    rule (`+6°` on a `+1.1°` card) is the canonical example.
@@ -455,8 +447,8 @@ Recap of §3.6 with the rules:
 
 - One class flip on `<html>` (`.dark`) re-themes everything via the
   `:root.dark` token overrides — no per-component dark-mode rule should
-  exist. **If you find yourself writing `:root.dark .my-thing`, fix it
-  by reading from a token instead.**
+  exist. **Writing `:root.dark .my-thing`? Read from a token
+  instead.**
 - Decorations (doodles, scribbles, ambient marks) inherit `color` from
   the parent and use `currentColor` in their fill / mask. The parent's
   `color` token (e.g. `--text-secondary`) drives both modes.
@@ -467,8 +459,8 @@ Recap of §3.6 with the rules:
 
 ### 9.1 Chess pieces
 
-Inline-SVG sprites injected once into the page via `HtmlPage.scala`'s
-sprite host. Always rendered through `pieceSvg(name)`; the parent's
+Inline-SVG sprites injected once via `HtmlPage.scala`'s sprite host.
+Always rendered through `pieceSvg(name)`; the parent's
 `color` (white-piece / black-piece classes) drives the `--piece-primary`
 / `--piece-secondary` cascade.
 
@@ -484,14 +476,14 @@ Two packs:
 
 > ⚠️ **Decorative doodle layer is currently empty** — the previous
 > marginalia / arrow-cluster / question-cluster experiments were
-> dropped. The doodle-pack section in this doc is a forward-looking
-> primer for when we re-introduce decorations on a per-screen basis.
+> dropped. This section is a forward-looking primer for when
+> decorations return on a per-screen basis.
 
 ### 9.3 Peach mark
 
-The brand peach SVG is already inlined in the sprite host; reference
-it as `<use href="/web/peach.svg#peach"/>`. Keep its viewBox at
-`-3 -3 43 44` so the right + bottom edges of the leaf aren't clipped.
+The brand peach SVG is inlined in the sprite host; reference it as
+`<use href="/web/peach.svg#peach"/>`. Keep its viewBox at
+`-3 -3 43 44` so the leaf's right + bottom edges aren't clipped.
 
 ## 10. Anti-patterns
 
@@ -499,9 +491,9 @@ The following are explicit "no":
 
 1. **Ad-hoc `position: absolute; top: <px>; left: <px>;`** for layout.
    Use structural anchors: `align-self`, flex flow, `calc(100% + x)`,
-   `inset: 0`. Absolute positioning is fine when it's relative to a
-   structural anchor; not when it's relative to a viewport coordinate
-   the layout will silently break under.
+   `inset: 0`. Absolute positioning is fine relative to a structural
+   anchor — not relative to a viewport coordinate the layout will
+   silently break under.
 2. **Per-element dark-mode rules** (`:root.dark .my-thing`). Read a
    token. If no token fits, define one.
 3. **Per-element filter chains** for icon recolouring. Use `mask-image`
@@ -510,8 +502,8 @@ The following are explicit "no":
 4. **Random rotations recomputed per render.** Pseudo-random fine
    (seed once at first render). Live random no.
 5. **Bespoke button shapes per screen.** If `.btn-cta` doesn't fit,
-   the answer is to extend the spec, not invent `.start-cta`,
-   `.mode-cta`, `.lobby-cta`, etc.
+   extend the spec — don't invent `.start-cta`, `.mode-cta`,
+   `.lobby-cta`, etc.
 6. **px values for anything user-facing.** `rem` for sizing,
    `0.something rem` for hairlines below 1px equivalents. Px is
    reserved for `box-shadow` blur (where rem rounds badly).
@@ -522,8 +514,8 @@ The following are explicit "no":
 
 ## 11. Refactor checklist
 
-Concrete drift the doc above prescribes a fix for. Execute these in
-the order listed; each one is independently shippable.
+Concrete drift the doc prescribes a fix for. Execute in the order
+listed; each is independently shippable.
 
 ### 11.0 Foundation: Tailwind 4 + Scala component helpers ✅ DONE
 
@@ -534,8 +526,8 @@ the bespoke CSS layer; helper catalogue lives at
 `web-ui/src/main/scala/chess/webui/components/`. Every routed screen
 (start, new-game, join, lobby, settings, help, docs) renders through
 the helpers. The game screen keeps its own `app-shell` workspace
-pattern (board IS the content) but its modals + buttons go through
-the same helpers. ~360 lines of legacy bespoke CSS deleted in #52.
+pattern (board IS the content), but its modals + buttons use the same
+helpers. ~360 lines of legacy bespoke CSS deleted in #52.
 
 ### 11.1 Spacing tokens
 Add `--space-{1..6}` to `:root`. Migrate hard-coded `padding` / `gap` /
@@ -585,9 +577,9 @@ and replaced by reading from a token.
 
 ## 12. Implementation: Tailwind 4 + Scala component helpers
 
-The bespoke-class drift is also an implementation problem: every time
-we want a button on a new screen, the path of least resistance is
-"write yet another bespoke selector". The structural fix is twofold:
+The bespoke-class drift is also an implementation problem: the path of
+least resistance for a button on a new screen is "write yet another
+bespoke selector". The structural fix is twofold:
 
 1. **Tailwind 4 utilities** for layout, spacing, sizing, colour, and
    typography. The `@theme` block in `style.css` declares the design
@@ -636,23 +628,23 @@ we want a button on a new screen, the path of least resistance is
 
 > **Don't use `@apply`.** It re-creates the bespoke-selector problem.
 
-The whole point of utilities is that the styling decision lives at the
-call site (or inside a Scala helper); inlining utilities into a CSS
-selector via `@apply` defeats both Tailwind's atomic value prop and
-the design system's "one source of truth at the call site" intent.
+The point of utilities is that the styling decision lives at the call
+site (or inside a Scala helper); inlining utilities into a CSS selector
+via `@apply` defeats both Tailwind's atomic value prop and the design
+system's "one source of truth at the call site" intent.
 
 Two narrow exceptions:
 - **Migration bridge** — temporarily wrap a legacy selector with
-  `@apply` while migrating its call sites to the new helper. Delete
-  the bridge once the call sites are migrated.
+  `@apply` while migrating its call sites to the new helper, then
+  delete the bridge.
 - **Pure decoration** — bespoke things like the tape pseudo-elements
-  or the post-it clip-paths that aren't expressible as utilities at
-  all stay as plain CSS.
+  or post-it clip-paths that aren't expressible as utilities at all
+  stay as plain CSS.
 
 ### 12.3 Catalogue of Scala component helpers
 
-Every helper below corresponds to a §5 component class. Spec'd here
-for once the migration starts.
+Every helper below corresponds to a §5 component class, spec'd for
+when the migration starts.
 
 ```scala
 // Layout primitives
@@ -687,8 +679,8 @@ bespoke class (e.g. `.btn-cta` for clip-path + drop-shadow + tilt).
 
 ### 12.4 Modal registry
 
-The Modal scroll lock signal in §5.7 hard-codes the four current
-modal Vars. Moving forward, register modals through one helper:
+The scroll-lock signal in §5.7 hard-codes the four current modal Vars.
+Register modals through one helper instead:
 
 ```scala
 private val modalRegistry: Var[Set[String]] = Var(Set.empty)
@@ -712,9 +704,9 @@ When the Tailwind migration starts, do it bottom-up:
 1. **Set up Tailwind 4** — add the tooling, declare `@theme` with the
    §3 tokens, wire an sbt task that watches Scala sources and emits
    the generated CSS into `gateway/src/main/resources/web/`.
-2. **Migrate one screen end-to-end** (start screen) as the proof of
+2. **Migrate one screen end-to-end** (start screen) as proof of
    concept — extract `card`, `ctaButton`, `linkButton`, `sidePostIt`
-   helpers in the process.
+   helpers.
 3. **Roll the helpers across the other screens** one by one (new
    game → join → lobby → settings → help → docs → game).
 4. **Audit and delete** any per-screen CSS rule whose appearance is

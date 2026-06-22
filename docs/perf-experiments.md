@@ -1,23 +1,23 @@
 # Performance experiments — a step-by-step tutorial
 
-> Audience: a dev or reviewer who needs to understand how persistence
-> and performance work in this repo, then run the two experiments
-> themselves. Also doubles as the entry point to the generated report.
+> Audience: a dev or reviewer who needs to understand persistence
+> and performance in this repo, then run the two experiments. Also the
+> entry point to the generated report.
 >
 > **Per-run results live in
 > `perf-reports/<TS>/performance-test-results.md`** — built by `make
 > perf-report` after each run. This doc is the static guide; the
 > generated file is the data.
 
-This guide is built around two experiments:
+Two experiments:
 
 1. **The persistence experiment** — drive the perf suite across every
    backend × cache × workload combination and rank the configs.
 2. **The performance experiment** — find hot paths via profiling, ship
    optimised and naive implementations side-by-side gated by DI, then
-   compare them on the suite.
+   compare on the suite.
 
-Read top-to-bottom for the full picture or jump to the section you need:
+Read top-to-bottom, or jump to a section:
 
 - [Architecture in one page](#architecture-in-one-page)
 - [The persistence layer](#the-persistence-layer)
@@ -34,9 +34,9 @@ Read top-to-bottom for the full picture or jump to the section you need:
 ## Architecture in one page
 
 Seven services run in Docker. **State** lives in the persistence
-backend that game-service + repository + lobby-service all read from
+backend that game-service + repository + lobby-service read from
 (picked at startup via `PICHESS_BACKEND`). **Events** flow through
-Kafka when one of the projection profiles is active.
+Kafka when a projection profile is active.
 
 ```
                       ┌─────────┐
@@ -97,17 +97,16 @@ persistence/
 
 Three services consume `PersistenceLayers`: game-service (game repo),
 repository (game repo, write-side from Kafka events), and lobby-service
-(lobby repo). They all share the same selection mechanism. Adding a
-backend is a one-file change in `runtime/PersistenceLayers.scala` plus
-a new module — see [Extending §
-backend](#adding-a-new-backend).
+(lobby repo) — all via the same selection mechanism. Adding a backend
+is a one-file change in `runtime/PersistenceLayers.scala` plus a new
+module — see [Extending § backend](#adding-a-new-backend).
 
 ### The five backends
 
 | Backend | When it fits | When to avoid | Profile |
 |---|---|---|---|
 | `inmemory` | The baseline. Pure JVM map, no I/O. Use as the upper-bound benchmark and to isolate non-DB overhead in profiling. | Anywhere you need durability across restarts. | none |
-| `postgres` | **Default backend** (see `docs/db-selection-report.md`). Strong consistency + relational queries; wins the Game workload outright among durable backends. | Latency-bound key-only reads where Redis durability is acceptable, or write-heavy time series (Cassandra wins). | `postgres` |
+| `postgres` | **Was the r2 default**; the shipping default is now **mongo + redis** (`docs/db-selection-report.md` r3). Strong consistency + relational queries; wins the Game workload outright among durable backends. | Latency-bound key-only reads where Redis durability is acceptable, or write-heavy time series (Cassandra wins). | `postgres` |
 | `mongo` | Schema agility — game/lobby snapshots are document-shaped and don't need joins. Reasonable middle ground. | High-cardinality secondary indexes or strict transactional invariants. | `mongo` |
 | `redis` | Latency-bound key-value workloads. Single-digit-ms p99 under load. Good for hot-path caches; sometimes good enough as a primary. | Durability guarantees, complex queries, large objects. | `redis` |
 | `cassandra` | Write-heavy, eventually-consistent, time-series-shaped event logs. Linear write scaling under partition. | Read-mostly small datasets — the LSM overhead doesn't pay back. | `cassandra` |
@@ -116,14 +115,15 @@ backend](#adding-a-new-backend).
 
 `PICHESS_CACHE=redis` wraps any primary repository in
 `CachedGameRepository` (look-aside cache: read-through, write-through
-invalidation). It's a decorator pattern, orthogonal to backend choice —
-e.g. `PICHESS_BACKEND=postgres PICHESS_CACHE=redis` (**the default**)
-gives you postgres durability with redis read latency for hot keys.
+invalidation). The decorator is orthogonal to backend choice —
+e.g. `PICHESS_BACKEND=postgres PICHESS_CACHE=redis` (the shipping
+default is now `mongo`+`redis`) gives postgres durability with redis
+read latency for hot keys.
 
-When `PICHESS_BACKEND=redis`, layering a Redis cache decorator on top
-of a Redis primary is double-Redis with no benefit. `make stack-redis`
-sets `PICHESS_CACHE=none` for that reason; the runtime won't *prevent*
-the combination, it just isn't useful, so don't construct it by hand.
+When `PICHESS_BACKEND=redis`, a Redis cache decorator on a Redis
+primary is double-Redis with no benefit. `make stack-redis` sets
+`PICHESS_CACHE=none` for that reason; the runtime won't *prevent* the
+combination, it just isn't useful, so don't construct it by hand.
 
 ### How selection works at runtime
 
@@ -141,9 +141,9 @@ program.provide(
 )
 ```
 
-The user-facing surface for swapping backends is **env vars passed at
-container start time**. Run-time switching isn't supported — backends
-are picked once at startup and live for the lifetime of the JVM.
+The surface for swapping backends is **env vars passed at container
+start time**. Run-time switching isn't supported — a backend is picked
+once at startup and lives for the JVM's lifetime.
 
 ### Verifying which backend is active
 
@@ -153,16 +153,16 @@ curl http://localhost:8090/api/stack-info
 ```
 
 The endpoint surfaces what the gateway sees; if your stack came up
-with different env (e.g. `PICHESS_CACHE` wasn't propagated), this is
-where you'd notice.
+with different env (e.g. `PICHESS_CACHE` wasn't propagated), you'd
+notice here.
 
 ---
 
 ## The performance stack
 
-Seven layers, each addressing a different question. The same layout as
-[`docs/performance.md`](performance.md) but trimmed to "what does each
-do and why is it here".
+Seven layers, each answering a different question — same layout as
+[`docs/performance.md`](performance.md), trimmed to "what does each do
+and why is it here".
 
 | # | Layer | Question it answers | Tool |
 |---|---|---|---|
@@ -174,19 +174,19 @@ do and why is it here".
 | 5 | Metrics | "What's the live state of the running system?" | zio-metrics-connectors + Prometheus + Grafana |
 | 6 | Tracing | "Where in the request fan-out is the slow span?" | zio-opentelemetry + Jaeger |
 
-The two experiments use these layers as follows:
+How the experiments use these layers:
 
-- **Persistence experiment**: Layer 1 generates the load, Layer 5 measures
-  resource cost per backend. Layers 1b/2 are *backend-agnostic* (they
-  isolate things that aren't affected by the DB choice) and don't run
-  in the matrix.
+- **Persistence experiment**: Layer 1 generates the load, Layer 5
+  measures resource cost per backend. Layers 1b/2 are *backend-agnostic*
+  (they isolate things the DB choice doesn't affect) and don't run in
+  the matrix.
 - **Performance experiment**: Layers 3+4 surface the optimisation
   targets; Layers 1, 1b, 2, 5 measure the before/after delta. Layer 6
   helps interpret findings ("the slow span is in the gateway-to-game
-  call, not in the DB").
+  call, not the DB").
 
-For each layer's setup, runners, and output paths, the deep reference
-is [`docs/performance.md`](performance.md).
+For each layer's setup, runners, and output paths, see
+[`docs/performance.md`](performance.md).
 
 ---
 
@@ -202,23 +202,23 @@ is [`docs/performance.md`](performance.md).
 > separate axis — Redis-as-cache atop a durable primary often beats
 > either alone.
 
-The matrix tests this hypothesis by running the same Gatling workload
-against every (backend, cache) combination.
+The matrix tests this by running the same Gatling workload against
+every (backend, cache) combination.
 
 ### Methodology
 
 For each tuple in `BACKENDS × WORKLOADS × eligible-caches`:
 
 1. **Rotate the stack** to `PICHESS_BACKEND=<backend>` and
-   `PICHESS_CACHE=<cache>`, with the `obs` profile up so Prometheus is
-   scraping and Jaeger is collecting traces (`TRACING_ENABLED=true`).
+   `PICHESS_CACHE=<cache>`, with the `obs` profile up so Prometheus
+   scrapes and Jaeger collects traces (`TRACING_ENABLED=true`).
 2. **Wait for readiness** — `/api/stack-info` is the gateway probe;
-   `/healthcheck` on lobby is a backup.
+   `/healthcheck` on lobby is the backup.
 3. **Warm up** with N (default 20) full game replays so the JVMs JIT
    the hot paths before measurement.
 4. **Snapshot Prometheus** (baseline), **run the Gatling simulation**,
    **snapshot Prometheus** (final).
-5. **Extract** Gatling's per-request statistics from `stats.js` into a
+5. **Extract** Gatling's per-request stats from `stats.js` into a
    per-tuple `summary.txt`.
 
 When all tuples finish, `matrix.md` and `matrix-summary.csv` are
@@ -258,16 +258,15 @@ make db-matrix
 ```
 
 The default is **lite mode**: app services (gateway / game-service /
-repository / lobby-service) come up *once* at the start and stay warm
-across rotations. Only the DB container and the three backend-
-dependent services (game-service, repository, lobby-service) get
-recreated when the backend or cache changes. The recreation is
-sequenced — game-service first so its schema migration commits before
-repository + lobby-service start theirs (otherwise the two concurrent
-`CREATE TABLE IF NOT EXISTS games` would race inside Postgres's
-`pg_type` catalog).
+repository / lobby-service) come up *once* and stay warm across
+rotations. Only the DB container and the three backend-dependent
+services (game-service, repository, lobby-service) are recreated when
+the backend or cache changes — game-service first, so its schema
+migration commits before repository + lobby-service start theirs
+(otherwise the two concurrent `CREATE TABLE IF NOT EXISTS games` would
+race inside Postgres's `pg_type` catalog).
 
-Compared to the old full-stack-down/up-per-rotation behaviour:
+Versus the old full-stack-down/up-per-rotation behaviour:
 - ~half the peak memory (~3-4 GB vs ~6-8 GB)
 - ~5-8 min off the full matrix runtime (warm JVMs need ~5s warmup vs 30s)
 - Same data, same report
@@ -300,7 +299,7 @@ OBS=false make db-matrix
 MATRIX_HEAVY=true make db-matrix
 ```
 
-All Gatling system-property knobs propagate. Full list:
+All Gatling system-property knobs propagate:
 `BACKENDS`, `WORKLOADS`, `WARMUP_ITERS`, `USERS`, `PEAK_USERS`,
 `RAMP_SECONDS`, `HOLD_SECONDS`, `RATE_PER_SEC`, `OBS`,
 `MATRIX_HEAVY`. `USERS` only affects the Game (closed-loop) workload;
@@ -318,13 +317,13 @@ Three artefacts land under `perf-reports/<TS>/matrix/`:
 | `<backend>+<cache>/<workload>/` | Per-config artifacts: full Gatling report, Prometheus snapshots, sbt log. |
 
 The generated report (next section) folds matrix + Prometheus + k6 + JMH
-into `performance-test-results.md`. That's the file you read first.
+into `performance-test-results.md` — the file you read first.
 
 ### Interpreting the resource profile
 
 Prometheus snapshots capture each service's heap, GC time, and CPU at
 two moments (baseline = end of warmup, final = end of run). The
-report's "Resource profile" table shows:
+"Resource profile" table shows:
 
 - **Heap** — `jvm_memory_used_bytes{area="heap"}` post-run total
   (proxy for steady-state peak in workloads where GC has settled).
@@ -359,15 +358,14 @@ What to look for:
 ### The selector model
 
 Every optimisation registers a per-component env var. Default value =
-`default` — the implementation we *believe* is the better one, but
-without claiming it. The `baseline` value flips to whatever was
-there before the alternative was written. A single override knob
-(`PICHESS_OPT_ALL=baseline`) flips every selector at once for the
-headline A/B run.
+`default` — the implementation we *believe* is better, without claiming
+it. The `baseline` value flips to whatever was there before the
+alternative was written. One override knob (`PICHESS_OPT_ALL=baseline`)
+flips every selector at once for the headline A/B run.
 
 The names `default` / `baseline` are intentional: the perf experiment
-is what proves which one is "optimised" on a given workload, not our
-priors. `default` just means "what runs without flipping a selector".
+proves which one is "optimised" on a given workload, not our priors.
+`default` just means "what runs without flipping a selector".
 
 **Implemented (Phase C):**
 
@@ -401,11 +399,11 @@ optimisation](#adding-a-new-optimisation-selector) for the pattern.
 
 ### Optimisation list
 
-Each optimisation pairs with a perf layer that's expected to surface
-its impact most clearly. **#1 is the headline finding** from Phase B
-profiling — see "Phase B findings" below for how it was identified.
-The rest are a mix of profile-driven targets and known-quantity wins
-from the perf-stack design.
+Each optimisation pairs with the perf layer expected to surface its
+impact most clearly. **#1 is the headline finding** from Phase B
+profiling — see "Phase B findings" below. The rest are a mix of
+profile-driven targets and known-quantity wins from the perf-stack
+design.
 
 | # | Optimisation | Layer | What changes | Expected signal |
 |---|---|---|---|---|
@@ -438,9 +436,8 @@ Top stacks from the `itimer` (on-CPU) profile, by sample count:
 
 The smoking gun is the `DriverDataSource.getConnection` →
 `Driver.connect` chain. **A pooled DataSource never calls `Driver.connect`
-once the pool is warm**; the fact that we see it ~1000 times in a
-30-second window means a fresh socket + SCRAM handshake is happening
-for every query.
+once the pool is warm**; seeing it ~1000 times in a 30-second window
+means a fresh socket + SCRAM handshake per query.
 
 Code citation:
 `persistence/postgres/.../PostgresDatabase.scala:62-81` — the
@@ -449,26 +446,25 @@ implementation is `Database.forURL(url, user, password, driver,
 executor = AsyncExecutor(...))`. The `executor` parameter only controls
 the *query scheduling* thread pool; per the Slick docs
 (`numThreads` "has no effect on the number of connections in the
-connection pool"), there is no connection pool here — the
-`DriverDataSource` opens a fresh JDBC connection on every
-`getConnection` call.
+connection pool"), there is no pool here — `DriverDataSource` opens a
+fresh JDBC connection on every `getConnection` call.
 
 The fix is `Database.forDataSource(new com.zaxxer.hikari.HikariDataSource(cfg))`
 with HikariCP configured for `maximumPoolSize = settings.maxConnections`.
-The selector wraps both paths so the regression is reproducible at
-will via `PICHESS_OPT_PG_POOL=baseline make perf BACKENDS=postgres MODE=Stress`.
+The selector wraps both paths so the regression is reproducible via
+`PICHESS_OPT_PG_POOL=baseline make perf BACKENDS=postgres MODE=Stress`.
 
 Secondary findings (lower priority, kept for documentation):
 
 - **`MoveValidator.isInCheck → Ray.walk → Position.apply`** shows up in
   the allocation profile (≈33 samples). Each ray step allocates a fresh
   `Position`; reusing instances trims allocation rate without changing
-  the algorithm. Folded in as optimisation #4.
+  the algorithm. Folded in as #4.
 - **gRPC tracing is not joined gateway↔game-service** — the gateway-side
-  span shows ~10 ms for a `/move` POST, but we can't see how much of
-  that is the gRPC fan-out vs game-service work. Adding the gRPC
-  interceptor is in [`docs/performance.md`'s Deferred Work table](performance.md#deferred-work),
-  not in the optimisation list — it's an instrumentation fix, not an
+  span shows ~10 ms for a `/move` POST, but we can't tell how much is
+  gRPC fan-out vs game-service work. Adding the gRPC interceptor is in
+  [`docs/performance.md`'s Deferred Work table](performance.md#deferred-work),
+  not the optimisation list — an instrumentation fix, not an
   optimisation.
 - **`PrometheusEncoder.unsafeEncode` calls `String.replaceAll` per
   metric on every scrape.** Visible in the profile but ~1 sample —
@@ -496,16 +492,15 @@ PICHESS_OPT_LEGAL_MOVES=recompute make perf-all
 ```
 
 The selectors are read by the relevant service Mains, so flipping any
-of them is **a stack restart away** — no rebuild required. `make
-perf-all` reruns the full Gatling cross-backend + all three k6
-surfaces + the JMH bench, which is the canonical evidence for each
-swap.
+is **a stack restart away** — no rebuild required. `make perf-all`
+reruns the full Gatling cross-backend + all three k6 surfaces + the JMH
+bench — the canonical evidence for each swap.
 
 ### Reading the optimisation output
 
 The generated report (`performance-test-results.md`) has an
-"Optimisation A/B" section that compares the two extremes. For per-
-optimisation breakdown, look at:
+"Optimisation A/B" section comparing the two extremes. For per-
+optimisation breakdown:
 
 - **Layer 2 deltas**: `bench-<scope>.json` rows for the affected
   benchmark class — direct µs/op comparison. See "Module benches"
@@ -513,15 +508,15 @@ optimisation breakdown, look at:
 - **Layer 1 deltas**: the `comparison.md` p95 column per backend.
 - **Layer 1b deltas**: k6 per-surface `summary.json` p95.
 - **Resource profile deltas**: the Prometheus table — allocation /
-  GC / CPU changes that the latency tables miss.
+  GC / CPU changes the latency tables miss.
 
 ---
 
 ## Module benches — isolated per-subsystem perf
 
 The JMH bench suite is partitioned so you can A/B a single subsystem
-without running the whole application or the whole bench suite. Each
-subset runs in seconds when scoped narrowly.
+without running the whole application or bench suite. Each subset runs
+in seconds when scoped narrowly.
 
 | Target | Tests | Needs |
 |---|---|---|
@@ -539,24 +534,23 @@ BENCH_QUICK=true    make bench-codec   # 1+1 — fast feedback, no confidence in
 BENCH_THOROUGH=true make bench-codec   # 5+10 × 2 forks — publication-grade
 ```
 
-`BENCH_QUICK` is what you reach for during a tight develop-measure-tweak
-loop. The numbers are noisy (no confidence interval — JMH writes
-`scoreError = "NaN"` with only 1 sample, surfaced as `n/a` in the
-report's Error column) but the ratio between optimised and naive is
-usually still informative. Use `BENCH_THOROUGH` for the final numbers
-that go into the report.
+`BENCH_QUICK` is for a tight develop-measure-tweak loop. The numbers
+are noisy (no confidence interval — JMH writes `scoreError = "NaN"`
+with only 1 sample, surfaced as `n/a` in the report's Error column),
+but the optimised-vs-naive ratio is usually still informative. Use
+`BENCH_THOROUGH` for the final numbers that go into the report.
 
 ### Output, aggregation, the perf-report scope tables
 
-Every subset writes a JSON file named `perf-reports/bench-<scope>-<ts>.json`,
-e.g. `bench-codec-20260603T020012Z.json`. The report generator
+Every subset writes `perf-reports/bench-<scope>-<ts>.json`, e.g.
+`bench-codec-20260603T020012Z.json`. The report generator
 (`make perf-report`) picks these up and emits one sub-table per scope
 under `## JMH microbenchmarks`, so the final report has separate
 codec / rules / persistence / wire tables — easy to compare against
 specific optimisations.
 
 A bare `make bench` (the unioned form) writes `bench-<ts>.json` with
-no scope label; the report shows that under `### Scope: all`.
+no scope label; the report shows it under `### Scope: all`.
 
 ### Per-optimisation bench pairing (Phase D convention)
 
@@ -575,10 +569,9 @@ scope so the A/B is reproducible at the smallest level:
 
 Module benches with testcontainers (`bench-persistence`) trade ~5-10 s
 of container startup for "clean room" data: a fresh DB per `@Trial`,
-no leftover state, no other services on the host competing for CPU.
-Peak resource: one DB container (~250-800 MB) + the JMH JVM
-(~300 MB) — fits in well under a gigabyte for everything except
-Cassandra.
+no leftover state, no other services competing for CPU. Peak resource:
+one DB container (~250-800 MB) + the JMH JVM (~300 MB) — well under a
+gigabyte for everything except Cassandra.
 
 ---
 
@@ -649,7 +642,7 @@ Reading the flame graph:
 - Width = % of CPU time spent in that frame.
 - Climb to a wide green frame; that's the hot method.
 - Java/Scala frames are mixed with JVM internals. Filter
-  by the package prefix (`chess.*`) to focus on app code.
+  by package prefix (`chess.*`) to focus on app code.
 
 What to look for as optimisation targets:
 
@@ -688,8 +681,8 @@ Goal: drop a new backend into the matrix with no further plumbing.
 6. **Add `caches_for_backend` arm** in `scripts/db-matrix.sh` if the
    new backend can host a cache.
 
-The matrix picks the new backend up automatically when you pass
-`BACKENDS=<name>` (or include it in the default list).
+The matrix picks up the new backend automatically when you pass
+`BACKENDS=<name>` (or add it to the default list).
 
 ### Adding a new optimisation selector
 
@@ -748,9 +741,9 @@ if it's set to `naive`, every selector falls back to its naive case.
 
 ## The generated report
 
-`scripts/perf-report.sh` (called via `make perf-report`) reads any
-`perf-reports/<TS>/` directory and emits
-`performance-test-results.md` next to the raw data.
+`scripts/perf-report.sh` (via `make perf-report`) reads any
+`perf-reports/<TS>/` directory and emits `performance-test-results.md`
+next to the raw data.
 
 ```bash
 # Most recent run dir, picked automatically:
@@ -772,8 +765,8 @@ The report assembles whatever's in the run dir:
 | JMH microbenchmarks | `bench.json` (or `../bench-*.json`) | Either form present |
 | Raw artifacts | walk the run dir | Always |
 
-Missing sections are gracefully skipped — the report renders cleanly
-against any subset.
+Missing sections are skipped — the report renders cleanly against any
+subset.
 
 ---
 

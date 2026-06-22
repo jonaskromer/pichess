@@ -2,8 +2,8 @@
 
 > For the overall layer structure and package responsibilities, see [architecture.md](architecture.md). For the dev inner loop, see [development.md](development.md).
 
-The piChess performance stack is six layers stacked under one harness, each
-addressing a different question:
+The piChess performance stack is six layers under one harness, each answering a
+different question:
 
 | Layer | Question it answers | Tool |
 |---|---|---|
@@ -16,7 +16,7 @@ addressing a different question:
 | 6. Tracing | "Where in the request fan-out is the slow span?" | zio-opentelemetry + Jaeger |
 | Harness | "Glue the above into a backend-comparison report." | `make perf` |
 
-The entire stack is **opt-in**. Default `make up` stays lean; the observability
+The stack is **opt-in**: default `make up` stays lean; the observability
 infrastructure (Prometheus / Grafana / Jaeger) ships under the `obs`
 docker-compose profile.
 
@@ -24,8 +24,8 @@ docker-compose profile.
 
 ## Quick start
 
-Full cross-backend run with live observability, the way the `/dev/test/performance`
-page assumes you'll use it:
+Full cross-backend run with live observability, as the `/dev/test/performance`
+page assumes:
 
 ```bash
 TRACING_ENABLED=true make stack-postgres EXTRA=obs        # bring up obs + postgres
@@ -37,10 +37,10 @@ open http://localhost:9090/                                # Prometheus — raw 
 open http://localhost:16686/                               # Jaeger — trace UI
 ```
 
-After the harness completes, `perf-reports/<UTC-ts>/comparison.md` holds the
-cross-backend table; each `perf-reports/<UTC-ts>/<backend>/` subdir holds the
-per-backend Gatling HTML, the Prometheus baseline/final snapshots, and (when
-profiling was on) the flame graphs.
+After the run, `perf-reports/<UTC-ts>/comparison.md` holds the cross-backend
+table; each `perf-reports/<UTC-ts>/<backend>/` subdir holds the per-backend
+Gatling HTML, Prometheus baseline/final snapshots, and (when profiling was on)
+flame graphs.
 
 ---
 
@@ -77,16 +77,16 @@ profiling was on) the flame graphs.
    └──────────────────────┘
 ```
 
-The microservices themselves don't know which observability tools are watching;
-they just emit metrics, traces and (when profiling is on) samples. Add or
-remove `Prometheus`/`Grafana`/`Jaeger` without touching any service code.
+The microservices emit metrics, traces and (when profiling is on) samples
+without knowing which tools are watching; add or remove
+`Prometheus`/`Grafana`/`Jaeger` without touching service code.
 
 ---
 
 ## Layer 1 — Gatling load tests
 
-Module: `gatling/`. Built on Gatling 3.13.5 (Scala 3 native, Akka/Netty under
-the hood). One simulation per load shape.
+Module: `gatling/`. Built on Gatling 3.13.5 (Scala 3 native, Akka/Netty). One
+simulation per load shape.
 
 | Simulation | Shape | Default tuning | Use case |
 |---|---|---|---|
@@ -98,8 +98,8 @@ the hood). One simulation per load shape.
 | `VolumeSimulation`    | ramp to high user count, each runs full flow | 50 peak / 5 s | Storage-layer stress (index growth, compaction) |
 | `MixedSimulation`     | 70/30 game + lobby in parallel | derived from `pichessUsers` | Cross-service contention |
 
-Common scenario fragments live in `gatling/src/test/scala/chess/gatling/Chains.scala`
-so every simulation reuses the same gameplay / lobby chains.
+Common scenario fragments live in `gatling/src/test/scala/chess/gatling/Chains.scala`,
+so simulations share the same gameplay / lobby chains.
 
 ### System properties (per-run tuning)
 
@@ -118,9 +118,9 @@ All shapes read these via `sys.props`; pass `-D<key>=<value>` to sbt:
 ### Assertions
 
 Every simulation calls `setUp(…).assertions(…)` with p95 / p99 / error-rate
-SLAs (the values are loosened for stress / spike — see each simulation's
-source). A breach turns the run RED in Gatling's HTML report and exits the
-sbt task with a non-zero status, so a violated SLA fails CI.
+SLAs (loosened for stress / spike — see each simulation's source). A breach
+turns the run RED in Gatling's HTML report and exits the sbt task non-zero, so
+a violated SLA fails CI.
 
 ### Invocation
 
@@ -131,38 +131,35 @@ sbt -DpichessPeakUsers=200 -DpichessHoldSeconds=300 \
     'gatling/Gatling/testOnly chess.gatling.EnduranceSimulation'          # tuned
 ```
 
-Output: `gatling/target/gatling/<simulation>-<runId>/`. The latest run is what
-`make perf-bake` / `make gatling-build` pick up for the dev page.
+Output: `gatling/target/gatling/<simulation>-<runId>/`. `make perf-bake` /
+`make gatling-build` pick up the latest run for the dev page.
 
 ---
 
 ## Layer 1b — k6 (surfaces Gatling can't reach)
 
-Module: `k6/`. Image: pinned `grafana/k6:0.55.0` (Chromium + the `k6/browser`
-module bundled in core since 0.50). One JS script per surface.
-
-Layer 1 (Gatling) owns the HTTP load shapes. k6 sits next to it covering
-the three surfaces Gatling can't speak natively:
+Module: `k6/`. Image: a **custom two-stage build** (`k6/Dockerfile`; detailed
+under [Shared infrastructure](#shared-infrastructure) below). One JS script per
+surface, covering the three surfaces Gatling can't speak natively:
 
 | Surface | Script | What it measures | Status |
 |---|---|---|---|
 | Browser | `scripts/browser/lobby-flow.js` | Real Chromium → LCP / FCP / CLS on landing, `#new`, `#join` | **Shipped** |
-| Kafka   | `scripts/kafka/game-events.js`  | Direct producer onto `pichess.game.events` (bypasses HTTP) | Deferred — needs xk6-kafka build |
-| gRPC    | `scripts/grpc/game-service.js`  | Native gRPC against game-service (today only reached transitively via gateway) | Deferred |
+| Kafka   | `scripts/kafka/game-events.js`  | Direct `xk6-kafka` producer onto `chess.game-events` (bypasses HTTP) | **Shipped** |
+| gRPC    | `scripts/grpc/game-service.js`  | Native gRPC against game-service (otherwise only reached transitively via gateway) | **Shipped** |
 
 ### Why a second tool
 
-The k6 integration is **additive**, not a replacement for Gatling. Gatling
-already does HTTP load shapes / ramps / SLA-as-code well — see Layer 1.
-What it can't do:
+The k6 integration is **additive**, not a Gatling replacement: Gatling already
+does HTTP load shapes / ramps / SLA-as-code well (Layer 1). What it can't do:
 
 - **Render real pages.** Gatling speaks HTTP, not DOM — it can't measure
-  LCP or FCP. The frontend's perceived performance is a complete blind
-  spot in Layers 1–6.
+  LCP or FCP. Frontend perceived performance is a blind spot across
+  Layers 1–6.
 - **Saturate Kafka directly.** `opening-service` and `analytics-service`
-  are Kafka-only; the current Gatling sims reach them through the
-  gateway → game-service → Kafka path, which makes the upstream the
-  bottleneck before consumers are ever stressed.
+  are Kafka-only; Gatling sims reach them through the
+  gateway → game-service → Kafka path, so the upstream saturates before
+  consumers are ever stressed.
 - **Talk gRPC.** `game-service` is gRPC-only, so Gatling can't hit it
   directly — every measurement passes through the gateway.
 
@@ -172,55 +169,65 @@ What it can't do:
 |---|---|
 | `k6/lib/config.js`     | `cfg.gatewayUrl`, `cfg.vus`, … — single source for env-var fallbacks |
 | `k6/lib/thresholds.js` | Shared SLA values. `httpThresholds` mirror Gatling assertions; `browserThresholds` use Google's "Good" Web Vitals buckets |
-| `k6/Dockerfile`        | Single-stage from `grafana/k6:0.55.0`. Kafka surface will replace this with a `grafana/xk6` two-stage build |
+| `k6/Dockerfile`        | Two-stage build: `grafana/xk6:1.0.1` links `xk6-kafka@v0.27.0` into k6 `0.55.0`, then copies that binary onto the `grafana/k6:0.55.0-with-browser` base (Chromium for the browser surface) |
 
 ### Compose / Docker
 
 Service `k6` under the `k6` profile. Bind-mounts `k6/scripts:/scripts`,
-`k6/lib:/lib`, `perf-reports:/out`. Runs with `network_mode: host` so
-the same `localhost:8090` / `localhost:9092` / `localhost:8091` targets
-resolve identically inside the container and from the host shell.
+`k6/lib:/k6lib` (**not** `/lib` — that would shadow Alpine's musl dynamic
+linker and break Chromium), `proto/src/main/protobuf:/proto` (gRPC surface),
+and `perf-reports:/out`. Runs `network_mode: host` so host-mapped targets
+resolve identically inside the container and from the host shell: gateway
+`localhost:8090`, Kafka `localhost:29092` (the `PLAINTEXT_HOST` listener),
+game-service gRPC `localhost:9000`.
 
 ### Invocation
 
 ```bash
-make stack-postgres EXTRA=obs                 # gateway must be reachable on :8090
-make k6-build                                 # one-shot — pulls + builds the image
-make k6-browser                               # runs k6/scripts/browser/lobby-flow.js
-K6_VUS=20 K6_DURATION=120s make k6-browser    # tuned
+make stack-postgres EXTRA=obs                 # gateway reachable on :8090
+make k6-build                                 # one-shot — builds the custom xk6 image
+make k6-browser                               # browser surface (scripts/browser/lobby-flow.js)
+make k6-grpc                                  # native gRPC against game-service :9000
+make stack-postgres EXTRA=opening             # kafka surface needs Kafka up …
+make k6-kafka                                 #   … then the direct xk6-kafka producer
+make k6 SURFACES=browser,grpc,kafka           # all three in one run
+PICHESS_K6_VUS=20 PICHESS_K6_DURATION=120s make k6-browser   # tuned (NOT K6_VUS/K6_DURATION — those are k6-reserved)
 ```
 
-`scripts/k6-run.sh` is the driver. It writes:
+`scripts/k6-run.sh` (the driver) writes:
 
 ```
 perf-reports/<UTC-ts>/k6/
-└── browser/
-    ├── summary.json   ← k6 handleSummary
-    └── stdout.log     ← full run log
+├── browser/
+│   ├── summary.json   ← k6 handleSummary
+│   └── stdout.log     ← full run log
+├── grpc/    …         ← one subdir per surface that ran
+└── kafka/   …
 ```
 
-A threshold breach exits the surface's container non-zero; the driver
-continues to the next surface and exits non-zero at the end if *any*
-surface failed, so CI sees one pass/fail.
+A threshold breach exits that surface's container non-zero; the driver
+continues to the next and exits non-zero at the end if *any* surface failed,
+so CI sees one pass/fail.
 
 ### Wiring to Layer 5 (Prometheus + Grafana)
 
 k6 supports `--out experimental-prometheus-rw=…` for native remote-write
 into the Prometheus container, and a dashboard JSON in
-`docker/grafana/dashboards/k6.json` would be auto-provisioned the same
-way as `pichess.json`. Neither is wired yet — first cut runs the script
-standalone with the JSON summary; the metrics wiring lands when the
-Kafka + gRPC surfaces do.
+`docker/grafana/dashboards/k6.json` would be auto-provisioned like
+`pichess.json`. Neither is wired yet — every surface runs standalone,
+emitting the JSON summary + stdout log; native Prometheus remote-write
+remains a follow-up.
 
 ### Not yet wired
 
-- `kafka` surface — needs an xk6-kafka image build and Kafka exposed
-  on host port 9092 (currently internal-only).
-- `gRPC` surface — needs game-service's gRPC port exposed and the
-  `.proto` files mounted into the container.
+All three surfaces ship (table above). What's left:
+
 - Backend rotation — `scripts/perf-run.sh` doesn't yet invoke k6 per
-  backend. When folded in, output will move to
+  backend; k6 runs once per suite via `scripts/k6-run.sh`, output under
+  `perf-reports/<ts>/k6/`. Folded in, output would move to
   `perf-reports/<ts>/<backend>/k6/` to match the Gatling layout.
+- Native Prometheus remote-write + a `k6.json` Grafana dashboard (see
+  the previous subsection).
 
 ---
 
@@ -239,9 +246,13 @@ the pure-functional chess-engine internals that Gatling can't isolate.
 | `ZobristHashBenchmark`  | `Zobrist.hash` (NANOSECONDS — tight inner loop) |
 | `SanRoundTripBenchmark` | parse-apply-serialize over a 16-ply Ruy Lopez |
 | `PgnParserBenchmark`    | full-PGN parse over the curated corpus |
+| `SearchBenchmark`       | `Search.bestMove` — the production α-β + TT hot path — over starting / mid-game / Kiwipete at depths 2–4; material vs tapered eval (MILLISECONDS) |
+| `TexelTunerBenchmark`   | `TexelTuner` coordinate descent — `evaluate` / `totalLoss` / `oneSweep` at 5 vs 690 features (MILLISECONDS) |
+| `SelfPlayBenchmark`     | `SelfPlay.round` throughput — cross-game fiber parallelism scaling (MILLISECONDS) |
+| `BoardStateDtoBenchmark`| codec round-trip on `BoardStateDto` (small + medium): boopickle vs zio-json vs FEN — pins the numbers in [Wire-format conventions](#wire-format-conventions-for-grpc-payloads) |
 
 Shared inputs (FEN corpus, SAN sequences, PGN wrapper) live in
-`bench/src/main/scala/chess/bench/BenchFixtures.scala`. ZIO effects are unwrapped
+`bench/src/main/scala/chess/bench/BenchFixtures.scala`; ZIO effects are unwrapped
 via `bench/src/main/scala/chess/bench/UnsafeRuntime.scala`'s shared default runtime.
 
 JMH config is fixed in annotations: `Mode.AverageTime`, default in µs (ns for
@@ -252,25 +263,32 @@ the CLI when needed.
 
 ```bash
 make bench                                                          # full suite, JSON to perf-reports/
+make bench-codec                                                    # subset: FEN / SAN / PGN / Zobrist
+make bench-rules                                                    # subset: MoveValidator / Ray / GameApplyMove
+make bench-bot                                                      # subset: Search / TexelTuner / SelfPlay
+BENCH_QUICK=true make bench-codec                                   # 1 warmup + 1 meas × 1 fork — fast, noisy
+BENCH_THOROUGH=true make bench-bot                                  # 5 warmup + 10 meas × 2 forks — publication-grade
 sbt 'bench/Jmh/run -i 5 -wi 5 -f1 chess.bench.FenParserBenchmark'   # one class, default counts
 sbt 'bench/Jmh/run -i 3 -wi 3 -f1 -rf json -rff bench-results.json' # all, JSON output
 ```
 
 `make bench` writes `perf-reports/bench-<UTC-ts>.json` — the `make perf` harness
-optionally folds it into its summary.
+optionally folds it into its summary. The `bench-codec` / `bench-rules` /
+`bench-bot` subset targets write `bench-<scope>-<ts>.json`; the `BENCH_QUICK` /
+`BENCH_THOROUGH` toggles switch JMH iteration / fork counts for any of them
+(`make help` lists the per-target vars).
 
 ---
 
 ## Layer 3 — zio-profiling (sampling, fiber-aware)
 
 Module: `observability/`. Library: `zio-profiling 0.3.3`. The marquee ZIO-native
-piece of the stack — a CPU profiler that understands ZIO fibers, so output is
-attributed to your effects rather than to `ZIO.evaluate` / `FiberRuntime`
-frames.
+piece — a CPU profiler that understands ZIO fibers, so output is attributed to
+your effects rather than `ZIO.evaluate` / `FiberRuntime` frames.
 
 The integration is in `chess.obs.ProfilerLayer.wrap(serviceName, program)`;
-every service Main wraps its `run` body with it. With profiling disabled the
-wrap is a literal pass-through (zero overhead).
+every service Main wraps its `run` body with it. Disabled, the wrap is a literal
+pass-through (zero overhead).
 
 ### Modes
 
@@ -280,17 +298,17 @@ wrap is a literal pass-through (zero overhead).
 | `sampling`            | Wraps the program in `SamplingProfiler(20ms).profile(…)`. On termination, dumps stack-collapsed format to `/var/log/pichess/profile-<service>-<UTC-ts>.folded`. |
 
 The container path `/var/log/pichess/` is bind-mounted to the host's
-`./perf-reports/profiles/` so dumps survive `docker stop` and the perf-matrix
+`./perf-reports/profiles/`, so dumps survive `docker stop` and the perf-matrix
 backend rotation.
 
 ### Tagging compiler plugin (optional but recommended)
 
-Without the plugin, the profile shows time spent in the ZIO evaluation loop —
-useful for spotting CPU starvation but not for source-line attribution. With
-the plugin, every effect-returning `def` / `val` is automatically tagged with
-its source position, and the flame graph shows actual line-by-line attribution.
+Without the plugin, the profile shows time in the ZIO evaluation loop — useful
+for spotting CPU starvation but not source-line attribution. With it, every
+effect-returning `def` / `val` is auto-tagged with its source position, and the
+flame graph shows line-by-line attribution.
 
-To build with the plugin (it's a compile-time decision):
+To build with the plugin (a compile-time decision):
 
 ```bash
 PICHESS_PROFILE_BUILD=true sbt dockerBuildAll
@@ -298,8 +316,8 @@ PICHESS_PROFILE_BUILD=true sbt dockerBuildAll
 
 `commonSettings` in `build.sbt` adds the plugin only when this env var is set,
 and **also disables scoverage** for that build (the synthetic statements the
-plugin emits would otherwise break the 100 % coverage gate). Profile builds and
-CI builds are intentionally not the same artifact.
+plugin emits would otherwise break the 100 % coverage gate). Profile and CI
+builds are intentionally not the same artifact.
 
 ### Rendering a flame graph
 
@@ -322,8 +340,8 @@ overhead, prod-safe. Covers everything below ZIO — GC, JIT, native code — th
 zio-profiling can't see. Use both: zio-profiling for "which effect", async-
 profiler for "what is the JVM doing".
 
-The integration is runtime-attach (no Java agent baked into the image), so
-the same image runs in CI and under profiling without re-build.
+Runtime-attach (no Java agent baked into the image), so the same image runs in
+CI and under profiling without rebuild.
 
 ### `scripts/profile-async.sh`
 
@@ -352,26 +370,36 @@ make profile-async-cpu   SERVICE=game-service DURATION=60
 make profile-async-alloc SERVICE=game-service DURATION=60
 ```
 
-Note on macOS: `asprof` runs inside the Linux container, not on the host.
-Docker Desktop's VM has sane `perf_event_paranoid` defaults for arm64 Macs;
-verify once with `docker compose exec game-service sysctl kernel.perf_event_paranoid`
+On macOS, `asprof` runs inside the Linux container, not the host. Docker
+Desktop's VM has sane `perf_event_paranoid` defaults for arm64 Macs; verify
+once with `docker compose exec game-service sysctl kernel.perf_event_paranoid`
 if a first run fails.
 
 ---
 
 ## Layer 5 — Prometheus + Grafana metrics
 
-Module: `observability/`. Library: `zio-metrics-connectors-prometheus 2.5.5`.
+Module: `observability/`. Library: `zio-metrics-connectors-prometheus 2.5.6`.
 Wires the ZIO runtime's built-in `zio.Metric` registry (fiber counts, JVM heap,
-GC pauses, etc.) plus any application-emitted counters/histograms into the
+GC pauses, etc.) plus any application-emitted counters/histograms into
 Prometheus exposition format.
 
 ### Wiring
 
 `chess.obs.MetricsLayer.live` builds a single `ULayer[PrometheusPublisher]` from
-the publisher + connector + `MetricsConfig(5.seconds)`.
-`chess.obs.MetricsHttpServer.serve(port)` runs a tiny zio-http server that
-exposes `GET /metrics` returning the latest snapshot.
+publisher + connector + `MetricsConfig(5.seconds)`.
+`chess.obs.MetricsHttpServer.serve(port)` runs a tiny zio-http server exposing
+`GET /metrics` with the latest snapshot.
+
+> ⚠️ `MetricsLayer.live` yields only the **publisher** — it snapshots whatever
+> is already in ZIO's metric registry. The JVM series (`jvm_memory_used_bytes`,
+> `jvm_gc_pause_seconds_*`, thread / class-loading counters) is **not**
+> automatic: each service Main must *also* call `MetricsLayer.jvmMetricsBootstrap`
+> (which builds `DefaultJvmMetrics.liveV2` on the long-lived scope) to register
+> those trackers. Without it, `/metrics` carries only the ZIO runtime +
+> application metrics. Every service Main calls it (e.g. `GatewayMain.scala`,
+> `GameServiceMain.scala`); `liveV2` over `live` so the names match what the
+> dashboards / report generator parse.
 
 Every service Main forks the metrics server on its dedicated port via
 `MetricsHttpServer.serve(metricsPort).forkDaemon`:
@@ -425,12 +453,12 @@ Module: `observability/`. Library: `zio-opentelemetry 3.0.0-RC24` +
 `chess.obs.TracingLayer.fromEnv(name)` reads `TRACING_ENABLED`: when truthy it
 builds the live SDK pointing at `OTEL_EXPORTER_OTLP_ENDPOINT`
 (default `http://jaeger:4317`); otherwise it returns a noop layer that never
-opens a connection. The choice is made at boot time so the live exporter
-doesn't sit there retrying when Jaeger isn't around.
+opens a connection. The choice is made at boot so the live exporter doesn't
+retry when Jaeger isn't around.
 
 `chess.obs.TracingMiddleware.serverSpan` is a zio-http `HandlerAspect` that
-extracts the incoming W3C `traceparent` / `tracestate` headers from each
-request, starts a SERVER span named `<METHOD> <path>`, and ends it on response.
+extracts the W3C `traceparent` / `tracestate` headers from each request, starts
+a SERVER span named `<METHOD> <path>`, and ends it on response.
 
 ### Instrumented services
 
@@ -443,10 +471,9 @@ request, starts a SERVER span named `<METHOD> <path>`, and ends it on response.
 | game-service      | **No** — gRPC interceptor is deferred (see [Deferred work](#deferred-work)) |
 | opening-service   | **No** — Kafka-only; consumer instrumentation is deferred |
 
-What this means today: a request through the gateway shows as one trace at the
-gateway, then a separate, unconnected trace at game-service / repository for
-the downstream calls. Connecting them into a single trace is the deferred
-gRPC / Kafka work.
+Today, a request through the gateway shows as one trace at the gateway, then a
+separate, unconnected trace at game-service / repository for the downstream
+calls. Connecting them into a single trace is the deferred gRPC / Kafka work.
 
 ### Jaeger
 
@@ -510,13 +537,12 @@ perf-reports/
     └── inmemory/   …
 ```
 
-`comparison.md` is what you commit / paste into a PR description / link from
-the dev page after `make perf-bake`.
+`comparison.md` is what you commit / paste into a PR / link from the dev page
+after `make perf-bake`.
 
 ### Make targets
 
-The perf suite is exposed as a single menu of Make targets — one per
-layer or surface, plus an orchestrator for the full sweep.
+One Make target per layer / surface, plus an orchestrator for the full sweep.
 
 **Run the full suite (Layers 1 + 1b + 2)**
 
@@ -552,9 +578,9 @@ above for the `PICHESS_PROFILE` / `EXTRA=obs` / `TRACING_ENABLED` flags.
 
 ### Environment variables — full reference
 
-Every tunable env var the perf-suite Make targets honor, grouped by
-target. Defaults match the values in `scripts/perf-run.sh`,
-`scripts/k6-run.sh`, `scripts/perf-all.sh`, and `k6/lib/config.js`.
+Every tunable env var the perf-suite Make targets honor, grouped by target.
+Defaults match `scripts/perf-run.sh`, `scripts/k6-run.sh`,
+`scripts/perf-all.sh`, and `k6/lib/config.js`.
 
 **Layer 1 — `make perf` and `make perf-all`**
 
@@ -599,9 +625,9 @@ target. Defaults match the values in `scripts/perf-run.sh`,
 
 ### k6 surface internals
 
-All three k6 surfaces ship with scripts under `k6/scripts/<surface>/`
-and run end-to-end via `make k6` / `make k6-{browser,grpc,kafka}`. The
-infrastructure each surface relies on:
+All three surfaces ship with scripts under `k6/scripts/<surface>/`, run
+end-to-end via `make k6` / `make k6-{browser,grpc,kafka}`. The infrastructure
+each relies on:
 
 | Surface | Wiring |
 |---|---|
@@ -629,25 +655,25 @@ make k6-browser
 `#dev/test/performance` (gated by `PICHESS_DEV=true`) renders three sections in
 the existing paper-card aesthetic:
 
-1. **Live observability links** — Grafana / Prometheus / Jaeger. They only
-   resolve when the `obs` profile is active; otherwise the links 404. The page
-   is intentionally a launcher, not a status board.
+1. **Live observability links** — Grafana / Prometheus / Jaeger. They resolve
+   only when the `obs` profile is active; otherwise the links 404. The page is
+   intentionally a launcher, not a status board.
 2. **How-to-reproduce** — a copy-friendly `make perf BACKENDS=… MODE=…`
-   snippet so the URL of a Gatling report is bundled with the command that
-   regenerates it.
+   snippet, bundling a Gatling report's URL with the command that regenerates
+   it.
 3. **Latest baked report** — iframe of `/dev/performance/report/`, refreshed
    by `make perf-bake` (or the legacy `make gatling-build`).
 
-The page is **read-only**: no buttons that kick off runs. The reasoning
-(self-DoS surface + Docker-socket privilege + image bloat) is settled — see the
-discussion in [ADR](adr/) follow-ups, or rerun via the CLI.
+The page is **read-only**: no buttons kick off runs. The reasoning (self-DoS
+surface + Docker-socket privilege + image bloat) is settled — see the
+[ADR](adr/) follow-ups, or rerun via the CLI.
 
 ---
 
 ## Memory budget — MacBook Air notes
 
 The dev rig is a 16 GiB MacBook Air. Approximate per-container RSS during a
-perf run, so you can decide what's safe to bring up together:
+perf run, to decide what's safe to bring up together:
 
 | Container | Approx | When it's up |
 |---|---|---|
@@ -673,18 +699,17 @@ Rules of thumb:
 ## Wire-format conventions for gRPC payloads
 
 When a gRPC response carries a rich, structured payload (not just a few
-strings/ids) and the producer + consumer are both Scala microservices in
-this monorepo, the convention is to **ship the wire payload as a single
-`bytes` field carrying a Scala case-class DTO encoded via boopickle**.
-The DTO lives in the shared `api` module — same type at both ends, no
-proto↔Scala translation layer.
+strings/ids) and producer + consumer are both Scala microservices in this
+monorepo, the convention is to **ship the wire payload as a single `bytes`
+field carrying a Scala case-class DTO encoded via boopickle**. The DTO lives in
+the shared `api` module — same type at both ends, no proto↔Scala translation
+layer.
 
-Current production user: `StateReply.board_state` carries a
-`BoardStateDto` encoded by `BoardStateDto.encodeBytes` (boopickle) and
-decoded by `BoardStateDto.decodeBytes`. The gateway's
-`WebController.replyToDto` consumes the bytes directly; the gateway no
-longer parses a FEN string out of every reply. Sidecar `fen` field
-remains for the annotation cache, which needs castling + en-passant
+Current production user: `StateReply.board_state` carries a `BoardStateDto`
+encoded by `BoardStateDto.encodeBytes` (boopickle) and decoded by
+`BoardStateDto.decodeBytes`. The gateway's `WebController.replyToDto` consumes
+the bytes directly; it no longer parses a FEN string out of every reply. Sidecar
+`fen` field remains for the annotation cache, which needs castling + en-passant
 info the `BoardStateDto` doesn't carry.
 
 **Codec choice rule:**
@@ -696,30 +721,26 @@ info the `BoardStateDto` doesn't carry.
 | FEN string (hand-tuned) | ~12 µs | retained for `fen` sidecar + persistence |
 | zio-schema-protobuf | **~416 µs (33× slower)** | **do not use on hot paths** |
 
-The zio-schema-protobuf trap was found the hard way: an initial
-migration regressed end-to-end p99 by ~7× under high load.
-Redis persistence still uses zio-schema-protobuf via
-`RedisLayers.ProtobufCodecSupplier` and that's fine because the
-`GameState` payload is smaller and Redis isn't a per-request hot
-path — but don't extend that pattern to gRPC or any per-request
-encode site. The microbench in
-`bench/.../BoardStateDtoBenchmark.scala` pins the numbers down across
-small + medium DTO sizes and is the place to add a new codec
-contender before any migration.
+The zio-schema-protobuf trap was found the hard way: an initial migration
+regressed end-to-end p99 by ~7× under high load. Redis persistence still uses
+zio-schema-protobuf via `RedisLayers.ProtobufCodecSupplier`, and that's fine —
+the `GameState` payload is smaller and Redis isn't a per-request hot path — but
+don't extend that pattern to gRPC or any per-request encode site. The microbench
+in `bench/.../BoardStateDtoBenchmark.scala` pins the numbers across small +
+medium DTO sizes; add a new codec contender there before any migration.
 
-**When the pattern doesn't apply.** If the response is already a few
-flat strings (e.g. `ExportReply { format, body }` where `body` is
-rendered to its final wire format at the source), there's no Scala
-DTO middle layer to eliminate — keep the structured proto fields. The
-pattern is for collapsing a proto↔Scala translation step, not for
-binary-encoding-as-a-virtue.
+**When the pattern doesn't apply.** If the response is already a few flat
+strings (e.g. `ExportReply { format, body }` where `body` is rendered to its
+final wire format at the source), there's no Scala DTO middle layer to
+eliminate — keep the structured proto fields. The pattern collapses a
+proto↔Scala translation step; it's not binary-encoding-as-a-virtue.
 
 ---
 
 ## Deferred work
 
 The plan in [the design ADR](adr/) called for additional tracing surfaces; they
-weren't required to ship the rest of the stack and have known integration
+weren't required to ship the rest of the stack and carry known integration
 risk. All three slot in additively (no rework of what's shipped).
 
 | Deferred | Wiring needed | Reasoning |
@@ -728,9 +749,9 @@ risk. All three slot in additively (no rework of what's shipped).
 | **Kafka context propagation** | Wrap `producer.produce(...)` in `Tracing.span("kafka.produce")` with header injection at `KafkaGameEventProducer.scala:21`, and header extraction at the three consumers (`repository/KafkaGameEventConsumer.scala:43-63`, `opening/.../KafkaOpeningConsumer.scala`, `analytics/.../KafkaAnalyticsConsumer.scala`). | zio-kafka 2.10 has no native OTel hook; this is a small amount of manual plumbing. |
 | **DB tracing decorator** | New `persistence/tracing/` module mirroring `persistence/cache/.../CachedGameRepository.scala:19-38`, wrapping `GameRepository` and `LobbyRepository` at the trait boundary so every backend gets `db.<op>` spans uniformly. Wire at `PersistenceLayers.gameRepository`. | Single point-of-instrumentation gives identical span shape across Postgres / Mongo / Redis / Cassandra. |
 
-The observability module already pulls in `zio-opentelemetry` and the
-`opentelemetry-sdk` so all three land as new files + a few-line wiring
-change, with no dependency churn.
+The observability module already pulls in `zio-opentelemetry` and
+`opentelemetry-sdk`, so all three land as new files + a few-line wiring change,
+no dependency churn.
 
 ---
 
