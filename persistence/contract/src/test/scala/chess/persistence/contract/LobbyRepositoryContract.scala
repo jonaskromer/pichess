@@ -115,7 +115,10 @@ abstract class LobbyRepositoryContract extends ZIOSpecDefault:
         )
         val closedLobby = baseLobby.copy(
           id = "closed-1",
-          inviteCode = InviteCode.unsafe("CLOSED"),
+          // Must be a *valid* code: the alphabet excludes I/O, so the literal
+          // "CLOSED" (has an O) is rejected by the Redis strict decoder on
+          // round-trip — see the findByInviteCode note above.
+          inviteCode = InviteCode.unsafe("CLSEDX"),
           status = LobbyStatus.Closed
         )
         for
