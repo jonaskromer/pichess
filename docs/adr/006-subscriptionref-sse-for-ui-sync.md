@@ -2,7 +2,17 @@
 
 ## Status
 
-Accepted
+Accepted — core decision current; some specifics superseded by the microservices split.
+
+> **Update (microservices split, Phase 11):** the `SubscriptionRef[SessionState]`
+> now lives **inside game-service** (a per-game session map), and the gateway
+> subscribes to it over the gRPC `SubscribeGame` stream and re-emits SSE — the
+> endpoint is per-game `/api/games/{id}/events`, not the single-process
+> `/api/events` described below. The SubscriptionRef-over-SSE decision still
+> holds (and [ADR 014](014-spectator-presence-in-gateway.md) extends it to a
+> second, spectator-count stream); the single-shared-process and TUI-`readLine`-race
+> specifics below are historical — see [ADR 011](011-grpc-for-internal-rpc.md) and
+> [ADR 013](013-deletion-of-app-module-and-sbt-run.md).
 
 ## Context
 

@@ -4,6 +4,13 @@
 
 Accepted (supersedes earlier decision where GameController was unused at runtime)
 
+> **Update (microservices split, Phase 11):** `GameController` and the
+> `SubscriptionRef[SessionState]` it operates on now live in **game-service**.
+> The TUI and web GUI no longer share an in-process controller — both drive the
+> game through the gateway → game-service gRPC boundary ([ADR 011](011-grpc-for-internal-rpc.md)).
+> The "one home for move-processing" decision holds; the "shared by TUI and
+> WebController in one process" framing below is historical.
+
 ## Context
 
 Both the TUI (`Main.tuiLoop`) and the web GUI (`WebController.handleMove`) need to process a move against the shared game session. The sequence is identical:

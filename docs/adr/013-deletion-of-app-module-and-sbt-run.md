@@ -3,6 +3,15 @@
 ## Status
 Accepted (Phase 5 / 11 re-architecture).
 
+> **Update (TUI runtime landed):** the closing Consequence below — "the `tui`
+> module is now a parser-only library; runtime … is documented future work" — is
+> no longer true. The TUI now has a full runtime: `TuiMain` (a `ZIOAppDefault`,
+> and the module's wired `mainClass`) drives `TuiClient`, a typed REST client over
+> the **shared `chess.api.Endpoints`** (the same contract the gateway serves and
+> the web-ui consumes), with live updates via `TuiEventStream` (SSE on
+> `/api/events`) and a lobby flow through the gateway's `/lobbies/*` reverse
+> proxy. The `app`-deletion and `sbt run`-unwired decisions below still stand.
+
 ## Context
 Until Phase 11, the `app` SBT module was the composition root: a single Main (`chess.Main`) wired TUI + gateway + game-service in one process, with the repository reachable over a synchronous REST PUT toggled by the `REPOSITORY_URL` env var. The root `build.sbt` aliased `run` to `app/Compile/run`, so `sbt run` started "the whole thing".
 

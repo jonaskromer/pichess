@@ -3,6 +3,15 @@
 ## Status
 Accepted (Phase 11).
 
+> **Update (boopickle wire codec — see [ADR 017](017-boopickle-wire-codec-for-dtos.md)):**
+> the "Wire format" bullet below is now **stale**. `StateReply.board_state`
+> carries a boopickle-encoded `BoardStateDto` as `bytes` — `fen` is demoted to a
+> fallback/debug field (`proto/.../game_service.proto:95-101`) — and a move
+> crosses as a **single notation string** (`MoveRequest.raw`: coordinate /
+> castling / SAN, `:66-69`), not origin/destination square coordinates. The
+> "we don't model `Board`/`Piece` in protobuf" reasoning still holds; the
+> FEN-on-the-wire and move-as-squares specifics are superseded by ADR 017.
+
 ## Context
 After splitting `app`, the gateway needs to call game-service synchronously for every command (MakeMove, Undo, GetState, …). The lecture frames this as inter-service IPC; we needed a typed contract that both sides compile against.
 
