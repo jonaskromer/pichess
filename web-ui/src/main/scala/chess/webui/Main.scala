@@ -10,7 +10,7 @@ import sttp.client3.FetchBackend
 import sttp.tapir.client.sttp.SttpClientInterpreter
 import zio.json.*
 
-import chess.api.{BoardStateDto, CreateGameRequest, Endpoints, ErrorDto, ExportResponse, GameStatusDto, MoveEntryDto, MoveRequest, SquareDto, StackInfoResponse, StateResponse, VsBotSettings}
+import chess.api.{AnalyticsSummaryDto, BoardStateDto, CreateGameRequest, Endpoints, ErrorDto, ExportResponse, GameStatusDto, MoveEntryDto, MoveRequest, SquareDto, StackInfoResponse, StateResponse, VsBotSettings}
 import chess.webui.components.{Components, ModalRegistry}
 
 object Main:
@@ -83,6 +83,12 @@ object Main:
   // Live spectator count for the active game, pushed over SSE as the
   // `spectators` event and shown in the header eye badge.
   private val spectatorCountVar: Var[Int] = Var(0)
+
+  // Live analytics: the most recent completed-game summaries pushed by the
+  // Spark speed layer over the gateway's `/api/analytics/events` SSE stream.
+  // Newest first, capped so the start-screen panel stays compact.
+  private val analyticsVar: Var[List[AnalyticsSummaryDto]] = Var(Nil)
+  private val analyticsKeep = 8
   // Whether the header spectator-share popover is open.
   private val sharePanelOpenVar: Var[Boolean] = Var(false)
   private val flippedVar: Var[Boolean] = Var(false)
@@ -301,6 +307,9 @@ object Main:
         // first paint; this call is the safety net for the (rare) case
         // where the script ran before localStorage was readable.
         applyTheme(themeVar.now())
+        // Open the app-wide live analytics feed (Spark speed layer → gateway
+        // SSE). One connection per session, independent of the active screen.
+        connectAnalytics()
         // The URL hash drives the active screen. `syncScreenFromHash` runs
         // once at boot to pick up a deep-link, then on every hashchange
         // (back/forward, manual edits, anchor links).
@@ -1579,6 +1588,25 @@ object Main:
     spectatorCountVar.set(0)
     sharePanelOpenVar.set(false)
 
+  private var analyticsSse: Option[dom.EventSource] = None
+
+  /** Open the app-wide analytics feed once. Unlike the per-game `state` stream,
+    * this one is global (one topic for the whole platform) and stays open for
+    * the session — each `game-summary` event prepends to `analyticsVar`, which
+    * drives the live start-screen panel. */
+  private def connectAnalytics(): Unit =
+    if analyticsSse.isEmpty then
+      val source = new dom.EventSource("/api/analytics/events")
+      analyticsSse = Some(source)
+      source.addEventListener(
+        "game-summary",
+        (e: dom.MessageEvent) =>
+          e.data.asInstanceOf[String].fromJson[AnalyticsSummaryDto] match
+            case Right(summary) =>
+              analyticsVar.update(summary :: _.take(analyticsKeep - 1))
+            case Left(_) => () // ignore malformed payloads
+      )
+
   private def connectEvents(gameId: String, spectator: Boolean): Unit =
     sseHandle.foreach(_.close())
     sharePanelOpenVar.set(false)
@@ -2054,7 +2082,41 @@ object Main:
           Components.linkAnchor("Help", "#help")
         )
       ),
+      analyticsPanel(),
       pieceShelf()
+    )
+
+  /** Live analytics card on the start screen — renders the most recent
+    * completed-game summaries computed by the Spark speed layer and streamed
+    * in over SSE. Updates reactively as `analyticsVar` changes. */
+  private def analyticsPanel(): HtmlElement =
+    Components.contentCard(
+      div(
+        className := "flex flex-col gap-1",
+        div(className := "font-bold text-center", "Live analytics"),
+        child <-- analyticsVar.signal.map { summaries =>
+          if summaries.isEmpty then
+            div(
+              className := "text-center opacity-60 text-sm",
+              "waiting for completed games…"
+            )
+          else
+            div(
+              className := "flex flex-col gap-1",
+              summaries.map(analyticsRow)
+            )
+        }
+      )
+    )
+
+  private def analyticsRow(s: AnalyticsSummaryDto): HtmlElement =
+    val secs = f"${s.avgThinkTimeMs / 1000.0}%.1f"
+    div(
+      className := "flex justify-between gap-2 text-sm",
+      span(className := "font-semibold", s.result),
+      span(s"${s.totalMoves} moves"),
+      span(className := "opacity-70 truncate", s.opening),
+      span(className := "opacity-70", s"${secs}s/move")
     )
 
   /** Poster-sized brand wordmark used inside the start-screen title

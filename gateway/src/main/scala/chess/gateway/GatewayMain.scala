@@ -9,6 +9,8 @@ import zio.telemetry.opentelemetry.context.ContextStorage
 import zio.telemetry.opentelemetry.tracing.Tracing
 
 import chess.controller.{
+  AnalyticsRelay,
+  AnalyticsRoutes,
   AnnotationCache,
   LobbyProxy,
   SessionRegistry,
@@ -80,6 +82,18 @@ object GatewayMain extends ZIOAppDefault:
         // when a bot token is present. Absent → the route is simply not added.
         lichessToken <- zio.System.env("LICHESS_BOT_TOKEN").map(_.filter(_.nonEmpty))
         metricsPort  <- MetricsHttpServer.portFromEnv(defaultMetricsPort)
+        // Live-analytics loop-back: fan `chess.analytics` (Spark speed-layer
+        // output) out to SSE clients. Only started when Kafka is configured,
+        // so the gateway still runs in Kafka-less setups.
+        analyticsHub <- Hub.bounded[String](256)
+        kafkaBoot    <- zio.System.env("KAFKA_BOOTSTRAP_SERVERS").map(_.filter(_.trim.nonEmpty))
+        _            <- ZIO.foreachDiscard(kafkaBoot) { servers =>
+                          AnalyticsRelay
+                            .run(analyticsHub)
+                            .provideLayer(AnalyticsRelay.consumerLayer(servers))
+                            .catchAllCause(c => ZIO.logWarningCause("analytics relay stopped", c))
+                            .forkDaemon
+                        }
         _            <- Console.printLine(
                           s"pichess-gateway HTTP listening on 0.0.0.0:$httpPort " +
                             s"(game-service=$target, lobby-service=$lobbyBaseUrl, " +
@@ -92,7 +106,7 @@ object GatewayMain extends ZIOAppDefault:
                         )
         _            <- MetricsHttpServer.serve(metricsPort).forkDaemon
         _            <- Server.install(
-                          WebController.routes(
+                          (WebController.routes(
                             client,
                             registry,
                             cache,
@@ -100,7 +114,7 @@ object GatewayMain extends ZIOAppDefault:
                             lobbyBaseUrl,
                             stackInfo,
                             lichessToken
-                          ) @@ TracingMiddleware.serverSpan
+                          ) ++ AnalyticsRoutes.routes(analyticsHub)) @@ TracingMiddleware.serverSpan
                         )
         // Run forever; the gateway is no longer killable from a network
         // request — `docker stop` / SIGTERM is the only shutdown path.
