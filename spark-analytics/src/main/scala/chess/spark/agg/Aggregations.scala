@@ -2,7 +2,7 @@ package chess.spark.agg
 
 import scala3encoders.given
 
-import org.apache.spark.sql.functions.{col, desc}
+import org.apache.spark.sql.functions.{col, desc, window}
 
 import zio.*
 import zio.spark.sql.*
@@ -53,6 +53,22 @@ object Aggregations:
     */
   def eventTypeBreakdown(rows: Dataset[MoveEventRow]): DataFrame =
     rows.groupBy(col("eventType")).count
+
+  /** Event-time windowed counts of events per type, using `occurredAt` (epoch
+    * ms) as the event time. The watermark bounds how long state is kept for
+    * late records — the canonical "I understand streaming time semantics"
+    * pattern. Streaming-friendly in `Update` output mode.
+    */
+  def windowedEventCounts(
+      rows: Dataset[MoveEventRow],
+      windowDuration: String,
+      watermark: String
+  ): DataFrame =
+    rows
+      .withColumn("eventTime", (col("occurredAt") / 1000).cast("timestamp"))
+      .withWatermark("eventTime", watermark)
+      .groupBy(window(col("eventTime"), windowDuration), col("eventType"))
+      .count
 
   /** The `top` most-played moves by SAN. Batch-only: the `orderBy` makes this
     * an unbounded sort that Structured Streaming would reject.

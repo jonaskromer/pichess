@@ -12,29 +12,32 @@ import chess.spark.agg.Aggregations
 import chess.spark.schema.RawGameEvent
 import chess.spark.stream.StreamSource
 
-/** Streaming entrypoint — the "connect Spark Streaming to Kafka" half of the
-  * Spark task, and the (stateless) speed layer of the Lambda architecture.
+/** Event-time windowed streaming — counts events per type in tumbling windows
+  * over the `occurredAt` event time, with a watermark bounding late-data state.
   *
-  * Subscribes to the live `chess.game-events` topic via Structured Streaming,
-  * decodes each Kafka value through the shared codec, and drives the same
-  * [[Aggregations]] surface the batch job uses — here a running per-event-type
-  * breakdown to a console sink in `Complete` output mode. For the stateful
-  * per-game sessionization variant see `GameSessionStreamMain`.
+  * Together with `GameSessionStreamMain` (stateful sessionization) this rounds
+  * out the "advanced streaming" story: stateless windowed aggregation with
+  * proper event-time + watermark semantics, beyond the stateless
+  * processing-time `groupBy().count()` of `StreamAnalyticsMain`.
   */
-object StreamAnalyticsMain extends ZIOAppDefault:
+object WindowedStreamMain extends ZIOAppDefault:
 
   private def job(bootstrap: String): ZIO[SparkSession, Throwable, Unit] =
     for
       source <- StreamSource.kafka(bootstrap, RawGameEvent.Topic)
       rows    = StreamSource.decodeRows(source)
-      summary = Aggregations.eventTypeBreakdown(rows)
+      windowed = Aggregations.windowedEventCounts(
+                   rows,
+                   windowDuration = "5 seconds",
+                   watermark = "10 seconds"
+                 )
       _      <- Console.printLine(
-                  s"[spark-analytics] streaming '${RawGameEvent.Topic}' from $bootstrap"
+                  s"[spark-analytics] windowed counts over '${RawGameEvent.Topic}' from $bootstrap"
                 )
-      query  <- summary.writeStream
+      query  <- windowed.writeStream
                   .format("console")
                   .option("truncate", value = false)
-                  .outputMode(OutputMode.Complete())
+                  .outputMode(OutputMode.Update())
                   .start
       _      <- ZIO.attemptBlocking(query.awaitTermination())
     yield ()
@@ -42,7 +45,7 @@ object StreamAnalyticsMain extends ZIOAppDefault:
   private val session =
     SparkSession.builder
       .master(localAllNodes)
-      .appName("pichess-spark-analytics-stream")
+      .appName("pichess-spark-windowed")
       .asLayer
 
   override def run: ZIO[ZIOAppArgs, Any, Any] =
