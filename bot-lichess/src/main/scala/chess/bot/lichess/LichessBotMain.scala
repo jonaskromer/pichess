@@ -29,9 +29,15 @@ import chess.bot.engine.{
   *   - `LICHESS_BOT_USERNAME` (default `pichess-htwg`) used to detect our
   *     colour
   *   - `LICHESS_WEIGHTS_VERSION`(default `8`) HCE weights snapshot to load
-  *   - `LICHESS_MOVE_BUDGET_MS` (default `2000`) per-move search budget in ms
   *   - `LICHESS_SEARCH_DEPTH` (default `6`) fallback fixed depth if the
   *     budgeted search can't complete even one iteration
+  *   - `LICHESS_LAZYSMP` (default on; `false` disables) LazySMP parallel
+  *     search across spare cores
+  *   - `LICHESS_TABLEBASE` (default on; `false` disables) Syzygy tablebase
+  *     oracle for endgames (≤7 pieces)
+  *
+  * The per-move time budget is adaptive (see `TimeManager`) — derived from the
+  * game clock, so there is no fixed move-budget env knob.
   */
 object LichessBotMain extends ZIOAppDefault:
 

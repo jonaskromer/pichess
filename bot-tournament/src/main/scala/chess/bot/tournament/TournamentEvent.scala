@@ -20,9 +20,11 @@ import chess.model.piece.Color
   * `@jsonDiscriminator("type")` + `@jsonHint` matches that exactly.
   *
   * Two contract facts the decoders below pin:
-  *   - the per-game stream carries **no colour** — our colour comes from the
-  *     tournament stream's [[TournamentEvent.GameStart.color]] and is threaded
-  *     into the game fiber;
+  *   - the per-game stream carries **no colour** — and the tournament stream's
+  *     `gameStart` `color` is **not** authoritative either (it's broadcast for
+  *     both colours of every game), so the bridge resolves our colour by
+  *     matching our id against the game's players (see
+  *     [[TournamentBridge.resolveOurColor]]);
   *   - clocks are **seconds** ([[GameClock]] is `Double`), and the increment is
   *     absent from game events — it lives in the tournament [[Clock]].
   */
@@ -77,8 +79,10 @@ object TournamentEvent:
   @jsonHint("roundStarted")
   final case class RoundStarted(round: Int) extends TournamentEvent
 
-  /** A game we're in has started. `color` is the colour WE play — the per-game
-    * stream never repeats it, so this is the only source.
+  /** A game in the round has started. NOTE: `gameStart` is broadcast for BOTH
+    * colours of EVERY game to every subscriber, so `color` here is **not**
+    * authoritative — the bridge ignores it and works out whether this is our
+    * game (and as which colour) via [[TournamentBridge.resolveOurColor]].
     */
   @jsonHint("gameStart")
   final case class GameStart(round: Int, gameId: String, color: Color)

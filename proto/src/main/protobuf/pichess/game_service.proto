@@ -5,8 +5,8 @@ package pichess;
 // gRPC contract for the gameService microservice.
 //
 // Wire format: `StateReply.board_state` carries a `BoardStateDto`
-// serialised via `Schema[BoardStateDto].protobufCodec` (zio-schema-
-// protobuf). Game-service constructs the DTO directly from the in-memory
+// serialised via boopickle (`BoardStateDto.encodeBytes` / `decodeBytes`).
+// Game-service constructs the DTO directly from the in-memory
 // `GameState`; the gateway decodes the bytes and forwards the DTO to the
 // HTTP client as JSON. This sidesteps the FEN-parse round-trip the
 // gateway used to do on every reply.

@@ -7,9 +7,10 @@ import chess.model.piece.Color
 /** Pure per-game decision logic for the NowChess tournament bridge.
   *
   * Each [[GameEvent]] is handed to [[decide]] alongside the colour we play
-  * (discovered once from [[TournamentEvent.GameStart.color]]). The result is an
-  * [[Action]] the orchestrator performs. Keeping the choice logic I/O-free
-  * makes it fully unit-testable without a live server.
+  * (resolved once by [[TournamentBridge.resolveOurColor]] — matching our id
+  * against the game's players, not the broadcast `gameStart` colour). The
+  * result is an [[Action]] the orchestrator performs. Keeping the choice logic
+  * I/O-free makes it fully unit-testable without a live server.
   *
   * Simpler than the Lichess `GameRunner`: every NowChess event carries the
   * authoritative post-move `fen` and `turn`, so there's no cumulative-move
