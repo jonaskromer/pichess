@@ -175,6 +175,7 @@ object Main:
     case Watch(gameId: String)
     case Settings
     case Help
+    case Analytics
 
   private val currentScreenVar: Var[Screen] = Var(Screen.Start)
 
@@ -189,6 +190,7 @@ object Main:
       case "join"               => Screen.Join
       case "settings"           => Screen.Settings
       case "help"               => Screen.Help
+      case "analytics"          => Screen.Analytics
       case s"lobby/$c"          => Screen.Lobby(c)
       case s"watch/$id"         => Screen.Watch(id)
       case s"game/$id"          => Screen.Game(id)
@@ -203,6 +205,7 @@ object Main:
     case Screen.Watch(id)      => s"#watch/$id"
     case Screen.Settings       => "#settings"
     case Screen.Help           => "#help"
+    case Screen.Analytics      => "#analytics"
 
   /** Navigate to a different screen by mutating the URL hash. The
     * `hashchange` listener picks it up and updates `currentScreenVar`,
@@ -441,6 +444,7 @@ object Main:
     case Screen.Watch(_)        => spectatorUi()
     case Screen.Settings        => settingsScreen()
     case Screen.Help            => helpScreen()
+    case Screen.Analytics       => analyticsScreen()
 
   /** Side-effect when entering a Game screen: ensure gameIdVar is set,
     * pull current state, (re)connect SSE for that id. Idempotent — a
@@ -2079,26 +2083,29 @@ object Main:
           // Kick off a live Lichess bot-game (our bot vs a random online
           // bot) and spectate it on our own board, read-only.
           Components.linkButton("Watch a bot game") { _ => startLichessWatch() },
+          Components.linkAnchor("Live analytics", "#analytics"),
           Components.linkAnchor("Help", "#help")
         )
       ),
-      analyticsPanel(),
       pieceShelf()
     )
 
-  /** Live analytics card on the start screen — renders the most recent
-    * completed-game summaries computed by the Spark speed layer and streamed
-    * in over SSE. Updates reactively as `analyticsVar` changes. */
-  private def analyticsPanel(): HtmlElement =
-    Components.contentCard(
-      div(
-        className := "flex flex-col gap-1",
-        div(className := "font-bold text-center", "Live analytics"),
+  /** Dedicated `#analytics` screen — the live feed of recently-completed games
+    * computed by the Spark speed layer and streamed in over SSE. The feed
+    * itself is opened once at app start (see `connectAnalytics`), so summaries
+    * accumulate even before this screen is opened. */
+  private def analyticsScreen(): HtmlElement =
+    Components.screenLayout("analytics")(
+      Components.titleCard(
+        Components.backLink(() => navigate(Screen.Start)),
+        Components.screenHeading("Live analytics")
+      ),
+      Components.contentCard(
         child <-- analyticsVar.signal.map { summaries =>
           if summaries.isEmpty then
             div(
               className := "text-center opacity-60 text-sm",
-              "waiting for completed games…"
+              "Waiting for completed games… (needs the Spark analytics job + Kafka running)"
             )
           else
             div(
