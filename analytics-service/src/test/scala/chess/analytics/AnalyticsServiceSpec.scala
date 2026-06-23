@@ -3,17 +3,17 @@ package chess.analytics
 import zio.*
 import zio.test.*
 
+import chess.api.AnalyticsSummaryDto
+
 object AnalyticsServiceSpec extends ZIOSpecDefault:
 
-  /** Hand-rolled fake — the trait is tiny and the Live impl is exercised
-    * end-to-end against a real ClickHouse via docker-compose, so a mock
-    * library would be overkill here.
-    */
+  /** Hand-rolled fake for the accessor delegation tests. */
   private final class FakeAnalyticsService(
       moves: List[(String, Long)],
       avgPlies: Option[Double],
       games: Long
   ) extends AnalyticsService:
+    def record(summary: AnalyticsSummaryDto): UIO[Unit] = ZIO.unit
     def topMoves(limit: Int): Task[List[(String, Long)]] =
       ZIO.succeed(moves.take(limit))
     def averageGameLength: Task[Option[Double]] = ZIO.succeed(avgPlies)
@@ -25,19 +25,46 @@ object AnalyticsServiceSpec extends ZIOSpecDefault:
     games    = 99L
   )
 
-  private val layer: ULayer[AnalyticsService] = ZLayer.succeed(fake)
+  private def summary(opening: String, moves: Int): AnalyticsSummaryDto =
+    AnalyticsSummaryDto("g", moves, 0L, opening, "GameEnded", 0.0)
 
-  def spec = suite("AnalyticsService accessors")(
-    test("topMoves delegates to the service") {
-      for got <- AnalyticsService.topMoves(2)
-      yield assertTrue(got == List("e4" -> 10L, "d4" -> 7L))
-    },
-    test("averageGameLength delegates to the service") {
-      for got <- AnalyticsService.averageGameLength
-      yield assertTrue(got.contains(42.5))
-    },
-    test("gameCount delegates to the service") {
-      for got <- AnalyticsService.gameCount
-      yield assertTrue(got == 99L)
-    },
-  ).provideLayer(layer)
+  def spec = suite("AnalyticsService")(
+    suite("accessors delegate to the service")(
+      test("topMoves") {
+        for got <- AnalyticsService.topMoves(2)
+        yield assertTrue(got == List("e4" -> 10L, "d4" -> 7L))
+      },
+      test("averageGameLength") {
+        for got <- AnalyticsService.averageGameLength
+        yield assertTrue(got.contains(42.5))
+      },
+      test("gameCount") {
+        for got <- AnalyticsService.gameCount
+        yield assertTrue(got == 99L)
+      }
+    ).provideLayer(ZLayer.succeed(fake)),
+    suite("in-memory LiveAnalyticsService")(
+      test("empty before any record") {
+        for
+          games <- AnalyticsService.gameCount
+          avg   <- AnalyticsService.averageGameLength
+          top   <- AnalyticsService.topMoves(5)
+        yield assertTrue(games == 0L, avg.isEmpty, top.isEmpty)
+      },
+      test("folds recorded summaries into aggregates") {
+        for
+          svc <- ZIO.service[AnalyticsService]
+          _   <- svc.record(summary("e4 e5", 20))
+          _   <- svc.record(summary("e4 e5", 30))
+          _   <- svc.record(summary("d4 d5", 10))
+          games <- svc.gameCount
+          avg   <- svc.averageGameLength
+          top   <- svc.topMoves(1)
+        yield assertTrue(
+          games == 3L,
+          avg.contains(20.0),          // (20+30+10)/3
+          top == List("e4 e5" -> 2L)   // most frequent opening
+        )
+      }
+    ).provideLayer(LiveAnalyticsService.layer)
+  )

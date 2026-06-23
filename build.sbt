@@ -47,8 +47,6 @@ val mongoDriverVersion    = "5.5.1"
 val zioRsInteropVersion   = "2.0.2"
 val cassandraDriverVersion = "4.17.0"
 val neo4jDriverVersion     = "5.28.5"
-val clickhouseJdbcVersion  = "0.9.0"
-val zioJdbcVersion         = "0.1.2"
 // zio-spark's git `v0.13.0` tag (Spark 3.5.1) was never published to Maven
 // Central — the latest *released* artifact is 0.12.0, which targets Spark 3.3.1
 // (built on Scala 3.2.1, zio 2.0.5). We pin to what actually resolves and match
@@ -702,7 +700,7 @@ lazy val openingService = project
 // admin panel can call it without speaking JDBC.
 lazy val analyticsService = project
   .in(file("analytics-service"))
-  .dependsOn(domain.jvm, codec, events, observability)
+  .dependsOn(domain.jvm, codec, events, api.jvm, observability)
   .enablePlugins(JavaAppPackaging, DockerPlugin)
   .settings(commonSettings)
   .settings(
@@ -710,13 +708,11 @@ lazy val analyticsService = project
     Compile / mainClass := Some("chess.analytics.AnalyticsMain"),
     libraryDependencies ++= Seq(
       "dev.zio"                     %% "zio-kafka"             % zioKafkaVersion,
-      "dev.zio"                     %% "zio-jdbc"              % zioJdbcVersion,
       "dev.zio"                     %% "zio-http"              % zioHttpVersion,
       "dev.zio"                     %% "zio-json"              % zioJsonVersion,
       "com.softwaremill.sttp.tapir" %% "tapir-core"            % tapirVersion,
       "com.softwaremill.sttp.tapir" %% "tapir-json-zio"        % tapirVersion,
       "com.softwaremill.sttp.tapir" %% "tapir-zio-http-server" % tapirVersion,
-      "com.clickhouse"              %  "clickhouse-jdbc"       % clickhouseJdbcVersion,
     ),
     Docker / packageName := "pichess-analytics-service",
     Docker / version     := "latest",
@@ -725,12 +721,10 @@ lazy val analyticsService = project
     dockerUpdateLatest   := true,
     Docker / dockerGroupLayers := pichessLayerGrouping,
     // DB-touching files (projection, service, schema, JSON codecs, HTTP
-    // wiring) are exercised end-to-end against a live ClickHouse, not as
-    // unit tests. Pure logic in AnalyticsEventMapping IS unit-tested.
+    // HTTP/Kafka wiring is exercised by docker-compose smoke runs, not unit
+    // tests. The in-memory AnalyticsState + LiveAnalyticsService ARE unit-tested.
     coverageExcludedFiles :=
-      ".*AnalyticsMain.*;.*Kafka.*;.*ClickHouse.*;.*AnalyticsServer.*;" +
-        ".*AnalyticsEndpoints.*;.*AnalyticsProjection.*;.*LiveAnalyticsService.*;" +
-        ".*AnalyticsSchema.*",
+      ".*AnalyticsMain.*;.*Kafka.*;.*AnalyticsServer.*;.*AnalyticsEndpoints.*",
   )
 
 // Spark analytics — Lambda-architecture read-side projection over the same

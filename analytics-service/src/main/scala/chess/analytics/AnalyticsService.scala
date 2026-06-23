@@ -2,19 +2,18 @@ package chess.analytics
 
 import zio.*
 
-/** Read-side service for the analytics REST surface. Three canonical
-  * aggregate queries that the future admin panel will surface as charts.
+import chess.api.AnalyticsSummaryDto
+
+/** Read-side service for the analytics REST surface, now fed by the Spark
+  * speed layer (`chess.analytics` stream) rather than ClickHouse — see ADR 022.
+  * `record` folds in one completed-game summary; the three queries serve the
+  * canonical aggregates from the in-memory [[AnalyticsState]].
   *
-  * Queries are hand-written SQL — kept simple so the structure is obvious;
-  * heavier reporting can grow into materialised views without touching
-  * this trait.
-  *
-  * Only the trait + ZIO service accessors live here so this file stays in
-  * statement coverage. The default JDBC-backed impl + its ZLayer are in
-  * [[LiveAnalyticsService]], which needs a live ClickHouse to drive and
-  * therefore stays excluded.
+  * `topMoves` returns the top **openings** (the move-signature each
+  * `GameSummary` carries), preserving the `/analytics/openings/top` contract.
   */
 trait AnalyticsService:
+  def record(summary: AnalyticsSummaryDto): UIO[Unit]
   def topMoves(limit: Int): Task[List[(String, Long)]]
   def averageGameLength: Task[Option[Double]]
   def gameCount: Task[Long]

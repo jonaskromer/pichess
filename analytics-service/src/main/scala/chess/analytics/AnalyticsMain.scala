@@ -3,17 +3,18 @@ package chess.analytics
 import zio.*
 import zio.http.*
 
+import chess.events.Topics
 import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer, TracingLayer, TracingMiddleware}
 
 /** Standalone entry point for the analytics-service microservice.
   *
   * Two concurrent jobs:
-  *   - Kafka consumer that ingests `chess.game-events` into ClickHouse
+  *   - Kafka consumer that folds `chess.analytics` (Spark speed-layer
+  *     per-game summaries) into in-memory aggregate state
   *   - HTTP server on `:8093` exposing canonical aggregate queries
   *
-  * Required env: `KAFKA_BOOTSTRAP_SERVERS`, `PICHESS_CLICKHOUSE_URL`.
-  * If Kafka is unset, the consumer is skipped — the service still serves
-  * REST queries against any pre-existing ClickHouse data.
+  * Required env: `KAFKA_BOOTSTRAP_SERVERS`. If Kafka is unset the consumer is
+  * skipped and the service serves empty aggregates. No database (ADR 022).
   */
 object AnalyticsMain extends ZIOAppDefault:
 
@@ -27,12 +28,16 @@ object AnalyticsMain extends ZIOAppDefault:
   override def run: ZIO[ZIOAppArgs, Throwable, Unit] =
     ProfilerLayer.wrap("analytics-service", runProfiled)
 
+  private def serveHttp(port: Int, svc: AnalyticsService): Task[Nothing] =
+    Server
+      .serve(AnalyticsServer.routes(svc) @@ TracingMiddleware.serverSpan)
+      .provide(
+        Server.defaultWithPort(port),
+        TracingLayer.fromEnv("analytics-service")
+      )
+
   private def runProfiled: ZIO[ZIOAppArgs, Throwable, Unit] =
-    val program: ZIO[
-      AnalyticsProjection & AnalyticsService & zio.jdbc.ZConnectionPool & Scope,
-      Throwable,
-      Unit
-    ] =
+    val program: ZIO[AnalyticsService & Scope, Throwable, Unit] =
       for
         _           <- MetricsLayer.jvmMetricsBootstrap
         port        <- portFromEnv
@@ -40,9 +45,7 @@ object AnalyticsMain extends ZIOAppDefault:
         group       <- zio.System
                          .env("KAFKA_CONSUMER_GROUP")
                          .map(_.getOrElse(defaultConsumerGroup))
-        _           <- AnalyticsSchema.ensure
         svc         <- ZIO.service[AnalyticsService]
-        proj        <- ZIO.service[AnalyticsProjection]
         metricsPort <- MetricsHttpServer.portFromEnv(defaultMetricsPort)
         _           <- Console.printLine(
                          s"pichess-analytics-service listening on 0.0.0.0:$port " +
@@ -52,43 +55,21 @@ object AnalyticsMain extends ZIOAppDefault:
         _           <- bootstrap.filter(_.trim.nonEmpty) match
                          case Some(servers) =>
                            Console.printLine(
-                             s"pichess-analytics-service consuming chess.game-events from $servers (group=$group)"
+                             s"pichess-analytics-service consuming ${Topics.Analytics} from $servers (group=$group)"
                            ) *>
                              KafkaAnalyticsConsumer
-                               .run(proj)
-                               .provideSomeLayer[zio.jdbc.ZConnectionPool](
-                                 KafkaAnalyticsConsumer
-                                   .consumerLayer(servers, group) ++
-                                   TracingLayer.fromEnv("analytics-service")
+                               .run(svc)
+                               .provideLayer(
+                                 KafkaAnalyticsConsumer.consumerLayer(servers, group)
                                )
                                .forkDaemon *>
-                             Server
-                               .serve(
-                                 AnalyticsServer.routes(svc)
-                                   @@ TracingMiddleware.serverSpan
-                               )
-                               .provide(
-                                 Server.defaultWithPort(port),
-                                 TracingLayer.fromEnv("analytics-service"),
-                               )
+                             serveHttp(port, svc)
                          case None =>
-                           Server
-                             .serve(
-                               AnalyticsServer.routes(svc)
-                                 @@ TracingMiddleware.serverSpan
-                             )
-                             .provide(
-                               Server.defaultWithPort(port),
-                               TracingLayer.fromEnv("analytics-service"),
-                             )
+                           serveHttp(port, svc)
       yield ()
 
     ZIO.scoped {
-      program.provideSome[Scope](
-        ClickHouseLayer.pool,
-        LiveAnalyticsService.layer,
-        AnalyticsProjection.layer
-      )
+      program.provideSome[Scope](LiveAnalyticsService.layer)
     }
 
   private[analytics] def portFromEnv: Task[Int] =

@@ -11,9 +11,10 @@
 #   neo4j          — graph DB; supplementary projection (always-on).
 #                    opening-service consumes Kafka and builds an opening
 #                    tree of (Position)-[:MOVE]->(Position) edges.
-#   clickhouse     — OLAP DB; supplementary projection (always-on).
-#                    analytics-service consumes Kafka into a flat
-#                    move_events table and serves aggregate queries on :8093.
+#   analytics-service — consumes the Spark speed-layer topic (chess.analytics)
+#                    and serves aggregate queries on :8093 from in-memory
+#                    state. No database — the Spark job does the aggregation
+#                    and the Kafka topic is the durable store (ADR 022).
 #   kafka          — single-broker KRaft Kafka (no Zookeeper). Backs the
 #                    chess.game-events event log.
 #   game-service   — authoritative game state. Exposes gRPC on :9000 and
@@ -132,48 +133,6 @@ services:
       retries: 12
       start_period: 20s
 
-  clickhouse:
-    image: clickhouse/clickhouse-server:24-alpine
-    container_name: pichess-clickhouse
-    profiles: ["analytics"]
-    ports:
-      - "8123:8123"   # HTTP (also what JDBC speaks)
-      - "9009:9000"   # Native TCP — remapped so it doesn't collide with gameService
-    # No CLICKHOUSE_DB / CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT here, by
-    # design. Setting either of them flips the entrypoint into an "init
-    # phase" that binds clickhouse-server to 127.0.0.1 only and ping-loops
-    # on http_port until ready, then restarts on 0.0.0.0. Under our tight
-    # resource limits that init loop can hang indefinitely (and `default`
-    # already exists out of the box, so creating it would be a no-op).
-    # AnalyticsSchema.ensure handles `CREATE TABLE IF NOT EXISTS
-    # move_events` at the application layer, which is the correct seam.
-    # ClickHouse defaults still assume a multi-core production server, so
-    # dev-limits.xml drops memory/cache/pool knobs to something a laptop
-    # can survive.
-    volumes:
-      - ./docker/clickhouse/dev-limits.xml:/etc/clickhouse-server/config.d/dev-limits.xml:ro
-    # Hard-cap container memory. ClickHouse refuses to come up cleanly
-    # below ~4 GiB — auto-tuning needs the headroom for query cache,
-    # merges buffer, and Jemalloc arenas. Matches the Altinity small-
-    # server guide's stated minimum. dev-limits.xml does NOT override
-    # these caps any more; ClickHouse's cgroup auto-tuning produces
-    # sensible numbers from `mem_limit` on its own.
-    mem_limit: 4g
-    ulimits:
-      nofile:
-        soft: 65536
-        hard: 65536
-    healthcheck:
-      # `clickhouse-client` ships with the server image and speaks the
-      # native protocol on port 9000 — same path the JDBC driver and the
-      # analytics-service use, so a passing healthcheck means we're
-      # actually serving queries (not merely "process is up").
-      test: ["CMD-SHELL", "clickhouse-client --query 'SELECT 1' >/dev/null 2>&1 || exit 1"]
-      interval: 5s
-      timeout: 5s
-      retries: 24
-      start_period: 15s
-
   kafka:
     image: confluentinc/cp-kafka:7.7.1
     container_name: pichess-kafka
@@ -268,9 +227,6 @@ services:
       PICHESS_NEO4J_URL: "bolt://neo4j:7687"
       PICHESS_NEO4J_USER: "neo4j"
       PICHESS_NEO4J_PASSWORD: "password"
-      PICHESS_CLICKHOUSE_URL: "jdbc:clickhouse://clickhouse:8123/default"
-      PICHESS_CLICKHOUSE_USER: "default"
-      PICHESS_CLICKHOUSE_PASSWORD: ""
       # PICHESS_PROFILE=sampling activates chess.obs.ProfilerLayer; the
       # service then dumps stack-collapsed profile files to
       # /var/log/pichess on shutdown, which is bind-mounted below.
@@ -375,17 +331,14 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
-      clickhouse:
-        condition: service_healthy
     ports:
       - "8093:8093"
     environment:
       ANALYTICS_PORT: "8093"
+      # Consumes the Spark speed-layer output (chess.analytics); no database —
+      # aggregates are held in memory and rebuilt by replaying the topic (ADR 022).
       KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
       KAFKA_CONSUMER_GROUP: "pichess-analytics"
-      PICHESS_CLICKHOUSE_URL: "jdbc:clickhouse://clickhouse:8123/default"
-      PICHESS_CLICKHOUSE_USER: "default"
-      PICHESS_CLICKHOUSE_PASSWORD: ""
     volumes: *profile-volume
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8093/healthcheck 2>&1 | grep -q ok"]
