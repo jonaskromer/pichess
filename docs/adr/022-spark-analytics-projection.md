@@ -53,12 +53,17 @@ each item below was discovered by an actual failed run, not from docs:
   of `events`/`codec`, so the module re-declares a minimal `RawGameEvent`
   zio-json mirror instead of sharing the canonical `GameDomainEvent` ADT. The
   one cost: that mirror must be kept in sync with `chess.events.GameDomainEvent`.
-- **Java 17 at run time**, not the repo's Java 23/Docker JRE: Java 21+ removed
-  the `DirectByteBuffer(long, int)` constructor Spark's `Platform` reflects into.
-  The run config forks with a pinned JDK (`PICHESS_SPARK_JAVA_HOME`), Spark's
-  `--add-opens` set, `-Djava.security.manager=allow` (Java 18+ blocks Hadoop's
-  `Subject.getSubject`), and the `% Provided` Spark jars put back on the run
-  classpath (`build.sbt`, `sparkRunJavaOptions` + the `Compile / run` overrides).
+- **Java 17**, not the repo's Java 23: Java 21+ removed the
+  `DirectByteBuffer(long, int)` constructor Spark's `Platform` reflects into.
+  The **deploy artifact is a container** (`JavaAppPackaging` + `eclipse-temurin:17-jre`,
+  entrypoint `AnalyticsSinkMain`) running **Spark in local mode** — so the Spark
+  jars are bundled (`Compile` scope, **not** `Provided` — there is no external
+  cluster), and the container's `JAVA_TOOL_OPTIONS` carries Spark's `--add-opens`
+  set + `-Djava.security.manager=allow` (Java 18+ blocks Hadoop's
+  `Subject.getSubject`) + an `-Xmx` cap. No host JVM and no sudo — it deploys on
+  the no-sudo VM like every other service. For LOCAL dev the same mains fork a
+  pinned Java-17 JVM (`PICHESS_SPARK_JAVA_HOME`) with the same flags
+  (`build.sbt`, `sparkRunJavaOptions`).
 
 The module is deliberately kept **out of the root aggregate** — Spark drags in a
 large jackson/netty closure — and built explicitly with `sparkAnalytics/compile`.
@@ -123,5 +128,10 @@ gateway relay and the analytics consumer both start only when
     `chess.analytics` on restart; fine while the topic's retention covers all
     completed games, but it trades durable random-access for simplicity. A
     Redis/Parquet-backed serving impl can slot behind the same trait later.
-  - Spark `% Provided` jars mean a real run needs the run-config classpath +
-    JDK pinning above; this is not the same artifact as the CI build.
+  - The deploy container bundles Spark (~527 MB image, layer-grouped) and runs
+    Spark **local mode** (driver+executor in one capped JVM) — the heaviest
+    single service, but lighter than the ClickHouse container it replaced.
+  - Its streaming **checkpoint is ephemeral** in the demo (container `/tmp`); a
+    production deploy should mount a persistent volume (k8s PVC) at the
+    checkpoint path so a restart doesn't replay `chess.game-events` and re-emit
+    summaries. (Left as a documented compose note rather than guessed PVC wiring.)

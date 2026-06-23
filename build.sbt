@@ -753,16 +753,24 @@ lazy val analyticsService = project
 // aggregate — build it with `sparkAnalytics/compile`.
 lazy val sparkAnalytics = project
   .in(file("spark-analytics"))
+  .enablePlugins(JavaAppPackaging, DockerPlugin)
   .settings(commonSettings)
   .settings(
     name         := "pichess-spark-analytics",
     scalaVersion := "3.3.6",
+    // `AnalyticsSinkMain` is the deployable speed-layer loop-back (Kafka→Kafka,
+    // Spark in local mode). It's the container entrypoint; the batch / scale /
+    // sessionization / windowed mains stay runnable locally via `runMain`.
+    Compile / mainClass := Some("chess.spark.AnalyticsSinkMain"),
     libraryDependencies ++= Seq(
       "dev.zio"           %% "zio-json"             % zioJsonVersion,
       "io.univalence"     %% "zio-spark"            % zioSparkVersion,
-      ("org.apache.spark" %% "spark-core"           % sparkVersion % Provided)
+      // Spark runs in LOCAL mode inside our container (no external cluster), so
+      // the jars must SHIP in the image — Compile scope, not Provided. (~250 MB
+      // of jars; layer-grouped below so a code change doesn't re-push them.)
+      ("org.apache.spark" %% "spark-core"           % sparkVersion)
         .cross(CrossVersion.for3Use2_13),
-      ("org.apache.spark" %% "spark-sql"            % sparkVersion % Provided)
+      ("org.apache.spark" %% "spark-sql"            % sparkVersion)
         .cross(CrossVersion.for3Use2_13),
       ("org.apache.spark" %% "spark-sql-kafka-0-10" % sparkVersion)
         .cross(CrossVersion.for3Use2_13),
@@ -771,25 +779,17 @@ lazy val sparkAnalytics = project
     // that scala3-library 3.3.6 pulls, so the reflection toolchain is coherent
     // (an older reflect over a newer 2.13 library can still misfire).
     dependencyOverrides += "org.scala-lang" % "scala-reflect" % "2.13.16",
-    // Spark assemblies bundle their own Scala 2.13 stdlib + jackson; this
-    // module is an isolated island talking only over Kafka/files, so it isn't
-    // unit-covered here (jobs are exercised against a local SparkSession).
     coverageEnabled := false,
-    // `run`/`runMain` against a local SparkSession: fork a JVM with the Spark
-    // module-opens, and put `% Provided` Spark jars on the run classpath (they
-    // are excluded from the default `Runtime` classpath but supplied by the
-    // cluster in production — locally we are the cluster). Uses `fullClasspath`
-    // (= Compile classpath, which includes Provided).
+    // Spark 3.3 needs Java 17 (Java 21+ removed DirectByteBuffer(long,int) that
+    // Spark's Platform reflects into), so the image uses a Java-17 base; the
+    // container supplies the module-opens + security-manager + locale flags via
+    // JAVA_TOOL_OPTIONS (see docker-compose `spark-analytics`). For LOCAL runs,
+    // fork a Java-17 JVM (PICHESS_SPARK_JAVA_HOME) with the same flags, from the
+    // repo root so file-reading batch jobs resolve spark-analytics/data/… paths.
     fork := true,
-    // Spark 3.3 requires Java 17 (Java 21+ removed DirectByteBuffer(long,int)
-    // that Spark's Platform reflects into). The JVM running sbt may be newer,
-    // so pin the forked run's JDK via PICHESS_SPARK_JAVA_HOME when set.
     Compile / run / javaHome :=
       sys.env.get("PICHESS_SPARK_JAVA_HOME").map(file),
     javaOptions ++= sparkRunJavaOptions,
-    // Forked runs default their working dir to the module dir; pin it to the
-    // repo root so repo-root-relative data paths (spark-analytics/data/...)
-    // resolve the same way whether invoked from root or the module.
     Compile / run / baseDirectory := (LocalRootProject / baseDirectory).value,
     Compile / run := Defaults
       .runTask(
@@ -801,6 +801,13 @@ lazy val sparkAnalytics = project
     Compile / runMain := Defaults
       .runMainTask(Compile / fullClasspath, Compile / run / runner)
       .evaluated,
+    // No HTTP surface — it's a Kafka consumer/producer. Java-17 base + layer
+    // grouping so the (large, rarely-changing) Spark jar layer caches.
+    Docker / packageName       := "pichess-spark-analytics",
+    Docker / version           := "latest",
+    dockerBaseImage            := "eclipse-temurin:17-jre",
+    dockerUpdateLatest         := true,
+    Docker / dockerGroupLayers := pichessLayerGrouping,
   )
 
 // New microservice for lobby management. REST-only on :8092 — no gRPC, no
@@ -1078,6 +1085,7 @@ addCommandAlias(
     "lobbyService/Docker/publishLocal",
     "openingService/Docker/publishLocal",
     "analyticsService/Docker/publishLocal",
+    "sparkAnalytics/Docker/publishLocal",
     "gateway/Docker/publishLocal",
     "tui/Docker/publishLocal"
   ).mkString(";", ";", "")
