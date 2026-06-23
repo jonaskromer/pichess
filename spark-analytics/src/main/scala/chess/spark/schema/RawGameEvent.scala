@@ -23,7 +23,11 @@ final case class RawGameEvent(
     gameId: String,
     resultingFen: String,
     san: Option[String],
-    occurredAt: Long
+    occurredAt: Long,
+    // Terminal-event outcome fields (absent on non-terminal events → None).
+    // `Forfeited` carries `winner`, `GameEnded` carries `status`.
+    winner: Option[String] = None,
+    status: Option[String] = None
 )
 
 object RawGameEvent:

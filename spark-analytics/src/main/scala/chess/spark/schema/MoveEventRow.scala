@@ -19,7 +19,10 @@ final case class MoveEventRow(
     eventType: String,
     san: String,
     fen: String,
-    occurredAt: Long
+    occurredAt: Long,
+    // Terminal outcome (winner colour or game-end status); "" on non-terminal
+    // events. Lets the batch opening analysis report results, not just counts.
+    outcome: String
 )
 
 object MoveEventRow:
@@ -34,5 +37,6 @@ object MoveEventRow:
       eventType = e.`type`,
       san = e.san.getOrElse(""),
       fen = e.resultingFen,
-      occurredAt = e.occurredAt
+      occurredAt = e.occurredAt,
+      outcome = e.winner.orElse(e.status).getOrElse("")
     )

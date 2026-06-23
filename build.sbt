@@ -63,6 +63,9 @@ val zioSparkVersion        = "0.12.0"
 // modern JDK. (Spark 3.3 officially supports Java 8/11/17; we run it on 21 —
 // the closest JDK installed — which works for these local jobs with the opens.)
 val sparkRunJavaOptions = Seq(
+  // Force en-US locale so `f"%.1f"` prints "2.5" not the host-locale "2,5".
+  "-Duser.language=en",
+  "-Duser.country=US",
   // Hadoop's security layer (pulled by Spark) calls `Subject.getSubject`, which
   // Java 18+ refuses unless a security manager is explicitly allowed. Java 17
   // still permitted it; since we run on 21, opt in. (No SecurityManager is
