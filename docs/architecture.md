@@ -34,6 +34,7 @@ For background see:
 - [ADR 017 — boopickle wire codec for DTOs (supersedes the FEN note in 011)](adr/017-boopickle-wire-codec-for-dtos.md)
 - [ADR 018 — CQRS read-side projections (Neo4j, ClickHouse)](adr/018-cqrs-read-side-projections.md)
 - [ADR 021 — distributed tracing across HTTP/gRPC/Kafka](adr/021-distributed-tracing-across-async-boundary.md)
+- [ADR 022 — Spark analytics projection (Lambda read-side + live loop-back)](adr/022-spark-analytics-projection.md)
 
 > **Historical note (pre-Phase 5/11):** πChess used to run as a single `app` Main bundling TUI + gateway + game-service in one process, with the repository reachable over a synchronous REST PUT. That monolith is **gone** — its responsibilities are split across the services above, the cross-service hop is gRPC (not in-process calls), and `sbt run` at the root is no longer wired. The package responsibilities below are preserved; only the wiring changed.
 
@@ -301,6 +302,7 @@ See [`docs/adr/`](adr/) for the full decision records:
 - [ADR 019 — copy-make search via a read-only BoardLike/PositionView seam](adr/019-copy-make-search-boardlike-seam.md)
 - [ADR 020 — engine as an embedded library (no engine service)](adr/020-engine-as-embedded-library.md)
 - [ADR 021 — distributed tracing across HTTP/gRPC/Kafka via uniform decorators](adr/021-distributed-tracing-across-async-boundary.md)
+- [ADR 022 — Spark analytics projection: Lambda read-side, stateful streaming, live loop-back, ClickHouse dropped](adr/022-spark-analytics-projection.md)
 
 ## What's Built vs. Next
 
