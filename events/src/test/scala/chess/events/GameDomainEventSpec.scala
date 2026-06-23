@@ -67,5 +67,8 @@ object GameDomainEventSpec extends ZIOSpecDefault:
     },
     test("topic name is the canonical chess.game-events") {
       assertTrue(Topics.GameEvents == "chess.game-events")
+    },
+    test("analytics topic name is the canonical chess.analytics") {
+      assertTrue(Topics.Analytics == "chess.analytics")
     }
   )
