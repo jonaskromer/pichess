@@ -91,9 +91,17 @@ chess.game-events ─▶ spark-analytics (sessionize)
 ```
 
 The shared wire contract is `chess.api.AnalyticsSummaryDto` (cross-compiled,
-round-trip tested). `analytics-service` is repointed off ClickHouse to a
-Redis/Parquet serving view; durable batch views land in Parquet, live reads in
-Redis (both already in the prod stack). The gateway relay starts only when
+round-trip tested). `analytics-service` is **repointed off ClickHouse**: it now
+consumes `chess.analytics` and folds each summary into **in-memory aggregate
+state** (`AnalyticsState`/`LiveAnalyticsService`) behind the same REST endpoints
+(count / avg-length / top-openings — all derivable from `GameSummary`). There is
+**no database**: the durable store is the Kafka topic itself, replayed from
+earliest on restart to rebuild the aggregates. The `clickhouse` service, its
+JDBC layer, schema, and the old `chess.game-events` projection are deleted; the
+`clickhouse` container is removed from `docker-compose`. The Spark **batch**
+layer additionally persists authoritative views to **Parquet** for durable
+historical serving and batch⊕speed reconciliation (`BatchServingMain`). The
+gateway relay and the analytics consumer both start only when
 `KAFKA_BOOTSTRAP_SERVERS` is set, so Kafka-less setups still run.
 
 ## Consequences
@@ -111,5 +119,9 @@ Redis (both already in the prod stack). The gateway relay starts only when
   - **Lost:** ad-hoc, slice-by-any-dimension OLAP over raw events at query time.
     Spark batch jobs can answer any new question over the archive, just not in
     sub-second interactive SQL — acceptable for a fixed dashboard.
+  - **In-memory serving** means analytics-service rebuilds state by replaying
+    `chess.analytics` on restart; fine while the topic's retention covers all
+    completed games, but it trades durable random-access for simplicity. A
+    Redis/Parquet-backed serving impl can slot behind the same trait later.
   - Spark `% Provided` jars mean a real run needs the run-config classpath +
     JDK pinning above; this is not the same artifact as the CI build.
