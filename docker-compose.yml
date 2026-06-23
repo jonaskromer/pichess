@@ -358,6 +358,10 @@ services:
     environment:
       HTTP_PORT: "8090"
       GAME_SERVICE_GRPC: "game-service:9000"
+      # Live-analytics relay: when Kafka is up (EXTRA=analytics sets PICHESS_KAFKA),
+      # the gateway consumes chess.analytics and relays it to the web-ui over SSE.
+      # Empty otherwise → relay is skipped and the gateway runs Kafka-free.
+      KAFKA_BOOTSTRAP_SERVERS: "${PICHESS_KAFKA:-}"
       # The active stack profile + any extras the Makefile selected.
       # Surfaced read-only via GET /api/stack-info so the UI can render
       # an "Active stack: postgres" chip on the /dev page.
