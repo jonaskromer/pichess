@@ -24,6 +24,11 @@ object StreamSource:
         .option("kafka.bootstrap.servers", bootstrap)
         .option("subscribe", topic)
         .option("startingOffsets", "earliest")
+        // Speed-layer source: tolerate the checkpoint referencing offsets a
+        // (possibly recreated/ephemeral) broker no longer has, instead of
+        // crashing. Any resulting reprocessing is made harmless by gameId
+        // dedup downstream.
+        .option("failOnDataLoss", "false")
         .load()
         .zioSpark
     }
