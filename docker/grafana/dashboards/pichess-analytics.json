@@ -7,7 +7,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 38,
-  "version": 4,
+  "version": 5,
   "refresh": "5s",
   "time": {
     "from": "now-30m",
@@ -814,7 +814,7 @@
       }
     },
     {
-      "type": "stat",
+      "type": "bargauge",
       "title": "Records",
       "description": "Running leaderboard across completed games.",
       "gridPos": {
@@ -847,22 +847,22 @@
         }
       ],
       "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
           ],
           "fields": ""
         },
-        "graphMode": "none",
-        "colorMode": "value",
-        "textMode": "value_and_name",
-        "orientation": "horizontal"
+        "valueMode": "text"
       },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "color": {
-            "mode": "thresholds"
+            "mode": "continuous-GrYlRd"
           },
           "thresholds": {
             "mode": "absolute",
