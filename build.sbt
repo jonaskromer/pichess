@@ -862,9 +862,6 @@ lazy val gateway = project
     libraryDependencies ++= Seq(
       "dev.zio"                     %% "zio-http"                 % zioHttpVersion,
       "dev.zio"                     %% "zio-json"                 % zioJsonVersion,
-      // Live-analytics loop-back: consume the `chess.analytics` topic that the
-      // Spark speed layer publishes, relay it to the web-ui over SSE.
-      "dev.zio"                     %% "zio-kafka"                % zioKafkaVersion,
       "com.softwaremill.sttp.tapir" %% "tapir-zio-http-server"    % tapirVersion,
       "com.softwaremill.sttp.tapir" %% "tapir-swagger-ui-bundle"  % tapirVersion,
       "io.grpc"                     %  "grpc-inprocess"           % "1.68.1" % Test,
@@ -879,7 +876,7 @@ lazy val gateway = project
     // (Lichess HTTP API + game-service gRPC + a follower fiber) — integration
     // glue, not meaningfully unit-testable without a live Lichess + game
     // service, like the other external adapters (StockfishSearch).
-    coverageExcludedFiles := ".*(GatewayMain|LichessSpectate|AnalyticsRelay|AnalyticsRoutes).*",
+    coverageExcludedFiles := ".*(GatewayMain|LichessSpectate).*",
     // Copy the Scala.js output of web-ui into gateway's managed resources at
     // web/main.js so WebController can serve it from the classpath.
     Compile / resourceGenerators += Def.task {

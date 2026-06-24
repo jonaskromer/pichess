@@ -10,7 +10,7 @@ import sttp.client3.FetchBackend
 import sttp.tapir.client.sttp.SttpClientInterpreter
 import zio.json.*
 
-import chess.api.{AnalyticsSummaryDto, BoardStateDto, CreateGameRequest, Endpoints, ErrorDto, ExportResponse, GameStatusDto, MoveEntryDto, MoveRequest, SquareDto, StackInfoResponse, StateResponse, VsBotSettings}
+import chess.api.{BoardStateDto, CreateGameRequest, Endpoints, ErrorDto, ExportResponse, GameStatusDto, MoveEntryDto, MoveRequest, SquareDto, StackInfoResponse, StateResponse, VsBotSettings}
 import chess.webui.components.{Components, ModalRegistry}
 
 object Main:
@@ -84,11 +84,6 @@ object Main:
   // `spectators` event and shown in the header eye badge.
   private val spectatorCountVar: Var[Int] = Var(0)
 
-  // Live analytics: the most recent completed-game summaries pushed by the
-  // Spark speed layer over the gateway's `/api/analytics/events` SSE stream.
-  // Newest first, capped so the start-screen panel stays compact.
-  private val analyticsVar: Var[List[AnalyticsSummaryDto]] = Var(Nil)
-  private val analyticsKeep = 8
   // Whether the header spectator-share popover is open.
   private val sharePanelOpenVar: Var[Boolean] = Var(false)
   private val flippedVar: Var[Boolean] = Var(false)
@@ -310,9 +305,6 @@ object Main:
         // first paint; this call is the safety net for the (rare) case
         // where the script ran before localStorage was readable.
         applyTheme(themeVar.now())
-        // Open the app-wide live analytics feed (Spark speed layer → gateway
-        // SSE). One connection per session, independent of the active screen.
-        connectAnalytics()
         // The URL hash drives the active screen. `syncScreenFromHash` runs
         // once at boot to pick up a deep-link, then on every hashchange
         // (back/forward, manual edits, anchor links).
@@ -1592,30 +1584,6 @@ object Main:
     spectatorCountVar.set(0)
     sharePanelOpenVar.set(false)
 
-  private var analyticsSse: Option[dom.EventSource] = None
-
-  /** Open the app-wide analytics feed once. Unlike the per-game `state` stream,
-    * this one is global (one topic for the whole platform) and stays open for
-    * the session — each `game-summary` event prepends to `analyticsVar`, which
-    * drives the live start-screen panel. */
-  private def connectAnalytics(): Unit =
-    if analyticsSse.isEmpty then
-      val source = new dom.EventSource("/api/analytics/events")
-      analyticsSse = Some(source)
-      source.addEventListener(
-        "game-summary",
-        (e: dom.MessageEvent) =>
-          e.data.asInstanceOf[String].fromJson[AnalyticsSummaryDto] match
-            case Right(summary) =>
-              // Dedup by gameId: Kafka/Spark are at-least-once, so the same
-              // completed game can arrive more than once — show it just once.
-              analyticsVar.update { cur =>
-                if cur.exists(_.gameId == summary.gameId) then cur
-                else summary :: cur.take(analyticsKeep - 1)
-              }
-            case Left(_) => () // ignore malformed payloads
-      )
-
   private def connectEvents(gameId: String, spectator: Boolean): Unit =
     sseHandle.foreach(_.close())
     sharePanelOpenVar.set(false)
@@ -2095,50 +2063,38 @@ object Main:
       pieceShelf()
     )
 
-  /** Dedicated `#analytics` screen — the live feed of recently-completed games
-    * computed by the Spark speed layer and streamed in over SSE. The feed
-    * itself is opened once at app start (see `connectAnalytics`), so summaries
-    * accumulate even before this screen is opened. */
+  /** `#analytics` screen — analytics now live in Grafana (Spark domain metrics +
+    * JVM/service + Kafka), so this is a launcher of links rather than an in-app
+    * panel. Requires the stack up with `EXTRA=analytics,obs`. */
   private def analyticsScreen(): HtmlElement =
     Components.screenLayout("analytics")(
       Components.titleCard(
         Components.backLink(() => navigate(Screen.Start)),
-        Components.screenHeading("Live analytics")
+        Components.screenHeading("Analytics")
       ),
       Components.contentCard(
-        child <-- analyticsVar.signal.map { summaries =>
-          if summaries.isEmpty then
-            div(
-              className := "text-center opacity-60 text-sm",
-              "Waiting for completed games… (needs the Spark analytics job + Kafka running)"
-            )
-          else
-            div(
-              className := "flex flex-col gap-1",
-              summaries.map(analyticsRow)
-            )
-        }
+        div(
+          className := "flex flex-col gap-2",
+          p(
+            "Game analytics, throughput, openings and Kafka/system metrics are " +
+              "served by Grafana."
+          ),
+          a(
+            href   := "http://localhost:3000/d/pichess-analytics",
+            target := "_blank",
+            "Game analytics dashboard ↗"
+          ),
+          a(
+            href   := "http://localhost:3000/d/pichess-jvm-overview",
+            target := "_blank",
+            "JVM / service overview ↗"
+          ),
+          p(
+            className := "opacity-60 text-sm",
+            "Needs the stack running with EXTRA=analytics,obs (Grafana on :3000)."
+          )
+        )
       )
-    )
-
-  /** Human-readable game outcome (absolute colour, not a player perspective):
-    * a resignation says which colour won, a draw says "Draw", a GameEnded shows
-    * its status; falls back to the raw event type. */
-  private def outcomeLabel(s: AnalyticsSummaryDto): String =
-    (s.result, s.outcome) match
-      case ("Forfeited", w) if w.nonEmpty   => s"$w won (resign)"
-      case ("DrawClaimed", _)               => "Draw"
-      case ("GameEnded", st) if st.nonEmpty => st
-      case (r, _)                           => r
-
-  private def analyticsRow(s: AnalyticsSummaryDto): HtmlElement =
-    val secs = f"${s.avgThinkTimeMs / 1000.0}%.1f"
-    div(
-      className := "flex justify-between gap-2 text-sm",
-      span(className := "font-semibold", outcomeLabel(s)),
-      span(s"${s.totalMoves} moves"),
-      span(className := "opacity-70 truncate", s.opening),
-      span(className := "opacity-70", s"${secs}s/move")
     )
 
   /** Poster-sized brand wordmark used inside the start-screen title
