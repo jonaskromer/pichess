@@ -166,6 +166,12 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
       CLUSTER_ID: "pichess-cluster-0001"
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    # Persist log dirs so topics survive `make` down/up (which does NOT pass
+    # -v). Keeps the broker consistent with the Spark sink's persistent
+    # checkpoint — otherwise a wiped broker + surviving checkpoint makes the
+    # sink skip events. `make clean` (down -v) still wipes for a fresh slate.
+    volumes:
+      - kafka-data:/var/lib/kafka/data
     healthcheck:
       test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
       interval: 5s
@@ -557,6 +563,14 @@ services:
       PICHESS_K6_VUS:      "${PICHESS_K6_VUS:-5}"
       PICHESS_K6_DURATION: "${PICHESS_K6_DURATION:-30s}"
     mem_limit: 1g
+
+volumes:
+  # Kafka log dirs — persists topics across `make` down/up so the broker stays
+  # consistent with the Spark sink's persistent checkpoint. `make clean`
+  # (down -v) wipes it. NOTE: after a Spark *state-schema* change, also clear
+  # spark-analytics/data/checkpoint (flatMapGroupsWithState state isn't
+  # schema-evolvable) or the sink aborts with StateSchemaNotCompatible.
+  kafka-data:
 
 networks:
   default:

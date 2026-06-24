@@ -81,33 +81,36 @@ large jackson/netty closure — and built explicitly with `sparkAnalytics/compil
 - **Event-time windowing** (`WindowedStreamMain`): tumbling windows over
   `occurredAt` with a **watermark** for late data (`agg.Aggregations`).
 
-### The reactive loop-back, and dropping ClickHouse
+### Dropping ClickHouse; monitoring via Grafana
 
 Once Spark is the aggregation engine, ClickHouse's query-time-OLAP role is
-subsumed: the serving layer only ever holds small, pre-computed results. So we
-**drop ClickHouse** and close the loop on infrastructure we already run:
+subsumed. So we **drop ClickHouse** and route everything into the existing
+Prometheus + Grafana obs stack (~512 MB, vs the 4 GB ClickHouse removed) plus a
+tiny `kafka-exporter`:
 
 ```
-chess.game-events ─▶ spark-analytics (sessionize)
-                  ─▶ chess.analytics topic            (AnalyticsSinkMain)
-                  ─▶ gateway zio-kafka relay ─▶ Hub    (controller.AnalyticsRelay)
-                  ─▶ SSE  GET /api/analytics/events     (controller.AnalyticsRoutes)
-                  ─▶ web-ui Laminar "Live analytics" panel
+chess.game-events ─▶ spark-analytics sink (sessionize) ─▶ chess.analytics topic
+analytics-service ─┬─ consumes chess.game-events  → raw rate/classifier metrics
+                   └─ consumes chess.analytics    → completed-game metrics + records
+                  ─▶ zio-metrics on /metrics:9106 ─▶ Prometheus ─▶ Grafana
+kafka-exporter ─▶ Prometheus ─▶ Grafana   (lag, throughput, broker health)
 ```
 
-The shared wire contract is `chess.api.AnalyticsSummaryDto` (cross-compiled,
-round-trip tested). `analytics-service` is **repointed off ClickHouse**: it now
-consumes `chess.analytics` and folds each summary into **in-memory aggregate
-state** (`AnalyticsState`/`LiveAnalyticsService`) behind the same REST endpoints
-(count / avg-length / top-openings — all derivable from `GameSummary`). There is
-**no database**: the durable store is the Kafka topic itself, replayed from
-earliest on restart to rebuild the aggregates. The `clickhouse` service, its
-JDBC layer, schema, and the old `chess.game-events` projection are deleted; the
-`clickhouse` container is removed from `docker-compose`. The Spark **batch**
-layer additionally persists authoritative views to **Parquet** for durable
-historical serving and batch⊕speed reconciliation (`BatchServingMain`). The
-gateway relay and the analytics consumer both start only when
-`KAFKA_BOOTSTRAP_SERVERS` is set, so Kafka-less setups still run.
+`analytics-service` is **repointed off ClickHouse** into in-memory aggregates
+(`AnalyticsState`) for its REST endpoints, and additionally **emits domain
+metrics** (`AnalyticsMetrics`): moves/captures/checks/castles/promotions/
+takeback rates + active-games (from raw events); outcomes, openings, ECO
+families (`Eco`), first-move, length/duration/think-time histograms and records
+(`Records`) from the Spark summaries. The shared wire contract is
+`chess.api.AnalyticsSummaryDto`. The Spark **batch** layer also persists
+authoritative views to **Parquet** (`BatchServingMain`, batch⊕speed reconcile).
+
+The dashboards (`docker/grafana/dashboards/`) are provisioned at boot. There is
+**no bespoke in-app dashboard**: an earlier SSE loop-back (gateway relay + a
+Laminar live panel) was **retired** in favour of Grafana — the web-ui
+`#analytics` screen is now just a launcher linking to the Grafana dashboards.
+Metrics emission starts only when `KAFKA_BOOTSTRAP_SERVERS` is set, so
+Kafka-less setups still run.
 
 ## Consequences
 
