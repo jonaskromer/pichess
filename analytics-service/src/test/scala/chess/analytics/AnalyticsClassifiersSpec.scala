@@ -45,6 +45,30 @@ object AnalyticsClassifiersSpec extends ZIOSpecDefault:
         )
       }
     ),
+    suite("Outcomes.classify")(
+      test("forfeit → winning colour + resignation") {
+        assertTrue(Outcomes.classify("Forfeited", "White") == ("White", "resignation"))
+      },
+      test("draw claim → Draw + draw-claim") {
+        assertTrue(Outcomes.classify("DrawClaimed", "") == ("Draw", "draw-claim"))
+      },
+      test("forfeit with no winner detail → Decisive") {
+        assertTrue(Outcomes.classify("Forfeited", "") == ("Decisive", "resignation"))
+      },
+      test("GameEnded decisive vs drawish vs empty") {
+        assertTrue(
+          Outcomes.classify("GameEnded", "Checkmate") == ("Decisive", "Checkmate"),
+          Outcomes.classify("GameEnded", "Stalemate") == ("Draw", "Stalemate"),
+          Outcomes.classify("GameEnded", "") == ("Decisive", "other")
+        )
+      },
+      test("unknown terminal type falls back (with and without detail)") {
+        assertTrue(
+          Outcomes.classify("Weird", "") == ("Unknown", "Weird"),
+          Outcomes.classify("Weird", "x") == ("Unknown", "x")
+        )
+      }
+    ),
     suite("Records.fold")(
       test("tracks longest, shortest and most captures") {
         def s(moves: Int, caps: Int): AnalyticsSummaryDto =

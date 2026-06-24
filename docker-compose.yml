@@ -392,8 +392,12 @@ services:
         --add-opens=java.base/sun.security.action=ALL-UNNAMED
         --add-opens=java.base/sun.util.calendar=ALL-UNNAMED
         --add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED
+    # Named volume (not a bind mount) so `make clean` (down -v) wipes it
+    # together with kafka-data — keeping the checkpoint's committed offsets
+    # consistent with the broker. A surviving checkpoint over a wiped broker
+    # makes the sink skip events (offsets ahead of the fresh topic).
     volumes:
-      - ./spark-analytics/data/checkpoint:/var/pichess/spark
+      - spark-checkpoint:/var/pichess/spark
 
   # Kafka metrics for Grafana (broker up/down, topic throughput, consumer-group
   # lag, partition offsets). Scraped by Prometheus (see docker/prometheus). Tiny.
@@ -571,6 +575,9 @@ volumes:
   # spark-analytics/data/checkpoint (flatMapGroupsWithState state isn't
   # schema-evolvable) or the sink aborts with StateSchemaNotCompatible.
   kafka-data:
+  # Spark Structured Streaming checkpoint — wiped together with kafka-data on
+  # `make clean` so committed offsets stay consistent with the broker.
+  spark-checkpoint:
 
 networks:
   default:

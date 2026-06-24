@@ -7,7 +7,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 38,
-  "version": 2,
+  "version": 3,
   "refresh": "5s",
   "time": {
     "from": "now-30m",
@@ -17,7 +17,7 @@
     {
       "type": "stat",
       "title": "Total games",
-      "description": "Completed games seen (cumulative).",
+      "description": "Completed games (cumulative).",
       "gridPos": {
         "h": 5,
         "w": 6,
@@ -42,7 +42,6 @@
         },
         "graphMode": "area",
         "colorMode": "value",
-        "justifyMode": "auto",
         "textMode": "value_and_name"
       },
       "fieldConfig": {
@@ -73,7 +72,7 @@
     {
       "type": "stat",
       "title": "Active games",
-      "description": "Games currently in progress (started, not yet ended).",
+      "description": "Games in progress (started, not ended).",
       "gridPos": {
         "h": 5,
         "w": 6,
@@ -98,7 +97,6 @@
         },
         "graphMode": "area",
         "colorMode": "value",
-        "justifyMode": "auto",
         "textMode": "value_and_name"
       },
       "fieldConfig": {
@@ -129,7 +127,7 @@
     {
       "type": "stat",
       "title": "Moves / sec",
-      "description": "MoveMade events per second (1m rate).",
+      "description": "MoveMade events/sec (1m rate).",
       "gridPos": {
         "h": 5,
         "w": 6,
@@ -154,7 +152,6 @@
         },
         "graphMode": "area",
         "colorMode": "value",
-        "justifyMode": "auto",
         "textMode": "value_and_name"
       },
       "fieldConfig": {
@@ -185,7 +182,7 @@
     {
       "type": "stat",
       "title": "Games / min",
-      "description": "GameStarted events per minute (5m rate).",
+      "description": "GameStarted/min (5m rate).",
       "gridPos": {
         "h": 5,
         "w": 6,
@@ -210,7 +207,6 @@
         },
         "graphMode": "area",
         "colorMode": "value",
-        "justifyMode": "auto",
         "textMode": "value_and_name"
       },
       "fieldConfig": {
@@ -241,7 +237,7 @@
     {
       "type": "timeseries",
       "title": "Move-event rates (per sec)",
-      "description": "Per-second rates of each move classifier (1-minute window). Legend shows current + peak.",
+      "description": "Per-second rate of each move classifier (1m). Legend: current + peak.",
       "gridPos": {
         "h": 9,
         "w": 16,
@@ -335,7 +331,7 @@
     {
       "type": "stat",
       "title": "Game length & tempo",
-      "description": "Avg/median/p90 game length (moves) and median think-time per move (from histograms).",
+      "description": "Avg/median/p90 length (moves) + median think-time/move (histograms).",
       "gridPos": {
         "h": 9,
         "w": 8,
@@ -411,7 +407,7 @@
     {
       "type": "table",
       "title": "Top openings (sequence \u2192 games, click to look up)",
-      "description": "Most-played opening move-sequences. Bar = game count; click the move list to look it up.",
+      "description": "Most-played opening sequences. Bar = games; click the moves to look it up.",
       "gridPos": {
         "h": 11,
         "w": 14,
@@ -458,10 +454,7 @@
       ],
       "options": {
         "showHeader": true,
-        "cellHeight": "sm",
-        "footer": {
-          "show": false
-        }
+        "cellHeight": "sm"
       },
       "fieldConfig": {
         "defaults": {
@@ -489,7 +482,7 @@
               },
               {
                 "id": "custom.width",
-                "value": 160
+                "value": 170
               },
               {
                 "id": "color",
@@ -526,9 +519,9 @@
       }
     },
     {
-      "type": "barchart",
+      "type": "bargauge",
       "title": "Opening families (ECO)",
-      "description": "Games grouped into ECO opening families (Sicilian, Ruy Lopez, \u2026).",
+      "description": "Games grouped into ECO opening families.",
       "gridPos": {
         "h": 11,
         "w": 10,
@@ -538,56 +531,39 @@
       "targets": [
         {
           "expr": "sum by (family) (pichess_opening_family_total)",
-          "legendFormat": "",
+          "legendFormat": "{{family}}",
           "refId": "A",
           "instant": true,
-          "format": "table"
-        }
-      ],
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "job": true,
-              "instance": true,
-              "stack": true
-            },
-            "renameByName": {
-              "Value": "games"
-            }
-          }
-        },
-        {
-          "id": "sortBy",
-          "options": {
-            "sort": [
-              {
-                "field": "games",
-                "desc": true
-              }
-            ]
-          }
+          "format": "time_series"
         }
       ],
       "options": {
         "orientation": "horizontal",
-        "showValue": "always",
-        "stacking": "none",
-        "legend": {
-          "showLegend": false
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
         },
-        "xField": "family",
-        "barRadius": 0,
-        "fullHighlight": true
+        "valueMode": "text",
+        "minVizWidth": 0
       },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "color": {
             "mode": "continuous-GrYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
           }
         },
         "overrides": []
@@ -599,9 +575,9 @@
       }
     },
     {
-      "type": "barchart",
-      "title": "Game outcomes",
-      "description": "Result/end-reason per game: winning colour (resign), Draw, or a GameEnded status (Checkmate/Timeout/\u2026).",
+      "type": "bargauge",
+      "title": "Game result (winner)",
+      "description": "Who won: White/Black (incl. resignations), Draw, or Decisive (GameEnded w/o a colour).",
       "gridPos": {
         "h": 9,
         "w": 8,
@@ -610,57 +586,40 @@
       },
       "targets": [
         {
-          "expr": "sum by (outcome) (pichess_games_by_outcome_total)",
-          "legendFormat": "",
+          "expr": "sum by (winner) (pichess_games_by_winner_total)",
+          "legendFormat": "{{winner}}",
           "refId": "A",
           "instant": true,
-          "format": "table"
-        }
-      ],
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "job": true,
-              "instance": true,
-              "stack": true
-            },
-            "renameByName": {
-              "Value": "games"
-            }
-          }
-        },
-        {
-          "id": "sortBy",
-          "options": {
-            "sort": [
-              {
-                "field": "games",
-                "desc": true
-              }
-            ]
-          }
+          "format": "time_series"
         }
       ],
       "options": {
         "orientation": "horizontal",
-        "showValue": "always",
-        "stacking": "none",
-        "legend": {
-          "showLegend": false
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
         },
-        "xField": "outcome",
-        "barRadius": 0,
-        "fullHighlight": true
+        "valueMode": "text",
+        "minVizWidth": 0
       },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "color": {
             "mode": "continuous-GrYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
           }
         },
         "overrides": []
@@ -672,9 +631,9 @@
       }
     },
     {
-      "type": "barchart",
-      "title": "First move",
-      "description": "Distribution of opening first moves (e4 / d4 / Nf3 / \u2026).",
+      "type": "bargauge",
+      "title": "How games end (reason)",
+      "description": "End reason: resignation, draw-claim, or a GameEnded status (Checkmate/Timeout/\u2026).",
       "gridPos": {
         "h": 9,
         "w": 8,
@@ -683,57 +642,40 @@
       },
       "targets": [
         {
-          "expr": "sum by (move) (pichess_first_move_total)",
-          "legendFormat": "",
+          "expr": "sum by (reason) (pichess_games_by_end_reason_total)",
+          "legendFormat": "{{reason}}",
           "refId": "A",
           "instant": true,
-          "format": "table"
-        }
-      ],
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "job": true,
-              "instance": true,
-              "stack": true
-            },
-            "renameByName": {
-              "Value": "games"
-            }
-          }
-        },
-        {
-          "id": "sortBy",
-          "options": {
-            "sort": [
-              {
-                "field": "games",
-                "desc": true
-              }
-            ]
-          }
+          "format": "time_series"
         }
       ],
       "options": {
         "orientation": "horizontal",
-        "showValue": "always",
-        "stacking": "none",
-        "legend": {
-          "showLegend": false
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
         },
-        "xField": "move",
-        "barRadius": 0,
-        "fullHighlight": true
+        "valueMode": "text",
+        "minVizWidth": 0
       },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "color": {
             "mode": "continuous-GrYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
           }
         },
         "overrides": []
@@ -745,9 +687,9 @@
       }
     },
     {
-      "type": "stat",
-      "title": "Records",
-      "description": "Running leaderboard across all completed games.",
+      "type": "bargauge",
+      "title": "First move",
+      "description": "Distribution of opening first moves.",
       "gridPos": {
         "h": 9,
         "w": 8,
@@ -756,22 +698,134 @@
       },
       "targets": [
         {
+          "expr": "sum by (move) (pichess_first_move_total)",
+          "legendFormat": "{{move}}",
+          "refId": "A",
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "valueMode": "text",
+        "minVizWidth": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 11,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      }
+    },
+    {
+      "type": "bargauge",
+      "title": "White win-rate by opening family",
+      "description": "Share of games won by White within each opening family (winner=White \u00f7 all in family).",
+      "gridPos": {
+        "h": 9,
+        "w": 16,
+        "x": 0,
+        "y": 34
+      },
+      "targets": [
+        {
+          "expr": "sum by (family) (pichess_family_result_total{winner=\"White\"}) / clamp_min(sum by (family) (pichess_family_result_total),1)",
+          "legendFormat": "{{family}}",
+          "refId": "A",
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "valueMode": "text",
+        "minVizWidth": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 12,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Records",
+      "description": "Running leaderboard across completed games.",
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 34
+      },
+      "targets": [
+        {
           "expr": "pichess_record_longest_game_moves",
-          "legendFormat": "longest game (moves)",
+          "legendFormat": "longest (moves)",
           "refId": "A",
           "instant": true,
           "format": "time_series"
         },
         {
           "expr": "pichess_record_shortest_game_moves",
-          "legendFormat": "shortest game (moves)",
+          "legendFormat": "shortest (moves)",
           "refId": "A",
           "instant": true,
           "format": "time_series"
         },
         {
           "expr": "pichess_record_most_captures",
-          "legendFormat": "most captures in a game",
+          "legendFormat": "most captures",
           "refId": "A",
           "instant": true,
           "format": "time_series"
@@ -807,7 +861,7 @@
         },
         "overrides": []
       },
-      "id": 11,
+      "id": 13,
       "datasource": {
         "type": "prometheus",
         "uid": "Prometheus"
@@ -816,12 +870,12 @@
     {
       "type": "timeseries",
       "title": "Kafka consumer-group lag",
-      "description": "Unconsumed messages per consumer group. Near-zero = consumers (incl. Spark) keeping up.",
+      "description": "Unconsumed messages per group; ~0 = consumers (incl. Spark) keeping up.",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 34
+        "y": 43
       },
       "targets": [
         {
@@ -859,7 +913,7 @@
         },
         "overrides": []
       },
-      "id": 12,
+      "id": 14,
       "datasource": {
         "type": "prometheus",
         "uid": "Prometheus"
@@ -868,12 +922,12 @@
     {
       "type": "timeseries",
       "title": "Kafka topic throughput (msg/s)",
-      "description": "Messages produced per second per topic (1m rate).",
+      "description": "Messages/sec per topic (1m rate).",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 34
+        "y": 43
       },
       "targets": [
         {
@@ -911,7 +965,7 @@
         },
         "overrides": []
       },
-      "id": 13,
+      "id": 15,
       "datasource": {
         "type": "prometheus",
         "uid": "Prometheus"

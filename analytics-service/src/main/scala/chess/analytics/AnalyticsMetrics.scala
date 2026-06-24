@@ -59,8 +59,14 @@ object AnalyticsMetrics:
   private val gamesCompleted = Metric.counter("pichess_games_completed_total")
   private val completedMoves = Metric.counter("pichess_completed_moves_total")
 
-  private def byOutcome(o: String) =
-    Metric.counter("pichess_games_by_outcome_total").tagged("outcome", o)
+  // Outcome split into two independent dimensions (see Outcomes):
+  private def byWinner(w: String) =
+    Metric.counter("pichess_games_by_winner_total").tagged("winner", w)
+  private def byEndReason(r: String) =
+    Metric.counter("pichess_games_by_end_reason_total").tagged("reason", r)
+  // Win-rate-by-opening: family × winner (two labels).
+  private def byFamilyResult(fam: String, w: String) =
+    Metric.counter("pichess_family_result_total").tagged("family", fam).tagged("winner", w)
   private def byOpening(op: String) =
     Metric.counter("pichess_opening_games_total").tagged("opening", op)
   private def byEco(fam: String) =
@@ -95,14 +101,17 @@ object AnalyticsMetrics:
   private val capturesGauge = Metric.gauge("pichess_record_most_captures")
 
   def gameCompleted(s: AnalyticsSummaryDto): UIO[Unit] =
-    val opening   = if s.opening.isEmpty then "(no moves)" else s.opening
-    val outcome   = if s.outcome.isEmpty then s.result else s.outcome
-    val firstMove = s.opening.split(' ').headOption.filter(_.nonEmpty).getOrElse("(none)")
+    val opening          = if s.opening.isEmpty then "(no moves)" else s.opening
+    val family           = Eco.familyOf(s.opening)
+    val firstMove        = s.opening.split(' ').headOption.filter(_.nonEmpty).getOrElse("(none)")
+    val (winner, reason) = Outcomes.classify(s.result, s.outcome)
     gamesCompleted.increment *>
       completedMoves.incrementBy(s.totalMoves.toLong) *>
-      byOutcome(outcome).increment *>
+      byWinner(winner).increment *>
+      byEndReason(reason).increment *>
+      byFamilyResult(family, winner).increment *>
       byOpening(opening).increment *>
-      byEco(Eco.familyOf(s.opening)).increment *>
+      byEco(family).increment *>
       byFirstMove(firstMove).increment *>
       movesPerGame.update(s.totalMoves.toDouble) *>
       gameSeconds.update(s.durationMs.toDouble / 1000.0) *>
