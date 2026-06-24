@@ -50,9 +50,9 @@ Kafka when a projection profile is active.
                           │     │                          ┌──────────┐
                   gRPC ───┘     └─ HTTP                    │ opening  │ ─▶ Neo4j
                   ▼                ▼                       └──────────┘
-            ┌──────────────┐ ┌──────────────┐              ┌──────────┐
-            │ game-service │ │ lobby-service│              │analytics │ ─▶ ClickHouse
-            └──────┬───────┘ └──────┬───────┘              └──────────┘
+            ┌──────────────┐ ┌──────────────┐         ┌───────────────┐
+            │ game-service │ │ lobby-service│         │ spark-analytics│ ─▶ analytics-service ─▶ Grafana
+            └──────┬───────┘ └──────┬───────┘         └───────────────┘
                    │ persistence    │ persistence
                    ▼                ▼
             ┌────────────────────────────────┐

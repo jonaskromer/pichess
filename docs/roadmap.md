@@ -175,7 +175,7 @@ The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural
 
 - The gateway's **SSE endpoint** (`/api/games/{id}/events`) streams `SubscriptionRef.changes` (Source) through a JSON-encoding `Flow` to the connected browser (Sink) — live multi-client board sync
 - The same per-game SSE feed also carries **live spectator presence** — a gateway-owned `SubscriptionRef[Int]` per game (`SpectatorPresence`) streamed as `spectators` events to every viewer; a `?role=spectator` watcher is gated by the lobby's per-game policy (`allowSpectate` + `limit`), and a refusal is delivered as a `spectator-denied` event
-- The repository and both projection services consume `chess.game-events` as **zio-kafka** streams (Source = topic, Sink = the persistence layer / Neo4j / ClickHouse), with stream-level failures interrupting the service via the supervising scope
+- The repository and projection services consume `chess.game-events` as **zio-kafka** streams (Source = topic, Sink = the persistence layer / Neo4j / zio-metrics), with stream-level failures interrupting the service via the supervising scope. `spark-analytics` consumes the same topic as a Spark Structured Streaming source
 - `GameService.makeMove` returns `(newState, event)` — the publishing seam the producer stream drains into Kafka
 
 ---
@@ -203,18 +203,21 @@ The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural
 
 ---
 
-## Phase 13 — Data Aggregation (Spark brief → Kafka projections)
+## Phase 13 — Data Aggregation (Spark)
 
-**Status:** Met with ZIO-Kafka projections instead of Spark.
+**Status:** Met with a real Apache Spark Lambda projection (`spark-analytics`).
 
 **Lecture task:** Work with Spark to aggregate data from your application. First read from a file, then connect Spark to Kafka as a stream.
 
-Rather than pull in Spark (which would force a Scala 2.12 sub-project), the data-aggregation requirement is satisfied by two **zio-kafka stream projections** that consume `chess.game-events` (Phase 11):
+The **`spark-analytics`** module satisfies both halves of the brief and goes well beyond:
 
-- **`analytics-service`** ingests every event into **ClickHouse** (an OLAP `move_events` table) and serves aggregate queries — top openings, average game length, game count — over REST (`:8093`).
-- **`opening-service`** builds an **opening tree in Neo4j** — `(:Position)-[:MOVE {san, count}]->(:Position)` edges with move frequencies.
+- **Batch (read from file):** reads an archived `chess.game-events` dump, aggregates (openings, game length, FEN square-occupancy heatmap, opening→outcome) and writes authoritative views to **Parquet**.
+- **Streaming (Spark ↔ Kafka):** consumes `chess.game-events` and **sessionizes** each game with `flatMapGroupsWithState` (the speed layer), plus event-time windowed counts with watermarks; publishes per-game `GameSummary` to `chess.analytics`.
+- Built with **zio-spark** (effect-typed Spark) — see [ADR 022](adr/022-spark-analytics-projection.md) for the Scala-3.3/Java-17/`for3Use2_13` compat seam this required.
 
-Both are optional add-ons (`make analytics` / `make opening`); see [development.md](development.md) and [architecture.md](architecture.md). Revisit a true Spark job only if the lecture explicitly requires the Spark API itself.
+`analytics-service` consumes `chess.analytics` + raw `chess.game-events` and emits **zio-metrics** (rates, outcomes, ECO opening families, length/duration/think-time histograms, records) to **Prometheus → Grafana** — the monitoring dashboard. This **replaced** the earlier Kafka → ClickHouse projection (ClickHouse dropped). The companion **`opening-service`** still builds an **opening tree in Neo4j** (`(:Position)-[:MOVE {san, count}]->(:Position)`).
+
+All optional via `make stack-<bk> EXTRA=analytics,obs`; see [development.md](development.md) and [architecture.md](architecture.md).
 
 ---
 

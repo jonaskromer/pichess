@@ -28,9 +28,9 @@
 |---|---|---|
 | `make obs` / `obs-down` / `obs-status` | Prometheus + Grafana + Jaeger | `make grafana` / `prometheus` / `jaeger` open the UIs |
 | `make opening` / `opening-down` | Kafka + opening-service + Neo4j | — |
-| `make analytics` / `analytics-down` | Kafka + analytics-service + ClickHouse | — |
+| `make analytics` / `analytics-down` | Kafka + analytics-service + spark-analytics + kafka-exporter (no DB) | — |
 
-> Note: `make opening` / `make analytics` bring up the consumers, but game-service only publishes if `KAFKA_BOOTSTRAP_SERVERS` was set at start time. For full publisher → consumer integration, use `make stack-<bk> EXTRA=opening` (or `analytics`).
+> Note: `make opening` / `make analytics` bring up the consumers, but game-service only publishes if `KAFKA_BOOTSTRAP_SERVERS` was set at start time. For full publisher → consumer integration, use `make stack-<bk> EXTRA=opening` (or `analytics`). The analytics **dashboard lives in Grafana**, so add `obs` too: `make stack-<bk> EXTRA=analytics,obs` → Grafana on :3000 ("piChess — game analytics").
 
 **Per-service iteration**
 
@@ -53,7 +53,6 @@
 | `make redis-cli` | redis-cli |
 | `make cqlsh` | cassandra |
 | `make cypher` | neo4j (opening projection) |
-| `make clickhouse-cli` | clickhouse (analytics projection) |
 
 **sbt-level commands** (run from the host, no Docker)
 
@@ -110,9 +109,8 @@
 | analytics-service | `KAFKA_BOOTSTRAP_SERVERS` | (required when running) |
 | analytics-service | `KAFKA_CONSUMER_GROUP`    | `pichess-analytics` |
 | analytics-service | `METRICS_PORT`            | `9106` |
-| analytics-service | `PICHESS_CLICKHOUSE_URL`      | `jdbc:clickhouse://localhost:8123/default` |
-| analytics-service | `PICHESS_CLICKHOUSE_USER`     | `default` |
-| analytics-service | `PICHESS_CLICKHOUSE_PASSWORD` | (empty) |
+| spark-analytics   | `KAFKA_BOOTSTRAP_SERVERS` | (required when running) |
+| spark-analytics   | `PICHESS_SPARK_CHECKPOINT` | `/var/pichess/spark/analytics-sink` |
 | tui               | `PICHESS_GATEWAY_URL`     | `http://localhost:8090` |
 | tui               | `PICHESS_SESSION_ID`      | (random UUID minted per process) |
 | tui               | `PICHESS_NICKNAME`        | `Anonymous` |
@@ -230,7 +228,8 @@ Seven services are Docker-packaged via sbt-native-packager. The full set:
 | `repository`        | 8091 (REST)    | `repository`     | Persistence write-side. Consumes `chess.game-events` and saves via `PersistenceLayers`. |
 | `lobby-service`     | 8092 (REST)    | `lobby-service`  | Lobby management + invite-code flow. |
 | `opening-service`   | (no HTTP)      | `opening-service`| Kafka consumer → Neo4j opening-tree projection. |
-| `analytics-service` | 8093 (REST)    | `analytics-service` | Kafka consumer → ClickHouse analytics projection. |
+| `spark-analytics`   | (no HTTP)      | `spark-analytics`| Spark speed layer: `chess.game-events` → sessionize → `chess.analytics`. |
+| `analytics-service` | 8093 (REST)    | `analytics-service` | Kafka consumer (`chess.game-events` + `chess.analytics`) → zio-metrics for Grafana (no DB). |
 | `tui-service`       | (no HTTP)      | `tui`            | Headless control surface; spawn via `make tui`. |
 
 Each service also exposes Prometheus metrics on a dedicated port (9101–9106) regardless of profile — see the "Inner-loop env vars" table above for `METRICS_PORT` defaults.

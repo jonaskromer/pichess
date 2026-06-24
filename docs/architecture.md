@@ -5,23 +5,28 @@
 πChess is a chess platform written in Scala 3 using ZIO throughout. The runtime is a **microservice stack** with **gRPC** for synchronous inter-service calls and **Kafka** as the asynchronous event log. The core play path is:
 
 ```
-                                    ┌──────────────────────── projections (optional) ─────────────────────────┐
-                                    │                                                                          │
-  browser ──HTTP/SSE──▶  gateway  ──gRPC──▶  game-service  ──Kafka(chess.game-events)──▶  repository ──▶ DB    │
-     │                      │                  │ (+ engine)            │                                       │
-     │                      │ HTTP             │                       ├──▶ opening-service ──▶ Neo4j          │
-     └──── web UI (Scala.js)┘                  └─ vs-computer          └──▶ analytics-service ──▶ ClickHouse   │
-                            │                                                                                  │
-                            └──▶ lobby-service (multiplayer) ──▶ DB                                            │
+                                  ┌──────────────── read-side projections (optional) ─────────────────┐
+                                  │                                                                    │
+ browser ─HTTP/SSE─▶ gateway ─gRPC─▶ game-service ─Kafka(chess.game-events)─▶ repository ─▶ DB         │
+    │                   │             │ (+ engine)        │                                            │
+    │                   │ HTTP        │                   ├─▶ opening-service ─▶ Neo4j                  │
+    └─ web UI (Scala.js)┘             └─ vs-computer      ├─▶ spark-analytics ─Kafka(chess.analytics)─┐ │
+                        │                                 │     (Spark speed layer: sessionize)       │ │
+                        └─▶ lobby-service ─▶ DB           └─▶ analytics-service ◀─────────────────────┘ │
+                                                              (raw events + summaries → zio-metrics)    │
+                                                                          │                            │
+                                  obs: Prometheus ◀─ /metrics (all services + kafka-exporter) ─▶ Grafana
 ```
 
 - **gateway** holds **no** authoritative game state. Each REST endpoint forwards to a gRPC rpc on game-service (or an HTTP call to lobby-service); the SSE source re-subscribes when the active game id changes. It also serves the Laminar/Scala.js web UI from the classpath.
 - **game-service** owns in-memory game state via `GameSessions` (one `SubscriptionRef[SessionState]` per game id). It embeds **`bot-engine`** for vs-computer play, and after every successful state transition it publishes a `GameDomainEvent` to Kafka.
 - **repository** is the persistence write-side: a Kafka consumer applies each event by writing the latest state under `gameId` through the pluggable persistence layer. A legacy REST surface is retained for Gatling and ad-hoc curl — both write paths are idempotent.
 - **lobby-service** runs the multiplayer invite/join flow and registers players back with the gateway over HTTP when a game starts.
-- **opening-service** and **analytics-service** are optional read-side Kafka projections — they consume `chess.game-events` and never touch game state. Unlike the repository's idempotent upsert write path, these projections are **not** replay-safe: analytics does one unconditional `INSERT` per event, and opening-service increments edge counts against an in-memory before-FEN `Ref` (lost on restart). Both consumers reset `auto.offset.reset=earliest`, so a topic replay double-counts.
+- **opening-service** is an optional read-side Kafka projection — it consumes `chess.game-events` and builds a Neo4j opening tree (never touches game state).
+- **spark-analytics** is the **Spark speed layer** (Lambda architecture): a containerized Spark-local-mode job that consumes `chess.game-events`, **sessionizes** each game with `flatMapGroupsWithState` (moves, opening signature, duration, outcome, captures), and publishes one `GameSummary` per completed game to `chess.analytics`. A batch sibling recomputes authoritative views to Parquet. See [ADR 022](adr/022-spark-analytics-projection.md).
+- **analytics-service** is the metrics bridge to Grafana: it consumes `chess.analytics` (completed-game aggregates) **and** `chess.game-events` (raw rate/classifier metrics), folding both into zio-metrics counters/gauges/histograms on its `/metrics` endpoint. **No database** — ClickHouse was dropped (ADR 022); the durable store is the Kafka topic, and dedup-by-gameId keeps counts correct under at-least-once replay.
 
-All services read config from env vars (12-factor), expose Prometheus metrics, and select their persistence backend through one shared switch (`PICHESS_BACKEND` / `PICHESS_CACHE`).
+All services read config from env vars (12-factor), expose Prometheus metrics, and select their persistence backend through one shared switch (`PICHESS_BACKEND` / `PICHESS_CACHE`). The optional **obs** profile (`EXTRA=obs`) runs Prometheus + Grafana (auto-provisioned dashboards); `EXTRA=analytics` additionally runs Kafka, spark-analytics, analytics-service and a `kafka-exporter`. Analytics/monitoring is served by **Grafana**, not an in-app dashboard.
 
 For background see:
 - [ADR 010 — Kafka as event log](adr/010-kafka-as-event-log.md)
@@ -32,7 +37,7 @@ For background see:
 - [ADR 015 — tournament play as a separate `bot-tournament` module](adr/015-tournament-server-integration-module.md)
 - [ADR 016 — polyglot persistence behind a DAO seam](adr/016-polyglot-persistence-dao-seam.md)
 - [ADR 017 — boopickle wire codec for DTOs (supersedes the FEN note in 011)](adr/017-boopickle-wire-codec-for-dtos.md)
-- [ADR 018 — CQRS read-side projections (Neo4j, ClickHouse)](adr/018-cqrs-read-side-projections.md)
+- [ADR 018 — CQRS read-side projections (Neo4j, ClickHouse)](adr/018-cqrs-read-side-projections.md) — *the ClickHouse half is superseded by ADR 022*
 - [ADR 021 — distributed tracing across HTTP/gRPC/Kafka](adr/021-distributed-tracing-across-async-boundary.md)
 - [ADR 022 — Spark analytics projection (Lambda read-side + live loop-back)](adr/022-spark-analytics-projection.md)
 
@@ -40,7 +45,7 @@ For background see:
 
 ## SBT Module Map
 
-The build is **32 sbt modules** (run `sbt projects` for the live list — it reports 34 + `root` because `domain` and `api` each expand into JVM + JS variants there). `domain` and `api` are cross-compiled to JVM **and** JS so the Scala.js web-ui shares types and DTOs with the JVM gateway. Modules group into libraries, persistence, the bot, the deployable services, and cross-cutting/test tooling:
+The build is **33 sbt modules** (run `sbt projects` for the live list — it reports 35 + `root` because `domain` and `api` each expand into JVM + JS variants there). `domain` and `api` are cross-compiled to JVM **and** JS so the Scala.js web-ui shares types and DTOs with the JVM gateway. Modules group into libraries, persistence, the bot, the deployable services, and cross-cutting/test tooling:
 
 ```
 root (aggregate)
@@ -80,7 +85,9 @@ root (aggregate)
 │  ├── repository         REST :8091 — persistence write-side; Kafka consumer
 │  ├── lobby-service      REST :8092 — multiplayer lobby/invite flow
 │  ├── opening-service    (no HTTP)  — Kafka → Neo4j opening-tree projection
-│  ├── analytics-service  REST :8093 — Kafka → ClickHouse analytics projection + query API
+│  ├── analytics-service  REST :8093 — Kafka(chess.game-events + chess.analytics) → zio-metrics for Grafana (no DB)
+│  ├── spark-analytics    (no HTTP)  — Spark speed layer: chess.game-events → sessionize → chess.analytics
+│  │                                   Scala 3.3 + Java-17 image (Spark local mode); see ADR 022
 │  └── tui                interactive terminal client against the gateway (`make tui`)
 │
 ├─ web-ui (JS only)       chess.webui — Laminar SPA, compiled to JS, served by the gateway
@@ -90,7 +97,7 @@ root (aggregate)
    └── bench              chess.bench — JMH microbenchmarks for rules/codec/domain/bot (see performance.md)
 ```
 
-Each service exposes Prometheus metrics on a dedicated port (gateway 9101, game-service 9102, repository 9103, lobby 9104, opening 9105, analytics 9106).
+Each service exposes Prometheus metrics on a dedicated port (gateway 9101, game-service 9102, repository 9103, lobby 9104, opening 9105, analytics 9106). Under `EXTRA=analytics,obs` a `kafka-exporter` (:9308) adds broker/lag/throughput metrics, and Grafana (:3000) auto-provisions the JVM-overview and game-analytics dashboards. **spark-analytics is the one module on Scala 3.3 / Java 17** (Spark 3.3 needs a genuine 2.13 stdlib + Java 17) and is kept out of the root aggregate; everything else is Scala 3.8.2 / Java 23.
 
 ## Module Dependency Graph
 
@@ -102,7 +109,8 @@ game-service     → domain, rules, codec, events, proto, api, persistence/{api,
 repository       → domain, repository-api, codec, events, persistence/{api,runtime}, observability
 lobby-service    → domain, api, persistence/{api,runtime}, observability
 opening-service  → domain, codec, events, observability
-analytics-service→ domain, codec, events, observability
+analytics-service→ domain, codec, events, api, observability
+spark-analytics  → (standalone — no in-repo deps; re-declares its event schema)  + zio-spark/Spark
 tui              → domain, codec, api
 web-ui           → domain.js, api.js                                   (Scala.js)
 
@@ -194,7 +202,7 @@ Game-state encoding/decoding in FEN, PGN, and JSON, plus UCI move translation. F
 
 ### `chess.events` (module: `events`)
 
-The Kafka event ADT. `chess.events.GameDomainEvent` = `GameStarted | GameLoaded | MoveMade | Undone | Redone | DrawClaimed | Forfeited | GameEnded`. Every event carries a `resultingFen` — "what to persist after this event" — so consumers stay type-agnostic. zio-json over the wire (no schema registry, [ADR 012](adr/012-zio-json-event-serialization-no-schema-registry.md)).
+The Kafka event ADT. `chess.events.GameDomainEvent` = `GameStarted | GameLoaded | MoveMade | Undone | Redone | DrawClaimed | Forfeited | GameEnded`. Every event carries a `resultingFen` — "what to persist after this event" — so consumers stay type-agnostic. zio-json over the wire (no schema registry, [ADR 012](adr/012-zio-json-event-serialization-no-schema-registry.md)). `chess.events.Topics` names the two topics: `chess.game-events` (game-service → repository / opening / spark-analytics / analytics-service) and `chess.analytics` (spark-analytics → analytics-service; per-completed-game `GameSummary` JSON).
 
 ### `chess.api` (module: `api`, cross-compiled JVM + JS)
 
@@ -298,23 +306,23 @@ See [`docs/adr/`](adr/) for the full decision records:
 - [ADR 015 — tournament play as a separate `bot-tournament` module](adr/015-tournament-server-integration-module.md)
 - [ADR 016 — polyglot persistence behind a DAO seam, env-selected, contract-tested](adr/016-polyglot-persistence-dao-seam.md)
 - [ADR 017 — boopickle as the binary wire codec for DTOs (supersedes ADR 011's FEN note)](adr/017-boopickle-wire-codec-for-dtos.md)
-- [ADR 018 — CQRS read-side: Kafka projections into Neo4j + ClickHouse](adr/018-cqrs-read-side-projections.md)
+- [ADR 018 — CQRS read-side: Kafka projections into Neo4j + ClickHouse](adr/018-cqrs-read-side-projections.md) *(ClickHouse half superseded by ADR 022)*
 - [ADR 019 — copy-make search via a read-only BoardLike/PositionView seam](adr/019-copy-make-search-boardlike-seam.md)
 - [ADR 020 — engine as an embedded library (no engine service)](adr/020-engine-as-embedded-library.md)
 - [ADR 021 — distributed tracing across HTTP/gRPC/Kafka via uniform decorators](adr/021-distributed-tracing-across-async-boundary.md)
-- [ADR 022 — Spark analytics projection: Lambda read-side, stateful streaming, live loop-back, ClickHouse dropped](adr/022-spark-analytics-projection.md)
+- [ADR 022 — Spark analytics projection: Lambda read-side, stateful streaming → Prometheus/Grafana, ClickHouse dropped](adr/022-spark-analytics-projection.md)
 
 ## What's Built vs. Next
 
-The 14-phase HTWG lecture plan ([roadmap.md](roadmap.md)) is essentially complete: TUI, functional rules, three FEN parsers, REST, microservices + Docker, Slick/Postgres **and** Mongo/Redis/Cassandra persistence, the web UI, the Gatling performance work, the AI bot, ZIO-Streams reactivity, and the Kafka event log are all in. The Phase 13 "Spark" brief was satisfied with the Kafka → ClickHouse analytics projection instead of Spark.
+The 14-phase HTWG lecture plan ([roadmap.md](roadmap.md)) is essentially complete: TUI, functional rules, three FEN parsers, REST, microservices + Docker, Slick/Postgres **and** Mongo/Redis/Cassandra persistence, the web UI, the Gatling performance work, the AI bot, ZIO-Streams reactivity, and the Kafka event log are all in. The Phase 13 "Spark" brief is satisfied by the **`spark-analytics`** module — a real Spark Lambda read-side (stateful sessionization speed layer + Parquet batch layer) over `chess.game-events`, whose output drives the Grafana analytics dashboards. This **replaced** the earlier Kafka → ClickHouse projection (ClickHouse dropped, [ADR 022](adr/022-spark-analytics-projection.md)).
 
 | Area | Status | Notes |
 |---|---|---|
 | Persistence | **Done** | DAO trait + Postgres/Mongo/Redis/Cassandra/in-memory + Redis cache, switchable via `PICHESS_BACKEND` |
 | AI bot | **Done, ongoing** | Hybrid HCE+NNUE ≈2350 Elo; live on Lichess; training pipeline in `bot-train`/`nnue-train` |
 | Multiplayer | **Done** | `lobby-service` invite/join flow |
-| Observability | **Done** | Prometheus + Grafana + Jaeger on every service |
-| Read-side projections | **Done** | opening-tree → Neo4j, analytics → ClickHouse |
+| Observability | **Done** | Prometheus + Grafana (JVM + game-analytics dashboards) + Jaeger; kafka-exporter under `EXTRA=analytics` |
+| Read-side projections | **Done** | opening-tree → Neo4j; analytics → **Spark** (`spark-analytics`) → Prometheus/Grafana (ClickHouse removed) |
 | game-service restart resilience | **Next** | replay `chess.game-events` on startup to rebuild in-memory state. `BotConfigRepository` is also in-memory only (`Ref[Map]`), so after a game-service restart vs-bot games silently revert to PvP — the bot stops auto-replying |
 | k3s/k3d deployment | **Done** | Kustomize tiers (`mvp`⊂`lobbies`⊂`full`) + local Ansible pipeline (k3s or k3d) + prod-compose fallback; rollout stays local (VPN-gated box), see [deployment-plan.md](deployment-plan.md) |
 
@@ -322,7 +330,7 @@ The 14-phase HTWG lecture plan ([roadmap.md](roadmap.md)) is essentially complet
 
 | Tool | Version | Purpose |
 |---|---|---|
-| sbt | 1.12.6 | Build tool (32-module multi-project) |
+| sbt | 1.12.6 | Build tool (33-module multi-project) |
 | Scala | 3.8.2 | Language |
 | ZIO | 2.1.26 | Effect system, DI, concurrency |
 | zio-http | 3.11.2 | HTTP server, SSE |
@@ -335,8 +343,9 @@ The 14-phase HTWG lecture plan ([roadmap.md](roadmap.md)) is essentially complet
 | MongoDB Scala driver | 5.5.1 | Mongo backend |
 | zio-redis | 1.1.3 | Redis backend + cache decorator |
 | DataStax driver | 4.17.0 | Cassandra backend |
-| clickhouse-jdbc | 0.9.0 | analytics-service projection store |
 | Neo4j driver | (Bolt) | opening-service projection store |
+| zio-spark / Spark | 0.12.0 / 3.3.1 | `spark-analytics` speed+batch layers (Scala 3.3, Java 17, local mode) |
+| kafka-exporter | 1.7.0 | Kafka broker/lag/throughput metrics for Grafana (`EXTRA=analytics`) |
 | scala-parser-combinators / fastparse | 2.4.0 / 3.1.1 | The two library-based FEN parsers |
 | Gatling | 3.13.5 | Load testing (`gatling` module, `make perf`) |
 | zio-metrics-connectors / zio-opentelemetry / zio-profiling | 2.5.6 / 3.0.0-RC24 / 0.3.3 | Observability layers |
