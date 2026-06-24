@@ -4,6 +4,7 @@ import io.grpc.inprocess.{InProcessChannelBuilder, InProcessServerBuilder}
 import pichess.game_service.{
   ExportRequest,
   GameIdRequest,
+  ListActiveGamesRequest,
   LoadGameRequest,
   MoveRequest,
   NewGameRequest,
@@ -23,13 +24,13 @@ import chess.service.GameServiceLive
 
 /** Coverage spec for the tracing-decorator over `GameServiceClient`.
   *
-  * The decorator is purely pass-through plus span instrumentation, so
-  * the tests just exercise every rpc method against a real in-process
-  * `GameService` backed by the in-memory repo. We assert that the
-  * decorator behaves identically to the underlying client — the actual
-  * span emission is verified end-to-end by the Jaeger spans the perf
-  * suite captures (the decorator's behaviour is statically obvious;
-  * what the tests prove is that we didn't break the rpc forwarding).
+  * The decorator is purely pass-through plus span instrumentation, so the tests
+  * just exercise every rpc method against a real in-process `GameService`
+  * backed by the in-memory repo. We assert that the decorator behaves
+  * identically to the underlying client — the actual span emission is verified
+  * end-to-end by the Jaeger spans the perf suite captures (the decorator's
+  * behaviour is statically obvious; what the tests prove is that we didn't
+  * break the rpc forwarding).
   */
 object TracingGameServiceClientSpec extends ZIOSpecDefault:
 
@@ -56,26 +57,29 @@ object TracingGameServiceClientSpec extends ZIOSpecDefault:
           InProcessChannelBuilder.forName(name).directExecutor()
         ),
         options = io.grpc.CallOptions.DEFAULT
-      ),
+      )
     )
 
-  /** Build a fresh in-process gRPC stack + the tracing-decorated
-    * client. Each test gets its own channel name so the inprocess
-    * registry doesn't collide.
+  /** Build a fresh in-process gRPC stack + the tracing-decorated client. Each
+    * test gets its own channel name so the inprocess registry doesn't collide.
     */
   private def withTracedClient[A](
-      body: TracingGameServiceClient => ZIO[Tracing & ContextStorage, Throwable, A]
+      body: TracingGameServiceClient => ZIO[
+        Tracing & ContextStorage,
+        Throwable,
+        A
+      ]
   ): ZIO[Any, Throwable, A] =
     for
       name <- ZIO.succeed(s"tracing-spec-${java.util.UUID.randomUUID()}")
       out <- ZIO.scoped {
-               (for
-                 raw     <- ZIO.service[ZioGameService.GameServiceClient]
-                 tracing <- ZIO.service[Tracing]
-                 client   = new TracingGameServiceClient(raw, tracing)
-                 result  <- body(client)
-               yield result).provideSomeLayer[Scope](stackLayer(name))
-             }
+        (for
+          raw <- ZIO.service[ZioGameService.GameServiceClient]
+          tracing <- ZIO.service[Tracing]
+          client = new TracingGameServiceClient(raw, tracing)
+          result <- body(client)
+        yield result).provideSomeLayer[Scope](stackLayer(name))
+      }
     yield out
 
   def spec = suite("TracingGameServiceClient")(
@@ -97,7 +101,7 @@ object TracingGameServiceClientSpec extends ZIOSpecDefault:
       withTracedClient { client =>
         for
           started <- client.newGame(NewGameRequest())
-          reply   <- client.makeMove(MoveRequest(started.gameId, "e2 e4"))
+          reply <- client.makeMove(MoveRequest(started.gameId, "e2 e4"))
         yield assertTrue(reply.fen.startsWith("rnbqkbnr/pppppppp/8/8/4P3"))
       }
     },
@@ -105,8 +109,8 @@ object TracingGameServiceClientSpec extends ZIOSpecDefault:
       withTracedClient { client =>
         for
           started <- client.newGame(NewGameRequest())
-          _       <- client.makeMove(MoveRequest(started.gameId, "e2 e4"))
-          reply   <- client.undo(GameIdRequest(started.gameId))
+          _ <- client.makeMove(MoveRequest(started.gameId, "e2 e4"))
+          reply <- client.undo(GameIdRequest(started.gameId))
         yield assertTrue(reply.fen.nonEmpty)
       }
     },
@@ -114,9 +118,9 @@ object TracingGameServiceClientSpec extends ZIOSpecDefault:
       withTracedClient { client =>
         for
           started <- client.newGame(NewGameRequest())
-          _       <- client.makeMove(MoveRequest(started.gameId, "e2 e4"))
-          _       <- client.undo(GameIdRequest(started.gameId))
-          reply   <- client.redo(GameIdRequest(started.gameId))
+          _ <- client.makeMove(MoveRequest(started.gameId, "e2 e4"))
+          _ <- client.undo(GameIdRequest(started.gameId))
+          reply <- client.redo(GameIdRequest(started.gameId))
         yield assertTrue(reply.fen.startsWith("rnbqkbnr/pppppppp/8/8/4P3"))
       }
     },
@@ -127,7 +131,7 @@ object TracingGameServiceClientSpec extends ZIOSpecDefault:
       withTracedClient { client =>
         for
           started <- client.newGame(NewGameRequest())
-          exit    <- client.claimDraw(GameIdRequest(started.gameId)).exit
+          exit <- client.claimDraw(GameIdRequest(started.gameId)).exit
         yield assertTrue(exit.isFailure)
       }
     },
@@ -135,7 +139,7 @@ object TracingGameServiceClientSpec extends ZIOSpecDefault:
       withTracedClient { client =>
         for
           started <- client.newGame(NewGameRequest())
-          reply   <- client.forfeit(GameIdRequest(started.gameId))
+          reply <- client.forfeit(GameIdRequest(started.gameId))
         yield assertTrue(reply.fen.nonEmpty)
       }
     },
@@ -143,7 +147,7 @@ object TracingGameServiceClientSpec extends ZIOSpecDefault:
       withTracedClient { client =>
         for
           started <- client.newGame(NewGameRequest())
-          reply   <- client.getState(GameIdRequest(started.gameId))
+          reply <- client.getState(GameIdRequest(started.gameId))
         yield assertTrue(reply.gameId == started.gameId)
       }
     },
@@ -151,19 +155,31 @@ object TracingGameServiceClientSpec extends ZIOSpecDefault:
       withTracedClient { client =>
         for
           started <- client.newGame(NewGameRequest())
-          reply   <- client.exportGame(ExportRequest(started.gameId, "fen"))
+          reply <- client.exportGame(ExportRequest(started.gameId, "fen"))
         yield assertTrue(reply.body.nonEmpty)
+      }
+    },
+    test(
+      "listActiveGames → underlying listActiveGames, includes the new game"
+    ) {
+      withTracedClient { client =>
+        for
+          started <- client.newGame(NewGameRequest())
+          reply <- client.listActiveGames(ListActiveGamesRequest())
+        yield assertTrue(reply.games.exists(_.gameId == started.gameId))
       }
     },
     test("subscribeGame → underlying subscribeGame (single state emission)") {
       withTracedClient { client =>
         for
           started <- client.newGame(NewGameRequest())
-          first   <- client.subscribeGame(GameIdRequest(started.gameId)).runHead
+          first <- client.subscribeGame(GameIdRequest(started.gameId)).runHead
         yield assertTrue(first.exists(_.gameId == started.gameId))
       }
     },
-    test("withResponseMetadata exposes the underlying response-metadata variant") {
+    test(
+      "withResponseMetadata exposes the underlying response-metadata variant"
+    ) {
       withTracedClient { client =>
         ZIO.succeed(assertTrue(client.withResponseMetadata != null))
       }
@@ -190,21 +206,21 @@ object TracingGameServiceClientSpec extends ZIOSpecDefault:
       // unreachable from the smoke tests above.
       withTracedClient { client =>
         ZIO.succeed {
-          val md      = new io.grpc.Metadata()
+          val md = new io.grpc.Metadata()
           val carrier = client.metadataCarrier(md)
           carrier.set(md, "traceparent", "00-trace-span-01")
-          val key   = io.grpc.Metadata.Key.of(
+          val key = io.grpc.Metadata.Key.of(
             "traceparent",
-            io.grpc.Metadata.ASCII_STRING_MARSHALLER,
+            io.grpc.Metadata.ASCII_STRING_MARSHALLER
           )
           assertTrue(md.get(key) == "00-trace-span-01")
         }
       }
     },
     test("TracingGameServiceClient.layer wires the decorator") {
-      val program = for
-        client <- ZIO.service[ZioGameService.GameServiceClient]
-      yield assertTrue(client.isInstanceOf[TracingGameServiceClient])
+      val program =
+        for client <- ZIO.service[ZioGameService.GameServiceClient]
+        yield assertTrue(client.isInstanceOf[TracingGameServiceClient])
 
       val name = s"tracing-layer-${java.util.UUID.randomUUID()}"
       // `>>>` chains stackLayer into the decorator layer, dropping the
@@ -216,5 +232,5 @@ object TracingGameServiceClientSpec extends ZIOSpecDefault:
           stackLayer(name) >>> TracingGameServiceClient.layer
         )
       }
-    },
+    }
   ) @@ TestAspect.withLiveClock

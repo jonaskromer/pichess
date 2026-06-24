@@ -38,11 +38,11 @@ import chess.view.HtmlPage
   * SSE). Every command endpoint is a thin shim over the gameService gRPC
   * client; the gateway holds **no** authoritative game state.
   *
-  * **Routing**: every per-game endpoint is `/api/games/{id}/...`. The
-  * gateway is stateless — there's no global "active game" any more. The
-  * client tracks its own current gameId (in URL hash on the web-ui, in a
-  * Ref on the TUI). `POST /api/games` mints a new game and returns its
-  * id alongside the initial state.
+  * **Routing**: every per-game endpoint is `/api/games/{id}/...`. The gateway
+  * is stateless — there's no global "active game" any more. The client tracks
+  * its own current gameId (in URL hash on the web-ui, in a Ref on the TUI).
+  * `POST /api/games` mints a new game and returns its id alongside the initial
+  * state.
   */
 object WebController:
 
@@ -53,15 +53,29 @@ object WebController:
       presence: SpectatorPresence,
       lobbyBaseUrl: String,
       stackInfo: StackInfo,
-      lichessToken: Option[String]
+      lichessToken: Option[String],
+      tournamentBaseUrl: String,
+      botControlUrl: String,
+      botName: String,
+      tournamentSpectate: TournamentSpectate
   ): Routes[Client & Tracing & ContextStorage, Response] =
     val lichessRoutes =
       lichessToken match
         case Some(token) => LichessSpectate.routes(client, token)
         case None        => Routes.empty
     tapirRoutes(client, registry, cache, presence, stackInfo) ++
-      rawRoutes(client, presence, stackInfo) ++
+      rawRoutes(client, presence, stackInfo, lichessToken.isDefined) ++
       LobbyProxy.routes(lobbyBaseUrl) ++
+      TournamentProxy.routes(tournamentBaseUrl, botControlUrl) ++
+      tournamentSpectate.routes(client, tournamentBaseUrl) ++
+      SpectateIndex.routes(
+        client,
+        presence,
+        tournamentBaseUrl,
+        botControlUrl,
+        botName,
+        lichessToken
+      ) ++
       lichessRoutes
 
   // --------------------------------------------------------------------------
@@ -89,8 +103,8 @@ object WebController:
             // is allowed to move both colours. Lobby-created games will
             // overwrite this via `registerLobby` when the lobby starts
             // (Phase 2).
-            _     <- registry.registerLocal(reply.gameId, sessionId)
-            dto   <- replyToDto(reply)
+            _ <- registry.registerLocal(reply.gameId, sessionId)
+            dto <- replyToDto(reply)
           yield GameSnapshot(reply.gameId, dto)
         },
         Endpoints.getState.zServerLogic[Any] { case (id, format) =>
@@ -104,10 +118,10 @@ object WebController:
           gated(registry, id, sessionId) {
             for
               reply <- client
-                         .makeMove(MoveRequest(id, req.move))
-                         .mapError(toErrorDto)
-              _     <- cache.invalidate(id)
-              dto   <- replyToDto(reply)
+                .makeMove(MoveRequest(id, req.move))
+                .mapError(toErrorDto)
+              _ <- cache.invalidate(id)
+              dto <- replyToDto(reply)
             yield dto
           }
         },
@@ -186,25 +200,25 @@ object WebController:
   /** Cache-aware accessor for the annotation bundle of `gameId`. On hit,
     * returns the cached bundle directly. On miss, fetches the state from
     * gameService and decodes the server-side annotations sidecar
-    * (`reply.annotations` — boopickle [[AnnotationsDto]]) directly into
-    * the cache. No fallback path: game-service always populates the
-    * annotations on every StateReply (see
-    * `chess.gameservice.GrpcMappers.buildAnnotations`); empty or
-    * malformed bytes would be a server defect, surfaced via `.orDie`.
+    * (`reply.annotations` — boopickle [[AnnotationsDto]]) directly into the
+    * cache. No fallback path: game-service always populates the annotations on
+    * every StateReply (see `chess.gameservice.GrpcMappers.buildAnnotations`);
+    * empty or malformed bytes would be a server defect, surfaced via `.orDie`.
     *
-    * Invalidation is the responsibility of the mutation handlers
-    * (`postMove` / undo / redo / draw / forfeit) — they all call
-    * `cache.invalidate(id)` after a successful mutation.
+    * Invalidation is the responsibility of the mutation handlers (`postMove` /
+    * undo / redo / draw / forfeit) — they all call `cache.invalidate(id)` after
+    * a successful mutation.
     */
-  /** Build the gRPC `NewGameRequest` from the optional client-side
-    * vs-bot settings. When `vsBot` is `None` the request defaults to a
-    * regular PvP game (proto3 zero values). When supplied, the fields
-    * are passed through to game-service which validates them and
-    * routes the game through the vs-bot orchestrator.
+  /** Build the gRPC `NewGameRequest` from the optional client-side vs-bot
+    * settings. When `vsBot` is `None` the request defaults to a regular PvP
+    * game (proto3 zero values). When supplied, the fields are passed through to
+    * game-service which validates them and routes the game through the vs-bot
+    * orchestrator.
     *
-    * Validation (unknown side / difficulty) happens server-side rather
-    * than here so the rejection comes from a single source of truth.
-    * That keeps the gateway thin — it just shuttles the strings. */
+    * Validation (unknown side / difficulty) happens server-side rather than
+    * here so the rejection comes from a single source of truth. That keeps the
+    * gateway thin — it just shuttles the strings.
+    */
   private[controller] def newGameRequestFor(
       vsBot: Option[chess.api.VsBotSettings]
   ): NewGameRequest =
@@ -212,10 +226,10 @@ object WebController:
       case None => NewGameRequest()
       case Some(s) =>
         NewGameRequest(
-          vsBot         = true,
-          botSide       = s.botSide,
+          vsBot = true,
+          botSide = s.botSide,
           botDifficulty = s.difficulty,
-          allowUndo     = s.allowUndo,
+          allowUndo = s.allowUndo
         )
 
   private def annotationsFor(
@@ -225,17 +239,16 @@ object WebController:
   ): ZIO[Any, ErrorDto, AnnotationCache.Annotations] =
     cache.get(gameId).flatMap {
       case Some(cached) => ZIO.succeed(cached)
-      case None         =>
+      case None =>
         for
           reply <- client.getState(GameIdRequest(gameId)).mapError(toErrorDto)
-          ann    = decodeServerAnnotations(reply.annotations.toByteArray)
-          _     <- cache.put(gameId, ann)
+          ann = decodeServerAnnotations(reply.annotations.toByteArray)
+          _ <- cache.put(gameId, ann)
         yield ann
     }
 
-  /** Phase 4: decode the server-side annotation bundle off the wire.
-    * Throws on empty/corrupt input — that's a server defect, not
-    * client-recoverable.
+  /** Phase 4: decode the server-side annotation bundle off the wire. Throws on
+    * empty/corrupt input — that's a server defect, not client-recoverable.
     */
   private[controller] def decodeServerAnnotations(
       bytes: Array[Byte]
@@ -243,16 +256,15 @@ object WebController:
     val dto = AnnotationsDto.decodeBytes(bytes)
     AnnotationCache.Annotations(
       legalMovesFrom = dto.legalMovesFrom,
-      threats        = dto.threats,
-      attackersOf    = dto.attackersOf,
+      threats = dto.threats,
+      attackersOf = dto.attackersOf
     )
 
-  /** Wrap a mutation handler in a session-id check. Refuses with a
-    * "Forbidden: ..." 400 when the session isn't a registered active
-    * player on the game. Tapir's `errorOut` gives us 400; spec-wise
-    * this is a 403 in spirit, but adding the second status code would
-    * mean a `oneOf[ApiError]` refactor we don't need yet — the message
-    * carries the intent.
+  /** Wrap a mutation handler in a session-id check. Refuses with a "Forbidden:
+    * ..." 400 when the session isn't a registered active player on the game.
+    * Tapir's `errorOut` gives us 400; spec-wise this is a 403 in spirit, but
+    * adding the second status code would mean a `oneOf[ApiError]` refactor we
+    * don't need yet — the message carries the intent.
     */
   private def gated[A](
       registry: SessionRegistry,
@@ -260,7 +272,7 @@ object WebController:
       sessionId: String
   )(action: ZIO[Any, ErrorDto, A]): ZIO[Any, ErrorDto, A] =
     registry.canMutate(gameId, sessionId).flatMap {
-      case true  => action
+      case true => action
       case false =>
         ZIO.fail(
           ErrorDto(
@@ -272,11 +284,14 @@ object WebController:
   private def callOnGame(
       client: ZioGameService.GameServiceClient,
       id: String,
-      action: ZioGameService.GameServiceClient => String => IO[StatusException, StateReply]
+      action: ZioGameService.GameServiceClient => String => IO[
+        StatusException,
+        StateReply
+      ]
   ): ZIO[Any, ErrorDto, BoardStateDto] =
     for
       reply <- action(client)(id).mapError(toErrorDto)
-      dto   <- replyToDto(reply)
+      dto <- replyToDto(reply)
     yield dto
 
   private def exportInFormat(
@@ -284,12 +299,14 @@ object WebController:
       id: String,
       format: String
   ): ZIO[Any, ErrorDto, ExportResponse] =
-    for
-      reply <- client.exportGame(ExportRequest(id, format)).mapError(toErrorDto)
+    for reply <- client
+        .exportGame(ExportRequest(id, format))
+        .mapError(toErrorDto)
     yield ExportResponse(reply.format, reply.body)
 
   private[controller] def toErrorDto(err: StatusException): ErrorDto =
-    val description = Option(err.getStatus.getDescription).getOrElse(err.getMessage)
+    val description =
+      Option(err.getStatus.getDescription).getOrElse(err.getMessage)
     ErrorDto(description)
 
   private def currentBoard(
@@ -298,16 +315,18 @@ object WebController:
   ): ZIO[Any, ErrorDto, BoardStateDto] =
     for
       reply <- client.getState(GameIdRequest(id)).mapError(toErrorDto)
-      dto   <- replyToDto(reply)
+      dto <- replyToDto(reply)
     yield dto
 
-  /** Decode the gRPC StateReply's `board_state` bytes back into the
-    * shared [[BoardStateDto]]. The bytes were produced by
+  /** Decode the gRPC StateReply's `board_state` bytes back into the shared
+    * [[BoardStateDto]]. The bytes were produced by
     * [[chess.gameservice.GrpcMappers.encodeBoardState]] using
-    * [[BoardStateDto.encodeBytes]] (boopickle) — same codec used
-    * here, so the round-trip is exact.
+    * [[BoardStateDto.encodeBytes]] (boopickle) — same codec used here, so the
+    * round-trip is exact.
     */
-  private[controller] def replyToDto(reply: StateReply): ZIO[Any, ErrorDto, BoardStateDto] =
+  private[controller] def replyToDto(
+      reply: StateReply
+  ): ZIO[Any, ErrorDto, BoardStateDto] =
     ZIO
       .attempt(BoardStateDto.decodeBytes(reply.boardState.toByteArray))
       .mapError(t =>
@@ -321,10 +340,11 @@ object WebController:
   private def rawRoutes(
       client: ZioGameService.GameServiceClient,
       presence: SpectatorPresence,
-      stackInfo: StackInfo
+      stackInfo: StackInfo,
+      lichessEnabled: Boolean
   ): Routes[Any, Response] =
     val core = Routes(
-      Method.GET / "" -> handler(servePage(stackInfo)),
+      Method.GET / "" -> handler(servePage(stackInfo, lichessEnabled)),
       Method.GET / "web" / trailing ->
         handler((rest: zio.http.Path, _: Request) => serveAsset(rest)),
       Method.GET / "api" / "games" / string("id") / "events" -> handler {
@@ -357,12 +377,20 @@ object WebController:
       else Routes.empty
     core ++ dev
 
-  private def servePage(stackInfo: StackInfo): ZIO[Any, Nothing, Response] =
+  private def servePage(
+      stackInfo: StackInfo,
+      lichessEnabled: Boolean
+  ): ZIO[Any, Nothing, Response] =
     ZIO.succeed(
       Response(
         status = Status.Ok,
         headers = Headers(Header.ContentType(MediaType.text.html)),
-        body = Body.fromString(HtmlPage.render(devMode = stackInfo.devMode))
+        body = Body.fromString(
+          HtmlPage.render(
+            devMode = stackInfo.devMode,
+            lichessEnabled = lichessEnabled
+          )
+        )
       )
     )
 
@@ -380,18 +408,20 @@ object WebController:
       case _ =>
         ZIO.succeed(Response(status = Status.NotFound))
 
-  /** Serve a file from `dev/<subdir>/` in the gateway resources tree.
-    * Same path-traversal + extension allow-list as `serveAsset`. Returns
+  /** Serve a file from `dev/<subdir>/` in the gateway resources tree. Same
+    * path-traversal + extension allow-list as `serveAsset`. Returns
     * `index.html` when the request lands on the directory root (e.g.
-    * `/dev/coverage/report/`). The dev report HTMLs link out to .css /
-    * .js / .png siblings — the existing allow-list already covers them. */
+    * `/dev/coverage/report/`). The dev report HTMLs link out to .css / .js /
+    * .png siblings — the existing allow-list already covers them.
+    */
   private def serveDevAsset(
       subdir: String,
       rest: zio.http.Path
   ): ZIO[Any, Nothing, Response] =
-    val raw      = rest.toString.stripPrefix("/")
-    val relative = if raw.isEmpty || raw.endsWith("/") then raw + "index.html"
-                   else raw
+    val raw = rest.toString.stripPrefix("/")
+    val relative =
+      if raw.isEmpty || raw.endsWith("/") then raw + "index.html"
+      else raw
     contentTypeFor(relative) match
       case Some(contentType) if isSafeAssetPath(relative) =>
         serveClasspathResource(s"dev/$subdir/$relative", contentType)
@@ -415,6 +445,8 @@ object WebController:
     else if lower.endsWith(".png") then Some(MediaType.image.png)
     else if lower.endsWith(".html") then Some(MediaType.text.html)
     else if lower.endsWith(".json") then Some(MediaType.application.json)
+    else if lower.endsWith(".woff2") then Some(MediaType.font.`woff2`)
+    else if lower.endsWith(".woff") then Some(MediaType.font.`woff`)
     else None
 
   private def serveClasspathResource(
@@ -490,8 +522,7 @@ object WebController:
                 _ => ZIO.succeed(stateEvents.merge(countEvents))
               )
           }
-        else
-          stateEvents.merge(countEvents)
+        else stateEvents.merge(countEvents)
 
       Response.fromServerSentEvents(body)
     }

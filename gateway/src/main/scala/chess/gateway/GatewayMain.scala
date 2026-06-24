@@ -14,18 +14,26 @@ import chess.controller.{
   SessionRegistry,
   SpectatorPresence,
   StackInfo,
+  TournamentProxy,
+  TournamentSpectate,
   WebController
 }
-import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer, TracingLayer, TracingMiddleware}
+import chess.obs.{
+  MetricsHttpServer,
+  MetricsLayer,
+  ProfilerLayer,
+  TracingLayer,
+  TracingMiddleware
+}
 
 /** Standalone entry point for the gateway microservice.
   *
   * Hosts the public HTTP surface (Tapir REST + SSE + web-ui static) on
-  * `HTTP_PORT` (default 8090). All game commands are forwarded to
-  * gameService via a gRPC client opened against `GAME_SERVICE_GRPC`
-  * (default `localhost:9000`). The gateway holds **no** authoritative
-  * state and **no** per-process "active game" — every request carries
-  * its own `gameId` in the URL, so multiple games run side by side.
+  * `HTTP_PORT` (default 8090). All game commands are forwarded to gameService
+  * via a gRPC client opened against `GAME_SERVICE_GRPC` (default
+  * `localhost:9000`). The gateway holds **no** authoritative state and **no**
+  * per-process "active game" — every request carries its own `gameId` in the
+  * URL, so multiple games run side by side.
   */
 object GatewayMain extends ZIOAppDefault:
 
@@ -41,8 +49,8 @@ object GatewayMain extends ZIOAppDefault:
       "gateway",
       for
         httpPort <- portFromEnv("HTTP_PORT", defaultHttpPort)
-        target   <- targetFromEnv
-        _        <- serve(httpPort, target)
+        target <- targetFromEnv
+        _ <- serve(httpPort, target)
       yield ()
     )
 
@@ -59,8 +67,8 @@ object GatewayMain extends ZIOAppDefault:
 
   private def serve(httpPort: Int, target: String): Task[Unit] =
     val program: ZIO[
-      ZioGameService.GameServiceClient & Server & Client
-        & Tracing & ContextStorage & Scope,
+      ZioGameService.GameServiceClient & Server & Client & Tracing &
+        ContextStorage & Scope,
       Throwable,
       Unit
     ] =
@@ -69,42 +77,52 @@ object GatewayMain extends ZIOAppDefault:
         // flow into the Prometheus publisher used by /metrics. Built
         // in the surrounding ZIO.scoped block so the trackers run
         // for the lifetime of this service rather than per-request.
-        _            <- MetricsLayer.jvmMetricsBootstrap
-        client       <- ZIO.service[ZioGameService.GameServiceClient]
-        registry     <- SessionRegistry.make
-        cache        <- AnnotationCache.make
-        presence     <- SpectatorPresence.make
+        _ <- MetricsLayer.jvmMetricsBootstrap
+        client <- ZIO.service[ZioGameService.GameServiceClient]
+        registry <- SessionRegistry.make
+        cache <- AnnotationCache.make
+        presence <- SpectatorPresence.make
         lobbyBaseUrl <- LobbyProxy.baseUrlFromEnv
-        stackInfo    <- StackInfo.fromEnv
+        tournamentUrl <- TournamentProxy.tournamentUrlFromEnv
+        botControlUrl <- TournamentProxy.botControlUrlFromEnv
+        botName <- TournamentProxy.botNameFromEnv
+        tournamentSpectate <- TournamentSpectate.make
+        stackInfo <- StackInfo.fromEnv
         // Optional: enables the Lichess spectate bridge (POST /lichess/games)
         // when a bot token is present. Absent → the route is simply not added.
-        lichessToken <- zio.System.env("LICHESS_BOT_TOKEN").map(_.filter(_.nonEmpty))
-        metricsPort  <- MetricsHttpServer.portFromEnv(defaultMetricsPort)
-        _            <- Console.printLine(
-                          s"pichess-gateway HTTP listening on 0.0.0.0:$httpPort " +
-                            s"(game-service=$target, lobby-service=$lobbyBaseUrl, " +
-                            s"stack=${stackInfo.backend}" +
-                            (if stackInfo.extras.isEmpty then ""
-                             else s"+${stackInfo.extras.mkString(",")}") + ")"
-                        )
-        _            <- Console.printLine(
-                          s"pichess-gateway metrics on 0.0.0.0:$metricsPort/metrics"
-                        )
-        _            <- MetricsHttpServer.serve(metricsPort).forkDaemon
-        _            <- Server.install(
-                          WebController.routes(
-                            client,
-                            registry,
-                            cache,
-                            presence,
-                            lobbyBaseUrl,
-                            stackInfo,
-                            lichessToken
-                          ) @@ TracingMiddleware.serverSpan
-                        )
+        lichessToken <- zio.System
+          .env("LICHESS_BOT_TOKEN")
+          .map(_.filter(_.nonEmpty))
+        metricsPort <- MetricsHttpServer.portFromEnv(defaultMetricsPort)
+        _ <- Console.printLine(
+          s"pichess-gateway HTTP listening on 0.0.0.0:$httpPort " +
+            s"(game-service=$target, lobby-service=$lobbyBaseUrl, " +
+            s"stack=${stackInfo.backend}" +
+            (if stackInfo.extras.isEmpty then ""
+             else s"+${stackInfo.extras.mkString(",")}") + ")"
+        )
+        _ <- Console.printLine(
+          s"pichess-gateway metrics on 0.0.0.0:$metricsPort/metrics"
+        )
+        _ <- MetricsHttpServer.serve(metricsPort).forkDaemon
+        _ <- Server.install(
+          WebController.routes(
+            client,
+            registry,
+            cache,
+            presence,
+            lobbyBaseUrl,
+            stackInfo,
+            lichessToken,
+            tournamentUrl,
+            botControlUrl,
+            botName,
+            tournamentSpectate
+          ) @@ TracingMiddleware.serverSpan
+        )
         // Run forever; the gateway is no longer killable from a network
         // request — `docker stop` / SIGTERM is the only shutdown path.
-        _            <- ZIO.never
+        _ <- ZIO.never
       yield ()
 
     // Raw gRPC client → tracing decorator. The decorator's layer expects
@@ -126,6 +144,6 @@ object GatewayMain extends ZIOAppDefault:
         Server.defaultWithPort(httpPort),
         Client.default,
         tracedClientLayer,
-        TracingLayer.fromEnv("gateway"),
+        TracingLayer.fromEnv("gateway")
       )
     }

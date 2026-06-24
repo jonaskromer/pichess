@@ -3,9 +3,11 @@ package chess.gateway
 import io.grpc.{Metadata, StatusException}
 import io.opentelemetry.api.trace.SpanKind
 import pichess.game_service.{
+  ActiveGamesReply,
   ExportReply,
   ExportRequest,
   GameIdRequest,
+  ListActiveGamesRequest,
   LoadGameRequest,
   MoveRequest,
   NewGameRequest,
@@ -22,23 +24,22 @@ import zio.telemetry.opentelemetry.tracing.propagation.TraceContextPropagator
 /** Decorator over `ZioGameService.GameServiceClient` that
   *
   *   1. starts a CLIENT span per rpc, named `GameService/<rpc>`, so the
-  *      gateway-side leg of every game-service hop is visible in Jaeger
-  *      with proper timing.
-  *   2. injects the W3C `traceparent` / `tracestate` of that span into
-  *      the outgoing gRPC `Metadata` via `mapMetadataZIO`, so the
-  *      game-service's `GrpcServer.serverSpan` can pick it up as the
-  *      parent of its own SERVER span — giving us one continuous trace
-  *      from the public HTTP entry, through the gRPC hop, into DB calls.
+  *      gateway-side leg of every game-service hop is visible in Jaeger with
+  *      proper timing. 2. injects the W3C `traceparent` / `tracestate` of that
+  *      span into the outgoing gRPC `Metadata` via `mapMetadataZIO`, so the
+  *      game-service's `GrpcServer.serverSpan` can pick it up as the parent of
+  *      its own SERVER span — giving us one continuous trace from the public
+  *      HTTP entry, through the gRPC hop, into DB calls.
   *
-  * `mapMetadataZIO` runs the injector once per call. Because the call
-  * is initiated from inside `tracing.span(...)`, the fiber's OTel
-  * context already carries the CLIENT span when the injector reads it,
-  * so the propagator writes that span's id as `traceparent`.
+  * `mapMetadataZIO` runs the injector once per call. Because the call is
+  * initiated from inside `tracing.span(...)`, the fiber's OTel context already
+  * carries the CLIENT span when the injector reads it, so the propagator writes
+  * that span's id as `traceparent`.
   *
-  * Implements `GameServiceClient` directly (not the simpler
-  * `GameService` trait) so existing call sites that wire the generated
-  * client type don't need to be updated. `transform` rewraps with the
-  * same tracing decorator so chained transformations preserve tracing.
+  * Implements `GameServiceClient` directly (not the simpler `GameService`
+  * trait) so existing call sites that wire the generated client type don't need
+  * to be updated. `transform` rewraps with the same tracing decorator so
+  * chained transformations preserve tracing.
   */
 final class TracingGameServiceClient(
     underlying: ZioGameService.GameServiceClient,
@@ -47,10 +48,12 @@ final class TracingGameServiceClient(
 
   private val tracedUnderlying: ZioGameService.GameServiceClient =
     underlying.mapMetadataZIO { safe =>
-      safe.wrapZIO { md =>
-        val carrier = metadataCarrier(md)
-        tracing.injectSpan(TraceContextPropagator.default, carrier)
-      }.as(safe)
+      safe
+        .wrapZIO { md =>
+          val carrier = metadataCarrier(md)
+          tracing.injectSpan(TraceContextPropagator.default, carrier)
+        }
+        .as(safe)
     }
 
   def newGame(request: NewGameRequest): IO[StatusException, StateReply] =
@@ -80,6 +83,13 @@ final class TracingGameServiceClient(
   def exportGame(request: ExportRequest): IO[StatusException, ExportReply] =
     clientSpan("GameService/exportGame")(tracedUnderlying.exportGame(request))
 
+  def listActiveGames(
+      request: ListActiveGamesRequest
+  ): IO[StatusException, ActiveGamesReply] =
+    clientSpan("GameService/listActiveGames")(
+      tracedUnderlying.listActiveGames(request)
+    )
+
   def subscribeGame(
       request: GameIdRequest
   ): Stream[StatusException, StateReply] =
@@ -90,17 +100,17 @@ final class TracingGameServiceClient(
     // HTTP SERVER span via the FiberRef-based context.
     tracedUnderlying.subscribeGame(request)
 
-  /** With-response-metadata variant: delegate to the underlying without
-    * adding spans (rarely used; if needed we'd write a parallel
-    * tracing decorator over `GameServiceClientWithResponseMetadata`).
+  /** With-response-metadata variant: delegate to the underlying without adding
+    * spans (rarely used; if needed we'd write a parallel tracing decorator over
+    * `GameServiceClientWithResponseMetadata`).
     */
   def withResponseMetadata
       : ZioGameService.GameServiceClientWithResponseMetadata =
     underlying.withResponseMetadata
 
-  /** Apply a further transform on top of the underlying, preserving
-    * the tracing decoration. Used by callers of `withCallOptions`,
-    * `withTimeout`, etc., which forward via `transform` under the hood.
+  /** Apply a further transform on top of the underlying, preserving the tracing
+    * decoration. Used by callers of `withCallOptions`, `withTimeout`, etc.,
+    * which forward via `transform` under the hood.
     */
   override def transform(
       t: ClientTransform
@@ -130,9 +140,9 @@ final class TracingGameServiceClient(
 
 object TracingGameServiceClient:
 
-  /** Layer that wraps the existing raw `GameServiceClient` with the
-    * tracing decorator. Wire alongside the raw client layer; the
-    * decorator replaces the raw client in the environment.
+  /** Layer that wraps the existing raw `GameServiceClient` with the tracing
+    * decorator. Wire alongside the raw client layer; the decorator replaces the
+    * raw client in the environment.
     */
   val layer: URLayer[
     ZioGameService.GameServiceClient & Tracing,
