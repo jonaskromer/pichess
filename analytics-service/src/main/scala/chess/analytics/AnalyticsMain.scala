@@ -55,12 +55,17 @@ object AnalyticsMain extends ZIOAppDefault:
         _           <- bootstrap.filter(_.trim.nonEmpty) match
                          case Some(servers) =>
                            Console.printLine(
-                             s"pichess-analytics-service consuming ${Topics.Analytics} from $servers (group=$group)"
+                             s"pichess-analytics-service consuming ${Topics.Analytics} + ${Topics.GameEvents} from $servers (group=$group)"
                            ) *>
                              KafkaAnalyticsConsumer
                                .run(svc)
                                .provideLayer(
                                  KafkaAnalyticsConsumer.consumerLayer(servers, group)
+                               )
+                               .forkDaemon *>
+                             KafkaAnalyticsConsumer.runRaw
+                               .provideLayer(
+                                 KafkaAnalyticsConsumer.consumerLayer(servers, s"$group-raw")
                                )
                                .forkDaemon *>
                              serveHttp(port, svc)

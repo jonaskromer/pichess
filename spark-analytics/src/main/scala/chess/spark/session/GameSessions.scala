@@ -9,6 +9,7 @@ import chess.spark.schema.MoveEventRow
   */
 final case class GameState(
     moves: Int,
+    captures: Int,
     firstTs: Long,
     lastTs: Long,
     opening: String,
@@ -23,6 +24,7 @@ final case class GameState(
 final case class GameSummary(
     gameId: String,
     totalMoves: Int,
+    captures: Int,
     durationMs: Long,
     opening: String,
     result: String,
@@ -52,19 +54,21 @@ object GameSessions:
   /** Terminal event types that complete a game. */
   private val Terminal = Set("GameEnded", "Forfeited", "DrawClaimed")
 
-  val empty: GameState = GameState(0, Long.MaxValue, Long.MinValue, "", "", "")
+  val empty: GameState = GameState(0, 0, Long.MaxValue, Long.MinValue, "", "", "")
 
   /** Apply one event to the running state. */
   def fold(state: GameState, row: MoveEventRow): GameState =
     val isMove     = row.eventType == "MoveMade"
     val isTerminal = Terminal.contains(row.eventType)
     val moves      = if isMove then state.moves + 1 else state.moves
+    val captures   = if isMove && row.san.contains("x") then state.captures + 1 else state.captures
     val opening =
       if isMove && moves <= OpeningPlies then
         if state.opening.isEmpty then row.san else s"${state.opening} ${row.san}"
       else state.opening
     GameState(
       moves = moves,
+      captures = captures,
       firstTs = math.min(state.firstTs, row.occurredAt),
       lastTs = math.max(state.lastTs, row.occurredAt),
       opening = opening,
@@ -85,6 +89,7 @@ object GameSessions:
     GameSummary(
       gameId = gameId,
       totalMoves = s.moves,
+      captures = s.captures,
       durationMs = durationMs,
       opening = s.opening,
       result = s.result,

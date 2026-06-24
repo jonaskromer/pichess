@@ -389,6 +389,20 @@ services:
     volumes:
       - ./spark-analytics/data/checkpoint:/var/pichess/spark
 
+  # Kafka metrics for Grafana (broker up/down, topic throughput, consumer-group
+  # lag, partition offsets). Scraped by Prometheus (see docker/prometheus). Tiny.
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.7.0
+    container_name: pichess-kafka-exporter
+    profiles: ["analytics"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command: ["--kafka.server=kafka:9092"]
+    expose:
+      - "9308"
+    mem_limit: 128m
+
   gateway:
     image: pichess-gateway:latest
     pull_policy: never

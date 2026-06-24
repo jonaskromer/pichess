@@ -26,3 +26,12 @@ scrape_configs:
           - analytics-service:9106
         labels:
           stack: pichess
+
+  # Kafka broker metrics (lag, throughput, topic/partition offsets) via
+  # kafka-exporter. Only resolves when the analytics profile is up.
+  - job_name: kafka
+    static_configs:
+      - targets:
+          - kafka-exporter:9308
+        labels:
+          stack: pichess

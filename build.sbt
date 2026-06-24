@@ -724,7 +724,7 @@ lazy val analyticsService = project
     // HTTP/Kafka wiring is exercised by docker-compose smoke runs, not unit
     // tests. The in-memory AnalyticsState + LiveAnalyticsService ARE unit-tested.
     coverageExcludedFiles :=
-      ".*AnalyticsMain.*;.*Kafka.*;.*AnalyticsServer.*;.*AnalyticsEndpoints.*",
+      ".*AnalyticsMain.*;.*Kafka.*;.*AnalyticsServer.*;.*AnalyticsEndpoints.*;.*AnalyticsMetrics.*",
   )
 
 // Spark analytics — Lambda-architecture read-side projection over the same

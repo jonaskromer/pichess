@@ -26,7 +26,7 @@ object AnalyticsServiceSpec extends ZIOSpecDefault:
   )
 
   private def summary(id: String, opening: String, moves: Int): AnalyticsSummaryDto =
-    AnalyticsSummaryDto(id, moves, 0L, opening, "GameEnded", "Draw", 0.0)
+    AnalyticsSummaryDto(id, moves, 0, 0L, opening, "GameEnded", "Draw", 0.0)
 
   def spec = suite("AnalyticsService")(
     suite("accessors delegate to the service")(

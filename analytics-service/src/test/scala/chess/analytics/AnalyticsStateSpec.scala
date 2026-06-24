@@ -7,7 +7,7 @@ import chess.api.AnalyticsSummaryDto
 object AnalyticsStateSpec extends ZIOSpecDefault:
 
   private def summary(id: String, opening: String, moves: Int): AnalyticsSummaryDto =
-    AnalyticsSummaryDto(id, moves, 0L, opening, "GameEnded", "Draw", 0.0)
+    AnalyticsSummaryDto(id, moves, 0, 0L, opening, "GameEnded", "Draw", 0.0)
 
   def spec = suite("AnalyticsState")(
     test("empty has no games and no average") {

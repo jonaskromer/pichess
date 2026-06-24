@@ -10,6 +10,7 @@ object AnalyticsSummaryDtoSpec extends ZIOSpecDefault:
       val dto = AnalyticsSummaryDto(
         gameId = "g1",
         totalMoves = 3,
+        captures = 1,
         durationMs = 4000L,
         opening = "e4 d5 exd5",
         result = "DrawClaimed",
@@ -20,10 +21,10 @@ object AnalyticsSummaryDtoSpec extends ZIOSpecDefault:
     },
     test("decodes the Spark producer's payload shape") {
       val json =
-        """{"gameId":"g2","totalMoves":2,"durationMs":3000,"opening":"e4 e5","result":"Forfeited","outcome":"White","avgThinkTimeMs":3000.0}"""
+        """{"gameId":"g2","totalMoves":2,"captures":0,"durationMs":3000,"opening":"e4 e5","result":"Forfeited","outcome":"White","avgThinkTimeMs":3000.0}"""
       assertTrue(
         json.fromJson[AnalyticsSummaryDto] ==
-          Right(AnalyticsSummaryDto("g2", 2, 3000L, "e4 e5", "Forfeited", "White", 3000.0))
+          Right(AnalyticsSummaryDto("g2", 2, 0, 3000L, "e4 e5", "Forfeited", "White", 3000.0))
       )
     }
   )

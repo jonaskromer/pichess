@@ -15,11 +15,12 @@ import zio.json.*
 final case class AnalyticsSummaryDto(
     gameId: String,
     totalMoves: Int,
+    captures: Int,
     durationMs: Long,
     opening: String,
     result: String,
     // How the game ended: winning colour ("White"/"Black"), "Draw", or a
-    // GameEnded status — surfaced in the live panel alongside the event type.
+    // GameEnded status — drives the outcome metrics/panels.
     outcome: String,
     avgThinkTimeMs: Double
 )
