@@ -448,6 +448,14 @@ nnue-retrain: ## Retrain the NNUE from the shared TSV with depth-weighting → n
 ab-sweep: ## Re-A/B off-by-default search flags at the live budget → tagged keep/provisional table (roadmap #4). HOURS at default GAMES. Vars: GAMES (200), BUDGET_MS (2000), FLAGS, WEIGHTS, ALPHA
 	scripts/ab-sweep.sh
 
+.PHONY: tournament-bot
+tournament-bot: ## Connect piChess to a NowChess tournament & play (auto-registers). With NAME set it WAITS, joining as soon as a matching tournament opens. Vars: SERVER (base URL), NAME (name substring) or ID (exact), BOT (piChess), DEPTH. Long-running — wrap in tmux/nohup on a server.
+	TOURNAMENT_BASE_URL="$(or $(SERVER),http://141.37.123.132:8086)" \
+	TOURNAMENT_BOT_NAME="$(or $(BOT),piChess)" \
+	$(if $(ID),TOURNAMENT_ID="$(ID)",) $(if $(NAME),TOURNAMENT_NAME="$(NAME)",) \
+	$(if $(DEPTH),TOURNAMENT_MOVE_DEPTH="$(DEPTH)",) \
+	sbt "botTournament/runMain chess.bot.tournament.TournamentBotMain"
+
 .PHONY: bench-persistence
 bench-persistence: ## Per-backend persistence benches (testcontainer-backed). Phase D stub today.
 	@mkdir -p $(PERF_REPORTS_DIR)

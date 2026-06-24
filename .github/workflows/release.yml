@@ -67,6 +67,7 @@ jobs:
           gameService/Docker/stage
           repository/Docker/stage
           lobbyService/Docker/stage
+          botTournament/Docker/stage
 
       - name: Build multi-arch images and push to GHCR
         run: |
@@ -80,6 +81,7 @@ jobs:
             [pichess-game-service]=game-service
             [pichess-repository]=repository
             [pichess-lobby-service]=lobby-service
+            [pichess-bot-tournament]=bot-tournament
           )
           for img in "${!DIRS[@]}"; do
             ctx="${DIRS[$img]}/target/docker/stage"

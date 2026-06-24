@@ -352,6 +352,28 @@ services:
       timeout: 2s
       retries: 5
 
+  # Tournament bot (opt-in `tournament` profile): plays bot-vs-bot games on the
+  # external NowChess server and emits Prometheus metrics on :9107 (win/loss vs
+  # each opponent, openings, think-time, clocks) for the `piChess — tournament`
+  # Grafana dashboard. Engine weights ship inside the image (EngineBundle
+  # resources) — no external volume. Set TOURNAMENT_ID or TOURNAMENT_NAME to
+  # auto-join an open tournament; otherwise joins are driven via the control API
+  # (the gateway signals POST /control/tournaments/{id} on :8080).
+  bot-tournament:
+    image: pichess-bot-tournament:latest
+    pull_policy: never
+    container_name: pichess-bot-tournament
+    profiles: ["tournament"]
+    ports:
+      - "9107:9107"   # Prometheus metrics (scraped by the `tournament` job)
+    environment:
+      TOURNAMENT_BASE_URL: "${TOURNAMENT_BASE_URL:-https://nowchess.janis-eccarius.de}"
+      TOURNAMENT_BOT_NAME: "${TOURNAMENT_BOT_NAME:-pichess}"
+      TOURNAMENT_NAME: "${TOURNAMENT_NAME:-}"
+      TOURNAMENT_ID: "${TOURNAMENT_ID:-}"
+      METRICS_PORT: "9107"
+      JAVA_TOOL_OPTIONS: "-Xmx1g"
+
   # Spark speed layer (ADR 022): consumes chess.game-events, sessionizes each
   # game, and publishes per-game GameSummary JSON to chess.analytics. Runs Spark
   # in LOCAL mode inside the container — no external cluster, no host JVM, no
@@ -434,6 +456,10 @@ services:
       # an "Active stack: postgres" chip on the /dev page.
       PICHESS_STACK: "${PICHESS_BACKEND:-postgres}"
       PICHESS_STACK_EXTRAS: "${PICHESS_EXTRAS:-}"
+      # Spectate's default "piChess bot games only" filter matches tournament
+      # games by the bot's registered name — track the same var the
+      # bot-tournament service uses so the two never drift.
+      PICHESS_BOT_NAME: "${TOURNAMENT_BOT_NAME:-pichess}"
       # When set to "true" the /dev/* routes light up and the UI
       # surfaces the Dev link on the start screen post-it.
       PICHESS_DEV: "${PICHESS_DEV:-false}"

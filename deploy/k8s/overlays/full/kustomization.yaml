@@ -12,6 +12,9 @@ resources:
   - redis.yaml
   - kafka.yaml
   - repository.yaml
+  # Optional containerised tournament bot (gateway-signalled control API). It
+  # only talks OUTBOUND to the NowChess server, so it rides the full tier here.
+  - bot-tournament.yaml
 
 configMapGenerator:
   - name: pichess-config
@@ -26,7 +29,14 @@ configMapGenerator:
       - PICHESS_REDIS_HOST=redis
       - PICHESS_REDIS_PORT=6379
       - REPOSITORY_PORT=8091
+      # Spectate's default "piChess bot games only" filter matches tournament
+      # games by the bot's registered name — keep in sync with
+      # bot-tournament.yaml's TOURNAMENT_BOT_NAME (gateway defaults to "pichess"
+      # otherwise, which would hide every game on this tier).
+      - PICHESS_BOT_NAME=piChess
 
 images:
   - name: ghcr.io/jonaskromer/pichess-repository
+    newTag: "0.3.1"
+  - name: ghcr.io/jonaskromer/pichess-bot-tournament
     newTag: "0.3.1"

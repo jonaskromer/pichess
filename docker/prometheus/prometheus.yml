@@ -35,3 +35,13 @@ scrape_configs:
           - kafka-exporter:9308
         labels:
           stack: pichess
+
+  # Tournament bot (bot-vs-bot play): win/loss vs opponents, openings,
+  # think-time, clocks. Only resolves with the `tournament` compose profile
+  # (or the k8s full overlay); the target shows DOWN otherwise — harmless.
+  - job_name: tournament
+    static_configs:
+      - targets:
+          - bot-tournament:9107
+        labels:
+          stack: pichess

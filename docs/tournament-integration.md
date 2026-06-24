@@ -112,6 +112,34 @@ always a synthesized `gameState` snapshot, then live events:
 | **Reconnect safety** | ✅ Plain NDJSON, no heartbeats. Per-game streams **retry on drop** (`retry(Schedule.fixed(5s))`); the server re-emits the `gameState` snapshot and we recompute from `fen`, so play resumes (the per-game `search`/TT is reused across reconnects). The tournament stream has no replay, but per-game fibers are `forkDaemon`ed so they survive a tournament-stream reconnect too — no duplicate forks, no dropped games. |
 | **gameStart fan-out** | ⚠️ Handled. Broadcast both-colours-every-game ⇒ bot self-filters by registered id + dedupes by gameId (see note above). |
 
+## Running it (CLI)
+
+One command, via the `make` target (`make tournament-bot`). It auto-registers
+piChess (idempotent) and plays. The runnable entrypoint is
+`chess.bot.tournament.TournamentBotMain`; env knobs: `TOURNAMENT_BASE_URL`,
+`TOURNAMENT_ID` (exact), `TOURNAMENT_NAME` (substring to **wait for** and
+auto-join the moment it opens), `TOURNAMENT_BOT_NAME` (default `piChess`),
+`TOURNAMENT_MOVE_DEPTH`, `TOURNAMENT_LAZYSMP`.
+
+```bash
+# Wait for the next "Tournament 0.x" on the HTWG server and auto-join as piChess:
+make tournament-bot NAME="Tournament 0."
+
+# Join a specific tournament by id:
+make tournament-bot ID=767252df
+
+# Override server / bot name / fallback depth:
+make tournament-bot SERVER=http://141.37.123.132:8086 BOT=piChess NAME="Tournament 0." DEPTH=6
+```
+
+It's long-running (stays connected, plays every game). On a server, wrap it so
+it survives the SSH session — e.g. `tmux new -s pichess 'make tournament-bot NAME="Tournament 0."'`
+or `nohup make tournament-bot NAME="Tournament 0." &>/tmp/pichess-bot.log &`.
+Resolution precedence: `TOURNAMENT_ID` > `TOURNAMENT_NAME` (poll every 10s until
+a `created` tournament's name matches) > auto-pick the first open tournament.
+(Needs the repo + `sbt` + a JDK on the host; for a no-sbt binary, `sbt
+botTournament/stage` produces `bot-tournament/target/universal/stage/bin/`.)
+
 ## How it's built
 
 The `bot-tournament` module is a second protocol adapter the size of
@@ -176,6 +204,38 @@ Run it like the Lichess bot — straight from sbt:
 Make target or Docker image yet — neither bot is containerised today (both run
 from sbt).
 
+### Metrics & Grafana
+
+The bot emits Prometheus metrics **in-process** on `:9107/metrics` (the shared
+`chess.obs.MetricsHttpServer`, forked beside the control API in
+`TournamentBotMain`), scraped by Prometheus's `tournament` job and rendered by
+the auto-provisioned **`piChess — tournament`** Grafana dashboard. All the rich
+data is already in-process, so nothing is routed through Kafka — and the bot can
+play an off-cluster tournament and still be scraped.
+
+The metric families (all labels bounded — `opponent`, `color`, `result`,
+`status`, `family`, `move`):
+
+| Metric | What it answers |
+| --- | --- |
+| `pichess_tournament_games_finished_total{opponent,color,result,status}` | **win/loss/draw vs each opponent** + termination reason (checkmate/resigned/timeout/…) — one counter drives win-rate, the W/L/D split, and the "how games end" panel |
+| `pichess_tournament_games_started_total{opponent,color}` | games played vs each opponent, colour balance |
+| `pichess_tournament_openings_total{opponent,family}` | ECO opening **family per opponent** (UCI-prefix classifier, `Openings.family`) |
+| `pichess_tournament_first_move_total{move}` | opening-move distribution |
+| `pichess_tournament_think_seconds{color}` / `…_move_budget_seconds` | actual think-time and allocated budget per move (histograms) |
+| `pichess_tournament_game_length_plies` | game length (histogram) |
+| `pichess_tournament_clock_remaining_seconds{color}` | live clock pressure (gauge) |
+| `pichess_tournament_active_games` / `…_active_tournaments` | liveness gauges |
+| `pichess_tournament_moves_total{color}` | move throughput |
+| `…_stream_reconnects_total` / `…_move_failures_total` / `…_search_no_move_total` | operational health |
+
+The pure classification feeding these — `GameOutcome.classify` (result × status)
+and `Openings` (append / first-move / plies / ECO family) — is unit-tested
+(`GameOutcomeSpec`, `OpeningsSpec`); `TournamentMetrics` is emission-only glue
+(coverage-excluded, like `TournamentBotMain`). Locally: `docker compose
+--profile tournament --profile obs up` (set `TOURNAMENT_ID`/`TOURNAMENT_NAME`),
+then open Grafana at `:3000`.
+
 ### Reusable as-is
 
 `bot-engine` (all of it: search, HCE+NNUE hybrid eval, TT), `chess.codec`
@@ -200,6 +260,30 @@ bot's correctness** — they're the server's, and noted here for the integration
   (no top-level `gameId`). Irrelevant to our bot (it gets `gameId` from
   `gameStart`), but anything reading `GET /api/tournament/{id}/round/{n}` must
   read `matches[].gameId`.
+
+## Server compliance log
+
+**2026-06-24 — server update** (`feat: add CORS, clock increments, timeouts, SSE
+streaming improvements`; package renamed `nowchess.tournament` → `tournament`).
+Re-verified our client against the new code:
+
+- ❌→✅ **Heartbeats (the one real break).** The streams now interleave a
+  `{"type":"heartbeat"}` NDJSON line every ~10s (`NdjsonStream`). Our discriminated
+  decoders had no such case, so every heartbeat failed the stream → reconnect
+  churn. **Fixed:** added an ignorable `Heartbeat` case to both event ADTs
+  (`@jsonHint("heartbeat")`); the runner returns `None` and the bridge dispatch
+  silently ignores it. Tests + 100 % coverage retained.
+- ⚠️ **Timeouts are now ENFORCED.** `ClockRules` + a 1s timeout daemon flag a bot
+  that overruns its clock (`status=timeout`, opponent wins); clocks now decrement
+  and credit the Fischer increment. Previously unenforced. No client code change
+  (our `TimeManager` already budgets with a safety buffer), **but timing is now
+  load-bearing** → see the performance agenda in `docs/tournament-ui-plan.md`.
+- ✅ **Tolerated extra fields.** Clock objects gained `increment`; the game JSON
+  gained `startedAt`/`endedAt`. zio-json ignores them; pinned by a regression test.
+- ✅ **Unchanged & still compliant:** event discriminators/shapes, auth (register
+  idempotent, no exp), `move` → `{"ok":true}`, `getGame` players, list, and UCI
+  rules (castling king-two-square, promotion, EP). Streams are still NDJSON
+  (`application/x-ndjson`), not SSE/WS. CORS + the package rename don't affect us.
 
 ## Open operational questions (not blockers)
 

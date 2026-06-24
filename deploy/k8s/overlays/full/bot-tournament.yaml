@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bot-tournament
+  labels:
+    app: bot-tournament
+spec:
+  # In-process state (registered identity + active-tournaments map) is per-pod,
+  # so a single replica only — two would register/join independently.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bot-tournament
+  template:
+    metadata:
+      labels:
+        app: bot-tournament
+    spec:
+      containers:
+        - name: bot-tournament
+          image: ghcr.io/jonaskromer/pichess-bot-tournament
+          ports:
+            - name: control
+              containerPort: 8080
+            - name: metrics
+              containerPort: 9107
+          env:
+            # The NowChess tournament server to play on (edit per event). The bot
+            # only makes OUTBOUND calls to it; it needs no other pichess service.
+            - name: TOURNAMENT_BASE_URL
+              value: "http://141.37.123.132:8086"
+            - name: TOURNAMENT_BOT_NAME
+              value: "piChess"
+            - name: TOURNAMENT_CONTROL_PORT
+              value: "8080"
+            # Prometheus metrics endpoint (win/loss vs opponents, openings,
+            # think-time, clocks) → the `piChess — tournament` Grafana dashboard.
+            - name: METRICS_PORT
+              value: "9107"
+            # Bound the heap under the memory limit (off-heap + the NNUE net live
+            # outside it). The native-packager launcher honours JAVA_OPTS.
+            - name: JAVA_OPTS
+              value: "-Xmx1024m"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            # CPU-bound during search; bounded so it can't starve the rest of the
+            # full tier on the 4-vCPU box. Timeouts are enforced server-side, so
+            # under heavy contention it plays shallower rather than flagging.
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1536Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bot-tournament
+spec:
+  # ClusterIP (default) — internal only. NEVER add an ingress rule: anyone who
+  # can reach /control can enter piChess into arbitrary tournaments. The gateway
+  # signals it at http://bot-tournament:8080.
+  selector:
+    app: bot-tournament
+  ports:
+    - name: control
+      port: 8080
+      targetPort: 8080
+    - name: metrics
+      port: 9107
+      targetPort: 9107
