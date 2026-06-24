@@ -17,8 +17,8 @@ object GameSessionsSpec extends ZIOSpecDefault:
         for
           sessions <- gameSessions
           snapshot = mkSnapshot("game-1")
-          ref      <- sessions.register(snapshot)
-          state    <- ref.get
+          ref <- sessions.register(snapshot)
+          state <- ref.get
         yield assertTrue(state.game.gameId == "game-1")
       },
       test("subsequent get returns the same SubscriptionRef") {
@@ -26,33 +26,54 @@ object GameSessionsSpec extends ZIOSpecDefault:
           sessions <- gameSessions
           snapshot = mkSnapshot("game-2")
           registered <- sessions.register(snapshot)
-          fetched    <- sessions.get("game-2")
+          fetched <- sessions.get("game-2")
         yield assertTrue(registered eq fetched)
       },
       test("registering a different game does not overwrite earlier ones") {
         for
           sessions <- gameSessions
-          _        <- sessions.register(mkSnapshot("game-a"))
-          _        <- sessions.register(mkSnapshot("game-b"))
-          a        <- sessions.get("game-a")
-          b        <- sessions.get("game-b")
-          stateA   <- a.get
-          stateB   <- b.get
+          _ <- sessions.register(mkSnapshot("game-a"))
+          _ <- sessions.register(mkSnapshot("game-b"))
+          a <- sessions.get("game-a")
+          b <- sessions.get("game-b")
+          stateA <- a.get
+          stateB <- b.get
         yield assertTrue(
           stateA.game.gameId == "game-a",
           stateB.game.gameId == "game-b"
         )
       }
     ),
+    suite("all")(
+      test("snapshots every registered session") {
+        for
+          sessions <- gameSessions
+          _ <- sessions.register(mkSnapshot("g-all-1"))
+          _ <- sessions.register(mkSnapshot("g-all-2"))
+          all <- sessions.all
+        yield assertTrue(
+          all.map(_._1).toSet == Set("g-all-1", "g-all-2"),
+          all.forall(_._2.state == GameState.initial)
+        )
+      },
+      test("is empty when no games are registered") {
+        for
+          sessions <- gameSessions
+          all <- sessions.all
+        yield assertTrue(all.isEmpty)
+      }
+    ),
     suite("get")(
       test("fails with GameNotFound for an unregistered id") {
         for
           sessions <- gameSessions
-          exit     <- sessions.get("never-was").exit
+          exit <- sessions.get("never-was").exit
         yield assertTrue(
-          exit.causeOption.exists(_.failureOption.contains(
-            GameError.GameNotFound("never-was")
-          ))
+          exit.causeOption.exists(
+            _.failureOption.contains(
+              GameError.GameNotFound("never-was")
+            )
+          )
         )
       }
     ),
@@ -62,9 +83,9 @@ object GameSessionsSpec extends ZIOSpecDefault:
         // We register + get through the live service to confirm wiring.
         val program = for
           sessions <- ZIO.service[GameSessions]
-          _        <- sessions.register(mkSnapshot("from-layer"))
-          ref      <- sessions.get("from-layer")
-          state    <- ref.get
+          _ <- sessions.register(mkSnapshot("from-layer"))
+          ref <- sessions.get("from-layer")
+          state <- ref.get
         yield state.game.gameId
         for result <- program.provide(GameSessions.layer)
         yield assertTrue(result == "from-layer")
@@ -72,8 +93,8 @@ object GameSessionsSpec extends ZIOSpecDefault:
     )
   )
 
-  /** Build a fresh `GameSessions` via the layer so each test gets an
-    * isolated session map.
+  /** Build a fresh `GameSessions` via the layer so each test gets an isolated
+    * session map.
     */
   private def gameSessions: ZIO[Any, Nothing, GameSessions] =
     ZIO.service[GameSessions].provide(GameSessions.layer)

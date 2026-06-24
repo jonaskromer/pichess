@@ -31,6 +31,10 @@ service GameService {
   rpc GetState     (GameIdRequest)       returns (StateReply);
   rpc ExportGame   (ExportRequest)       returns (ExportReply);
 
+  // Index of the in-progress games the server holds (PvP + vs-bot), for the
+  // gateway's spectate list. Only still-playing games are returned.
+  rpc ListActiveGames (ListActiveGamesRequest) returns (ActiveGamesReply);
+
   // Streaming subscription — emits the current state immediately, then every
   // subsequent state change for that game. Powers the gateway's SSE source.
   rpc SubscribeGame(GameIdRequest)       returns (stream StateReply);
@@ -103,4 +107,19 @@ message StateReply {
 message ExportReply {
   string format = 1;
   string body   = 2;
+}
+
+message ListActiveGamesRequest {}
+
+message ActiveGamesReply {
+  repeated ActiveGame games = 1;
+}
+
+// One in-progress game in the spectate index. The gateway turns this into a
+// display row + a "spectate this game-service id directly" action (PvP/PvBot
+// are native games — no mirror needed).
+message ActiveGame {
+  string game_id  = 1;
+  bool   vs_bot   = 2;  // true when a bot plays one side
+  string bot_side = 3;  // "white"/"black" when vs_bot, else empty
 }

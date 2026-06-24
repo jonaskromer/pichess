@@ -5,9 +5,12 @@ import scala.jdk.CollectionConverters.*
 import io.grpc.{Metadata, StatusException}
 import io.opentelemetry.api.trace.SpanKind
 import pichess.game_service.{
+  ActiveGame,
+  ActiveGamesReply,
   ExportReply,
   ExportRequest,
   GameIdRequest,
+  ListActiveGamesRequest,
   LoadGameRequest,
   MoveRequest,
   NewGameRequest,
@@ -26,27 +29,26 @@ import chess.codec.{FenSerializer, JsonSerializer, PgnSerializer}
 import chess.controller.GameController
 import chess.events.GameEventProducer
 import chess.model.board.{GameState, Move}
-import chess.model.piece.PieceType
+import chess.model.piece.{Color, PieceType}
 import chess.model.{GameError, GameId, GameSnapshot, SessionState}
 import chess.notation.SanSerializer
 import chess.service.{BotConfigRepository, GameService}
 
 /** zio-grpc service implementation. Each rpc routes the request through the
   * existing in-process `GameService` / `GameController`, then projects the
-  * resulting `SessionState` into a `StateReply`. Per-game atomicity comes
-  * for free from `SubscriptionRef.modifyZIO`'s semaphore inside the
-  * controllers.
+  * resulting `SessionState` into a `StateReply`. Per-game atomicity comes for
+  * free from `SubscriptionRef.modifyZIO`'s semaphore inside the controllers.
   *
-  * Implements the context-aware `RCGameService` variant so every rpc has
-  * access to the per-call gRPC `Metadata`. The trace context (W3C
-  * `traceparent`) is extracted from that metadata and used as the parent
-  * for the SERVER span this server emits — so an upstream client
-  * (`TracingGameServiceClient`) and any further child spans (DB calls,
-  * Kafka publish) share one trace in Jaeger.
+  * Implements the context-aware `RCGameService` variant so every rpc has access
+  * to the per-call gRPC `Metadata`. The trace context (W3C `traceparent`) is
+  * extracted from that metadata and used as the parent for the SERVER span this
+  * server emits — so an upstream client (`TracingGameServiceClient`) and any
+  * further child spans (DB calls, Kafka publish) share one trace in Jaeger.
   *
   * Errors:
   *   - `GameError.GameNotFound` → `Status.NOT_FOUND`
-  *   - `GameError.InvalidMove` / `GameError.ParseError` → `Status.INVALID_ARGUMENT`
+  *   - `GameError.InvalidMove` / `GameError.ParseError` →
+  *     `Status.INVALID_ARGUMENT`
   *   - `GameError.InfrastructureError` → `Status.INTERNAL`
   */
 final class GrpcServer(
@@ -59,42 +61,55 @@ final class GrpcServer(
     // provide a trivial in-memory BotConfigRepository + the same
     // Search instance the standalone Lichess bot uses.
     botConfigs: BotConfigRepository,
-    search: Search,
+    search: Search
 ) extends ZioGameService.RCGameService:
 
-  def newGame(request: NewGameRequest, ctx: RequestContext): IO[StatusException, StateReply] =
+  def newGame(
+      request: NewGameRequest,
+      ctx: RequestContext
+  ): IO[StatusException, StateReply] =
     serverSpan(ctx, "GameService/newGame") {
       (for
         // Validate the optional bot-config fields up-front so a
         // malformed request fails before we commit a fresh game.
         botCfg <- ZIO
-                    .fromEither(GrpcMappers.parseBotConfig(request))
-                    .mapError(GameError.ParseError(_))
-        event   <- gs.newGame()
-        _       <- botCfg.fold(ZIO.unit)(botConfigs.save(event.gameId, _))
+          .fromEither(GrpcMappers.parseBotConfig(request))
+          .mapError(GameError.ParseError(_))
+        event <- gs.newGame()
+        _ <- botCfg.fold(ZIO.unit)(botConfigs.save(event.gameId, _))
         snapshot = GameSnapshot.fresh(event.gameId, event.initialState)
-        ref     <- sessions.register(snapshot)
+        ref <- sessions.register(snapshot)
         // If the bot has white, play its opening move so the very
         // first state reply reflects the bot's move (the client
         // doesn't have to handle "newGame, then await first move").
-        _       <- maybeBotReply(ref)
-        reply   <- replyFor(event.gameId, ref)
+        _ <- maybeBotReply(ref)
+        reply <- replyFor(event.gameId, ref)
       yield reply).mapError(GrpcMappers.toStatusException)
     }
 
-  def loadGame(request: LoadGameRequest, ctx: RequestContext): IO[StatusException, StateReply] =
+  def loadGame(
+      request: LoadGameRequest,
+      ctx: RequestContext
+  ): IO[StatusException, StateReply] =
     serverSpan(ctx, "GameService/loadGame") {
       (for
         result <- gs.loadGame(request.raw)
         (event, history) = result
         snapshot <-
-          GameSnapshot.fromHistory(event.gameId, event.initialState, history.reverse)
-        ref   <- sessions.register(snapshot)
+          GameSnapshot.fromHistory(
+            event.gameId,
+            event.initialState,
+            history.reverse
+          )
+        ref <- sessions.register(snapshot)
         reply <- replyFor(event.gameId, ref)
       yield reply).mapError(GrpcMappers.toStatusException)
     }
 
-  def makeMove(request: MoveRequest, ctx: RequestContext): IO[StatusException, StateReply] =
+  def makeMove(
+      request: MoveRequest,
+      ctx: RequestContext
+  ): IO[StatusException, StateReply] =
     serverSpan(ctx, "GameService/makeMove") {
       runOn(request.gameId) { ref =>
         // Player's move first; if this is a vs-bot game and the
@@ -107,27 +122,42 @@ final class GrpcServer(
       }
     }
 
-  def undo(request: GameIdRequest, ctx: RequestContext): IO[StatusException, StateReply] =
+  def undo(
+      request: GameIdRequest,
+      ctx: RequestContext
+  ): IO[StatusException, StateReply] =
     serverSpan(ctx, "GameService/undo") {
       runOn(request.gameId)(GameController.undo(gs, producer, _))
     }
 
-  def redo(request: GameIdRequest, ctx: RequestContext): IO[StatusException, StateReply] =
+  def redo(
+      request: GameIdRequest,
+      ctx: RequestContext
+  ): IO[StatusException, StateReply] =
     serverSpan(ctx, "GameService/redo") {
       runOn(request.gameId)(GameController.redo(gs, producer, _))
     }
 
-  def claimDraw(request: GameIdRequest, ctx: RequestContext): IO[StatusException, StateReply] =
+  def claimDraw(
+      request: GameIdRequest,
+      ctx: RequestContext
+  ): IO[StatusException, StateReply] =
     serverSpan(ctx, "GameService/claimDraw") {
       runOn(request.gameId)(GameController.claimDraw(gs, producer, _))
     }
 
-  def forfeit(request: GameIdRequest, ctx: RequestContext): IO[StatusException, StateReply] =
+  def forfeit(
+      request: GameIdRequest,
+      ctx: RequestContext
+  ): IO[StatusException, StateReply] =
     serverSpan(ctx, "GameService/forfeit") {
       runOn(request.gameId)(GameController.forfeit(gs, producer, _))
     }
 
-  def getState(request: GameIdRequest, ctx: RequestContext): IO[StatusException, StateReply] =
+  def getState(
+      request: GameIdRequest,
+      ctx: RequestContext
+  ): IO[StatusException, StateReply] =
     serverSpan(ctx, "GameService/getState") {
       sessions
         .get(request.gameId)
@@ -135,25 +165,52 @@ final class GrpcServer(
         .mapError(GrpcMappers.toStatusException)
     }
 
-  def exportGame(request: ExportRequest, ctx: RequestContext): IO[StatusException, ExportReply] =
+  def listActiveGames(
+      request: ListActiveGamesRequest,
+      ctx: RequestContext
+  ): IO[StatusException, ActiveGamesReply] =
+    serverSpan(ctx, "GameService/listActiveGames") {
+      sessions.all.flatMap { all =>
+        ZIO
+          .foreach(all.filterNot(_._2.state.status.isOver)) { (id, _) =>
+            botConfigs.get(id).map { cfg =>
+              ActiveGame(
+                gameId = id,
+                vsBot = cfg.isDefined,
+                botSide = cfg
+                  .map(c =>
+                    if c.botSide == Color.White then "white" else "black"
+                  )
+                  .getOrElse("")
+              )
+            }
+          }
+          .map(games => ActiveGamesReply(games = games))
+      }
+    }
+
+  def exportGame(
+      request: ExportRequest,
+      ctx: RequestContext
+  ): IO[StatusException, ExportReply] =
     serverSpan(ctx, "GameService/exportGame") {
       (for
         ref <- sessions.get(request.gameId)
-        s   <- ref.get
+        s <- ref.get
         body <- request.format.toLowerCase match
-                  case "fen"  => ZIO.succeed(FenSerializer.serialize(s.state))
-                  case "json" => ZIO.succeed(JsonSerializer.serialize(s.state))
-                  case "pgn"  =>
-                    SanSerializer
-                      .deriveMoveLog(s.initialState, s.historyMoves)
-                      .orDie
-                      .flatMap(log => PgnSerializer.serialize(log, s.state.status))
-                  case other =>
-                    ZIO.fail(
-                      GameError.ParseError(
-                        s"Unknown format '$other'; expected fen, pgn, or json"
-                      )
-                    )
+          case "fen"  => ZIO.succeed(FenSerializer.serialize(s.state))
+          case "json" => ZIO.succeed(JsonSerializer.serialize(s.state))
+          case "pgn" =>
+            SanSerializer
+              .deriveMoveLog(s.initialState, s.historyMoves)
+              .orDie
+              .flatMap(log => PgnSerializer.serialize(log, s.state.status))
+          case other =>
+            ZIO.fail(
+              GameError.ParseError(
+                s"Unknown format '$other'; expected fen, pgn, or json"
+              )
+            )
       yield ExportReply(format = request.format.toLowerCase, body = body))
         .mapError(GrpcMappers.toStatusException)
     }
@@ -166,19 +223,22 @@ final class GrpcServer(
     // span for the initial-subscribe step. The per-element work happens
     // in the upstream MakeMove rpc, not here.
     ZStream
-      .fromZIO(sessions.get(request.gameId).mapError(GrpcMappers.toStatusException))
+      .fromZIO(
+        sessions.get(request.gameId).mapError(GrpcMappers.toStatusException)
+      )
       .flatMap { ref =>
-        ref.changes.mapZIO(state => GrpcMappers.toStateReply(request.gameId, state))
+        ref.changes.mapZIO(state =>
+          GrpcMappers.toStateReply(request.gameId, state)
+        )
       }
 
   // ---- vs-bot helpers --------------------------------------------------
 
-  /** If the game in `ref` is in vs-bot mode AND it's now the bot's
-    * turn AND the game isn't over, run the bot's search + apply its
-    * move through the same [[GameController.makeMove]] path the
-    * player uses. Bot moves are recorded in the same history,
-    * repetition counts include them, and the same SSE subscribers
-    * see them as ordinary state updates.
+  /** If the game in `ref` is in vs-bot mode AND it's now the bot's turn AND the
+    * game isn't over, run the bot's search + apply its move through the same
+    * [[GameController.makeMove]] path the player uses. Bot moves are recorded
+    * in the same history, repetition counts include them, and the same SSE
+    * subscribers see them as ordinary state updates.
     */
   private def maybeBotReply(
       ref: SubscriptionRef[SessionState]
@@ -197,7 +257,7 @@ final class GrpcServer(
   private def playBotMove(
       ref: SubscriptionRef[SessionState],
       state: GameState,
-      cfg: BotConfig,
+      cfg: BotConfig
   ): IO[GameError, Unit] =
     for
       // Project the session's per-position counts into a Set of
@@ -208,19 +268,22 @@ final class GrpcServer(
       // winning, or fail to claim one while losing.
       history <- ref.get.map(_.game.positionCounts.keySet)
       moveOpt <- search.bestMove(state, cfg.difficulty.searchDepth, history)
-      move    <- ZIO
-                   .fromOption(moveOpt)
-                   .orElseFail(GameError.InvalidMove(
-                     s"Bot has no legal move at a non-terminal position",
-                   ))
+      move <- ZIO
+        .fromOption(moveOpt)
+        .orElseFail(
+          GameError.InvalidMove(
+            s"Bot has no legal move at a non-terminal position"
+          )
+        )
       // Re-enter GameController.makeMove so fivefold detection /
       // repetition counts / event publication all happen for the
       // bot's move just like for the player's.
-      _       <- GameController.makeMove(gs, producer, ref, toUci(move))
+      _ <- GameController.makeMove(gs, producer, ref, toUci(move))
     yield ()
 
-  /** Inline UCI serialiser — bot's chosen [[Move]] → wire string the
-    * existing `MoveParser` parses via its coordinate-notation branch. */
+  /** Inline UCI serialiser — bot's chosen [[Move]] → wire string the existing
+    * `MoveParser` parses via its coordinate-notation branch.
+    */
   private def toUci(move: Move): String =
     val base = s"${move.from.col}${move.from.row}${move.to.col}${move.to.row}"
     move.promotion match
@@ -232,9 +295,9 @@ final class GrpcServer(
 
   // ---- generic helpers -------------------------------------------------
 
-  /** Extract the parent span context from the gRPC `Metadata` carried in
-    * `ctx`, then wrap `io` in a child SERVER span. The propagator reads
-    * W3C `traceparent` / `tracestate` keys, populated by the
+  /** Extract the parent span context from the gRPC `Metadata` carried in `ctx`,
+    * then wrap `io` in a child SERVER span. The propagator reads W3C
+    * `traceparent` / `tracestate` keys, populated by the
     * `TracingGameServiceClient` decorator on the gateway side.
     */
   private def serverSpan[A](ctx: RequestContext, name: String)(
@@ -257,14 +320,16 @@ final class GrpcServer(
       override def getAllKeys(carrier: Metadata): Iterable[String] =
         carrier.keys().asScala
       override def getByKey(carrier: Metadata, key: String): Option[String] =
-        Option(carrier.get(Metadata.Key.of(key, Metadata.ASCII_STRING_MARSHALLER)))
+        Option(
+          carrier.get(Metadata.Key.of(key, Metadata.ASCII_STRING_MARSHALLER))
+        )
 
   private def runOn(gameId: GameId)(
       action: SubscriptionRef[SessionState] => IO[GameError, Unit]
   ): IO[StatusException, StateReply] =
     (for
       ref <- sessions.get(gameId)
-      _   <- action(ref)
+      _ <- action(ref)
       out <- replyFor(gameId, ref)
     yield out).mapError(GrpcMappers.toStatusException)
 
@@ -285,8 +350,8 @@ object GrpcServer:
   /** Layer exposing the impl as the public RC gRPC service trait — what
     * zio-grpc's `GenericBindable` derivation looks for. The trait is the
     * context-aware variant (`RCGameService = GGameService[RequestContext,
-    * StatusException]`) so each rpc sees the per-call gRPC `Metadata`
-    * for trace extraction.
+    * StatusException]`) so each rpc sees the per-call gRPC `Metadata` for trace
+    * extraction.
     */
   val asServiceLayer: URLayer[
     GameService & GameEventProducer & GameSessions & Tracing &
@@ -300,7 +365,7 @@ object GrpcServer:
           s: GameSessions,
           t: Tracing,
           bcr: BotConfigRepository,
-          search: Search,
+          search: Search
       ) =>
         new GrpcServer(gs, p, s, t, bcr, search): ZioGameService.RCGameService
     )

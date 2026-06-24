@@ -8,9 +8,9 @@ import chess.model.{GameError, GameId, GameSnapshot, SessionState}
 /** Holds one `SubscriptionRef[SessionState]` per active game.
   *
   * Replaces the single shared `session` previously held in `app/Main`. Each
-  * gRPC client connects to the same in-memory map; concurrent requests on
-  * the same game are serialised by `SubscriptionRef.modifyZIO`'s internal
-  * semaphore (same atomicity guarantee as the old in-process model).
+  * gRPC client connects to the same in-memory map; concurrent requests on the
+  * same game are serialised by `SubscriptionRef.modifyZIO`'s internal semaphore
+  * (same atomicity guarantee as the old in-process model).
   *
   * State is in-memory only — gameService restart drops every active game.
   * Replay-from-Kafka-on-startup is the documented next iteration.
@@ -20,7 +20,9 @@ final class GameSessions(
 ):
   def register(snapshot: GameSnapshot): UIO[SubscriptionRef[SessionState]] =
     sessions.modifyZIO { map =>
-      SubscriptionRef.make(SessionState(snapshot)).map(ref => (ref, map + (snapshot.gameId -> ref)))
+      SubscriptionRef
+        .make(SessionState(snapshot))
+        .map(ref => (ref, map + (snapshot.gameId -> ref)))
     }
 
   def get(id: GameId): IO[GameError, SubscriptionRef[SessionState]] =
@@ -28,6 +30,15 @@ final class GameSessions(
       ZIO
         .fromOption(map.get(id))
         .orElseFail(GameError.GameNotFound(id))
+    }
+
+  /** Snapshot every live session as `(gameId, current SessionState)`. Finished
+    * games linger in the map until eviction, so callers filter by status (e.g.
+    * the spectate index keeps only still-playing games).
+    */
+  def all: UIO[List[(GameId, SessionState)]] =
+    sessions.get.flatMap { map =>
+      ZIO.foreach(map.toList) { case (id, ref) => ref.get.map(id -> _) }
     }
 
 object GameSessions:
