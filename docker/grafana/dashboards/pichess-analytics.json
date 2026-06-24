@@ -7,7 +7,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 38,
-  "version": 5,
+  "version": 6,
   "refresh": "5s",
   "time": {
     "from": "now-30m",
@@ -834,14 +834,14 @@
         {
           "expr": "pichess_record_shortest_game_moves",
           "legendFormat": "shortest (moves)",
-          "refId": "A",
+          "refId": "B",
           "instant": true,
           "format": "time_series"
         },
         {
           "expr": "pichess_record_most_captures",
           "legendFormat": "most captures",
-          "refId": "A",
+          "refId": "C",
           "instant": true,
           "format": "time_series"
         }
