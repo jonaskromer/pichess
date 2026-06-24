@@ -364,6 +364,10 @@ services:
         condition: service_healthy
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      # Persistent checkpoint → a restart resumes from committed offsets instead
+      # of replaying chess.game-events from earliest and re-emitting summaries
+      # (the duplicate-games bug). Bind-mounted to a gitignored host dir.
+      PICHESS_SPARK_CHECKPOINT: "/var/pichess/spark/analytics-sink"
       JAVA_TOOL_OPTIONS: >-
         -Xmx1g
         -Djava.security.manager=allow
@@ -382,7 +386,8 @@ services:
         --add-opens=java.base/sun.security.action=ALL-UNNAMED
         --add-opens=java.base/sun.util.calendar=ALL-UNNAMED
         --add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED
-    volumes: *profile-volume
+    volumes:
+      - ./spark-analytics/data/checkpoint:/var/pichess/spark
 
   gateway:
     image: pichess-gateway:latest

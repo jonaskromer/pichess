@@ -12,7 +12,8 @@ final case class GameState(
     firstTs: Long,
     lastTs: Long,
     opening: String,
-    result: String
+    result: String,
+    outcome: String
 )
 
 /** The record emitted once, when a game completes. This is also the payload
@@ -25,6 +26,9 @@ final case class GameSummary(
     durationMs: Long,
     opening: String,
     result: String,
+    // How the game ended: winning colour ("White"/"Black"), "Draw", or a
+    // GameEnded status. Empty if the terminal event carried no detail.
+    outcome: String,
     avgThinkTimeMs: Double
 )
 
@@ -48,23 +52,24 @@ object GameSessions:
   /** Terminal event types that complete a game. */
   private val Terminal = Set("GameEnded", "Forfeited", "DrawClaimed")
 
-  val empty: GameState = GameState(0, Long.MaxValue, Long.MinValue, "", "")
+  val empty: GameState = GameState(0, Long.MaxValue, Long.MinValue, "", "", "")
 
   /** Apply one event to the running state. */
   def fold(state: GameState, row: MoveEventRow): GameState =
-    val isMove = row.eventType == "MoveMade"
-    val moves  = if isMove then state.moves + 1 else state.moves
+    val isMove     = row.eventType == "MoveMade"
+    val isTerminal = Terminal.contains(row.eventType)
+    val moves      = if isMove then state.moves + 1 else state.moves
     val opening =
       if isMove && moves <= OpeningPlies then
         if state.opening.isEmpty then row.san else s"${state.opening} ${row.san}"
       else state.opening
-    val result = if Terminal.contains(row.eventType) then row.eventType else state.result
     GameState(
       moves = moves,
       firstTs = math.min(state.firstTs, row.occurredAt),
       lastTs = math.max(state.lastTs, row.occurredAt),
       opening = opening,
-      result = result
+      result = if isTerminal then row.eventType else state.result,
+      outcome = if isTerminal then row.outcome else state.outcome
     )
 
   /** A game is done once a terminal event has set its result. */
@@ -83,5 +88,6 @@ object GameSessions:
       durationMs = durationMs,
       opening = s.opening,
       result = s.result,
+      outcome = s.outcome,
       avgThinkTimeMs = durationMs.toDouble / intervals
     )

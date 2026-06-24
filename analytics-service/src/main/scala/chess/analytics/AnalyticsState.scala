@@ -11,7 +11,10 @@ import chess.api.AnalyticsSummaryDto
 final case class AnalyticsState(
     games: Long,
     totalMoves: Long,
-    openings: Map[String, Long]
+    openings: Map[String, Long],
+    // gameIds already folded in — Kafka/Spark are at-least-once and a restart
+    // replays the topic, so dedup keeps counts correct under redelivery.
+    seen: Set[String]
 ):
 
   /** The `limit` most-frequent openings, ties broken alphabetically. */
@@ -24,13 +27,16 @@ final case class AnalyticsState(
 
 object AnalyticsState:
 
-  val empty: AnalyticsState = AnalyticsState(0L, 0L, Map.empty)
+  val empty: AnalyticsState = AnalyticsState(0L, 0L, Map.empty, Set.empty)
 
-  /** Accumulate one completed-game summary. */
+  /** Accumulate one completed-game summary, ignoring a gameId already seen. */
   def fold(state: AnalyticsState, s: AnalyticsSummaryDto): AnalyticsState =
-    val key = if s.opening.isEmpty then "(no moves)" else s.opening
-    state.copy(
-      games = state.games + 1,
-      totalMoves = state.totalMoves + s.totalMoves,
-      openings = state.openings.updatedWith(key)(c => Some(c.getOrElse(0L) + 1))
-    )
+    if state.seen.contains(s.gameId) then state
+    else
+      val key = if s.opening.isEmpty then "(no moves)" else s.opening
+      state.copy(
+        games = state.games + 1,
+        totalMoves = state.totalMoves + s.totalMoves,
+        openings = state.openings.updatedWith(key)(c => Some(c.getOrElse(0L) + 1)),
+        seen = state.seen + s.gameId
+      )

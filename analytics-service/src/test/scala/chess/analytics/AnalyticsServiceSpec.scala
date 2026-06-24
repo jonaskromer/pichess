@@ -25,8 +25,8 @@ object AnalyticsServiceSpec extends ZIOSpecDefault:
     games    = 99L
   )
 
-  private def summary(opening: String, moves: Int): AnalyticsSummaryDto =
-    AnalyticsSummaryDto("g", moves, 0L, opening, "GameEnded", 0.0)
+  private def summary(id: String, opening: String, moves: Int): AnalyticsSummaryDto =
+    AnalyticsSummaryDto(id, moves, 0L, opening, "GameEnded", "Draw", 0.0)
 
   def spec = suite("AnalyticsService")(
     suite("accessors delegate to the service")(
@@ -54,15 +54,16 @@ object AnalyticsServiceSpec extends ZIOSpecDefault:
       test("folds recorded summaries into aggregates") {
         for
           svc <- ZIO.service[AnalyticsService]
-          _   <- svc.record(summary("e4 e5", 20))
-          _   <- svc.record(summary("e4 e5", 30))
-          _   <- svc.record(summary("d4 d5", 10))
+          _   <- svc.record(summary("g1", "e4 e5", 20))
+          _   <- svc.record(summary("g2", "e4 e5", 30))
+          _   <- svc.record(summary("g2", "e4 e5", 30)) // redelivery — deduped
+          _   <- svc.record(summary("g3", "d4 d5", 10))
           games <- svc.gameCount
           avg   <- svc.averageGameLength
           top   <- svc.topMoves(1)
         yield assertTrue(
           games == 3L,
-          avg.contains(20.0),          // (20+30+10)/3
+          avg.contains(20.0),          // (20+30+10)/3, dup ignored
           top == List("e4 e5" -> 2L)   // most frequent opening
         )
       }

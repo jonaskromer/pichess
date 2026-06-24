@@ -18,6 +18,9 @@ final case class AnalyticsSummaryDto(
     durationMs: Long,
     opening: String,
     result: String,
+    // How the game ended: winning colour ("White"/"Black"), "Draw", or a
+    // GameEnded status — surfaced in the live panel alongside the event type.
+    outcome: String,
     avgThinkTimeMs: Double
 )
 

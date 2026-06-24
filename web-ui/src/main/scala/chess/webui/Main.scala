@@ -1607,7 +1607,12 @@ object Main:
         (e: dom.MessageEvent) =>
           e.data.asInstanceOf[String].fromJson[AnalyticsSummaryDto] match
             case Right(summary) =>
-              analyticsVar.update(summary :: _.take(analyticsKeep - 1))
+              // Dedup by gameId: Kafka/Spark are at-least-once, so the same
+              // completed game can arrive more than once — show it just once.
+              analyticsVar.update { cur =>
+                if cur.exists(_.gameId == summary.gameId) then cur
+                else summary :: cur.take(analyticsKeep - 1)
+              }
             case Left(_) => () // ignore malformed payloads
       )
 
@@ -2116,11 +2121,21 @@ object Main:
       )
     )
 
+  /** Human-readable game outcome (absolute colour, not a player perspective):
+    * a resignation says which colour won, a draw says "Draw", a GameEnded shows
+    * its status; falls back to the raw event type. */
+  private def outcomeLabel(s: AnalyticsSummaryDto): String =
+    (s.result, s.outcome) match
+      case ("Forfeited", w) if w.nonEmpty   => s"$w won (resign)"
+      case ("DrawClaimed", _)               => "Draw"
+      case ("GameEnded", st) if st.nonEmpty => st
+      case (r, _)                           => r
+
   private def analyticsRow(s: AnalyticsSummaryDto): HtmlElement =
     val secs = f"${s.avgThinkTimeMs / 1000.0}%.1f"
     div(
       className := "flex justify-between gap-2 text-sm",
-      span(className := "font-semibold", s.result),
+      span(className := "font-semibold", outcomeLabel(s)),
       span(s"${s.totalMoves} moves"),
       span(className := "opacity-70 truncate", s.opening),
       span(className := "opacity-70", s"${secs}s/move")

@@ -38,5 +38,12 @@ object MoveEventRow:
       san = e.san.getOrElse(""),
       fen = e.resultingFen,
       occurredAt = e.occurredAt,
-      outcome = e.winner.orElse(e.status).getOrElse("")
+      // Human-meaningful outcome per terminal type. `Forfeited.winner` is the
+      // absolute winning colour (the side NOT resigning); `GameEnded.status`
+      // is the end reason; a draw claim is just a draw. Empty for non-terminal.
+      outcome = e.`type` match
+        case "Forfeited"   => e.winner.getOrElse("")
+        case "DrawClaimed" => "Draw"
+        case "GameEnded"   => e.status.getOrElse("")
+        case _             => ""
     )

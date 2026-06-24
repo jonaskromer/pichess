@@ -6,8 +6,8 @@ import chess.api.AnalyticsSummaryDto
 
 object AnalyticsStateSpec extends ZIOSpecDefault:
 
-  private def summary(opening: String, moves: Int): AnalyticsSummaryDto =
-    AnalyticsSummaryDto("g", moves, 0L, opening, "GameEnded", 0.0)
+  private def summary(id: String, opening: String, moves: Int): AnalyticsSummaryDto =
+    AnalyticsSummaryDto(id, moves, 0L, opening, "GameEnded", "Draw", 0.0)
 
   def spec = suite("AnalyticsState")(
     test("empty has no games and no average") {
@@ -19,9 +19,9 @@ object AnalyticsStateSpec extends ZIOSpecDefault:
     },
     test("fold accumulates games, moves and opening counts") {
       val s = List(
-        summary("e4 e5", 20),
-        summary("e4 e5", 30),
-        summary("d4 d5", 10)
+        summary("g1", "e4 e5", 20),
+        summary("g2", "e4 e5", 30),
+        summary("g3", "d4 d5", 10)
       ).foldLeft(AnalyticsState.empty)(AnalyticsState.fold)
       assertTrue(
         s.games == 3L,
@@ -30,8 +30,21 @@ object AnalyticsStateSpec extends ZIOSpecDefault:
         s.topOpenings(2) == List("e4 e5" -> 2L, "d4 d5" -> 1L)
       )
     },
+    test("fold is idempotent per gameId (at-least-once dedup)") {
+      val s = List(
+        summary("g1", "e4 e5", 20),
+        summary("g1", "e4 e5", 20), // redelivery of the same game
+        summary("g2", "d4 d5", 10)
+      ).foldLeft(AnalyticsState.empty)(AnalyticsState.fold)
+      assertTrue(
+        s.games == 2L,
+        s.totalMoves == 30L,
+        // equal counts → alphabetical tie-break
+        s.topOpenings(2) == List("d4 d5" -> 1L, "e4 e5" -> 1L)
+      )
+    },
     test("empty opening is bucketed under a placeholder") {
-      val s = AnalyticsState.fold(AnalyticsState.empty, summary("", 0))
+      val s = AnalyticsState.fold(AnalyticsState.empty, summary("g1", "", 0))
       assertTrue(s.topOpenings(1) == List("(no moves)" -> 1L))
     }
   )
