@@ -21,11 +21,14 @@ import chess.model.piece.Color
   */
 object TournamentBridgeSpec extends ZIOSpecDefault:
 
-  private val botName = "piChess"
   private val myId = "bot_x"
   private val realSearch: Search = Search.alphaBeta(Evaluator.materialOnly)
   private val info =
-    TournamentInfo("t1", TournamentClock(limit = 60, increment = 0))
+    TournamentInfo(
+      "t1",
+      "Test Tournament",
+      TournamentClock(limit = 60, increment = 0)
+    )
 
   private val whiteToMove =
     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
@@ -103,6 +106,7 @@ object TournamentBridgeSpec extends ZIOSpecDefault:
       "t1",
       "g1",
       color,
+      opponent = "Opponent",
       incMs = 0L,
       fallbackDepth = 2,
       search,
@@ -110,29 +114,29 @@ object TournamentBridgeSpec extends ZIOSpecDefault:
     )
 
   def spec = suite("TournamentBridge")(
-    suite("colorFor — self-filter by registered id")(
-      test("we are white") {
+    suite("ourSide — self-filter by registered id")(
+      test("we are white → (White, opponent)") {
         assertTrue(
-          TournamentBridge.colorFor(GamePlayers(me, opp), myId) == Some(
-            Color.White
+          TournamentBridge.ourSide(GamePlayers(me, opp), myId) == Some(
+            (Color.White, opp)
           )
         )
       },
-      test("we are black") {
+      test("we are black → (Black, opponent)") {
         assertTrue(
-          TournamentBridge.colorFor(GamePlayers(opp, me), myId) == Some(
-            Color.Black
+          TournamentBridge.ourSide(GamePlayers(opp, me), myId) == Some(
+            (Color.Black, opp)
           )
         )
       },
       test("not our game") {
         assertTrue(
-          TournamentBridge.colorFor(GamePlayers(opp, opp), myId) == None
+          TournamentBridge.ourSide(GamePlayers(opp, opp), myId) == None
         )
       }
     ),
     suite("resolveOurColor — dedupe + lookup")(
-      test("our game (white) → Some(White) and the gameId is claimed") {
+      test("our game (white) → Some((White, opp)) and the gameId is claimed") {
         for
           stub <- newStub(gamePlayers = Map("g1" -> GamePlayers(me, opp)))
           started <- Ref.make(Set.empty[String])
@@ -144,15 +148,18 @@ object TournamentBridgeSpec extends ZIOSpecDefault:
             stub
           )
           claimed <- started.get
-        yield assertTrue(res == Some(Color.White), claimed.contains("g1"))
+        yield assertTrue(
+          res == Some((Color.White, opp)),
+          claimed.contains("g1")
+        )
       },
-      test("our game (black) → Some(Black)") {
+      test("our game (black) → Some((Black, opp))") {
         for
           stub <- newStub(gamePlayers = Map("g1" -> GamePlayers(opp, me)))
           started <- Ref.make(Set.empty[String])
           res <- TournamentBridge
             .resolveOurColor("t1", "g1", myId, started, stub)
-        yield assertTrue(res == Some(Color.Black))
+        yield assertTrue(res == Some((Color.Black, opp)))
       },
       test(
         "a game we're not in → None but stays claimed (so the dup is skipped)"
@@ -244,6 +251,44 @@ object TournamentBridgeSpec extends ZIOSpecDefault:
           _ <- runGameWith(stub, Color.White)
           recorded <- stub.calls.get
         yield assertTrue(recorded.isEmpty)
+      },
+      test("ignores a heartbeat (keep-alive, no move)") {
+        for
+          stub <- newStub(games = Map("g1" -> List(GameEvent.Heartbeat)))
+          _ <- runGameWith(stub, Color.White)
+          recorded <- stub.calls.get
+        yield assertTrue(recorded.isEmpty)
+      },
+      test("a terminal snapshot finishes the game (records outcome, no move)") {
+        // Terminal `gameState` with an opening move log → emitFinished classifies
+        // result/opening/length from the snapshot; no move is posted.
+        val ev = GameEvent.StateSnapshot(
+          whiteToMove,
+          "e2e4 e7e5",
+          Color.White,
+          clock,
+          "checkmate",
+          Some(Color.Black)
+        )
+        for
+          stub <- newStub(games = Map("g1" -> List(ev)))
+          _ <- runGameWith(stub, Color.White)
+          recorded <- stub.calls.get
+        yield assertTrue(recorded.isEmpty)
+      },
+      test("a terminal snapshot then gameEnd emits the outcome only once") {
+        // Both terminal events can arrive (snapshot-then-end on a reconnect);
+        // the `finished` guard makes the second a no-op.
+        val events = List(
+          GameEvent
+            .StateSnapshot(whiteToMove, "", Color.White, clock, "draw", None),
+          GameEvent.GameEnded(None, "draw")
+        )
+        for
+          stub <- newStub(games = Map("g1" -> events))
+          _ <- runGameWith(stub, Color.White)
+          recorded <- stub.calls.get
+        yield assertTrue(recorded.isEmpty)
       }
     ),
     suite("runGame — failure paths")(
@@ -297,6 +342,7 @@ object TournamentBridgeSpec extends ZIOSpecDefault:
             "t1",
             "g1",
             Color.White,
+            "Opponent",
             0L,
             2,
             () => realSearch,
@@ -328,6 +374,7 @@ object TournamentBridgeSpec extends ZIOSpecDefault:
             "t1",
             "g1",
             Color.White,
+            "Opponent",
             0L,
             2,
             () => realSearch,
@@ -359,13 +406,12 @@ object TournamentBridgeSpec extends ZIOSpecDefault:
         yield assertTrue(recorded.isEmpty)
       }
     ),
-    suite("run — full lifecycle")(
-      test(
-        "registers, joins, reads the clock, then streams; dedupes gameStart"
-      ) {
+    suite("playTournament — one tournament")(
+      test("joins, reads the clock, then streams; dedupes gameStart") {
         // g1 is announced twice (White then Black) — getGame must fire once.
         val events = List(
           TournamentEvent.TournamentStarted,
+          TournamentEvent.Heartbeat, // keep-alive; must be silently ignored
           TournamentEvent.RoundStarted(1),
           TournamentEvent.GameStart(1, "g1", Color.White),
           TournamentEvent.GameStart(1, "g1", Color.Black),
@@ -378,10 +424,15 @@ object TournamentBridgeSpec extends ZIOSpecDefault:
             games = Map("g1" -> Nil),
             gamePlayers = Map("g1" -> GamePlayers(me, opp))
           )
-          _ <- TournamentBridge.run("t1", botName, 2, () => realSearch, stub)
+          _ <- TournamentBridge.playTournament(
+            "t1",
+            myId,
+            2,
+            () => realSearch,
+            stub
+          )
           recorded <- stub.calls.get
         yield assertTrue(
-          recorded.contains("register:piChess"),
           recorded.contains("join:t1"),
           recorded.contains("get:t1"),
           recorded.count(_ == "getGame:g1") == 1
@@ -392,10 +443,15 @@ object TournamentBridgeSpec extends ZIOSpecDefault:
           List(TournamentEvent.TournamentFinished(BotRef("bot_x", "piChess")))
         for
           stub <- newStub(tournament = events, failJoin = true)
-          _ <- TournamentBridge.run("t1", botName, 2, () => realSearch, stub)
+          _ <- TournamentBridge.playTournament(
+            "t1",
+            myId,
+            2,
+            () => realSearch,
+            stub
+          )
           recorded <- stub.calls.get
         yield assertTrue(
-          recorded.contains("register:piChess"),
           recorded.contains("get:t1"),
           !recorded.exists(_.startsWith("join:"))
         )

@@ -75,10 +75,15 @@ object TournamentApiClient:
   object RegisterResult:
     given JsonDecoder[RegisterResult] = DeriveJsonDecoder.gen[RegisterResult]
 
-  /** Minimal projection of the (large, flattened) tournament JSON — we only
-    * need the id and clock. zio-json ignores the many other fields.
+  /** Minimal projection of the (large, flattened) tournament JSON — we need the
+    * id, the display name (for name-based auto-join), and the clock. zio-json
+    * ignores the many other fields.
     */
-  final case class TournamentInfo(id: String, clock: TournamentClock)
+  final case class TournamentInfo(
+      id: String,
+      fullName: String,
+      clock: TournamentClock
+  )
   object TournamentInfo:
     given JsonDecoder[TournamentInfo] = DeriveJsonDecoder.gen[TournamentInfo]
 

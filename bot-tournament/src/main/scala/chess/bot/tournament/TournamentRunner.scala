@@ -45,6 +45,8 @@ object TournamentRunner:
         turnAction(fen, ourColor, turn, clock)
       case _: GameEvent.GameEnded =>
         Action.GameOver
+      case GameEvent.Heartbeat =>
+        Action.None
 
   /** If it's our turn, parse the FEN and emit a move request with our and the
     * opponent's remaining clocks; otherwise wait. A malformed FEN is surfaced

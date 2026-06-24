@@ -3,8 +3,10 @@ package chess.bot.tournament
 import sttp.client3.httpclient.zio.HttpClientZioBackend
 import sttp.model.Uri
 import zio.*
+import zio.http.Server
 
 import chess.bot.engine.{EngineBundle, ParallelismBudget, Search}
+import chess.obs.{MetricsHttpServer, MetricsLayer}
 
 /** Runnable entrypoint for the NowChess tournament bot.
   *
@@ -35,6 +37,8 @@ object TournamentBotMain extends ZIOAppDefault:
   private val DefaultWeights = 8
   private val DefaultFallbackDepth = 6
   private val MaxTtEntries = 1_000_000
+  private val DefaultControlPort = 8080
+  private val DefaultMetricsPort = 9107
 
   override def run: ZIO[Any, Throwable, Unit] =
     for
@@ -75,7 +79,6 @@ object TournamentBotMain extends ZIOAppDefault:
           for
             api <- TournamentApiClient
               .sttp(backend, TournamentApiClient.Config(baseUrl))
-            tournamentId <- resolveTournamentId(api)
             searchFactory = () =>
               Search.alphaBeta(
                 bundle.eval,
@@ -85,34 +88,90 @@ object TournamentBotMain extends ZIOAppDefault:
                 budget = budget,
                 timeManagementUpgradeEnabled = true
               )
-            result <- TournamentBridge
-              .run(tournamentId, botName, fallbackDepth, searchFactory, api)
+            manager <- TournamentManager.make(
+              botName,
+              fallbackDepth,
+              searchFactory,
+              api
+            )
+            // Prometheus metrics (tournament play + JVM) on a dedicated port,
+            // scraped into the `piChess — tournament` Grafana dashboard. Forked
+            // so it lives alongside the control API without blocking it.
+            _           <- MetricsLayer.jvmMetricsBootstrap
+            metricsPort <- MetricsHttpServer.portFromEnv(DefaultMetricsPort)
+            _           <- ZIO.logInfo(
+              s"Tournament metrics on :$metricsPort/metrics"
+            )
+            _           <- MetricsHttpServer.serve(metricsPort).forkDaemon
+            controlPort = sys.env
+              .get("TOURNAMENT_CONTROL_PORT")
+              .flatMap(_.toIntOption)
+              .getOrElse(DefaultControlPort)
+            // Seed an initial join from the env (TOURNAMENT_ID / TOURNAMENT_NAME)
+            // in the background, so a NAME-wait doesn't delay the control server.
+            // The gateway then drives further joins via the control API.
+            _ <- seedJoin(manager, api)
               .tapError(e =>
                 ZIO.logError(
-                  s"Tournament stream failed, reconnecting in 5s: ${e.getMessage}"
+                  s"Seed join failed, retrying in 5s: ${e.getMessage}"
                 )
               )
               .retry(Schedule.fixed(5.seconds))
-          yield result
+              .forkDaemon
+            _ <- ZIO.logInfo(
+              s"Tournament control API on :$controlPort (POST/DELETE/GET /control/tournaments)."
+            )
+            // Serve the control API; this keeps the process alive while the
+            // per-tournament daemon fibers play in the background.
+            _ <- Server
+              .serve(TournamentControlApi.routes(manager))
+              .provide(Server.defaultWithPort(controlPort))
+          yield ()
         }
       }
     yield ()
 
-  /** Use `TOURNAMENT_ID` if set, else auto-pick the first joinable tournament.
+  /** Resolve an optional initial tournament to join from the env and join it:
+    *   - `TOURNAMENT_ID` → join that id;
+    *   - else `TOURNAMENT_NAME` → wait for a matching open tournament, then
+    *     join;
+    *   - else nothing (the control API drives all joins).
     */
-  private def resolveTournamentId(
+  private def seedJoin(
+      manager: TournamentManager,
       api: TournamentApiClient
-  ): IO[Throwable, String] =
+  ): IO[Throwable, Unit] =
     sys.env.get("TOURNAMENT_ID").filter(_.nonEmpty) match
-      case Some(id) => ZIO.succeed(id)
+      case Some(id) => manager.join(id)
       case None =>
-        api.listTournaments.flatMap {
-          case head :: _ =>
-            ZIO.logInfo(s"Auto-picked open tournament ${head.id}").as(head.id)
-          case Nil =>
-            ZIO.fail(
-              new RuntimeException(
-                "No open tournaments and TOURNAMENT_ID unset"
-              )
+        sys.env.get("TOURNAMENT_NAME").map(_.trim).filter(_.nonEmpty) match
+          case Some(pattern) => awaitNamed(api, pattern).flatMap(manager.join)
+          case None =>
+            ZIO.logInfo(
+              "No TOURNAMENT_ID/NAME set; awaiting joins via the control API."
             )
-        }
+
+  /** Poll the open (`created`) list until a tournament whose name contains
+    * `pattern` (case-insensitive) appears; retry every 10s.
+    */
+  private def awaitNamed(
+      api: TournamentApiClient,
+      pattern: String
+  ): IO[Throwable, String] =
+    val want = pattern.toLowerCase
+    def attempt: IO[Throwable, String] =
+      api.listTournaments.flatMap { ts =>
+        ts.find(_.fullName.toLowerCase.contains(want)) match
+          case Some(t) =>
+            ZIO
+              .logInfo(
+                s"Found open tournament '${t.fullName}' (${t.id}) matching '$pattern'"
+              )
+              .as(t.id)
+          case None =>
+            ZIO.logInfo(
+              s"No open tournament matching '$pattern' yet; retrying in 10s…"
+            ) *>
+              ZIO.sleep(10.seconds) *> attempt
+      }
+    attempt

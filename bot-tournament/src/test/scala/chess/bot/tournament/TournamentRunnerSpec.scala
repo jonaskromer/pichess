@@ -105,5 +105,16 @@ object TournamentRunnerSpec extends ZIOSpecDefault:
           ) == TournamentRunner.Action.GameOver
         )
       }
+    ),
+    suite("heartbeat")(
+      test("→ None (keep-alive, ignored)") {
+        assertTrue(
+          TournamentRunner
+            .decide(
+              GameEvent.Heartbeat,
+              Color.White
+            ) == TournamentRunner.Action.None
+        )
+      }
     )
   )

@@ -55,6 +55,12 @@ object TournamentEventCodecSpec extends ZIOSpecDefault:
             .fromJson[TournamentEvent]
             .isLeft
         )
+      },
+      test("heartbeat keep-alive decodes (and is ignored downstream)") {
+        assertTrue(
+          """{"type":"heartbeat"}""".fromJson[TournamentEvent] ==
+            Right(TournamentEvent.Heartbeat)
+        )
       }
     ),
     suite("GameEvent (per-game stream)")(
@@ -113,6 +119,24 @@ object TournamentEventCodecSpec extends ZIOSpecDefault:
             .fromJson[GameEvent] ==
             Right(GameEvent.GameEnded(None, "draw"))
         )
+      },
+      test("heartbeat keep-alive decodes (and is ignored by the runner)") {
+        assertTrue(
+          """{"type":"heartbeat"}""".fromJson[GameEvent] ==
+            Right(GameEvent.Heartbeat)
+        )
+      },
+      test("the new clock `increment` field is tolerated (ignored)") {
+        // The updated server adds `increment` to every clock object; our
+        // GameClock decoder must keep decoding (zio-json ignores extra fields).
+        assertTrue(
+          s"""{"type":"move","uci":"e2e4","fen":"$fen","turn":"black","clock":{"whiteTime":300.0,"blackTime":300.0,"increment":3}}"""
+            .fromJson[GameEvent] ==
+            Right(
+              GameEvent
+                .MovePlayed("e2e4", fen, Color.Black, GameClock(300.0, 300.0))
+            )
+        )
       }
     ),
     suite("REST payloads")(
@@ -134,7 +158,11 @@ object TournamentEventCodecSpec extends ZIOSpecDefault:
         assertTrue(
           big.fromJson[TournamentApiClient.TournamentInfo] ==
             Right(
-              TournamentApiClient.TournamentInfo("t1", TournamentClock(300, 3))
+              TournamentApiClient.TournamentInfo(
+                "t1",
+                "Friday Bots",
+                TournamentClock(300, 3)
+              )
             )
         )
       },

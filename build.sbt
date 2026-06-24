@@ -297,17 +297,29 @@ lazy val botLichess = project
 // UCI/FEN. See docs/tournament-integration.md.
 lazy val botTournament = project
   .in(file("bot-tournament"))
-  .dependsOn(domain.jvm, rules, codec, botEngine)
+  .dependsOn(domain.jvm, rules, codec, botEngine, observability)
+  .enablePlugins(JavaAppPackaging, DockerPlugin)
   .settings(commonSettings)
   .settings(
     name := "pichess-bot-tournament",
-    // TournamentBotMain: runnable entry point — orchestration over
-    // already-tested pieces; excluded from coverage like the other *Main entrypoints.
-    coverageExcludedFiles := ".*TournamentBotMain.*",
+    // TournamentBotMain: runnable entry point; TournamentMetrics: Prometheus
+    // emission glue (the pure classification it calls — GameOutcome / Openings —
+    // is unit-tested). Both excluded from coverage like the other *Main + metrics glue.
+    coverageExcludedFiles := ".*(TournamentBotMain|TournamentMetrics).*",
     libraryDependencies ++= Seq(
       "com.softwaremill.sttp.client3" %% "zio"      % "3.11.0",
+      "dev.zio"                       %% "zio-http" % zioHttpVersion,
       "dev.zio"                       %% "zio-json" % zioJsonVersion,
     ),
+    // Containerised, gateway-signalled bot (see docs/tournament-ui-plan.md). The
+    // control API listens on 8080 (ClusterIP-only — never via ingress).
+    Compile / mainClass        := Some("chess.bot.tournament.TournamentBotMain"),
+    Docker / packageName       := "pichess-bot-tournament",
+    Docker / version           := "latest",
+    dockerBaseImage            := "eclipse-temurin:23-jre",
+    dockerExposedPorts         := Seq(8080),
+    dockerUpdateLatest         := true,
+    Docker / dockerGroupLayers := pichessLayerGrouping,
   )
 
 // Training-data layer. DuckDB-backed: a single .duckdb file is the
@@ -876,7 +888,7 @@ lazy val gateway = project
     // (Lichess HTTP API + game-service gRPC + a follower fiber) — integration
     // glue, not meaningfully unit-testable without a live Lichess + game
     // service, like the other external adapters (StockfishSearch).
-    coverageExcludedFiles := ".*(GatewayMain|LichessSpectate).*",
+    coverageExcludedFiles := ".*(GatewayMain|LichessSpectate|TournamentSpectate).*",
     // Copy the Scala.js output of web-ui into gateway's managed resources at
     // web/main.js so WebController can serve it from the classpath.
     Compile / resourceGenerators += Def.task {

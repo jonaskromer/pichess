@@ -9,18 +9,17 @@ import chess.codec.UciCodec
 import chess.model.piece.Color
 import chess.model.rules.MoveValidator
 
-/** Top-level orchestrator for tournament play.
+/** Per-tournament orchestration for tournament play.
   *
-  * Lifecycle: register → join (tolerating "already added by the director") →
-  * read the tournament clock for the increment → subscribe to the tournament
-  * event stream → spawn a per-game fiber for every
-  * [[TournamentEvent.GameStart]].
+  * Stateless helpers: [[playTournament]] plays ONE tournament (join → read the
+  * clock → stream events → fork a per-game fiber for each of OUR games), and
+  * the decision logic lives in the pure [[TournamentRunner]] with the I/O in
+  * [[TournamentApiClient]]. Registering once and playing MANY tournaments
+  * concurrently is [[TournamentManager]]'s job.
   *
-  * As with the Lichess bridge, the decision logic lives in the pure
-  * [[TournamentRunner]] and the I/O in [[TournamentApiClient]]; this glues them
-  * together. Per-game fibers are `forkDaemon`ed so the tournament loop doesn't
-  * block, and terminate when their NDJSON stream closes (the server ends the
-  * stream on `gameEnd`).
+  * Per-game fibers are `forkDaemon`ed so the tournament loop doesn't block, and
+  * terminate when their NDJSON stream closes (the server ends the stream on
+  * `gameEnd`).
   *
   * We deliberately **never resign** (there's no bot resign endpoint anyway):
   * when the search returns no move the position is terminal or transiently
@@ -28,14 +27,16 @@ import chess.model.rules.MoveValidator
   */
 object TournamentBridge:
 
-  /** Run the full tournament lifecycle. Returns when the tournament stream
-    * completes (`tournamentFinished`); the caller usually wraps it in a
-    * reconnect `retry`.
+  /** Join and play ONE tournament: join (tolerating "already added by the
+    * director"), read the clock for the increment, then stream its events and
+    * fork a per-game fiber for each of our games. One pass — the
+    * [[TournamentManager]] wraps this with reconnect-retry. Returns when the
+    * tournament stream completes.
     *
     * @param tournamentId
     *   the tournament to play in
-    * @param botName
-    *   our registration name (drives our JWT identity)
+    * @param myId
+    *   our registered bot id (matched against game players)
     * @param fallbackDepth
     *   fixed-depth floor if the budgeted search can't finish even one iteration
     * @param searchFactory
@@ -44,18 +45,14 @@ object TournamentBridge:
     * @param api
     *   the tournament server client
     */
-  def run(
+  private[tournament] def playTournament(
       tournamentId: String,
-      botName: String,
+      myId: String,
       fallbackDepth: Int,
       searchFactory: () => Search,
       api: TournamentApiClient
   ): IO[Throwable, Unit] =
     for
-      reg <- api.register(botName)
-      _ <- ZIO.logInfo(
-        s"Registered with tournament server as ${reg.id} (name='$botName')"
-      )
       _ <- api
         .joinTournament(tournamentId)
         .catchAll(err =>
@@ -75,7 +72,7 @@ object TournamentBridge:
         dispatchTournamentEvent(
           event,
           tournamentId,
-          reg.id,
+          myId,
           started,
           incMs,
           fallbackDepth,
@@ -103,12 +100,16 @@ object TournamentBridge:
     event match
       case TournamentEvent.GameStart(round, gameId, _) =>
         resolveOurColor(tournamentId, gameId, myId, started, api).flatMap {
-          case Some(color) =>
-            ZIO.logInfo(s"Game start (round $round): $gameId playing $color") *>
+          case Some((color, opponent)) =>
+            ZIO.logInfo(
+              s"Game start (round $round): $gameId playing $color vs ${opponent.name}"
+            ) *>
+              TournamentMetrics.gameStarted(opponent.name, color) *>
               runGame(
                 tournamentId,
                 gameId,
                 color,
+                opponent.name,
                 incMs,
                 fallbackDepth,
                 searchFactory,
@@ -117,6 +118,8 @@ object TournamentBridge:
           case None =>
             ZIO.unit
         }
+      case TournamentEvent.Heartbeat =>
+        ZIO.unit // keep-alive; silently ignored (arrives every ~10s)
       case other =>
         ZIO.logInfo(s"Tournament event: $other")
 
@@ -137,9 +140,9 @@ object TournamentBridge:
       myId: String,
       started: Ref[Set[String]],
       api: TournamentApiClient
-  ): IO[Throwable, Option[Color]] =
+  ): IO[Throwable, Option[(Color, BotRef)]] =
     started.modify(s => (!s.contains(gameId), s + gameId)).flatMap { fresh =>
-      if !fresh then ZIO.succeed(Option.empty[Color])
+      if !fresh then ZIO.succeed(Option.empty[(Color, BotRef)])
       else
         api
           .getGame(tournamentId, gameId)
@@ -148,24 +151,26 @@ object TournamentBridge:
               started.update(_ - gameId) *>
                 ZIO
                   .logWarning(s"getGame $gameId failed: ${err.getMessage}")
-                  .as(Option.empty[Color]),
+                  .as(Option.empty[(Color, BotRef)]),
             players =>
-              val color = colorFor(players, myId)
+              val side = ourSide(players, myId)
               ZIO
-                .when(color.isEmpty)(
+                .when(side.isEmpty)(
                   ZIO.logInfo(s"$gameId is not our game; ignoring")
                 )
-                .as(color)
+                .as(side)
           )
     }
 
-  /** Our colour in a game: match our registered id against the two players. */
-  private[tournament] def colorFor(
+  /** Our colour and the opponent in a game: match our registered id against the
+    * two players. `Some((ourColour, opponent))` if we're in it, else `None`.
+    */
+  private[tournament] def ourSide(
       players: GamePlayers,
       myId: String
-  ): Option[Color] =
-    if players.white.id == myId then Some(Color.White)
-    else if players.black.id == myId then Some(Color.Black)
+  ): Option[(Color, BotRef)] =
+    if players.white.id == myId then Some((Color.White, players.black))
+    else if players.black.id == myId then Some((Color.Black, players.white))
     else None
 
   /** One per-game fiber: consume the game stream, drive
@@ -184,6 +189,7 @@ object TournamentBridge:
       tournamentId: String,
       gameId: String,
       ourColor: chess.model.piece.Color,
+      opponent: String,
       incMs: Long,
       fallbackDepth: Int,
       searchFactory: () => Search,
@@ -194,26 +200,107 @@ object TournamentBridge:
     // the loaded net and the global LazySMP helper budget are shared, and both
     // are safe across concurrent games.
     val search = searchFactory()
-    api
-      .streamGame(tournamentId, gameId)
-      .runForeach { event =>
-        handleAction(
-          TournamentRunner.decide(event, ourColor),
-          tournamentId,
-          gameId,
-          search,
-          incMs,
-          fallbackDepth,
-          api
-        )
-      }
-      .tapError(e =>
-        ZIO.logWarning(
-          s"Game $gameId stream dropped; reconnecting in ${reconnectDelay.toSeconds}s: ${e.getMessage}"
-        )
-      )
-      .retry(Schedule.fixed(reconnectDelay))
-      .catchAllCause(c => ZIO.logErrorCause(s"Game $gameId fiber stopped", c))
+    // `gameOpened`/`gameClosed` bracket the live-games gauge so it's correct
+    // however the fiber ends (completion, interruption, defect). `moves` (the
+    // running UCI log, for opening + length) and `finished` (emit-once guard)
+    // are created ONCE so they survive stream reconnects.
+    ZIO.acquireReleaseWith(TournamentMetrics.gameOpened)(_ =>
+      TournamentMetrics.gameClosed
+    ) { _ =>
+      for
+        moves    <- Ref.make("")
+        finished <- Ref.make(false)
+        played   <- api
+          .streamGame(tournamentId, gameId)
+          .runForeach { event =>
+            recordGameEvent(event, ourColor, opponent, moves, finished) *>
+              handleAction(
+                TournamentRunner.decide(event, ourColor),
+                tournamentId,
+                gameId,
+                search,
+                incMs,
+                fallbackDepth,
+                ourColor,
+                api
+              )
+          }
+          .tapError(e =>
+            TournamentMetrics.reconnect *>
+              ZIO.logWarning(
+                s"Game $gameId stream dropped; reconnecting in ${reconnectDelay.toSeconds}s: ${e.getMessage}"
+              )
+          )
+          .retry(Schedule.fixed(reconnectDelay))
+          .catchAllCause(c =>
+            ZIO.logErrorCause(s"Game $gameId fiber stopped", c)
+          )
+      yield played
+    }
+
+  /** Fold one game event into the per-game metric state: keep the running UCI
+    * move log (for opening + length), refresh the clock gauges, count observed
+    * moves, and emit the finished-game metrics exactly once on termination
+    * (a terminal `gameState` snapshot or the `gameEnd` event, whichever lands
+    * first — both can arrive, e.g. snapshot-then-end on a reconnect).
+    */
+  private[tournament] def recordGameEvent(
+      event: GameEvent,
+      ourColor: Color,
+      opponent: String,
+      moves: Ref[String],
+      finished: Ref[Boolean]
+  ): UIO[Unit] =
+    event match
+      case GameEvent.StateSnapshot(_, log, _, clock, status, winner) =>
+        moves.set(log) *> TournamentMetrics.clocks(clock) *>
+          ZIO
+            .when(isTerminal(status))(
+              emitFinished(winner, status, ourColor, opponent, moves, finished)
+            )
+            .unit
+      case GameEvent.MovePlayed(uci, _, turn, clock) =>
+        moves.update(Openings.append(_, uci)) *>
+          TournamentMetrics.clocks(clock) *>
+          TournamentMetrics.moveObserved(turn.opposite)
+      case GameEvent.GameEnded(winner, status) =>
+        emitFinished(winner, status, ourColor, opponent, moves, finished)
+      case GameEvent.Heartbeat =>
+        ZIO.unit
+
+  /** A `gameState` status that is neither `ongoing` nor `pending` is terminal
+    * (checkmate/stalemate/draw/resigned/timeout) — same partition
+    * [[TournamentRunner.decide]] uses to map a snapshot to `GameOver`.
+    */
+  private def isTerminal(status: String): Boolean =
+    status != "ongoing" && status != "pending"
+
+  /** Emit the per-game outcome metrics once (guarded by `finished`): result ×
+    * termination, opening family, first move, and game length.
+    */
+  private[tournament] def emitFinished(
+      winner: Option[Color],
+      status: String,
+      ourColor: Color,
+      opponent: String,
+      moves: Ref[String],
+      finished: Ref[Boolean]
+  ): UIO[Unit] =
+    finished.getAndSet(true).flatMap { already =>
+      ZIO
+        .unless(already) {
+          moves.get.flatMap { log =>
+            val outcome = GameOutcome.classify(winner, status, ourColor)
+            TournamentMetrics.gameFinished(opponent, ourColor, outcome) *>
+              TournamentMetrics.opening(opponent, Openings.family(log)) *>
+              TournamentMetrics.gameLength(Openings.plies(log)) *>
+              ZIO.foreachDiscard(Openings.firstMove(log))(
+                TournamentMetrics.firstMove
+              )
+          }
+        }
+        .unit
+    }
 
   /** Convert a [[TournamentRunner.Action]] into the HTTP call it implies.
     * `MoveFrom` sizes the search from the clock (converting NowChess seconds to
@@ -226,6 +313,7 @@ object TournamentBridge:
       search: Search,
       incMs: Long,
       fallbackDepth: Int,
+      ourColor: Color,
       api: TournamentApiClient
   ): IO[Throwable, Unit] =
     action match
@@ -239,9 +327,20 @@ object TournamentBridge:
           GamePhase.compute(state),
           MoveValidator.isInCheck(state.board, state.activeColor)
         )
-        search
-          .bestMoveWithBudget(state, budgetMs, fallbackDepth = fallbackDepth)
-          .flatMap {
+        for
+          start <- Clock.nanoTime
+          best  <- search.bestMoveWithBudget(
+            state,
+            budgetMs,
+            fallbackDepth = fallbackDepth
+          )
+          end <- Clock.nanoTime
+          _   <- TournamentMetrics.thinkTime(
+            ourColor,
+            (end - start).toDouble / 1.0e9
+          )
+          _ <- TournamentMetrics.budgetSeconds(budgetMs.toDouble / 1000.0)
+          posted <- best match
             case Some(move) =>
               val uci = UciCodec.serialize(move)
               ZIO.logInfo(
@@ -250,15 +349,17 @@ object TournamentBridge:
                 api
                   .makeMove(tournamentId, gameId, uci)
                   .catchAll(err =>
-                    ZIO.logWarning(
-                      s"Failed to POST move on $gameId: ${err.getMessage}"
-                    )
+                    TournamentMetrics.moveFailed *>
+                      ZIO.logWarning(
+                        s"Failed to POST move on $gameId: ${err.getMessage}"
+                      )
                   )
             case None =>
-              ZIO.logWarning(
-                s"Search returned no move on $gameId — not resigning; awaiting next event."
-              )
-          }
+              TournamentMetrics.searchNoMove *>
+                ZIO.logWarning(
+                  s"Search returned no move on $gameId — not resigning; awaiting next event."
+                )
+        yield posted
       case Action.MalformedEvent(reason) =>
         ZIO.logWarning(s"Malformed event on $gameId: $reason")
       case Action.GameOver =>

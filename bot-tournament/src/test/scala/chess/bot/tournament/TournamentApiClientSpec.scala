@@ -150,7 +150,7 @@ object TournamentApiClientSpec extends ZIOSpecDefault:
       },
       test("listTournaments returns the created (joinable) tournaments") {
         val body =
-          """{"created":[{"id":"t1","clock":{"limit":60,"increment":1}}],"started":[],"finished":[]}"""
+          """{"created":[{"id":"t1","fullName":"Open Cup","clock":{"limit":60,"increment":1}}],"started":[],"finished":[]}"""
         val backend = stub
           .whenRequestMatches(_.uri.toString == s"$baseUri/api/tournament")
           .thenRespond(body)

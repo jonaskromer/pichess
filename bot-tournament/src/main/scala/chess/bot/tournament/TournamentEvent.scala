@@ -25,8 +25,9 @@ import chess.model.piece.Color
   *     both colours of every game), so the bridge resolves our colour by
   *     matching our id against the game's players (see
   *     [[TournamentBridge.resolveOurColor]]);
-  *   - clocks are **seconds** ([[GameClock]] is `Double`), and the increment is
-  *     absent from game events — it lives in the tournament [[Clock]].
+  *   - clocks are **seconds** ([[GameClock]] is `Double`). The updated server
+  *     also carries `increment` on every clock object, but we ignore it there
+  *     and read the increment from the tournament [[TournamentClock]] instead.
   */
 
 // `Color` lives in the pure domain with no JSON codec; the wire form is the
@@ -51,7 +52,9 @@ object TournamentClock:
   given JsonEncoder[TournamentClock] = DeriveJsonEncoder.gen[TournamentClock]
 
 /** Per-game clock snapshot: each side's remaining time in **seconds**
-  * (fractional). Note: no increment here — see [[Clock]].
+  * (fractional). The server also sends an `increment` field on the clock
+  * object; we deliberately omit it here (zio-json ignores the extra field) and
+  * source the increment from the tournament [[TournamentClock]].
   */
 final case class GameClock(whiteTime: Double, blackTime: Double)
 object GameClock:
@@ -98,6 +101,13 @@ object TournamentEvent:
   @jsonHint("tournamentFinished")
   final case class TournamentFinished(winner: BotRef) extends TournamentEvent
 
+  /** Keep-alive line the server interleaves every ~10s (`NdjsonStream`). A real
+    * JSON object, not a blank line — we decode it so it doesn't fail the
+    * stream, then ignore it.
+    */
+  @jsonHint("heartbeat")
+  case object Heartbeat extends TournamentEvent
+
   given JsonDecoder[TournamentEvent] = DeriveJsonDecoder.gen[TournamentEvent]
   given JsonEncoder[TournamentEvent] = DeriveJsonEncoder.gen[TournamentEvent]
 
@@ -141,6 +151,12 @@ object GameEvent:
       winner: Option[Color],
       status: String
   ) extends GameEvent
+
+  /** Keep-alive line the server interleaves every ~10s (`NdjsonStream`) so idle
+    * game streams don't fail our line-by-line decoder. Ignored by the runner.
+    */
+  @jsonHint("heartbeat")
+  case object Heartbeat extends GameEvent
 
   given JsonDecoder[GameEvent] = DeriveJsonDecoder.gen[GameEvent]
   given JsonEncoder[GameEvent] = DeriveJsonEncoder.gen[GameEvent]
