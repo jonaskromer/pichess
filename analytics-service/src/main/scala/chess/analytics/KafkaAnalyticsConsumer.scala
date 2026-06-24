@@ -81,8 +81,8 @@ object KafkaAnalyticsConsumer:
       case e: GameStarted => AnalyticsMetrics.gameStarted *> started(e.gameId)
       case e: GameLoaded  => started(e.gameId)
       case e: MoveMade    => AnalyticsMetrics.moveMade(e.san)
-      case _: Undone      => AnalyticsMetrics.takeback
-      case _: Redone      => AnalyticsMetrics.takeback
+      case _: Undone      => AnalyticsMetrics.takeback("undo")
+      case _: Redone      => AnalyticsMetrics.takeback("redo")
       case e: Forfeited   => AnalyticsMetrics.gameEnded("Forfeited") *> ended(e.gameId)
       case e: DrawClaimed => AnalyticsMetrics.drawClaimed(e.reason) *> ended(e.gameId)
       case e: GameEnded   => AnalyticsMetrics.gameEnded("GameEnded") *> ended(e.gameId)

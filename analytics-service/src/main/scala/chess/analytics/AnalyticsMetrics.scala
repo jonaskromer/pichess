@@ -27,9 +27,10 @@ object AnalyticsMetrics:
   private val checkmates   = Metric.counter("pichess_checkmates_total")
   private val promotions   = Metric.counter("pichess_promotions_total")
   private val gamesStarted = Metric.counter("pichess_games_started_total")
-  private val takebacks    = Metric.counter("pichess_takebacks_total")
   private val activeGauge  = Metric.gauge("pichess_active_games")
 
+  private def takebackCounter(kind: String) =
+    Metric.counter("pichess_takebacks_total").tagged("kind", kind)
   private def castle(side: String) =
     Metric.counter("pichess_castles_total").tagged("side", side)
   private def ending(kind: String) =
@@ -48,7 +49,8 @@ object AnalyticsMetrics:
       ZIO.when(MoveFeatures.isQueensideCastle(san))(castle("queenside").increment).unit
 
   val gameStarted: UIO[Unit]      = gamesStarted.increment
-  val takeback: UIO[Unit]         = takebacks.increment
+  /** A takeback, split by direction: "undo" (Undone) or "redo" (Redone). */
+  def takeback(kind: String): UIO[Unit] = takebackCounter(kind).increment
   def gameEnded(kind: String): UIO[Unit] = ending(kind).increment
   def drawClaimed(reason: String): UIO[Unit] =
     ending("DrawClaimed").increment *> drawReason(reason).increment
@@ -95,6 +97,13 @@ object AnalyticsMetrics:
         Chunk(0.5, 1, 2, 3, 5, 10, 20, 60).map(_.toDouble)
       )
     )
+  private val capturesPerGame =
+    Metric.histogram(
+      "pichess_captures_per_game",
+      MetricKeyType.Histogram.Boundaries.fromChunk(
+        Chunk(0, 1, 2, 4, 6, 8, 12, 16, 24).map(_.toDouble)
+      )
+    )
 
   private val longestGauge  = Metric.gauge("pichess_record_longest_game_moves")
   private val shortestGauge = Metric.gauge("pichess_record_shortest_game_moves")
@@ -115,7 +124,8 @@ object AnalyticsMetrics:
       byFirstMove(firstMove).increment *>
       movesPerGame.update(s.totalMoves.toDouble) *>
       gameSeconds.update(s.durationMs.toDouble / 1000.0) *>
-      thinkSeconds.update(s.avgThinkTimeMs / 1000.0)
+      thinkSeconds.update(s.avgThinkTimeMs / 1000.0) *>
+      capturesPerGame.update(s.captures.toDouble)
 
   /** Publish the current leaderboard records as gauges. */
   def setRecords(r: Records): UIO[Unit] =

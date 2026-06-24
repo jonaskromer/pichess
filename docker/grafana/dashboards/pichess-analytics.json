@@ -7,7 +7,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 38,
-  "version": 3,
+  "version": 4,
   "refresh": "5s",
   "time": {
     "from": "now-30m",
@@ -255,42 +255,49 @@
         {
           "expr": "sum(rate(pichess_captures_total[1m]))",
           "legendFormat": "captures",
-          "refId": "A",
+          "refId": "B",
           "instant": false,
           "format": "time_series"
         },
         {
           "expr": "sum(rate(pichess_checks_total[1m]))",
           "legendFormat": "checks",
-          "refId": "A",
+          "refId": "C",
           "instant": false,
           "format": "time_series"
         },
         {
           "expr": "sum(rate(pichess_checkmates_total[1m]))",
           "legendFormat": "checkmates",
-          "refId": "A",
+          "refId": "D",
           "instant": false,
           "format": "time_series"
         },
         {
           "expr": "sum(rate(pichess_promotions_total[1m]))",
           "legendFormat": "promotions",
-          "refId": "A",
+          "refId": "E",
           "instant": false,
           "format": "time_series"
         },
         {
           "expr": "sum(rate(pichess_castles_total[1m]))",
           "legendFormat": "castles",
-          "refId": "A",
+          "refId": "F",
           "instant": false,
           "format": "time_series"
         },
         {
-          "expr": "sum(rate(pichess_takebacks_total[1m]))",
-          "legendFormat": "takebacks",
-          "refId": "A",
+          "expr": "sum(rate(pichess_takebacks_total{kind=\"undo\"}[1m]))",
+          "legendFormat": "undo",
+          "refId": "G",
+          "instant": false,
+          "format": "time_series"
+        },
+        {
+          "expr": "sum(rate(pichess_takebacks_total{kind=\"redo\"}[1m]))",
+          "legendFormat": "redo",
+          "refId": "H",
           "instant": false,
           "format": "time_series"
         }
@@ -343,29 +350,37 @@
           "expr": "pichess_completed_moves_total / clamp_min(pichess_games_completed_total,1)",
           "legendFormat": "avg moves/game",
           "refId": "A",
-          "instant": true,
-          "format": "time_series"
+          "instant": true
         },
         {
           "expr": "histogram_quantile(0.5, sum by (le) (pichess_game_length_moves_bucket))",
           "legendFormat": "median length",
-          "refId": "A",
-          "instant": true,
-          "format": "time_series"
+          "refId": "B",
+          "instant": true
         },
         {
           "expr": "histogram_quantile(0.9, sum by (le) (pichess_game_length_moves_bucket))",
           "legendFormat": "p90 length",
-          "refId": "A",
-          "instant": true,
-          "format": "time_series"
+          "refId": "C",
+          "instant": true
         },
         {
           "expr": "histogram_quantile(0.5, sum by (le) (pichess_think_seconds_per_move_bucket))",
           "legendFormat": "median think (s)",
-          "refId": "A",
-          "instant": true,
-          "format": "time_series"
+          "refId": "D",
+          "instant": true
+        },
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (pichess_game_duration_seconds_bucket))",
+          "legendFormat": "median duration (s)",
+          "refId": "E",
+          "instant": true
+        },
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (pichess_captures_per_game_bucket))",
+          "legendFormat": "median captures/game",
+          "refId": "F",
+          "instant": true
         }
       ],
       "options": {
