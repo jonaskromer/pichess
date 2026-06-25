@@ -2,12 +2,14 @@ package chess.gateway
 
 import io.grpc.inprocess.{InProcessChannelBuilder, InProcessServerBuilder}
 import pichess.game_service.{
+  AnalyzeRequest,
   ExportRequest,
   GameIdRequest,
   ListActiveGamesRequest,
   LoadGameRequest,
   MoveRequest,
   NewGameRequest,
+  SetClockRequest,
   ZioGameService
 }
 import scalapb.zio_grpc.{ServerLayer, ZManagedChannel}
@@ -143,6 +145,19 @@ object TracingGameServiceClientSpec extends ZIOSpecDefault:
         yield assertTrue(reply.fen.nonEmpty)
       }
     },
+    test("setClock → underlying setClock, returns the same game") {
+      // The tournament mirror pushes upstream clock values; the decorator just
+      // forwards. A fresh (untimed) game accepts the push and replies for the
+      // same id.
+      withTracedClient { client =>
+        for
+          started <- client.newGame(NewGameRequest())
+          reply <- client.setClock(
+            SetClockRequest(started.gameId, 65000, 58000, true)
+          )
+        yield assertTrue(reply.gameId == started.gameId)
+      }
+    },
     test("getState → underlying getState, returns persisted state") {
       withTracedClient { client =>
         for
@@ -151,12 +166,29 @@ object TracingGameServiceClientSpec extends ZIOSpecDefault:
         yield assertTrue(reply.gameId == started.gameId)
       }
     },
+    test("replayGame → underlying replayGame, returns the position history") {
+      withTracedClient { client =>
+        for
+          started <- client.newGame(NewGameRequest())
+          reply <- client.replayGame(GameIdRequest(started.gameId))
+        yield assertTrue(
+          reply.gameId == started.gameId,
+          reply.frames.nonEmpty // at least the initial-position frame
+        )
+      }
+    },
     test("exportGame → underlying exportGame, returns the requested format") {
       withTracedClient { client =>
         for
           started <- client.newGame(NewGameRequest())
           reply <- client.exportGame(ExportRequest(started.gameId, "fen"))
         yield assertTrue(reply.body.nonEmpty)
+      }
+    },
+    test("analyzeGame → underlying analyzeGame, returns analysis JSON") {
+      withTracedClient { client =>
+        for reply <- client.analyzeGame(AnalyzeRequest("1. e4 e5 *", 1))
+        yield assertTrue(reply.analysisJson.contains("opening"))
       }
     },
     test(

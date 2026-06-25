@@ -51,6 +51,15 @@
   --color-grid:               #8aafc8;
   --color-crumple-highlight:  #ffffff;
 
+  /* Board square tints — translucent so the paper texture + grid read
+     through (marker-pen-on-paper look). Tokenised (were hard-coded rgba) so
+     the board retints in dark mode; the *-hl variants are the last-move
+     highlight. */
+  --color-board-light:        rgb(253 232 208 / 0.72);
+  --color-board-dark:         rgb(232 149 106 / 0.72);
+  --color-board-light-hl:     rgb(252 200 158 / 0.85);
+  --color-board-dark-hl:      rgb(212 128 78 / 0.85);
+
   --color-text-primary:       #2d1b14;
   --color-text-secondary:     #6b4d3c;
   --color-text-muted:         #8a6a5a;
@@ -64,7 +73,7 @@
   --color-header-text:        #f7a072;
 
   --color-hairline:           rgb(70 40 25 / 0.18);
-  --color-overlay-bg:         rgb(45 27 20 / 0.7);
+  --color-overlay-bg:         rgb(45 27 20 / 0.12);
   --color-code-bg:            rgb(70 40 25 / 0.08);
   --color-input-bg:           rgb(70 40 25 / 0.06);
 
@@ -98,6 +107,14 @@
   --color-marker-green:       rgb(90 235 130 / 0.65);
   --color-marker-red:         rgb(255 80 80 / 0.7);
 
+  /* Ballpoint-pen ink — an opaque navy used for handwritten annotations
+     scrawled ONTO a clipping (e.g. the result-card stat counts), as if added
+     after the fact. Distinct from the translucent highlighter markers above:
+     this is a solid ink line, not a wash. Reads on both newsprint tones
+     (the cream light-mode cutting and the muted-beige dark-mode one), so it
+     carries a single value across themes. */
+  --color-ink-blue:           #27468f;
+
   /* Panel shadow — applied to paper-card filters. The dark-mode
      version is heavier (deeper paper, more contrast needed). */
   --shadow-panel: 0 0.9rem 1rem rgb(0 0 0 / 0.10);
@@ -114,6 +131,14 @@
   --color-grid:               #806856;
   --color-crumple-highlight:  #ffd9a0;
 
+  /* Board on dark paper — lighter + more opaque than the light-mode tints so
+     the squares stay legible against the deep-brown page rather than sinking
+     into it. */
+  --color-board-light:        rgb(208 180 148 / 0.80);
+  --color-board-dark:         rgb(130 90 58 / 0.84);
+  --color-board-light-hl:     rgb(226 194 152 / 0.90);
+  --color-board-dark-hl:      rgb(170 114 68 / 0.90);
+
   --color-text-primary:       #f5e6dc;
   --color-text-secondary:     #d8c4b6;
   --color-text-muted:         #b09a88;
@@ -127,7 +152,7 @@
   --color-header-text:        #f7a072;
 
   --color-hairline:           rgb(247 160 114 / 0.18);
-  --color-overlay-bg:         rgb(45 27 20 / 0.85);
+  --color-overlay-bg:         rgb(45 27 20 / 0.22);
   --color-code-bg:            rgb(0 0 0 / 0.25);
   --color-input-bg:           rgb(247 160 114 / 0.06);
 
@@ -145,6 +170,19 @@
      warm beige still reads as paper (vs. just "grey") and keeps the
      dark text legible. */
   --color-newsprint:          #a8a092;
+
+  /* Post-it palette in dark mode. The light-mode pastels were left
+     unadjusted and read as glaring neon slabs on the deep paper. These are
+     muted a notch (deeper, slightly desaturated) so they settle into the
+     dark theme — but deliberately kept LIGHT (luminance high) so the post-it
+     ink (`--color-post-text`, an unchanged dark brown) stays legible on top.
+     Shadows go darker + a touch stronger to seat them on the deeper page. */
+  --color-post-yellow:        #e7d178;
+  --color-post-yellow-shadow: rgb(110 88 20 / 0.45);
+  --color-post-cyan:          #9ed0d4;
+  --color-post-cyan-shadow:   rgb(20 80 90 / 0.45);
+  --color-post-coral:         #ee9784;
+  --color-post-coral-shadow:  rgb(120 45 38 / 0.5);
 
   --shadow-panel:             0 1rem 1.4rem rgb(0 0 0 / 0.35);
 }

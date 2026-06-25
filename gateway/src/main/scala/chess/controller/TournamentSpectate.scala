@@ -1,7 +1,7 @@
 package chess.controller
 
 import pichess.game_service.ZioGameService
-import pichess.game_service.{MoveRequest, NewGameRequest}
+import pichess.game_service.{MoveRequest, NewGameRequest, SetClockRequest}
 import zio.*
 import zio.http.*
 import zio.json.*
@@ -40,8 +40,18 @@ final class TournamentSpectate private (
   private given JsonEncoder[StartResponse] =
     DeriveJsonEncoder.gen[StartResponse]
 
+  /** The upstream clock block (`{whiteTime, blackTime}`, seconds as Doubles).
+    * Absent/`null` for an untimed tournament game → no clock is mirrored.
+    */
+  private final case class ClockInfo(whiteTime: Double, blackTime: Double)
+  private given JsonDecoder[ClockInfo] = DeriveJsonDecoder.gen[ClockInfo]
+
   /** Minimal projection of the public game snapshot. */
-  private final case class Snapshot(moves: String, status: String)
+  private final case class Snapshot(
+      moves: String,
+      status: String,
+      clock: Option[ClockInfo] = None
+  )
   private given JsonDecoder[Snapshot] = DeriveJsonDecoder.gen[Snapshot]
 
   def routes(
@@ -120,10 +130,17 @@ final class TournamentSpectate private (
               fetchSnapshot(url).foldZIO(
                 _ => ZIO.sleep(PollInterval) *> loop(n - 1),
                 snap =>
-                  applyNew(client, mirrorId, snap.moves, applied) *> {
-                    if isTerminal(snap.status) then ZIO.unit
-                    else ZIO.sleep(PollInterval) *> loop(n - 1)
-                  }
+                  val terminal = isTerminal(snap.status)
+                  // Replay new moves first, then refresh the clock to the
+                  // upstream's latest values (overwriting any decrement the
+                  // replayed move applied) — so each poll re-syncs the board's
+                  // clock to NowChess. Freeze it (running=false) once the
+                  // upstream game has ended.
+                  applyNew(client, mirrorId, snap.moves, applied) *>
+                    pushClock(client, mirrorId, snap.clock, !terminal) *> {
+                      if terminal then ZIO.unit
+                      else ZIO.sleep(PollInterval) *> loop(n - 1)
+                    }
               )
           loop(MaxPolls)
         }
@@ -161,6 +178,38 @@ final class TournamentSpectate private (
           )
       } *> applied.set(toks.size)
     }
+
+  /** Push the upstream clock onto the mirror so spectators see the live
+    * tournament times. NowChess reports seconds (Doubles); we send absolute
+    * remaining milliseconds. Display-only on our side — the game-service stores
+    * the values verbatim and never flags the mirror (NowChess owns the clock).
+    * A rejected push is logged, not fatal; an untimed game (no clock block) is a
+    * no-op.
+    */
+  private def pushClock(
+      client: ZioGameService.GameServiceClient,
+      mirrorId: String,
+      clock: Option[ClockInfo],
+      running: Boolean
+  ): ZIO[Any, Nothing, Unit] =
+    clock match
+      case None => ZIO.unit
+      case Some(c) =>
+        client
+          .setClock(
+            SetClockRequest(
+              gameId = mirrorId,
+              whiteMs = (c.whiteTime * 1000).toLong,
+              blackMs = (c.blackTime * 1000).toLong,
+              running = running
+            )
+          )
+          .unit
+          .catchAll(e =>
+            ZIO.logWarning(
+              s"mirror $mirrorId clock push failed: ${e.getStatus}"
+            )
+          )
 
   private def isTerminal(status: String): Boolean =
     status != "ongoing" && status != "pending"

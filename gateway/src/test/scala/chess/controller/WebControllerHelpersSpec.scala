@@ -4,15 +4,16 @@ import com.google.protobuf.ByteString
 import io.grpc.{Status as GrpcStatus, StatusException}
 import pichess.game_service.StateReply
 import zio.*
+import zio.http.MediaType
 import zio.test.*
 
 import chess.api.{AnnotationsDto, BoardStateDto, ErrorDto, GameStatusDto}
 
-/** Direct unit tests for WebController's private[controller] helpers
-  * that guard against contract-violating input from game-service. The
-  * full-stack integration tests can't trigger these branches because
-  * the real game-service is well-behaved — bumping each helper to
-  * package-private lets us feed it synthetic bad input here.
+/** Direct unit tests for WebController's private[controller] helpers that guard
+  * against contract-violating input from game-service. The full-stack
+  * integration tests can't trigger these branches because the real game-service
+  * is well-behaved — bumping each helper to package-private lets us feed it
+  * synthetic bad input here.
   */
 object WebControllerHelpersSpec extends ZIOSpecDefault:
 
@@ -23,7 +24,7 @@ object WebControllerHelpersSpec extends ZIOSpecDefault:
     error = None,
     inCheck = false,
     checkedKingPos = None,
-    status = GameStatusDto.Playing,
+    status = GameStatusDto.Playing
   )
 
   def spec = suite("WebController helpers")(
@@ -32,25 +33,28 @@ object WebControllerHelpersSpec extends ZIOSpecDefault:
         val err = new StatusException(
           GrpcStatus.INVALID_ARGUMENT.withDescription("explicit message")
         )
-        assertTrue(WebController.toErrorDto(err) == ErrorDto("explicit message"))
+        assertTrue(
+          WebController.toErrorDto(err) == ErrorDto("explicit message")
+        )
       },
       test("falls back to err.getMessage when getDescription returns null") {
         // `GrpcStatus.INTERNAL` carries no description by default —
         // `getDescription` returns null, so the `getOrElse(getMessage)`
         // arm fires. `err.getMessage` is the gRPC-formatted status
         // string ("INTERNAL").
-        val err  = new StatusException(GrpcStatus.INTERNAL)
-        val dto  = WebController.toErrorDto(err)
+        val err = new StatusException(GrpcStatus.INTERNAL)
+        val dto = WebController.toErrorDto(err)
         assertTrue(dto.error.contains("INTERNAL"))
       }
     ),
     suite("replyToDto bytes decode")(
       test("round-trips an encoded BoardStateDto through the wire bytes") {
         val reply = StateReply(
-          gameId     = "g1",
-          boardState = ByteString.copyFrom(BoardStateDto.encodeBytes(sampleDto)),
-          error      = "",
-          fen        = "",
+          gameId = "g1",
+          boardState =
+            ByteString.copyFrom(BoardStateDto.encodeBytes(sampleDto)),
+          error = "",
+          fen = ""
         )
         for dto <- WebController.replyToDto(reply)
         yield assertTrue(dto == sampleDto)
@@ -61,10 +65,10 @@ object WebControllerHelpersSpec extends ZIOSpecDefault:
         // the guard exists so a malformed payload doesn't crash the
         // gateway.
         val reply = StateReply(
-          gameId     = "g1",
+          gameId = "g1",
           boardState = ByteString.copyFromUtf8("not a valid protobuf"),
-          error      = "",
-          fen        = "",
+          error = "",
+          fen = ""
         )
         WebController.replyToDto(reply).either.map { result =>
           assertTrue(
@@ -74,29 +78,70 @@ object WebControllerHelpersSpec extends ZIOSpecDefault:
         }
       }
     ),
+    suite("frameToDto bytes decode")(
+      test("round-trips an encoded BoardStateDto into a ReplayFrame") {
+        val frame = pichess.game_service.ReplayFrame(
+          moveIndex = 2,
+          boardState =
+            ByteString.copyFrom(BoardStateDto.encodeBytes(sampleDto)),
+          san = "Nf3"
+        )
+        for dto <- WebController.frameToDto(frame)
+        yield assertTrue(
+          dto.moveIndex == 2,
+          dto.san == "Nf3",
+          dto.boardState == sampleDto
+        )
+      },
+      test("fails with an ErrorDto when the frame bytes can't be decoded") {
+        val frame = pichess.game_service.ReplayFrame(
+          moveIndex = 0,
+          boardState = ByteString.copyFromUtf8("not a valid payload"),
+          san = ""
+        )
+        WebController.frameToDto(frame).either.map { result =>
+          assertTrue(
+            result.isLeft,
+            result.left.exists(_.error.contains("decode replay frame"))
+          )
+        }
+      }
+    ),
+    suite("contentTypeFor")(
+      test("maps the vendored font extensions to their media types") {
+        // The .woff2 / .woff arms back the locally-vendored fonts
+        // (/web/vendor/fonts); exercised here since no other test serves a
+        // real font asset. Other extensions are covered by the asset routes.
+        assertTrue(
+          WebController.contentTypeFor("a.woff2").contains(MediaType.font.`woff2`),
+          WebController.contentTypeFor("a.woff").contains(MediaType.font.`woff`),
+          WebController.contentTypeFor("a.unknownext").isEmpty
+        )
+      }
+    ),
     suite("decodeServerAnnotations bytes round-trip")(
       test("decodes a populated bundle into the cache shape") {
         val sample = AnnotationsDto(
           legalMovesFrom = Map("e2" -> List("e3", "e4")),
-          threats        = List("d5"),
-          attackersOf    = Map("d5" -> List("e6")),
+          threats = List("d5"),
+          attackersOf = Map("d5" -> List("e6"))
         )
         val bytes = AnnotationsDto.encodeBytes(sample)
-        val ann   = WebController.decodeServerAnnotations(bytes)
+        val ann = WebController.decodeServerAnnotations(bytes)
         assertTrue(
           ann.legalMovesFrom == sample.legalMovesFrom,
-          ann.threats        == sample.threats,
-          ann.attackersOf    == sample.attackersOf,
+          ann.threats == sample.threats,
+          ann.attackersOf == sample.attackersOf
         )
       },
       test("an empty bundle round-trips cleanly") {
         val bytes = AnnotationsDto.encodeBytes(AnnotationsDto.Empty)
-        val ann   = WebController.decodeServerAnnotations(bytes)
+        val ann = WebController.decodeServerAnnotations(bytes)
         assertTrue(
           ann.legalMovesFrom.isEmpty,
           ann.threats.isEmpty,
-          ann.attackersOf.isEmpty,
+          ann.attackersOf.isEmpty
         )
-      },
+      }
     )
   )

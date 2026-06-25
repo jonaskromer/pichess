@@ -29,10 +29,10 @@ object WebControllerSpec extends ZIOSpecDefault:
       test("hold game state with moves") {
         val move = Move(Position('e', 2), Position('e', 4))
         for snapshot <- GameSnapshot.fromHistory(
-                          "id",
-                          GameState.initial,
-                          List((move, GameState.initial))
-                        )
+            "id",
+            GameState.initial,
+            List((move, GameState.initial))
+          )
         yield
           val state = SessionState(snapshot)
           assertTrue(state.moves == List(move))

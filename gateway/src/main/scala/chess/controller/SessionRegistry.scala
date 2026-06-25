@@ -8,10 +8,9 @@ import zio.*
   *
   * For a local game (`registerLocal`) the creator's session is the only
   * permitted mover and self-play is allowed (the same session moves both
-  * sides). For a lobbied game (Phase 2 `registerLobby`) the host and
-  * guest each move their own colour, but for Phase 1 we just check
-  * membership in a small set — colour-based gating arrives with the
-  * lobby work.
+  * sides). For a lobbied game (Phase 2 `registerLobby`) the host and guest each
+  * move their own colour, but for Phase 1 we just check membership in a small
+  * set — colour-based gating arrives with the lobby work.
   *
   * The registry is purely advisory at the HTTP layer: the gameService
   * authoritatively validates moves regardless. Its job is only to reject

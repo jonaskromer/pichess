@@ -4,34 +4,40 @@ import scala.io.Source
 
 object HtmlPage:
 
-  /** Render the SPA shell. `devMode` controls whether the web-ui
-    * surfaces the /dev link on the start screen + activates the
-    * #dev/… hash routes. The flag is read by the SPA from the
-    * `<meta name="pichess-dev">` tag injected here.
+  /** Render the SPA shell. `devMode` controls whether the web-ui surfaces the
+    * /dev link on the start screen + activates the #dev/… hash routes. The flag
+    * is read by the SPA from the `<meta name="pichess-dev">` tag injected here.
     */
-  def render(devMode: Boolean = false): String =
+  def render(
+      devMode: Boolean = false,
+      lichessEnabled: Boolean = false
+  ): String =
     val devMeta =
       s"""<meta name="pichess-dev" content="${devMode.toString}">"""
+    val lichessMeta =
+      s"""<meta name="pichess-lichess" content="${lichessEnabled.toString}">"""
     s"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 $devMeta
+$lichessMeta
 <title>piChess</title>
 <link rel="icon" type="image/png" sizes="32x32" href="/web/peach-32.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/web/peach.png">
 <link rel="apple-touch-icon" sizes="180x180" href="/web/peach-180.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat+Brush&amp;family=Caveat:wght@400;700&amp;family=Special+Elite&amp;display=swap">
-<!-- overlayScrollbars 2.x — used to skin .move-log's scrollbar with a
-     hand-drawn hatched look (native ::-webkit-scrollbar can't accept the
-     filter:url(#hand-drawn) effect on the handle the way OS's DOM-rendered
-     handle can). Loaded sync so the global OverlayScrollbarsGlobal symbol
-     is available before /web/main.js calls into it on mount. -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/overlayscrollbars@2.10.0/styles/overlayscrollbars.min.css">
-<script src="https://cdn.jsdelivr.net/npm/overlayscrollbars@2.10.0/browser/overlayscrollbars.browser.es6.min.js"></script>
+<!-- Self-hosted scrapbook fonts (Caveat Brush, Caveat 400/700, Special
+     Elite) — vendored by `make web-vendor` into /web/vendor/fonts. No CDN. -->
+<link rel="stylesheet" href="/web/vendor/fonts/fonts.css">
+<!-- overlayScrollbars 2.10.0 — vendored locally (make web-vendor), used to
+     skin .move-log's scrollbar with a hand-drawn hatched look (native
+     ::-webkit-scrollbar can't accept the filter:url(#hand-drawn) effect on the
+     handle the way OS's DOM-rendered handle can). Loaded sync so the global
+     OverlayScrollbarsGlobal symbol is available before /web/main.js calls into
+     it on mount; the init is guarded so a missing global degrades to native. -->
+<link rel="stylesheet" href="/web/vendor/overlayscrollbars/overlayscrollbars.min.css">
+<script src="/web/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js"></script>
 <script>
 // Theme bootstrap — runs synchronously in head, before the page paints,
 // so the chosen mode applies immediately (no FOUT). The Scala.js bundle

@@ -2,6 +2,7 @@ package chess.controller
 
 import io.grpc.StatusException
 import pichess.game_service.{
+  AnalyzeRequest,
   ExportRequest,
   GameIdRequest,
   LoadGameRequest,
@@ -15,19 +16,24 @@ import sttp.tapir.swagger.bundle.SwaggerInterpreter
 import sttp.tapir.ztapir.*
 import zio.*
 import zio.http.*
+import zio.json.*
 import zio.stream.ZStream
 import zio.telemetry.opentelemetry.context.ContextStorage
 import zio.telemetry.opentelemetry.tracing.Tracing
 
 import chess.api.{
+  AnalyzeRequestDto,
   AnnotationsDto,
   AttackersResponse,
   BoardStateDto,
   Endpoints,
   ErrorDto,
   ExportResponse,
+  GameAnalysisDto,
   GameSnapshot,
   LegalMovesResponse,
+  ReplayFrame,
+  ReplayResponse,
   StackInfoResponse,
   StateResponse,
   ThreatsResponse
@@ -95,7 +101,7 @@ object WebController:
       swagger ++ List(
         Endpoints.postCreateGame.zServerLogic[Any] { case (sessionId, req) =>
           val create = req.load match
-            case None       => client.newGame(newGameRequestFor(req.vsBot))
+            case None       => client.newGame(newGameRequestFor(req))
             case Some(load) => client.loadGame(LoadGameRequest(load))
           for
             reply <- create.mapError(toErrorDto)
@@ -151,6 +157,12 @@ object WebController:
         },
         Endpoints.getExport.zServerLogic[Any] { case (id, format) =>
           exportInFormat(client, id, format)
+        },
+        Endpoints.getReplay.zServerLogic[Any] { id =>
+          replayFor(client, id)
+        },
+        Endpoints.postAnalyze.zServerLogic[Any] { req =>
+          analyzeFor(client, req)
         },
         Endpoints.postRegisterPlayers.zServerLogic[Any] { case (id, req) =>
           // Internal coordination from lobby-service. Overwrites any
@@ -209,27 +221,29 @@ object WebController:
     * undo / redo / draw / forfeit) — they all call `cache.invalidate(id)` after
     * a successful mutation.
     */
-  /** Build the gRPC `NewGameRequest` from the optional client-side vs-bot
-    * settings. When `vsBot` is `None` the request defaults to a regular PvP
-    * game (proto3 zero values). When supplied, the fields are passed through to
-    * game-service which validates them and routes the game through the vs-bot
-    * orchestrator.
-    *
-    * Validation (unknown side / difficulty) happens server-side rather than
-    * here so the rejection comes from a single source of truth. That keeps the
-    * gateway thin — it just shuttles the strings.
+  /** Build the gRPC `NewGameRequest` from the client's [[CreateGameRequest]].
+    * The optional vs-bot settings route the game through the vs-bot orchestrator
+    * (validated server-side, so the gateway just shuttles the strings); the
+    * clock fields (`initialSeconds`/`incrementSeconds`, `0` = untimed) ride along
+    * for any mode — local, host/PvP, or vs-bot.
     */
   private[controller] def newGameRequestFor(
-      vsBot: Option[chess.api.VsBotSettings]
+      req: chess.api.CreateGameRequest
   ): NewGameRequest =
-    vsBot match
-      case None => NewGameRequest()
+    req.vsBot match
+      case None =>
+        NewGameRequest(
+          initialSeconds = req.initialSeconds,
+          incrementSeconds = req.incrementSeconds
+        )
       case Some(s) =>
         NewGameRequest(
           vsBot = true,
           botSide = s.botSide,
           botDifficulty = s.difficulty,
-          allowUndo = s.allowUndo
+          allowUndo = s.allowUndo,
+          initialSeconds = req.initialSeconds,
+          incrementSeconds = req.incrementSeconds
         )
 
   private def annotationsFor(
@@ -304,6 +318,29 @@ object WebController:
         .mapError(toErrorDto)
     yield ExportResponse(reply.format, reply.body)
 
+  /** Proxy analysis to game-service (which reuses its resident engine) and
+    * decode the returned `GameAnalysisDto` JSON. */
+  private def analyzeFor(
+      client: ZioGameService.GameServiceClient,
+      req: AnalyzeRequestDto
+  ): ZIO[Any, ErrorDto, GameAnalysisDto] =
+    for
+      reply <- client
+        .analyzeGame(AnalyzeRequest(req.pgn, req.depth))
+        .mapError(toErrorDto)
+      dto <- ZIO.fromEither(decodeAnalysis(reply.analysisJson))
+    yield dto
+
+  /** Decode game-service's analysis JSON into the api DTO. `private[controller]`
+    * so the malformed-JSON guard (unreachable through the well-behaved
+    * game-service) is unit-testable. */
+  private[controller] def decodeAnalysis(
+      json: String
+  ): Either[ErrorDto, GameAnalysisDto] =
+    json.fromJson[GameAnalysisDto].left.map(e =>
+      ErrorDto(s"Failed to decode analysis: $e")
+    )
+
   private[controller] def toErrorDto(err: StatusException): ErrorDto =
     val description =
       Option(err.getStatus.getDescription).getOrElse(err.getMessage)
@@ -331,6 +368,34 @@ object WebController:
       .attempt(BoardStateDto.decodeBytes(reply.boardState.toByteArray))
       .mapError(t =>
         ErrorDto(s"Failed to decode StateReply.boardState: ${t.getMessage}")
+      )
+
+  /** Fetch the full replay (every position, oldest first) and decode each
+    * frame's boopickle `board_state` bytes into a [[BoardStateDto]] — the same
+    * round-trip as [[replyToDto]], one frame at a time. Read-only; the
+    * game-service projects the stored history without mutating the session.
+    */
+  private def replayFor(
+      client: ZioGameService.GameServiceClient,
+      id: String
+  ): ZIO[Any, ErrorDto, ReplayResponse] =
+    for
+      reply  <- client.replayGame(GameIdRequest(id)).mapError(toErrorDto)
+      frames <- ZIO.foreach(reply.frames.toList)(frameToDto)
+    yield ReplayResponse(reply.gameId, frames)
+
+  /** Decode one replay frame's boopickle `board_state` bytes into the api
+    * [[ReplayFrame]] DTO — the per-ply analogue of [[replyToDto]].
+    * `private[controller]` so the decode-error guard (unreachable through the
+    * well-behaved game-service) is unit-testable with synthetic bad bytes. */
+  private[controller] def frameToDto(
+      frame: pichess.game_service.ReplayFrame
+  ): ZIO[Any, ErrorDto, ReplayFrame] =
+    ZIO
+      .attempt(BoardStateDto.decodeBytes(frame.boardState.toByteArray))
+      .mapBoth(
+        t => ErrorDto(s"Failed to decode replay frame: ${t.getMessage}"),
+        dto => ReplayFrame(frame.moveIndex, dto, frame.san)
       )
 
   // --------------------------------------------------------------------------
@@ -437,7 +502,7 @@ object WebController:
           seg.forall(c => c.isLetterOrDigit || c == '.' || c == '-' || c == '_')
       )
 
-  private def contentTypeFor(path: String): Option[MediaType] =
+  private[controller] def contentTypeFor(path: String): Option[MediaType] =
     val lower = path.toLowerCase
     if lower.endsWith(".js") then Some(MediaType.application.`javascript`)
     else if lower.endsWith(".svg") then Some(MediaType.image.`svg+xml`)

@@ -49,32 +49,28 @@ object HtmlPageSpec extends ZIOSpecDefault:
         )
       )
     },
-    test("preconnect and load the scrapbook font stack from Google Fonts") {
-      // display=swap avoids FOIT — fallback renders immediately and the
-      // scrapbook fonts swap in once they arrive.
+    test("load the scrapbook font stack from the local vendored stylesheet") {
+      // Vendored by `make web-vendor` into /web/vendor/fonts — no CDN, no
+      // Google Fonts preconnect (the @font-face rules live in fonts.css).
       assertTrue(
         html.contains(
-          """<link rel="preconnect" href="https://fonts.googleapis.com">"""
+          """<link rel="stylesheet" href="/web/vendor/fonts/fonts.css">"""
         ),
-        html.contains(
-          """<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>"""
-        ),
-        html.contains("fonts.googleapis.com/css2"),
-        html.contains("Caveat+Brush"),
-        html.contains("family=Caveat"),
-        html.contains("Special+Elite"),
-        html.contains("display=swap")
+        !html.contains("fonts.googleapis.com"),
+        !html.contains("fonts.gstatic.com")
       )
     },
-    test("load overlayScrollbars CSS + JS from CDN, sync") {
-      // Sync (no defer/async) so the global OverlayScrollbarsGlobal symbol
-      // is available before /web/main.js boots and tries to call OS on
-      // mount. Hand-drawn distortion filter is inline so OS-rendered
-      // handles can reference filter: url(#hand-drawn).
+    test("load overlayScrollbars CSS + JS from the local vendor dir, sync") {
+      // Vendored locally (make web-vendor) — no CDN. Sync (no defer/async) so
+      // the global OverlayScrollbarsGlobal symbol is available before
+      // /web/main.js boots and calls OS on mount. Hand-drawn distortion filter
+      // is inline so OS-rendered handles can reference filter: url(#hand-drawn).
       assertTrue(
-        html.contains("overlayscrollbars@2"),
-        html.contains("overlayscrollbars.min.css"),
-        html.contains("overlayscrollbars.browser.es6.min.js"),
+        html.contains("/web/vendor/overlayscrollbars/overlayscrollbars.min.css"),
+        html.contains(
+          "/web/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js"
+        ),
+        !html.contains("overlayscrollbars@2"),
         html.contains("""id="hand-drawn"""")
       )
     },

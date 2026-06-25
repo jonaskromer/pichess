@@ -174,6 +174,65 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
       }
     },
     test(
+      "GET /api/games/{id}/replay returns the position history (initial + per move)"
+    ) {
+      runWith() { routes =>
+        for
+          id <- createGame(routes)
+          _ <- routes.runZIO(
+            withSession(
+              Request.post(
+                url"/api/games/$id/move",
+                Body.fromString("""{"move":"e2 e4"}""")
+              )
+            )
+          )
+          response <- routes.runZIO(Request.get(url"/api/games/$id/replay"))
+          body <- response.body.asString
+        yield assertTrue(
+          response.status == Status.Ok,
+          // Two frames: index 0 (initial) and index 1 (after 1.e4)…
+          body.contains("\"moveIndex\":0"),
+          body.contains("\"moveIndex\":1"),
+          body.contains("\"san\":\"e4\""),
+          // …and frame 1's decoded board has Black to move.
+          body.contains("\"activeColor\":\"black\"")
+        )
+      }
+    },
+    test("POST /api/analyze rates a pasted PGN (opening + per-move classes)") {
+      runWith() { routes =>
+        for
+          response <- routes.runZIO(
+            Request.post(
+              url"/api/analyze",
+              Body.fromString("""{"pgn":"1. e4 c5 2. Nf3 *","depth":2}""")
+            )
+          )
+          body <- response.body.asString
+        yield assertTrue(
+          response.status == Status.Ok,
+          body.contains("\"opening\""),
+          body.contains("Sicilian"),
+          body.contains("\"moveClass\"")
+        )
+      }
+    },
+    test("POST /api/analyze rejects an unparseable PGN") {
+      runWith() { routes =>
+        for response <- routes.runZIO(
+            Request.post(
+              url"/api/analyze",
+              Body.fromString("""{"pgn":"this is not chess","depth":2}""")
+            )
+          )
+        yield assertTrue(response.status == Status.BadRequest)
+      }
+    },
+    test("decodeAnalysis surfaces malformed analysis JSON as an error") {
+      assertTrue(WebController.decodeAnalysis("{ not json").isLeft)
+    },
+    test(
       "POST /api/games/{id}/move applies a legal move and returns the updated state"
     ) {
       runWith() { routes =>
@@ -671,6 +730,17 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
       runWith() { routes =>
         for response <- routes.runZIO(
             Request.get(url"/api/games/missing/state")
+          )
+        yield assertTrue(response.status == Status.BadRequest)
+      }
+    },
+    test(
+      "GET /api/games/{id}/replay returns 400 for an unknown game (replayFor error path)"
+    ) {
+      // replayFor → client.replayGame → NOT_FOUND → toErrorDto → 400 from tapir.
+      runWith() { routes =>
+        for response <- routes.runZIO(
+            Request.get(url"/api/games/missing/replay")
           )
         yield assertTrue(response.status == Status.BadRequest)
       }

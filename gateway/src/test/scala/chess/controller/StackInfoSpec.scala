@@ -5,23 +5,31 @@ import zio.test.*
 
 object StackInfoSpec extends ZIOSpecDefault:
 
-  /** Set the three env vars StackInfo reads, then run `fromEnv`.
-    * Uses ZIO test's `TestSystem` (provided by default to every
-    * ZIOSpecDefault) so each test gets an isolated env snapshot.
+  /** Set the three env vars StackInfo reads, then run `fromEnv`. Uses ZIO
+    * test's `TestSystem` (provided by default to every ZIOSpecDefault) so each
+    * test gets an isolated env snapshot.
     */
   private def withEnv(
-      stack:   Option[String] = None,
-      extras:  Option[String] = None,
+      stack: Option[String] = None,
+      extras: Option[String] = None,
       devMode: Option[String] = None
   ): UIO[StackInfo] =
     val sets =
-      ZIO.foreachDiscard(stack)(v   => TestSystem.putEnv(StackInfo.EnvBackend, v)) *>
-      ZIO.foreachDiscard(extras)(v  => TestSystem.putEnv(StackInfo.EnvExtras,  v)) *>
-      ZIO.foreachDiscard(devMode)(v => TestSystem.putEnv(StackInfo.EnvDevMode, v))
+      ZIO.foreachDiscard(stack)(v =>
+        TestSystem.putEnv(StackInfo.EnvBackend, v)
+      ) *>
+        ZIO.foreachDiscard(extras)(v =>
+          TestSystem.putEnv(StackInfo.EnvExtras, v)
+        ) *>
+        ZIO.foreachDiscard(devMode)(v =>
+          TestSystem.putEnv(StackInfo.EnvDevMode, v)
+        )
     sets *> StackInfo.fromEnv
 
   def spec = suite("StackInfo.fromEnv")(
-    test("defaults to inmemory + empty extras + devMode=false when no env vars set") {
+    test(
+      "defaults to inmemory + empty extras + devMode=false when no env vars set"
+    ) {
       for info <- withEnv()
       yield assertTrue(
         info.backend == "inmemory",
@@ -65,14 +73,14 @@ object StackInfoSpec extends ZIOSpecDefault:
       for
         one <- withEnv(devMode = Some("1"))
         yes <- withEnv(devMode = Some("yes"))
-        on  <- withEnv(devMode = Some("on"))
+        on <- withEnv(devMode = Some("on"))
       yield assertTrue(one.devMode, yes.devMode, on.devMode)
     },
     test("rejects anything else as falsy") {
       for
         falseVal <- withEnv(devMode = Some("false"))
-        bogus    <- withEnv(devMode = Some("nope"))
-        empty    <- withEnv(devMode = Some(""))
+        bogus <- withEnv(devMode = Some("nope"))
+        empty <- withEnv(devMode = Some(""))
       yield assertTrue(
         !falseVal.devMode,
         !bogus.devMode,

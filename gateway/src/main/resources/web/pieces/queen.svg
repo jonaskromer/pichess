@@ -6,12 +6,12 @@
     piece-primary    main fill (lighter tone)
     piece-secondary  shadow/depth fill (darker tone)
 
-  Outlines are a fixed white sticker effect baked into the artwork.
+  Outline ink is var(--piece-edge): defaults to white, retinted to the text colour in dark mode.
   Defaults baked into each var(...) call render the light variant when no
   variables are set, so the file is also usable standalone.
 -->
   <symbol id="queen" viewBox="692.1 471.5 544.3 1000.7" overflow="visible">
-  <g fill="white" stroke="white" stroke-width="36" stroke-linejoin="round" stroke-linecap="round">
+  <g fill="var(--piece-edge, #fff)" stroke="var(--piece-edge, #fff)" stroke-width="36" stroke-linejoin="round" stroke-linecap="round">
     <path fill-rule="nonzero" fill-opacity="1" d="M 902.855469 828.421875 C 902.855469 926.871094 873.617188 1149.210938 873.617188 1149.210938 C 880.953125 1153.800781 964.257812 1153.441406 964.257812 1153.441406 C 964.257812 1153.441406 1047.558594 1153.800781 1054.898438 1149.210938 C 1054.898438 1149.210938 1025.660156 926.871094 1025.660156 828.421875 L 902.855469 828.421875 "/>
     <path fill-rule="nonzero" fill-opacity="1" d="M 874.488281 1149.511719 L 833.808594 1189.269531 C 924.136719 1207.601562 1004.371094 1195.96875 1094.710938 1189.269531 L 1054.03125 1149.511719 L 874.488281 1149.511719 "/>
     <path fill-rule="nonzero" fill-opacity="1" d="M 833.808594 1189.269531 L 833.808594 1225.019531 C 833.808594 1225.019531 792.28125 1291.390625 753.445312 1322.460938 C 753.445312 1322.460938 732.117188 1346.519531 798.238281 1366.28125 L 1130.269531 1366.28125 C 1196.398438 1346.519531 1175.070312 1322.460938 1175.070312 1322.460938 C 1136.230469 1291.390625 1094.710938 1225.019531 1094.710938 1225.019531 L 1094.710938 1189.269531 L 833.808594 1189.269531 "/>

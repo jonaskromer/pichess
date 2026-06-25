@@ -4,6 +4,8 @@ import io.grpc.{Metadata, StatusException}
 import io.opentelemetry.api.trace.SpanKind
 import pichess.game_service.{
   ActiveGamesReply,
+  AnalyzeReply,
+  AnalyzeRequest,
   ExportReply,
   ExportRequest,
   GameIdRequest,
@@ -11,6 +13,8 @@ import pichess.game_service.{
   LoadGameRequest,
   MoveRequest,
   NewGameRequest,
+  ReplayReply,
+  SetClockRequest,
   StateReply,
   ZioGameService
 }
@@ -77,11 +81,20 @@ final class TracingGameServiceClient(
   def forfeit(request: GameIdRequest): IO[StatusException, StateReply] =
     clientSpan("GameService/forfeit")(tracedUnderlying.forfeit(request))
 
+  def setClock(request: SetClockRequest): IO[StatusException, StateReply] =
+    clientSpan("GameService/setClock")(tracedUnderlying.setClock(request))
+
   def getState(request: GameIdRequest): IO[StatusException, StateReply] =
     clientSpan("GameService/getState")(tracedUnderlying.getState(request))
 
   def exportGame(request: ExportRequest): IO[StatusException, ExportReply] =
     clientSpan("GameService/exportGame")(tracedUnderlying.exportGame(request))
+
+  def analyzeGame(request: AnalyzeRequest): IO[StatusException, AnalyzeReply] =
+    clientSpan("GameService/analyzeGame")(tracedUnderlying.analyzeGame(request))
+
+  def replayGame(request: GameIdRequest): IO[StatusException, ReplayReply] =
+    clientSpan("GameService/replayGame")(tracedUnderlying.replayGame(request))
 
   def listActiveGames(
       request: ListActiveGamesRequest
