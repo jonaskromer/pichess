@@ -57,17 +57,17 @@ val zioSparkVersion        = "0.12.0"
 
 // Spark 3.3 reflects into JDK internals that Java 17+ seals by default; these
 // are the same `--add-opens` Spark's own launcher injects (its
-// `JavaModuleOptions`). Required for the forked `sparkAnalytics/run` on a
-// modern JDK. (Spark 3.3 officially supports Java 8/11/17; we run it on 21 —
-// the closest JDK installed — which works for these local jobs with the opens.)
+// `JavaModuleOptions`). Required for the forked `sparkAnalytics/run` on a modern
+// JDK. Spark 3.3 supports Java 8/11/17 — the deploy image is `temurin:17-jre`
+// and local runs pin Java 17 via `PICHESS_SPARK_JAVA_HOME` (Java 21+ removed the
+// `DirectByteBuffer(long,int)` Spark's Platform needs, so 17 is the ceiling).
 val sparkRunJavaOptions = Seq(
   // Force en-US locale so `f"%.1f"` prints "2.5" not the host-locale "2,5".
   "-Duser.language=en",
   "-Duser.country=US",
   // Hadoop's security layer (pulled by Spark) calls `Subject.getSubject`, which
-  // Java 18+ refuses unless a security manager is explicitly allowed. Java 17
-  // still permitted it; since we run on 21, opt in. (No SecurityManager is
-  // actually installed — this just unblocks the legacy call.)
+  // Java 18+ refuses unless a security manager is explicitly allowed — opt in.
+  // (No SecurityManager is actually installed; this just unblocks the legacy call.)
   "-Djava.security.manager=allow",
   "--add-opens=java.base/java.lang=ALL-UNNAMED",
   "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
@@ -297,7 +297,7 @@ lazy val botLichess = project
 // UCI/FEN. See docs/tournament-integration.md.
 lazy val botTournament = project
   .in(file("bot-tournament"))
-  .dependsOn(domain.jvm, rules, codec, botEngine, observability)
+  .dependsOn(domain.jvm, rules, codec, botEngine, observability, repositoryApi)
   .enablePlugins(JavaAppPackaging, DockerPlugin)
   .settings(commonSettings)
   .settings(
@@ -405,6 +405,9 @@ lazy val persistenceApi = project
   .settings(commonSettings)
   .settings(
     name := "pichess-persistence-api",
+    // GameArchive is stored as a JSON blob by every backend; the codec lives
+    // here so all impls + the contract share one source of truth.
+    libraryDependencies += "dev.zio" %% "zio-json" % zioJsonVersion,
   )
 
 // Aggregator that knows how to wire every backend impl into a working
@@ -648,6 +651,8 @@ lazy val gameService = project
     // chess-game lifecycle. bot-engine is pure CPU code so this adds
     // no transitive infra burden.
     botEngine,
+    // post-game analysis (AnalyzeGame rpc) reuses the resident engine.
+    analysis,
   )
   .enablePlugins(JavaAppPackaging, DockerPlugin)
   .settings(commonSettings)
@@ -1040,6 +1045,18 @@ lazy val webUi = project
     // Scoverage doesn't instrument Scala.js output, so coverage stays off here
     // even when someone runs `sbt coverage test coverageReport` globally.
     coverageEnabled := false,
+  )
+
+// Post-game analysis library: rates moves (cp → win% → NAG), per-side accuracy,
+// and names the opening. Engine-driven (bot-engine Search) + the Phase-2 ECO
+// namer (codec). Like the other engine-dependent modules it stays out of the
+// root aggregate (its tests run a real search); game-service wires it in.
+lazy val analysis = project
+  .in(file("analysis"))
+  .dependsOn(domain.jvm, codec, botEngine, api.jvm)
+  .settings(commonSettings)
+  .settings(
+    name := "pichess-analysis"
   )
 
 lazy val root = project

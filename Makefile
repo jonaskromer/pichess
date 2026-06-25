@@ -78,6 +78,34 @@ tailwind-build: tailwind-install ## Generate the production stylesheet (one-shot
 tailwind-watch: tailwind-install ## Watch Scala sources + input.css and rebuild on change
 	$(TAILWIND_BINARY) -i $(TAILWIND_INPUT) -o $(TAILWIND_OUTPUT) --watch
 
+# Web runtime deps are vendored locally (no CDN at runtime — keeps us
+# local + committable and immune to offline / blocked / down CDNs). The
+# downloaded files under web/vendor are COMMITTED, so the gateway image bakes
+# them in with no build-time network. Re-run this target only to (re)fetch or
+# bump a pinned version.
+OVERLAYSCROLLBARS_VERSION := 2.10.0
+WEB_DIR := gateway/src/main/resources/web
+
+.PHONY: web-vendor
+web-vendor: ## (Re)download pinned web runtime deps (OverlayScrollbars + fonts) into web/vendor — output is committed
+	@echo "vendoring OverlayScrollbars $(OVERLAYSCROLLBARS_VERSION) → $(WEB_DIR)/vendor/overlayscrollbars"
+	@mkdir -p $(WEB_DIR)/vendor/overlayscrollbars
+	@curl -fsSL -o $(WEB_DIR)/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js \
+	  https://cdn.jsdelivr.net/npm/overlayscrollbars@$(OVERLAYSCROLLBARS_VERSION)/browser/overlayscrollbars.browser.es6.min.js
+	@curl -fsSL -o $(WEB_DIR)/vendor/overlayscrollbars/overlayscrollbars.min.css \
+	  https://cdn.jsdelivr.net/npm/overlayscrollbars@$(OVERLAYSCROLLBARS_VERSION)/styles/overlayscrollbars.min.css
+	@echo "vendoring scrapbook fonts (self-hosted woff2 + rewritten @font-face)"
+	@mkdir -p $(WEB_DIR)/vendor/fonts
+	@cd $(WEB_DIR)/vendor/fonts && \
+	  curl -fsSL -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0 Safari/537.36" \
+	    "https://fonts.googleapis.com/css2?family=Caveat+Brush&family=Caveat:wght@400;700&family=Special+Elite&display=swap" -o fonts.css && \
+	  for url in $$(grep -oE 'https://fonts.gstatic.com[^)]+\.woff2' fonts.css | sort -u); do \
+	    fn=$$(basename "$$url"); \
+	    curl -fsSL "$$url" -o "$$fn"; \
+	    sed "s|$$url|/web/vendor/fonts/$$fn|g" fonts.css > fonts.css.tmp && mv fonts.css.tmp fonts.css; \
+	  done
+	@echo "web-vendor done — remember to commit $(WEB_DIR)/vendor"
+
 .PHONY: up
 up: ## Start the integrated stack (assumes images already built)
 	docker compose up -d
@@ -272,13 +300,13 @@ opening-down: ## Stop the opening projection (opening-service + Neo4j; keeps Kaf
 	docker compose rm -f opening-service neo4j 2>/dev/null || true
 
 .PHONY: analytics
-analytics: ## Bring up Kafka + analytics-service + ClickHouse alongside the running stack
-	PICHESS_KAFKA=kafka:9092 docker compose --profile analytics up -d kafka analytics-service clickhouse
+analytics: ## Bring up Kafka + analytics-service + spark-analytics + kafka-exporter alongside the running stack
+	PICHESS_KAFKA=kafka:9092 docker compose --profile analytics up -d kafka analytics-service spark-analytics kafka-exporter
 
 .PHONY: analytics-down
-analytics-down: ## Stop the analytics projection (analytics-service + ClickHouse)
-	docker compose stop analytics-service clickhouse 2>/dev/null || true
-	docker compose rm -f analytics-service clickhouse 2>/dev/null || true
+analytics-down: ## Stop the analytics projection (analytics-service + spark-analytics + kafka-exporter)
+	docker compose stop analytics-service spark-analytics kafka-exporter 2>/dev/null || true
+	docker compose rm -f analytics-service spark-analytics kafka-exporter 2>/dev/null || true
 
 .PHONY: kafka-down
 kafka-down: ## Stop Kafka (only safe when neither opening nor analytics is up)
@@ -685,10 +713,6 @@ cqlsh: ## Open a cqlsh session in the cassandra container
 .PHONY: cypher
 cypher: ## Open a cypher-shell session in the neo4j container
 	docker compose exec neo4j cypher-shell -u neo4j -p password
-
-.PHONY: clickhouse-cli
-clickhouse-cli: ## Open a clickhouse-client session
-	docker compose exec clickhouse clickhouse-client
 
 # --- TUI ------------------------------------------------------------------
 
