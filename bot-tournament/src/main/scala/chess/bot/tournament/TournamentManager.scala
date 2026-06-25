@@ -21,6 +21,7 @@ final class TournamentManager private (
     searchFactory: () => Search,
     api: TournamentApiClient,
     reconnectDelay: Duration,
+    recorder: Option[GameRecorder],
     registered: Ref.Synchronized[Option[String]],
     active: Ref.Synchronized[Map[String, Fiber.Runtime[Throwable, Unit]]]
 ):
@@ -92,7 +93,7 @@ final class TournamentManager private (
       myId: String
   ): IO[Throwable, Unit] =
     TournamentBridge
-      .playTournament(tournamentId, myId, fallbackDepth, searchFactory, api)
+      .playTournament(tournamentId, myId, fallbackDepth, searchFactory, api, recorder)
       .tapErrorCause(c =>
         ZIO.logErrorCause(
           s"Tournament $tournamentId stream failed; reconnecting",
@@ -112,7 +113,8 @@ object TournamentManager:
       fallbackDepth: Int,
       searchFactory: () => Search,
       api: TournamentApiClient,
-      reconnectDelay: Duration = 5.seconds
+      reconnectDelay: Duration = 5.seconds,
+      recorder: Option[GameRecorder] = None
   ): UIO[TournamentManager] =
     for
       registered <- Ref.Synchronized.make(Option.empty[String])
@@ -125,6 +127,7 @@ object TournamentManager:
       searchFactory,
       api,
       reconnectDelay,
+      recorder,
       registered,
       active
     )

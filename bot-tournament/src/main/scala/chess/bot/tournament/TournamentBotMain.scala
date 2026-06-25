@@ -1,12 +1,16 @@
 package chess.bot.tournament
 
+import sttp.capabilities.zio.ZioStreams
+import sttp.client3.*
 import sttp.client3.httpclient.zio.HttpClientZioBackend
 import sttp.model.Uri
 import zio.*
 import zio.http.Server
+import zio.json.*
 
 import chess.bot.engine.{EngineBundle, ParallelismBudget, Search}
 import chess.obs.{MetricsHttpServer, MetricsLayer}
+import chess.repository.api.ArchiveSubmissionDto
 
 /** Runnable entrypoint for the NowChess tournament bot.
   *
@@ -88,11 +92,21 @@ object TournamentBotMain extends ZIOAppDefault:
                 budget = budget,
                 timeManagementUpgradeEnabled = true
               )
+            // When PICHESS_ARCHIVE_URL is set (e.g. http://repository:8091),
+            // finished games are POSTed to the repository's archive store so
+            // they're analyzable/replayable like piChess's own games. Off by
+            // default (no URL → no recorder).
+            recorder = sys.env
+              .get("PICHESS_ARCHIVE_URL")
+              .map(_.trim)
+              .filter(_.nonEmpty)
+              .map(url => GameRecorder(botName, archiveSink(backend, url)))
             manager <- TournamentManager.make(
               botName,
               fallbackDepth,
               searchFactory,
-              api
+              api,
+              recorder = recorder
             )
             // Prometheus metrics (tournament play + JVM) on a dedicated port,
             // scraped into the `piChess — tournament` Grafana dashboard. Forked
@@ -130,6 +144,27 @@ object TournamentBotMain extends ZIOAppDefault:
         }
       }
     yield ()
+
+  /** POST a finished game to the repository's archive store. Best-effort: any
+    * failure is logged and swallowed so archiving never disturbs play. */
+  private def archiveSink(
+      backend: SttpBackend[Task, ZioStreams],
+      baseUrl: String
+  ): ArchiveSubmissionDto => UIO[Unit] =
+    dto =>
+      val request = basicRequest
+        .post(uri"$baseUrl/archives")
+        .header("Content-Type", "application/json")
+        .body(dto.toJson)
+        .response(asStringAlways)
+      backend
+        .send(request)
+        .unit
+        .catchAll(e =>
+          ZIO.logWarning(
+            s"Failed to archive tournament game ${dto.gameId}: ${e.getMessage}"
+          )
+        )
 
   /** Resolve an optional initial tournament to join from the env and join it:
     *   - `TOURNAMENT_ID` → join that id;

@@ -11,6 +11,7 @@ import chess.bot.tournament.TournamentApiClient.{
   TournamentInfo
 }
 import chess.model.piece.Color
+import chess.repository.api.ArchiveSubmissionDto
 
 /** End-to-end [[TournamentBridge]] behaviour against an in-memory
   * [[TournamentApiClient]] stub that records calls and serves canned streams.
@@ -275,6 +276,37 @@ object TournamentBridgeSpec extends ZIOSpecDefault:
           _ <- runGameWith(stub, Color.White)
           recorded <- stub.calls.get
         yield assertTrue(recorded.isEmpty)
+      },
+      test("records the finished game to the recorder sink") {
+        // A move is played, then the game ends with White winning. The recorder
+        // sink should receive a submission with that move + the result + names.
+        val events = List(
+          GameEvent.MovePlayed("e2e4", blackToMove, Color.Black, clock),
+          GameEvent.GameEnded(Some(Color.White), "checkmate")
+        )
+        for
+          captured <- Ref.make(Option.empty[ArchiveSubmissionDto])
+          recorder  = GameRecorder("piChess", dto => captured.set(Some(dto)))
+          stub     <- newStub(games = Map("g1" -> events))
+          _ <- TournamentBridge.runGame(
+            "t1",
+            "g1",
+            Color.White,
+            "Rival",
+            0L,
+            2,
+            () => realSearch,
+            stub,
+            recorder = Some(recorder)
+          )
+          sub <- captured.get
+        yield assertTrue(
+          sub.exists(_.moves.map(_.uci) == List("e2e4")),
+          sub.map(_.result) == Some("1-0"),
+          sub.map(_.white) == Some("piChess"),
+          sub.map(_.black) == Some("Rival"),
+          sub.map(_.source) == Some("tournament")
+        )
       },
       test("a terminal snapshot then gameEnd emits the outcome only once") {
         // Both terminal events can arrive (snapshot-then-end on a reconnect);

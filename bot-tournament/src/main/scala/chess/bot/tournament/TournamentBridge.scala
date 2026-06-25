@@ -8,6 +8,7 @@ import chess.bot.tournament.TournamentRunner.Action
 import chess.codec.UciCodec
 import chess.model.piece.Color
 import chess.model.rules.MoveValidator
+import chess.repository.api.SubmittedMoveDto
 
 /** Per-tournament orchestration for tournament play.
   *
@@ -50,7 +51,8 @@ object TournamentBridge:
       myId: String,
       fallbackDepth: Int,
       searchFactory: () => Search,
-      api: TournamentApiClient
+      api: TournamentApiClient,
+      recorder: Option[GameRecorder] = None
   ): IO[Throwable, Unit] =
     for
       _ <- api
@@ -77,7 +79,8 @@ object TournamentBridge:
           incMs,
           fallbackDepth,
           searchFactory,
-          api
+          api,
+          recorder
         )
       }
     yield done
@@ -95,7 +98,8 @@ object TournamentBridge:
       incMs: Long,
       fallbackDepth: Int,
       searchFactory: () => Search,
-      api: TournamentApiClient
+      api: TournamentApiClient,
+      recorder: Option[GameRecorder]
   ): IO[Throwable, Unit] =
     event match
       case TournamentEvent.GameStart(round, gameId, _) =>
@@ -113,7 +117,8 @@ object TournamentBridge:
                 incMs,
                 fallbackDepth,
                 searchFactory,
-                api
+                api,
+                recorder = recorder
               ).forkDaemon.unit
           case None =>
             ZIO.unit
@@ -194,7 +199,8 @@ object TournamentBridge:
       fallbackDepth: Int,
       searchFactory: () => Search,
       api: TournamentApiClient,
-      reconnectDelay: Duration = 5.seconds
+      reconnectDelay: Duration = 5.seconds,
+      recorder: Option[GameRecorder] = None
   ): UIO[Unit] =
     // Fresh, ISOLATED search per game (own TT + killer/history tables); only
     // the loaded net and the global LazySMP helper budget are shared, and both
@@ -210,10 +216,12 @@ object TournamentBridge:
       for
         moves    <- Ref.make("")
         finished <- Ref.make(false)
+        recorded <- Ref.make(Vector.empty[SubmittedMoveDto])
+        ctx = GameContext(gameId, ourColor, opponent, moves, finished, recorded, recorder)
         played   <- api
           .streamGame(tournamentId, gameId)
           .runForeach { event =>
-            recordGameEvent(event, ourColor, opponent, moves, finished) *>
+            recordGameEvent(event, ctx) *>
               handleAction(
                 TournamentRunner.decide(event, ourColor),
                 tournamentId,
@@ -244,27 +252,37 @@ object TournamentBridge:
     * (a terminal `gameState` snapshot or the `gameEnd` event, whichever lands
     * first — both can arrive, e.g. snapshot-then-end on a reconnect).
     */
-  private[tournament] def recordGameEvent(
-      event: GameEvent,
+  /** Per-game state threaded through event recording: the running UCI log
+    * (`moves`, for opening + length), the emit-once `finished` guard, the
+    * accumulated `recorded` half-moves (UCI + clock, for the archive), and the
+    * optional `recorder` that ships the finished game to the archive store. */
+  private[tournament] final case class GameContext(
+      gameId: String,
       ourColor: Color,
       opponent: String,
       moves: Ref[String],
-      finished: Ref[Boolean]
+      finished: Ref[Boolean],
+      recorded: Ref[Vector[SubmittedMoveDto]],
+      recorder: Option[GameRecorder]
+  )
+
+  private[tournament] def recordGameEvent(
+      event: GameEvent,
+      ctx: GameContext
   ): UIO[Unit] =
     event match
       case GameEvent.StateSnapshot(_, log, _, clock, status, winner) =>
-        moves.set(log) *> TournamentMetrics.clocks(clock) *>
-          ZIO
-            .when(isTerminal(status))(
-              emitFinished(winner, status, ourColor, opponent, moves, finished)
-            )
-            .unit
+        ctx.moves.set(log) *> TournamentMetrics.clocks(clock) *>
+          ZIO.when(isTerminal(status))(emitFinished(winner, status, ctx)).unit
       case GameEvent.MovePlayed(uci, _, turn, clock) =>
-        moves.update(Openings.append(_, uci)) *>
+        ctx.moves.update(Openings.append(_, uci)) *>
+          ctx.recorded.update(
+            _ :+ SubmittedMoveDto(uci, Some(TournamentRecorder.moverClockMs(clock, turn)), None)
+          ) *>
           TournamentMetrics.clocks(clock) *>
           TournamentMetrics.moveObserved(turn.opposite)
       case GameEvent.GameEnded(winner, status) =>
-        emitFinished(winner, status, ourColor, opponent, moves, finished)
+        emitFinished(winner, status, ctx)
       case GameEvent.Heartbeat =>
         ZIO.unit
 
@@ -281,25 +299,41 @@ object TournamentBridge:
   private[tournament] def emitFinished(
       winner: Option[Color],
       status: String,
-      ourColor: Color,
-      opponent: String,
-      moves: Ref[String],
-      finished: Ref[Boolean]
+      ctx: GameContext
   ): UIO[Unit] =
-    finished.getAndSet(true).flatMap { already =>
+    ctx.finished.getAndSet(true).flatMap { already =>
       ZIO
         .unless(already) {
-          moves.get.flatMap { log =>
-            val outcome = GameOutcome.classify(winner, status, ourColor)
-            TournamentMetrics.gameFinished(opponent, ourColor, outcome) *>
-              TournamentMetrics.opening(opponent, Openings.family(log)) *>
+          ctx.moves.get.flatMap { log =>
+            val outcome = GameOutcome.classify(winner, status, ctx.ourColor)
+            TournamentMetrics.gameFinished(ctx.opponent, ctx.ourColor, outcome) *>
+              TournamentMetrics.opening(ctx.opponent, Openings.family(log)) *>
               TournamentMetrics.gameLength(Openings.plies(log)) *>
               ZIO.foreachDiscard(Openings.firstMove(log))(
                 TournamentMetrics.firstMove
-              )
+              ) *>
+              archiveGame(winner, ctx)
           }
         }
         .unit
+    }
+
+  /** Ship the finished game to the archive store, if a recorder is configured.
+    * Best-effort: errors are the recorder's concern (it swallows them). */
+  private def archiveGame(winner: Option[Color], ctx: GameContext): UIO[Unit] =
+    ZIO.foreachDiscard(ctx.recorder) { rec =>
+      ctx.recorded.get.flatMap { moves =>
+        rec.sink(
+          TournamentRecorder.submission(
+            ctx.gameId,
+            rec.botName,
+            ctx.ourColor,
+            ctx.opponent,
+            winner,
+            moves
+          )
+        )
+      }
     }
 
   /** Convert a [[TournamentRunner.Action]] into the HTTP call it implies.
