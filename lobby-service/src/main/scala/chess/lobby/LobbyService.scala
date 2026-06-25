@@ -47,7 +47,9 @@ final case class NewLobbyInput(
     visibility: LobbyVisibility,
     allowUndo: Boolean,
     allowSpectate: Boolean,
-    spectatorLimit: Int
+    spectatorLimit: Int,
+    initialSeconds: Int,
+    incrementSeconds: Int
 )
 
 object LobbyService:
@@ -143,7 +145,9 @@ final class LobbyServiceLive(
                   spectatorLimit = input.spectatorLimit,
                   status = LobbyStatus.Waiting,
                   createdAt = now,
-                  gameId = None
+                  gameId = None,
+                  initialSeconds = input.initialSeconds,
+                  incrementSeconds = input.incrementSeconds
                 )
         _     <- repo.create(lobby)
       yield lobby
