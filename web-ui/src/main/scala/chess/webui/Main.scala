@@ -57,6 +57,21 @@ object Main:
         else frames.lift(ply).map(_.boardState).orElse(live)
       }
 
+  /** While time-travelling, the from/to squares of the move that produced the
+    * shown frame (frame `ply-1` → `ply`), so the moved piece is highlighted.
+    * Empty when not replaying or on the initial position (ply 0). */
+  private val replayMovedSignal: Signal[Set[String]] =
+    replayFramesVar.signal
+      .combineWith(activePlyVar.signal)
+      .map { (frames, ply) =>
+        if frames.isEmpty || ply <= 0 then Set.empty
+        else
+          (frames.lift(ply - 1), frames.lift(ply)) match
+            case (Some(prev), Some(cur)) =>
+              Logic.movedSquares(prev.boardState, cur.boardState)
+            case _ => Set.empty
+      }
+
   /** Pointer-event drag state. Replaces the previous HTML5-drag setup
     * (which had unreliable `setDragImage` snapshots for inline SVG with
     * cross-document `<use>` references). The data captured here drives
@@ -1108,6 +1123,11 @@ object Main:
         .map(_.contains(sq.pos))
         .distinct,
       cls("is-threatened") <-- threatsVar.signal
+        .map(_.contains(sq.pos))
+        .distinct,
+      // Replay time-travel: the from/to of the move that reached the shown
+      // frame, in the move-preview blue.
+      cls("is-replay-move") <-- replayMovedSignal
         .map(_.contains(sq.pos))
         .distinct,
       cls("is-attacker") <-- attackersVar.signal

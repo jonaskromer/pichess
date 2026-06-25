@@ -82,6 +82,19 @@ object Logic:
   def replayMoveState(i: Int, activePly: Int): (Boolean, Boolean) =
     (i == activePly - 1, i >= activePly)
 
+  /** The squares whose occupant changed between two replay frames — i.e. the
+    * from/to of the move that produced `cur` from `prev`. Derived by diffing the
+    * boards (the replay frames don't carry move coordinates), so it naturally
+    * also flags the secondary squares of castling (the rook) and en passant
+    * (the captured pawn), which are legitimately "what moved". Used to highlight
+    * the moved piece while time-travelling. */
+  def movedSquares(prev: BoardStateDto, cur: BoardStateDto): Set[String] =
+    val prevAt = prev.squares.iterator.map(s => s.pos -> (s.piece, s.pieceColor)).toMap
+    cur.squares.iterator
+      .filter(s => prevAt.get(s.pos).exists(_ != (s.piece, s.pieceColor)))
+      .map(_.pos)
+      .toSet
+
   /** (SAN-key, piece-type-name) pairs offered in the promotion dialog — four
     * entries, the same four for both colors. The piece-type name is used as the
     * symbol id when rendering `<use href="/web/pieces/<name>.svg#<name>"/>`.

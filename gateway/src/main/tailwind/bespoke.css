@@ -909,6 +909,24 @@ a.header-link:not([target]):focus-visible::before { opacity: 1; }
   pointer-events: none;
 }
 
+/* Replay time-travel: the from/to squares of the move that produced the shown
+   frame, in the move-preview blue. Same wobbly square outline as the threat
+   indicator, but blue — and on `::after` so it can coexist with a `::before`
+   preview outline. */
+.square.is-replay-move::after {
+  content: '';
+  position: absolute;
+  inset: 4%;
+  background-image: url(/web/doodle_icons/interface/square-blue.svg);
+  background-size: 100% 100%;
+  background-position: center;
+  background-repeat: no-repeat;
+  filter: url(#hand-drawn);
+  pointer-events: none;
+  border: none;
+  border-radius: 0;
+}
+
 /* In-check + threatened square indicators share the same wobbly red
    square outline — the king-in-check is the canonical "threatened"
    square. */

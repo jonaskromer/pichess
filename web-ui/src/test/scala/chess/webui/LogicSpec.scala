@@ -303,6 +303,38 @@ object LogicSpec extends ZIOSpecDefault:
         )
       }
     ),
+    suite("movedSquares")(
+      test("flags exactly the from/to of a quiet move") {
+        // e2 pawn → e4: e2 emptied, e4 gained the pawn; d2 unchanged.
+        val before = stateWith(
+          SquareDto("e2", "light", Some("pawn"), Some("white")),
+          SquareDto("e4", "dark", None, None),
+          SquareDto("d2", "dark", Some("pawn"), Some("white"))
+        )
+        val after = stateWith(
+          SquareDto("e2", "light", None, None),
+          SquareDto("e4", "dark", Some("pawn"), Some("white")),
+          SquareDto("d2", "dark", Some("pawn"), Some("white"))
+        )
+        assertTrue(Logic.movedSquares(before, after) == Set("e2", "e4"))
+      },
+      test("a capture flags both squares (occupant identity changed on the to)") {
+        // black rook on d5 captured by the white pawn from c4.
+        val before = stateWith(
+          SquareDto("c4", "light", Some("pawn"), Some("white")),
+          SquareDto("d5", "dark", Some("rook"), Some("black"))
+        )
+        val after = stateWith(
+          SquareDto("c4", "light", None, None),
+          SquareDto("d5", "dark", Some("pawn"), Some("white"))
+        )
+        assertTrue(Logic.movedSquares(before, after) == Set("c4", "d5"))
+      },
+      test("identical boards flag nothing") {
+        val s = stateWith(SquareDto("e4", "light", Some("rook"), Some("white")))
+        assertTrue(Logic.movedSquares(s, s).isEmpty)
+      }
+    ),
     suite("tournaments")(
       test("tournamentBadge maps statuses; canEnter only while created") {
         assertTrue(
