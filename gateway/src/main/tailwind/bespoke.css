@@ -1240,10 +1240,10 @@ body.is-dragging { cursor: grabbing; }
 }
 /* The banner is a verdict sentence, not a title — drop the headline drop-cap. */
 .banner .clip-heading::first-letter { font-size: inherit; text-shadow: none; }
-/* Winner verdict in the accent ink; a draw stays neutral newsprint ink. The
-   tint lands on the cutting, since the text lives there now. */
-.banner.win  .clip-heading { color: var(--accent-strong); }
-.banner.draw .clip-heading { color: var(--newsprint-text); }
+/* The clippings keep the DEFAULT newsprint ink in both themes (tinting them
+   accent-red went hard-to-read on the dark-mode cutting). The win tint lives on
+   the handwritten connective ("wins by") on the grid paper instead. */
+.banner.win .banner-conn { color: var(--accent-strong); }
 /* The arrow doodle + opt-in "Analyze game" CTA. */
 .analyze-prompt {
   display: flex;

@@ -288,12 +288,24 @@ object Logic:
   /** White-relative eval (centipawns) → display text: "+1.5", "-2.0", or a
     * mate marker for a (near-)mate score. */
   def evalText(evalCp: Int): String =
-    if evalCp >= 90000 then "#"
-    else if evalCp <= -90000 then "-#"
+    if evalCp >= 90000 then mateText(MateScore - evalCp, "#")
+    else if evalCp <= -90000 then mateText(MateScore + evalCp, "-#")
     else
       val pawns = evalCp / 100.0
       val s = f"$pawns%.1f"
       if pawns >= 0 then s"+$s" else s
+
+  /** Engine mate-score base — a forced mate is `MateScore - pliesToMate`, so the
+    * distance back out is `MateScore - |evalCp|`. Mirrors `Search.MateScore`. */
+  private val MateScore = 100000
+
+  /** A forced mate shown as `#N` (mate in N full moves), Lichess-style, so the
+    * eval stays a meaningful value instead of looking like it vanished. `plies`
+    * is the distance to mate; `≤ 0` (mate on the board) or an out-of-range value
+    * falls back to the bare marker. */
+  private def mateText(plies: Int, prefix: String): String =
+    if plies <= 0 || plies > 128 then prefix
+    else s"$prefix${(plies + 1) / 2}"
 
   /** White's share (0–100) of the eval bar, from the white-relative win%. */
   def evalBarWhitePct(winPct: Double): Double =

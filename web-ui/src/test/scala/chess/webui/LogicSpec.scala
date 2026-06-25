@@ -368,13 +368,17 @@ object LogicSpec extends ZIOSpecDefault:
       }
     ),
     suite("analysis helpers")(
-      test("evalText: signed pawns, mate marker") {
+      test("evalText: signed pawns, mate-in-N marker") {
         assertTrue(
           Logic.evalText(150) == "+1.5",
           Logic.evalText(-200) == "-2.0",
           Logic.evalText(0) == "+0.0",
-          Logic.evalText(99950) == "#",
-          Logic.evalText(-99950) == "-#"
+          // Forced mate → #N (mate in N moves), not a vanished number.
+          Logic.evalText(100000) == "#",    // mate on the board
+          Logic.evalText(99998) == "#1",    // 2 plies out
+          Logic.evalText(99996) == "#2",    // 4 plies out
+          Logic.evalText(-100000) == "-#",
+          Logic.evalText(-99996) == "-#2"
         )
       },
       test("evalBarWhitePct clamps to [0,100]") {
