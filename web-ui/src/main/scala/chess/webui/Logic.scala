@@ -4,7 +4,6 @@ import zio.json.*
 
 import chess.api.{
   BoardStateDto,
-  ClockDto,
   GameAnalysisDto,
   MoveAnalysisDto,
   MoveEntryDto,
@@ -270,46 +269,6 @@ object Logic:
     */
   def orderTournaments(list: TournamentList): List[TournamentRow] =
     list.created ++ list.started ++ list.finished
-
-  // --------------------------------------------------------------------------
-  // Clock display (Phase D). The game-service is the source of truth; these
-  // pure helpers only format + interpolate the running side between pushes.
-  // --------------------------------------------------------------------------
-
-  /** Format remaining milliseconds as a chess clock: `m:ss` normally, with a
-    * tenth of a second under 10s (e.g. `0:09.3`) where it matters; clamped at
-    * `0:00`.
-    */
-  def formatClock(ms: Long): String =
-    val clamped = math.max(0L, ms)
-    val totalSecs = clamped / 1000
-    val mins = totalSecs / 60
-    val secs = totalSecs % 60
-    if clamped < 10000 then
-      val tenths = (clamped % 1000) / 100
-      f"$mins%d:$secs%02d.$tenths%d"
-    else f"$mins%d:$secs%02d"
-
-  /** Displayed remaining ms for `side` ("white"/"black"), given the last server
-    * push (`clock`) and how long ago it was received. Only the side the clock is
-    * `runningFor` ticks down locally (the server stays authoritative and
-    * overwrites on the next push); clamped at zero. The client never flags.
-    */
-  def clockRemainingMs(
-      clock: ClockDto,
-      side: String,
-      elapsedSinceReceiptMs: Long
-  ): Long =
-    val base = if side == "white" then clock.whiteMs else clock.blackMs
-    if clock.runningFor.contains(side) then
-      math.max(0L, base - elapsedSinceReceiptMs)
-    else base
-
-  /** Whether `side`'s clock should show the low-time (urgency) treatment — under
-    * ten seconds and still running.
-    */
-  def clockIsUrgent(clock: ClockDto, side: String, remainingMs: Long): Boolean =
-    clock.runningFor.contains(side) && remainingMs < 10000L
 
   // -- Analysis (post-game move quality) -------------------------------------
 

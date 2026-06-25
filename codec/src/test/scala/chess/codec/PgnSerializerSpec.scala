@@ -69,22 +69,6 @@ object PgnSerializerSpec extends ZIOSpecDefault:
         pgn.endsWith("1/2-1/2")
       )
     },
-    test("serializes timeout result as 1-0 when black flags") {
-      // Timeout collapses onto the same PGN result token as a checkmate win
-      // for the side that still had time — PGN doesn't distinguish the cause.
-      for pgn <- PgnSerializer.serialize(Nil, GameStatus.Timeout(Color.White))
-      yield assertTrue(
-        pgn.contains("[Result \"1-0\"]"),
-        pgn.endsWith("1-0")
-      )
-    },
-    test("serializes timeout result as 0-1 when white flags") {
-      for pgn <- PgnSerializer.serialize(Nil, GameStatus.Timeout(Color.Black))
-      yield assertTrue(
-        pgn.contains("[Result \"0-1\"]"),
-        pgn.endsWith("0-1")
-      )
-    },
     test("serializes white-resignation result as 0-1 (white loses)") {
       // Resignation collapses onto the same result token as a checkmate
       // loss for the resigning side — PGN itself doesn't distinguish.

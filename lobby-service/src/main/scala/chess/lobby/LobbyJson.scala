@@ -48,9 +48,7 @@ object LobbyJson:
       visibility: LobbyVisibility,
       allowUndo: Boolean,
       allowSpectate: Boolean,
-      spectatorLimit: Int,
-      initialSeconds: Int = 0,
-      incrementSeconds: Int = 0
+      spectatorLimit: Int
   )
   object CreateLobbyRequest:
     given JsonCodec[CreateLobbyRequest] =

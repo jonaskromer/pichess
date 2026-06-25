@@ -286,15 +286,6 @@ object SelfPlay:
                 ZIO.succeed(
                   GameResult((history :+ (move, newState)).toList, outcome)
                 )
-              case GameStatus.Timeout(winner) =>
-                // Self-play games aren't timed, so a flag never happens here;
-                // handled for exhaustiveness — the side still on the clock wins.
-                val outcome =
-                  if winner == Color.White then Outcome.WhiteWins
-                  else Outcome.BlackWins
-                ZIO.succeed(
-                  GameResult((history :+ (move, newState)).toList, outcome)
-                )
           }
       }
 

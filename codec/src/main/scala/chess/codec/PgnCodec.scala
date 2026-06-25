@@ -25,8 +25,6 @@ object PgnCodec:
     case GameStatus.Checkmate(Color.Black)   => "0-1"
     case GameStatus.Resignation(Color.White) => "1-0"
     case GameStatus.Resignation(Color.Black) => "0-1"
-    case GameStatus.Timeout(Color.White)     => "1-0"
-    case GameStatus.Timeout(Color.Black)     => "0-1"
     case GameStatus.Draw(_)                  => "1/2-1/2"
 
   /** The set of valid PGN result tokens, derived from the encode mapping. Used

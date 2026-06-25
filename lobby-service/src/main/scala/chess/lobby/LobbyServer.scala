@@ -26,9 +26,7 @@ object LobbyServer:
                 visibility = req.visibility,
                 allowUndo = req.allowUndo,
                 allowSpectate = req.allowSpectate,
-                spectatorLimit = req.spectatorLimit,
-                initialSeconds = req.initialSeconds,
-                incrementSeconds = req.incrementSeconds
+                spectatorLimit = req.spectatorLimit
               )
             )
             .mapError(toHttpError)

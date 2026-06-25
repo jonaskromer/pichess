@@ -5,12 +5,12 @@ import io.grpc.{Status, StatusException}
 import pichess.game_service.{NewGameRequest, ReplayFrame, StateReply}
 import zio.UIO
 
-import chess.api.{AnnotationsDto, BoardStateDto, ClockDto, WebBoardView}
-import chess.bot.engine.{BotConfig, Difficulty, TimeManager}
+import chess.api.{AnnotationsDto, BoardStateDto, WebBoardView}
+import chess.bot.engine.{BotConfig, Difficulty}
 import chess.model.board.{GameState, Position}
 import chess.model.piece.Color
 import chess.model.rules.MoveValidator
-import chess.model.{ClockState, GameError, GameId, SessionState}
+import chess.model.{GameError, GameId, SessionState}
 
 /** Pure mapping helpers for the gRPC service.
   *
@@ -44,9 +44,6 @@ object GrpcMappers:
           moveLog = session.game.moveLog,
           error = session.error
         )
-        .copy(clock =
-          session.clock.map(toClockDto(_, session.state.activeColor))
-        )
       StateReply(
         gameId = gameId,
         boardState = encodeBoardState(dto),
@@ -62,10 +59,6 @@ object GrpcMappers:
     * no moves are re-applied (each [[chess.model.HistoryEntry]] already holds the
     * post-move [[GameState]]). Pure + total, so it's unit-tested here while
     * [[GrpcServer.replayGame]] (the rpc glue) stays coverage-excluded.
-    *
-    * Per-ply clocks are intentionally omitted (each frame's `clock` is `None`):
-    * timed-game clocks are reconstructed from move timestamps by the client, not
-    * stored per ply — see `docs/replay-plan.md` / `docs/timed-games-plan.md`.
     */
   def replayFrames(session: SessionState): List[ReplayFrame] =
     val snap    = session.game
@@ -86,34 +79,6 @@ object GrpcMappers:
     }
     initial :: moves
 
-  /** Per-move search budget (ms) for the bot's reply in a **timed** game,
-    * derived from the bot's live remaining clock + increment via the flag-safe
-    * [[TimeManager.budgetMs]]. `None` for an untimed game ⇒ the caller falls
-    * back to the difficulty's fixed search depth. `now` is when the bot is about
-    * to move (its clock just started running on the opponent's move).
-    */
-  def botMoveBudgetMs(
-      clock: Option[ClockState],
-      botSide: Color,
-      now: Long
-  ): Option[Long] =
-    clock.map(c =>
-      TimeManager.budgetMs(c.liveRemaining(botSide, botSide, now), c.incrementMs)
-    )
-
-  /** Project the authoritative [[ClockState]] into its wire form. The banked
-    * `whiteMs`/`blackMs` are sent as-is (server is the source of truth);
-    * `runningFor` names the side whose clock is currently ticking (the browser
-    * interpolates only that side between pushes), or `None` when paused.
-    */
-  def toClockDto(clock: ClockState, sideToMove: Color): ClockDto =
-    ClockDto(
-      whiteMs = clock.whiteMs,
-      blackMs = clock.blackMs,
-      runningFor = clock.runningSince.map(_ =>
-        if sideToMove == Color.White then "white" else "black"
-      )
-    )
 
   /** Encode a [[BoardStateDto]] to the bytes carried by
     * [[StateReply.boardState]]. Delegates to [[BoardStateDto.encodeBytes]]

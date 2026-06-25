@@ -94,8 +94,6 @@ object WebBoardView:
     case GameStatus.Draw(reason) => GameStatusDto.draw(drawReasonStr(reason))
     case GameStatus.Resignation(winner) =>
       GameStatusDto.resignation(colorStr(winner))
-    case GameStatus.Timeout(winner) =>
-      GameStatusDto.timeout(colorStr(winner))
 
   private def drawReasonStr(reason: DrawReason): String = reason match
     case DrawReason.Stalemate            => "stalemate"

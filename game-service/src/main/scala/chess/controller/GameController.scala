@@ -11,7 +11,7 @@ import chess.codec.FenSerializer
 import chess.events.{GameDomainEvent, GameEventProducer}
 import chess.model.board.{DrawReason, GameState, GameStatus}
 import chess.model.piece.Color
-import chess.model.{ClockState, GameError, SessionState}
+import chess.model.{GameError, SessionState}
 import chess.service.{GameMutation, GameService}
 
 /** Controller-level actions on a game session.
@@ -82,112 +82,13 @@ object GameController:
               )
           else ZIO.succeed((provisional, mutation))
         finalize.flatMap { (finalGame, finalMutation) =>
-          for
-            _ <- gs.commit(finalMutation)
-            nowMs <- now
-          yield
-            // Timed game: bank the mover's elapsed time + increment and start
-            // the opponent's clock — or pause it if this move ended the game.
-            val newClock = s.clock.map(
-              advanceClock(
-                _,
-                s.state.activeColor,
-                finalGame.state.status.isOver,
-                nowMs
-              )
-            )
-            (
-              (),
-              s.copy(
-                game = finalGame,
-                error = None,
-                output = None,
-                clock = newClock
-              )
-            )
+          for _ <- gs.commit(finalMutation)
+          yield (
+            (),
+            s.copy(game = finalGame, error = None, output = None)
+          )
         }
       }
-    }
-
-  /** Advance the clock after a completed move by `mover`: bank its elapsed time
-    * + increment and start the opponent's clock — but if the move ended the
-    * game, pause instead (there's no opponent to move).
-    */
-  private def advanceClock(
-      clock: ClockState,
-      mover: Color,
-      gameOver: Boolean,
-      now: Long
-  ): ClockState =
-    val advanced = clock.afterMove(mover, now)
-    if gameOver then advanced.copy(runningSince = None) else advanced
-
-  /** End the game on time when the side to move has flagged as of `nowMs`. The
-    * game-service is the authoritative clock; the timeout daemon in
-    * [[chess.gameservice.GrpcServer]] calls this on a tick. Returns `true` when
-    * it flagged (the session now holds a `Timeout` terminal + a stopped clock).
-    * No-op (`false`) for untimed games, already-over games, or a clock that
-    * hasn't run out — so a redundant tick is harmless.
-    */
-  def flagIfTimedOut(
-      gs: GameService,
-      producer: GameEventProducer,
-      session: SubscriptionRef[SessionState],
-      nowMs: Long
-  ): IO[GameError, Boolean] =
-    session.modifyZIO { s =>
-      s.clock match
-        case Some(clock)
-            if !s.state.status.isOver &&
-              clock.flagged(s.state.activeColor, nowMs) =>
-          val winner = s.state.activeColor.opposite
-          val timedOut = s.state.endWith(GameStatus.Timeout(winner))
-          for
-            _ <- gs.saveState(s.gameId, timedOut)
-            _ <- producer.publish(
-              GameDomainEvent.GameEnded(
-                gameId = s.gameId,
-                resultingFen = FenSerializer.serialize(timedOut),
-                status = timedOut.status.toString,
-                occurredAt = nowMs
-              )
-            )
-          yield (
-            true,
-            s.copy(
-              game = s.game.withCurrentState(timedOut),
-              clock = Some(clock.stopped(s.state.activeColor, nowMs)),
-              error = None,
-              output = None
-            )
-          )
-        case _ => ZIO.succeed((false, s))
-    }
-
-  /** Overwrite a session's clock with externally-authoritative values. Used by
-    * a NowChess tournament **mirror**, where the upstream server owns the clock:
-    * the gateway follower pushes the latest remaining times on every poll so
-    * spectators see the live tournament clock on our board.
-    *
-    * Display-only — unlike [[makeMove]]'s [[advanceClock]] this neither
-    * decrements nor banks an increment, and unlike [[flagIfTimedOut]] it never
-    * flags or persists; it just replaces the clock so the next SSE frame carries
-    * it. `running` starts the side-to-move's clock interpolating in the browser
-    * (the upstream is still ticking); pass `false` to freeze it once the
-    * upstream game has ended. The increment is irrelevant for a passive mirror,
-    * so it's pinned to 0. An already-over mirror is always frozen.
-    */
-  def setClock(
-      session: SubscriptionRef[SessionState],
-      whiteMs: Long,
-      blackMs: Long,
-      running: Boolean,
-      nowMs: Long
-  ): UIO[Unit] =
-    session.update { s =>
-      val runningSince =
-        if running && !s.state.status.isOver then Some(nowMs) else None
-      s.copy(clock = Some(ClockState(whiteMs, blackMs, 0L, runningSince)))
     }
 
   def undo(

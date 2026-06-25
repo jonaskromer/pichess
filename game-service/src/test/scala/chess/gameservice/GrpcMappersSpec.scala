@@ -5,12 +5,12 @@ import zio.*
 import zio.stream.SubscriptionRef
 import zio.test.*
 
-import chess.api.{BoardStateDto, ClockDto}
+import chess.api.BoardStateDto
 import chess.controller.GameController
 import chess.events.{GameEventProducer, InMemoryGameEventProducer}
-import chess.model.board.{GameState, GameStatus, Position}
+import chess.model.board.{GameState, Position}
 import chess.model.piece.{Color, Piece, PieceType}
-import chess.model.{ClockState, GameError, GameSnapshot, SessionState}
+import chess.model.{GameError, GameSnapshot, SessionState}
 import chess.persistence.InMemoryGameRepository
 import chess.service.{GameService, GameServiceLive}
 
@@ -114,43 +114,7 @@ object GrpcMappersSpec extends ZIOSpecDefault:
           dto.activeColor == "white",
           dto.status.kind == "playing",
           dto.moveLog.isEmpty,
-          dto.squares.size == 64,
-          // Untimed session ⇒ no clock on the wire.
-          dto.clock.isEmpty
-        )
-      },
-      test("carries the authoritative clock for a timed session") {
-        val timed = session.copy(clock =
-          Some(ClockState(295000, 300000, 2000, runningSince = Some(0)))
-        )
-        for
-          reply <- GrpcMappers.toStateReply(gameId, timed)
-          dto <- ZIO.attempt(
-            BoardStateDto.decodeBytes(reply.boardState.toByteArray)
-          )
-        yield assertTrue(
-          dto.clock.exists(c =>
-            c.whiteMs == 295000 && c.blackMs == 300000 &&
-              // White is to move on the initial position, so its clock runs.
-              c.runningFor.contains("white")
-          )
-        )
-      },
-      test("maps a timeout terminal onto the wire status") {
-        val timedOut = SessionState(
-          GameSnapshot.fresh(
-            gameId,
-            GameState.initial.endWith(GameStatus.Timeout(Color.Black))
-          )
-        )
-        for
-          reply <- GrpcMappers.toStateReply(gameId, timedOut)
-          dto <- ZIO.attempt(
-            BoardStateDto.decodeBytes(reply.boardState.toByteArray)
-          )
-        yield assertTrue(
-          dto.status.kind == "timeout",
-          dto.status.winner.contains("black")
+          dto.squares.size == 64
         )
       },
       test("propagates session.error onto the reply envelope AND the DTO") {
@@ -215,33 +179,6 @@ object GrpcMappersSpec extends ZIOSpecDefault:
           decoded(2).activeColor == "white"
         )
       }.provideLayer(deps)
-    ),
-    suite("toClockDto")(
-      test("names the running side-to-move in runningFor") {
-        val c = ClockState(100, 200, 0, runningSince = Some(0))
-        assertTrue(
-          GrpcMappers
-            .toClockDto(c, Color.White) == ClockDto(100, 200, Some("white")),
-          GrpcMappers.toClockDto(c, Color.Black).runningFor.contains("black")
-        )
-      },
-      test("a paused clock has no running side") {
-        val c = ClockState(100, 200, 0, runningSince = None)
-        assertTrue(GrpcMappers.toClockDto(c, Color.White).runningFor.isEmpty)
-      }
-    ),
-    suite("botMoveBudgetMs")(
-      test("untimed game ⇒ no budget (caller uses fixed search depth)") {
-        assertTrue(GrpcMappers.botMoveBudgetMs(None, Color.White, 0).isEmpty)
-      },
-      test("timed game ⇒ a flag-safe positive budget from the bot's clock") {
-        val c = ClockState(300000, 300000, 2000, runningSince = Some(0))
-        assertTrue(
-          GrpcMappers
-            .botMoveBudgetMs(Some(c), Color.White, 0)
-            .exists(ms => ms > 0 && ms < 300000)
-        )
-      }
     ),
     suite("buildAnnotations")(
       test("surfaces a threatened own piece and its attackers") {

@@ -17,7 +17,6 @@ import pichess.game_service.{
   MoveRequest,
   NewGameRequest,
   ReplayReply,
-  SetClockRequest,
   StateReply,
   ZioGameService
 }
@@ -38,7 +37,7 @@ import chess.controller.GameController
 import chess.events.GameEventProducer
 import chess.model.board.{GameState, Move}
 import chess.model.piece.{Color, PieceType}
-import chess.model.{ClockState, GameError, GameId, GameSnapshot, SessionState}
+import chess.model.{GameError, GameId, GameSnapshot, SessionState}
 import chess.notation.SanSerializer
 import chess.service.{BotConfigRepository, GameService}
 
@@ -86,10 +85,7 @@ final class GrpcServer(
         event <- gs.newGame()
         _ <- botCfg.fold(ZIO.unit)(botConfigs.save(event.gameId, _))
         snapshot = GameSnapshot.fresh(event.gameId, event.initialState)
-        clock0 <- clockFromRequest(request)
-        ref <- sessions.register(snapshot, clock0)
-        // Timed game: run the authoritative timeout daemon for its lifetime.
-        _ <- ZIO.when(clock0.isDefined)(clockDaemon(ref).forkDaemon)
+        ref <- sessions.register(snapshot)
         // If the bot has white, play its opening move so the very
         // first state reply reflects the bot's move (the client
         // doesn't have to handle "newGame, then await first move").
@@ -163,26 +159,6 @@ final class GrpcServer(
   ): IO[StatusException, StateReply] =
     serverSpan(ctx, "GameService/forfeit") {
       runOn(request.gameId)(GameController.forfeit(gs, producer, _))
-    }
-
-  def setClock(
-      request: SetClockRequest,
-      ctx: RequestContext
-  ): IO[StatusException, StateReply] =
-    serverSpan(ctx, "GameService/setClock") {
-      Clock
-        .currentTime(java.util.concurrent.TimeUnit.MILLISECONDS)
-        .flatMap { now =>
-          runOn(request.gameId)(
-            GameController.setClock(
-              _,
-              request.whiteMs,
-              request.blackMs,
-              request.running,
-              now
-            )
-          )
-        }
     }
 
   def getState(
@@ -329,49 +305,6 @@ final class GrpcServer(
   private def botShouldPlay(state: GameState, cfg: BotConfig): Boolean =
     state.activeColor == cfg.botSide && !state.status.isOver
 
-  /** Build the initial authoritative clock from the request, or `None` for an
-    * untimed game (`initialSeconds <= 0`, the proto3 default). White's clock
-    * starts running immediately (white moves first).
-    */
-  private def clockFromRequest(
-      request: NewGameRequest
-  ): UIO[Option[ClockState]] =
-    if request.initialSeconds <= 0 then ZIO.none
-    else
-      Clock
-        .currentTime(java.util.concurrent.TimeUnit.MILLISECONDS)
-        .map(now =>
-          Some(
-            ClockState.initial(
-              initialMs = request.initialSeconds.toLong * 1000L,
-              incrementMs = request.incrementSeconds.toLong * 1000L,
-              now = now
-            )
-          )
-        )
-
-  /** Per-game timeout daemon for a timed game: every 250 ms, flag the side to
-    * move if its clock has run out (the server is the source of truth). Exits
-    * once the game is over. Coverage-excluded glue — the decision logic it
-    * drives (`ClockState.flagged` + `GameController.flagIfTimedOut`) is
-    * unit-tested.
-    */
-  private def clockDaemon(ref: SubscriptionRef[SessionState]): UIO[Unit] =
-    def loop: UIO[Unit] =
-      ref.get.flatMap { s =>
-        if s.clock.isEmpty || s.state.status.isOver then ZIO.unit
-        else
-          for
-            now <- Clock.currentTime(
-              java.util.concurrent.TimeUnit.MILLISECONDS
-            )
-            _ <- GameController.flagIfTimedOut(gs, producer, ref, now).ignore
-            _ <- ZIO.sleep(250.millis)
-            _ <- loop
-          yield ()
-      }
-    loop
-
   private def playBotMove(
       ref: SubscriptionRef[SessionState],
       state: GameState,
@@ -386,14 +319,10 @@ final class GrpcServer(
       // winning, or fail to claim one while losing.
       session <- ref.get
       history = session.game.positionCounts.keySet
-      now <- Clock.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS)
-      // Timed game: budget the reply from the bot's remaining clock (flag-safe
-      // via TimeManager); untimed: the difficulty's fixed search depth.
-      moveOpt <- GrpcMappers.botMoveBudgetMs(session.clock, cfg.botSide, now) match
-        case Some(budgetMs) =>
-          search.bestMoveWithBudget(state, budgetMs, history)
-        case None =>
-          search.bestMove(state, cfg.difficulty.searchDepth, history)
+      // Vs-bot games are untimed: the bot searches to the difficulty's fixed
+      // depth. (The engine's time-budgeted search lives on for the Lichess /
+      // tournament bots, where an external server owns the clock.)
+      moveOpt <- search.bestMove(state, cfg.difficulty.searchDepth, history)
       move <- ZIO
         .fromOption(moveOpt)
         .orElseFail(

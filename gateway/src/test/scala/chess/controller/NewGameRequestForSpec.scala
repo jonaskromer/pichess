@@ -13,9 +13,7 @@ object NewGameRequestForSpec extends ZIOSpecDefault:
         !req.vsBot,
         req.botSide.isEmpty,
         req.botDifficulty.isEmpty,
-        !req.allowUndo,
-        req.initialSeconds == 0,
-        req.incrementSeconds == 0
+        !req.allowUndo
       )
     },
     test("forwards vsBot settings into the gRPC request") {
@@ -35,33 +33,6 @@ object NewGameRequestForSpec extends ZIOSpecDefault:
         req.botSide == "black",
         req.botDifficulty == "Hard",
         req.allowUndo == true
-      )
-    },
-    test("carries the clock onto a PvP (non-bot) timed game") {
-      val req = WebController.newGameRequestFor(
-        CreateGameRequest(initialSeconds = 300, incrementSeconds = 2)
-      )
-      assertTrue(
-        !req.vsBot,
-        req.initialSeconds == 300,
-        req.incrementSeconds == 2
-      )
-    },
-    test("carries the clock onto a timed vs-bot game") {
-      val req = WebController.newGameRequestFor(
-        CreateGameRequest(
-          vsBot = Some(
-            VsBotSettings(botSide = "white", difficulty = "Easy", allowUndo = false)
-          ),
-          initialSeconds = 600,
-          incrementSeconds = 0
-        )
-      )
-      assertTrue(
-        req.vsBot,
-        req.botSide == "white",
-        req.initialSeconds == 600,
-        req.incrementSeconds == 0
       )
     }
   )

@@ -5,7 +5,6 @@ import zio.test.*
 
 import chess.api.{
   BoardStateDto,
-  ClockDto,
   GameAnalysisDto,
   GameStatusDto,
   MoveAnalysisDto,
@@ -333,40 +332,6 @@ object LogicSpec extends ZIOSpecDefault:
           decoded.map(_.created.map(_.id)) == Right(List("t1")),
           decoded.map(_.created.head.fullName) == Right("Tournament 0.1"),
           decoded.map(_.created.head.nbPlayers) == Right(4)
-        )
-      }
-    ),
-    suite("clock display")(
-      test("formatClock: m:ss, with tenths under 10s, clamped at 0:00") {
-        assertTrue(
-          Logic.formatClock(300000) == "5:00",
-          Logic.formatClock(65000) == "1:05",
-          Logic.formatClock(9300) == "0:09.3",
-          Logic.formatClock(0) == "0:00.0",
-          Logic.formatClock(-500) == "0:00.0"
-        )
-      },
-      test("clockRemainingMs: only the running side ticks, clamped at 0") {
-        val c = ClockDto(whiteMs = 120000, blackMs = 90000, runningFor = Some("white"))
-        assertTrue(
-          Logic.clockRemainingMs(c, "white", 5000) == 115000,
-          Logic.clockRemainingMs(c, "black", 5000) == 90000,
-          Logic.clockRemainingMs(c, "white", 999999) == 0
-        )
-      },
-      test("clockRemainingMs: a paused clock never ticks") {
-        val c = ClockDto(100000, 100000, runningFor = None)
-        assertTrue(
-          Logic.clockRemainingMs(c, "white", 5000) == 100000,
-          Logic.clockRemainingMs(c, "black", 5000) == 100000
-        )
-      },
-      test("clockIsUrgent: running side under ten seconds") {
-        val c = ClockDto(5000, 90000, runningFor = Some("white"))
-        assertTrue(
-          Logic.clockIsUrgent(c, "white", 5000),
-          !Logic.clockIsUrgent(c, "white", 15000),
-          !Logic.clockIsUrgent(c, "black", 5000)
         )
       }
     ),

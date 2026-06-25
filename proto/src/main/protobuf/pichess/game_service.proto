@@ -27,13 +27,6 @@ service GameService {
   rpc ClaimDraw    (GameIdRequest)       returns (StateReply);
   rpc Forfeit      (GameIdRequest)       returns (StateReply);
 
-  // Overwrite a game's clock with externally-authoritative values — for a
-  // NowChess tournament *mirror*, where the upstream server owns the clock.
-  // Display-only: no decrement, no flagging, no persistence (unlike the timed
-  // games started via NewGame's clock fields). Each call simply refreshes the
-  // SSE-visible clock so spectators see the live tournament times.
-  rpc SetClock     (SetClockRequest)     returns (StateReply);
-
   // Queries
   rpc GetState     (GameIdRequest)       returns (StateReply);
   rpc ExportGame   (ExportRequest)       returns (ExportReply);
@@ -75,18 +68,11 @@ service GameService {
 //     undo/redo buttons in a "no take-backs" game.
 //
 // All bot fields are ignored when `vs_bot` is false.
-//
-// Clock fields make the game timed (server-authoritative clock):
-//   - `initial_seconds` is each side's starting time. 0 (the proto3 default)
-//     means untimed — the existing behaviour, no clock, no flagging.
-//   - `increment_seconds` is the Fischer increment banked after each move.
 message NewGameRequest {
   bool   vs_bot            = 1;
   string bot_side          = 2;
   string bot_difficulty    = 3;
   bool   allow_undo        = 4;
-  int32  initial_seconds   = 5;
-  int32  increment_seconds = 6;
 }
 
 message LoadGameRequest {
@@ -100,18 +86,6 @@ message MoveRequest {
 
 message GameIdRequest {
   string game_id = 1;
-}
-
-// Externally-authoritative clock values pushed by a tournament mirror. Times
-// are absolute remaining-milliseconds (not deltas); the server stores them
-// verbatim so the next SSE frame shows them. `running` marks whether the
-// side-to-move's clock is live (true → the browser interpolates it down between
-// pushes; false → frozen, e.g. once the upstream game has ended).
-message SetClockRequest {
-  string game_id  = 1;
-  int64  white_ms = 2;
-  int64  black_ms = 3;
-  bool   running  = 4;
 }
 
 message ExportRequest {

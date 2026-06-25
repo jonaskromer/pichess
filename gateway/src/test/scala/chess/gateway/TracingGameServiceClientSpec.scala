@@ -9,7 +9,6 @@ import pichess.game_service.{
   LoadGameRequest,
   MoveRequest,
   NewGameRequest,
-  SetClockRequest,
   ZioGameService
 }
 import scalapb.zio_grpc.{ServerLayer, ZManagedChannel}
@@ -143,19 +142,6 @@ object TracingGameServiceClientSpec extends ZIOSpecDefault:
           started <- client.newGame(NewGameRequest())
           reply <- client.forfeit(GameIdRequest(started.gameId))
         yield assertTrue(reply.fen.nonEmpty)
-      }
-    },
-    test("setClock → underlying setClock, returns the same game") {
-      // The tournament mirror pushes upstream clock values; the decorator just
-      // forwards. A fresh (untimed) game accepts the push and replies for the
-      // same id.
-      withTracedClient { client =>
-        for
-          started <- client.newGame(NewGameRequest())
-          reply <- client.setClock(
-            SetClockRequest(started.gameId, 65000, 58000, true)
-          )
-        yield assertTrue(reply.gameId == started.gameId)
       }
     },
     test("getState → underlying getState, returns persisted state") {

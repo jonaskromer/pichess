@@ -395,11 +395,6 @@ object Main:
           clearPreviewState()
           if threatDetectionVar.now() then refreshThreats()
         }(using ctx.owner)
-        // Stamp every state push so the clock display can interpolate the
-        // running side locally between pushes (the server stays authoritative).
-        stateVar.signal.foreach(_ => clockReceivedAtVar.set(jsNow()))(using
-          ctx.owner
-        )
         // Toggling threatDetection on should immediately fetch /threats so
         // the rings appear without waiting for the next move; toggling off
         // should clear them. Same subscription persists the new value to
@@ -746,7 +741,6 @@ object Main:
       div(
         className := "board-paper",
         paperLayer(crumpled = true),
-        clockBar(),
         evalBar(),
         statusIndicator(),
         div(
@@ -875,7 +869,6 @@ object Main:
       div(
         className := "board-paper",
         paperLayer(crumpled = true),
-        clockBar(),
         evalBar(),
         statusIndicator(),
         div(
@@ -1215,17 +1208,6 @@ object Main:
       gameStatePostIt()
     )
 
-  /** Wall-clock (ms) when the last server state push arrived — used to
-    * interpolate the running clock locally between pushes. Stamped on every
-    * `stateVar` change by the effect wired at App mount. */
-  private val clockReceivedAtVar: Var[Double] = Var(0d)
-  private def jsNow(): Double = js.Date.now()
-
-  /** Two chess-clock faces for a timed game, flip-aware (the side shown at the
-    * top of the board is on top). Rendered only when the state carries a clock.
-    * Pure display: reads the authoritative `BoardStateDto.clock` and only
-    * interpolates the running side down between pushes — the server flags, never
-    * the client. Reusable by the replay view with paused (non-running) values. */
   /** Win-probability eval bar for the position currently shown (live or the
     * replay-scrubbed ply). White's share is the move's white-relative win%;
     * the centre label is the eval (`+1.5` / `#`). Renders only once the engine
@@ -1299,39 +1281,6 @@ object Main:
         }
     )
 
-  private def clockBar(): HtmlElement =
-    div(
-      className := "clock-bar",
-      child <-- stateVar.signal.combineWith(flippedVar.signal).map {
-        case (Some(s), flipped) if s.clock.isDefined =>
-          val (top, bottom) =
-            if flipped then ("white", "black") else ("black", "white")
-          div(className := "clock-bar-inner", clockFace(top), clockFace(bottom))
-        case _ => emptyNode
-      }
-    )
-
-  /** One clock face. Re-renders every 250ms to tick the running side down,
-    * interpolating from the last push (`clockReceivedAtVar`). */
-  private def clockFace(side: String): HtmlElement =
-    val face: Signal[(String, Boolean)] =
-      EventStream
-        .periodic(250)
-        .startWith(0)
-        .map { _ =>
-          stateVar.now().flatMap(_.clock) match
-            case Some(c) =>
-              val elapsed = (jsNow() - clockReceivedAtVar.now()).toLong
-              val ms = Logic.clockRemainingMs(c, side, elapsed)
-              (Logic.formatClock(ms), Logic.clockIsUrgent(c, side, ms))
-            case None => ("", false)
-        }
-    div(
-      className := s"clock-face clock-$side",
-      cls("is-urgent") <-- face.map(_._2),
-      span(className := "clock-time", child.text <-- face.map(_._1))
-    )
-
   private def statusIndicator(): HtmlElement =
     div(
       child <-- stateVar.signal.map {
@@ -1341,7 +1290,6 @@ object Main:
             case "checkmate"   => checkmateBanner(s.status)
             case "draw"        => drawBanner(s.status)
             case "resignation" => resignationBanner(s.status)
-            case "timeout"     => timeoutBanner(s.status)
             case _             => turnIndicator(s)
       }
     )
@@ -1372,10 +1320,6 @@ object Main:
   private def resignationBanner(status: GameStatusDto): HtmlElement =
     val winner = status.winner.map(capitalize).getOrElse("Someone")
     banner("win", s"$winner wins by resignation")
-
-  private def timeoutBanner(status: GameStatusDto): HtmlElement =
-    val winner = status.winner.map(capitalize).getOrElse("Someone")
-    banner("win", s"$winner wins on time")
 
   private def capitalize(s: String): String =
     if s.isEmpty then s else s"${s.head.toUpper}${s.tail}"
@@ -2778,43 +2722,6 @@ object Main:
   private val hostAllowSpectateVar: Var[Boolean] = Var(true)
   private val hostSpectatorLimitVar: Var[Int] = Var(8)
 
-  /** Shared "timed game" control state for the New Game forms — applies to all
-    * three modes. Off ⇒ untimed (the default). */
-  private val enableClockVar: Var[Boolean] = Var(false)
-  private val clockMinutesVar: Var[Int] = Var(5)
-
-  /** Initial time per side, in seconds, from the clock control (`0` = untimed). */
-  private def clockSeconds(): Int =
-    if enableClockVar.now() then clockMinutesVar.now() * 60 else 0
-
-  /** The "Enable clock + minutes" control. Mutually exclusive with allow-undo —
-    * a timed game has no take-backs — so the whole control greys (§5.9) while
-    * `undoOn`, and the minutes slider greys while the clock is off (mirroring the
-    * Allow-spectators ↔ Spectator-limit precedent). */
-  private def clockControl(undoOn: Signal[Boolean]): HtmlElement =
-    div(
-      className := "clock-control flex flex-col gap-3",
-      div(
-        className <-- undoOn.map(on => if on then "is-erased" else ""),
-        Components.checkboxRow(enableClockVar, "Enable clock")
-      ),
-      div(
-        className <-- enableClockVar.signal
-          .combineWith(undoOn)
-          .map((clockOn, undo) => if clockOn && !undo then "" else "is-erased"),
-        label(
-          className := "form-row",
-          span(
-            className := "form-row-label",
-            child.text <-- clockMinutesVar.signal.map(m =>
-              if m == 1 then "1 minute per side" else s"$m minutes per side"
-            )
-          ),
-          Components.rangeSlider(clockMinutesVar, min = 1, max = 10)
-        )
-      )
-    )
-
   private def newGameMenu(): HtmlElement =
     Components.screenLayout("new-game")(
       Components.titleCard(
@@ -2849,9 +2756,6 @@ object Main:
           "No invite code, no opponent — just a board."
       ),
       importField(),
-      // Local has no undo toggle (it always allows undo unless timed), so the
-      // clock control is never undo-greyed.
-      clockControl(Val(false)),
       Components.linkButton("Start local game") { _ => createLocalGame() }
     )
 
@@ -2908,12 +2812,7 @@ object Main:
             )
           )
         ),
-        div(
-          className <-- enableClockVar.signal
-            .map(on => if on then "is-erased" else ""),
-          Components.checkboxRow(vsBotAllowUndoVar, "Allow undo")
-        ),
-        clockControl(vsBotAllowUndoVar.signal)
+        Components.checkboxRow(vsBotAllowUndoVar, "Allow undo")
       ),
       importField(),
       Components.linkButton("Start game vs bot") { _ => createBotGame() }
@@ -2930,11 +2829,7 @@ object Main:
             Seq("Public" -> "Public", "Private" -> "Private")
           )
         ),
-        div(
-          className <-- enableClockVar.signal
-            .map(on => if on then "is-erased" else ""),
-          Components.checkboxRow(hostAllowUndoVar, "Allow undo")
-        ),
+        Components.checkboxRow(hostAllowUndoVar, "Allow undo"),
         Components.checkboxRow(hostAllowSpectateVar, "Allow spectators"),
         div(
           // Spectator limit is moot when spectators aren't allowed — fade it
@@ -2944,8 +2839,7 @@ object Main:
           Components.formRow("Spectator limit")(
             Components.rangeSlider(hostSpectatorLimitVar, min = 0, max = 64)
           )
-        ),
-        clockControl(hostAllowUndoVar.signal)
+        )
       ),
       Components.linkButton("Create lobby") { _ => createHostedLobby() }
     )
@@ -2956,11 +2850,9 @@ object Main:
         hostNickname = nicknameVar.now(),
         hostSessionId = sessionId,
         visibility = hostVisibilityVar.now(),
-        allowUndo = hostAllowUndoVar.now() && !enableClockVar.now(),
+        allowUndo = hostAllowUndoVar.now(),
         allowSpectate = hostAllowSpectateVar.now(),
-        spectatorLimit = hostSpectatorLimitVar.now(),
-        initialSeconds = clockSeconds(),
-        incrementSeconds = 0
+        spectatorLimit = hostSpectatorLimitVar.now()
       )
     )
     fetchJson("POST", s"$lobbyBaseUrl/lobbies", Some(payload)).onComplete {
@@ -2976,15 +2868,14 @@ object Main:
     }
 
   private def createLocalGame(): Unit =
-    val timed = enableClockVar.now()
     postCreateGameClient(
-      (sessionId, CreateGameRequest(newGameImport(), None, clockSeconds(), 0))
+      (sessionId, CreateGameRequest(newGameImport(), None))
     ).foreach {
       case Right(snapshot) =>
         gameIdVar.set(Some(snapshot.id))
         stateVar.set(Some(snapshot.state))
-        // Local games allow undo, except a timed one (no take-backs).
-        currentAllowUndoVar.set(!timed)
+        // Local games always allow undo.
+        currentAllowUndoVar.set(true)
         currentGameIsLocalVar.set(true)
         newGameImportVar.set("")
         navigate(Screen.Game(snapshot.id))
@@ -3007,13 +2898,12 @@ object Main:
     val settings = VsBotSettings(
       botSide    = if playerWhite then "black" else "white",
       difficulty = vsBotDifficultyVar.now(),
-      // A timed game has no take-backs, regardless of the (greyed) toggle.
-      allowUndo  = vsBotAllowUndoVar.now() && !enableClockVar.now(),
+      allowUndo  = vsBotAllowUndoVar.now(),
     )
     postCreateGameClient(
       (
         sessionId,
-        CreateGameRequest(newGameImport(), Some(settings), clockSeconds(), 0)
+        CreateGameRequest(newGameImport(), Some(settings))
       )
     ).foreach {
       case Right(snapshot) =>

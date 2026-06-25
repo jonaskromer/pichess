@@ -223,27 +223,20 @@ object WebController:
     */
   /** Build the gRPC `NewGameRequest` from the client's [[CreateGameRequest]].
     * The optional vs-bot settings route the game through the vs-bot orchestrator
-    * (validated server-side, so the gateway just shuttles the strings); the
-    * clock fields (`initialSeconds`/`incrementSeconds`, `0` = untimed) ride along
-    * for any mode — local, host/PvP, or vs-bot.
+    * (validated server-side, so the gateway just shuttles the strings).
     */
   private[controller] def newGameRequestFor(
       req: chess.api.CreateGameRequest
   ): NewGameRequest =
     req.vsBot match
       case None =>
-        NewGameRequest(
-          initialSeconds = req.initialSeconds,
-          incrementSeconds = req.incrementSeconds
-        )
+        NewGameRequest()
       case Some(s) =>
         NewGameRequest(
           vsBot = true,
           botSide = s.botSide,
           botDifficulty = s.difficulty,
-          allowUndo = s.allowUndo,
-          initialSeconds = req.initialSeconds,
-          incrementSeconds = req.incrementSeconds
+          allowUndo = s.allowUndo
         )
 
   private def annotationsFor(

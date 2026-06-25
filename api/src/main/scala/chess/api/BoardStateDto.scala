@@ -56,31 +56,10 @@ object GameStatusDto:
     GameStatusDto("draw", None, Some(reason))
   def resignation(winner: String): GameStatusDto =
     GameStatusDto("resignation", Some(winner), None)
-  def timeout(winner: String): GameStatusDto =
-    GameStatusDto("timeout", Some(winner), None)
 
   given JsonEncoder[GameStatusDto] = DeriveJsonEncoder.gen[GameStatusDto]
   given JsonDecoder[GameStatusDto] = DeriveJsonDecoder.gen[GameStatusDto]
   given Pickler[GameStatusDto] = generatePickler
-
-/** Wire-format chess clock for a timed game. `whiteMs`/`blackMs` are the
-  * authoritative remaining milliseconds as of the last state push (server is
-  * the source of truth). `runningFor` names the side whose clock is currently
-  * counting down ("white"/"black"), or `None` when the clock is paused (game
-  * over, or not yet started) — the browser interpolates only the running side
-  * locally between pushes and never decides the game is over. Absent entirely
-  * (`BoardStateDto.clock == None`) for untimed games.
-  */
-final case class ClockDto(
-    whiteMs: Long,
-    blackMs: Long,
-    runningFor: Option[String]
-)
-
-object ClockDto:
-  given JsonEncoder[ClockDto] = DeriveJsonEncoder.gen[ClockDto]
-  given JsonDecoder[ClockDto] = DeriveJsonDecoder.gen[ClockDto]
-  given Pickler[ClockDto] = generatePickler
 
 final case class BoardStateDto(
     squares: List[SquareDto],
@@ -89,8 +68,7 @@ final case class BoardStateDto(
     @jsonExplicitNull error: Option[String],
     inCheck: Boolean,
     @jsonExplicitNull checkedKingPos: Option[String],
-    status: GameStatusDto,
-    clock: Option[ClockDto] = None
+    status: GameStatusDto
 )
 
 object BoardStateDto:
@@ -150,17 +128,10 @@ object ExportResponse:
   * creates the game with the supplied bot config: which side the bot plays, its
   * difficulty level, and whether the player has undo/redo enabled in the UI.
   * When absent the game is a regular PvP game (existing behaviour).
-  *
-  * `initialSeconds` / `incrementSeconds` make the game timed (server-authoritative
-  * clock), independent of mode — local, host/PvP, or vs-bot. `0` (the default)
-  * means untimed, preserving the existing behaviour. Ignored on the `load` path
-  * (imported games are untimed).
   */
 final case class CreateGameRequest(
     load: Option[String] = None,
-    vsBot: Option[VsBotSettings] = None,
-    initialSeconds: Int = 0,
-    incrementSeconds: Int = 0
+    vsBot: Option[VsBotSettings] = None
 )
 
 object CreateGameRequest:

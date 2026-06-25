@@ -1217,33 +1217,6 @@ body.is-dragging { cursor: grabbing; }
   color: var(--text-primary);
   padding: 0.2rem 0.5rem;
 }
-/* ─── Chess clocks (timed games) ──────────────────────────────────────────
-   A Special Elite system-data readout (§3.1). Two faces (flip-aware via the
-   render order), the running side ticking; low time goes accent-red. */
-.clock-bar {
-  display: flex;
-  justify-content: center;
-  margin-bottom: 0.3rem;
-}
-.clock-bar-inner {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-  align-items: center;
-}
-.clock-face {
-  font-family: var(--font-press);
-  color: var(--text-secondary);
-  line-height: 1.15;
-}
-.clock-face .clock-time {
-  font-size: 1.5rem;
-  letter-spacing: 0.05em;
-}
-.clock-face.is-urgent .clock-time {
-  color: var(--accent-strong);
-  font-weight: 700;
-}
 .turn-dot {
   width: 0.95rem;
   height: 0.95rem;

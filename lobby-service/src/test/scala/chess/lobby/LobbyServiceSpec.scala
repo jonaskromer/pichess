@@ -50,9 +50,7 @@ object LobbyServiceSpec extends ZIOSpecDefault:
     visibility = LobbyVisibility.Public,
     allowUndo = true,
     allowSpectate = true,
-    spectatorLimit = 8,
-    initialSeconds = 300,
-    incrementSeconds = 2
+    spectatorLimit = 8
   )
 
   def spec = suite("LobbyService")(
@@ -68,9 +66,6 @@ object LobbyServiceSpec extends ZIOSpecDefault:
           lobby.allowUndo == true,
           lobby.allowSpectate == true,
           lobby.spectatorLimit == 8,
-          // Time control carried from the input onto the lobby.
-          lobby.initialSeconds == 300,
-          lobby.incrementSeconds == 2,
           lobby.status == LobbyStatus.Waiting,
           lobby.gameId.isEmpty,
           lobby.inviteCode.value.length == InviteCode.Length

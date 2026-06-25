@@ -192,10 +192,7 @@ object GameSnapshot:
 case class SessionState(
     game: GameSnapshot,
     error: Option[String] = None,
-    output: Option[String] = None,
-    // The authoritative clock for a timed game; `None` for untimed games
-    // (the default, preserving the existing behaviour).
-    clock: Option[ClockState] = None
+    output: Option[String] = None
 ):
   export game.{
     gameId,

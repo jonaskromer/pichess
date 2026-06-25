@@ -14,7 +14,6 @@ import pichess.game_service.{
   MoveRequest,
   NewGameRequest,
   ReplayReply,
-  SetClockRequest,
   StateReply,
   ZioGameService
 }
@@ -80,9 +79,6 @@ final class TracingGameServiceClient(
 
   def forfeit(request: GameIdRequest): IO[StatusException, StateReply] =
     clientSpan("GameService/forfeit")(tracedUnderlying.forfeit(request))
-
-  def setClock(request: SetClockRequest): IO[StatusException, StateReply] =
-    clientSpan("GameService/setClock")(tracedUnderlying.setClock(request))
 
   def getState(request: GameIdRequest): IO[StatusException, StateReply] =
     clientSpan("GameService/getState")(tracedUnderlying.getState(request))
