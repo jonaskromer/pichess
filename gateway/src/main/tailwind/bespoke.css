@@ -910,10 +910,10 @@ a.header-link:not([target]):focus-visible::before { opacity: 1; }
 }
 
 /* Replay time-travel: the from/to squares of the move that produced the shown
-   frame, in the move-preview blue. Same wobbly square outline as the threat
-   indicator, but blue — and on `::after` so it can coexist with a `::before`
-   preview outline. */
-.square.is-replay-move::after {
+   frame, in the move-preview blue. Same wobbly blue square outline as the
+   move-preview source, and on `::before` so it paints UNDER the piece (a
+   `::after` would render on top of and obscure the piece). */
+.square.is-replay-move::before {
   content: '';
   position: absolute;
   inset: 4%;
@@ -923,8 +923,6 @@ a.header-link:not([target]):focus-visible::before { opacity: 1; }
   background-repeat: no-repeat;
   filter: url(#hand-drawn);
   pointer-events: none;
-  border: none;
-  border-radius: 0;
 }
 
 /* In-check + threatened square indicators share the same wobbly red
@@ -2213,19 +2211,11 @@ body.is-dragging { cursor: grabbing; }
    and highlighted-text actions. */
 .result-dialog { width: 24rem; position: relative; z-index: 2; }
 /* Extra horizontal padding reserves the left/right gutters the flanking kings
-   sit in, so the centred verdict text never collides with them. */
-/* The toppled king is a `rotate(86deg)` transform whose box sweeps a hair past
-   the body's right edge; with the body's default `overflow: auto` that shows up
-   as a spurious horizontal scrollbar. Clip the X axis (computes to hidden next
-   to the Y `auto`) so the decorative overhang is just trimmed at the edge
-   instead of becoming scrollable; vertical scroll is untouched. */
-.result-dialog .modal-body {
-  align-items: center;
-  text-align: center;
-  padding-left: 3rem;
-  padding-right: 3rem;
-  overflow-x: clip;
-}
+   sit in, so the centred verdict text never collides with them. The horizontal
+   overhang of the toppled-king transform is clipped by the OverlayScrollbars
+   `overflow.x: hidden` config (the modal body is an OS viewport, not a plain
+   overflow:auto box), so no stray horizontal scrollbar appears. */
+.result-dialog .modal-body { align-items: center; text-align: center; padding-left: 3rem; padding-right: 3rem; }
 /* Headline is an h2 wrapping a `newsprintClip` (same shape as
    `.section-title`): the h2 sets the scale + spacing, the inner
    `.code-inline` (sized in `em`) renders the big "Game Over" cutting. */

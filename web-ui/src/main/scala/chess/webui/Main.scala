@@ -1578,6 +1578,12 @@ object Main:
         osg.OverlayScrollbars(
           ctx.thisNode.ref,
           js.Dynamic.literal(
+            // Vertical-only: every scroll container here (move log, modal
+            // bodies) wraps its content; horizontal "scroll" only ever appears
+            // from a decorative overhang (e.g. the result modal's toppled-king
+            // transform), so clip it rather than show a stray h-scrollbar.
+            overflow =
+              js.Dynamic.literal(x = "hidden", y = "scroll"),
             scrollbars = js.Dynamic.literal(theme = "os-theme-pichess")
           )
         )
@@ -2259,11 +2265,13 @@ object Main:
       AnalysisClientTimeoutMs
     )
 
-  /** Engine search depth the UI asks for per move. Kept modest (the server
-    * clamps to its own ceiling anyway): a post-game pass rates every ply, so a
-    * deep search per ply across a whole game is expensive — depth 10 is the
-    * server's tuned default and analyses a full game in seconds. */
-  private val AnalysisDepth = 10
+  /** Engine search depth the UI asks for per move. Deliberately shallow: a
+    * post-game pass runs a fixed-depth search on every ply (no time budget /
+    * early-stop like the live bot), and quiescence makes each search expensive
+    * on tactical, capture-heavy positions. Measured on a full game, depth 4 is
+    * ~8× faster than depth 6 for essentially identical accuracy (the extra plies
+    * barely move the eval), so deeper buys nothing but latency. */
+  private val AnalysisDepth = 4
   /** Client-side stuck-button guard; longer than the server's analysis deadline
     * so it only fires if the backend never responds at all. */
   private val AnalysisClientTimeoutMs = 165000.0
