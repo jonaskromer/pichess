@@ -1553,6 +1553,10 @@ body.is-dragging { cursor: grabbing; }
   display: flex;
   align-items: center;
   justify-content: center;
+  /* Purely informational, and overlays the end-state line (incl. the "Analyze
+     game" button) — never intercept clicks, so the button beneath stays
+     reachable before analysis lands. */
+  pointer-events: none;
 }
 .analysis-detail-inner {
   display: flex;
