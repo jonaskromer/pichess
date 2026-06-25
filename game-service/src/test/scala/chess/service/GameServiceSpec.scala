@@ -40,10 +40,12 @@ object GameServiceSpec extends ZIOSpecDefault:
         for (event, history) <- GameService.loadGame(fen)
         yield assertTrue(
           event.gameId.nonEmpty,
-          event.initialState.board == BoardState.fromMap(Map(
-            Position('e', 1) -> Piece(Color.White, PieceType.King),
-            Position('e', 8) -> Piece(Color.Black, PieceType.King)
-          )),
+          event.initialState.board == BoardState.fromMap(
+            Map(
+              Position('e', 1) -> Piece(Color.White, PieceType.King),
+              Position('e', 8) -> Piece(Color.Black, PieceType.King)
+            )
+          ),
           event.initialState.activeColor == Color.White,
           history.isEmpty
         )
@@ -69,20 +71,24 @@ object GameServiceSpec extends ZIOSpecDefault:
         for (event, history) <- GameService.loadGame(json)
         yield assertTrue(
           event.gameId.nonEmpty,
-          event.initialState.board == BoardState.fromMap(Map(
-            Position('e', 1) -> Piece(Color.White, PieceType.King),
-            Position('e', 8) -> Piece(Color.Black, PieceType.King)
-          )),
+          event.initialState.board == BoardState.fromMap(
+            Map(
+              Position('e', 1) -> Piece(Color.White, PieceType.King),
+              Position('e', 8) -> Piece(Color.Black, PieceType.King)
+            )
+          ),
           event.initialState.activeColor == Color.White,
           history.isEmpty
         )
       },
       test("persist the loaded state") {
         val fen = "4k3/8/8/8/8/8/8/4K3 w - - 0 1"
-        val expectedBoard = BoardState.fromMap(Map(
-          Position('e', 1) -> Piece(Color.White, PieceType.King),
-          Position('e', 8) -> Piece(Color.Black, PieceType.King)
-        ))
+        val expectedBoard = BoardState.fromMap(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 8) -> Piece(Color.Black, PieceType.King)
+          )
+        )
         for
           (event, _) <- GameService.loadGame(fen)
           state <- GameService.getState(event.gameId)
@@ -115,28 +121,30 @@ object GameServiceSpec extends ZIOSpecDefault:
           // Pre-state is what was loaded; state is the post-move
           // value. The two MUST differ structurally for `changed` to
           // be true.
-          mutation.pre.board != mutation.state.board,
+          mutation.pre.board != mutation.state.board
         )
       },
       test("does NOT persist the new state until commit") {
         for
           started <- GameService.newGame()
-          _       <- GameService.makeMove(started.gameId, "e2 e4")
-          stored  <- GameService.getState(started.gameId)
+          _ <- GameService.makeMove(started.gameId, "e2 e4")
+          stored <- GameService.getState(started.gameId)
         yield assertTrue(
           // Initial board still in store — makeMove built a Mutation but
           // didn't save.
-          stored.get.board.get(Position('e', 2)).contains(
-            Piece(Color.White, PieceType.Pawn)
-          ),
-          stored.get.board.get(Position('e', 4)).isEmpty,
+          stored.get.board
+            .get(Position('e', 2))
+            .contains(
+              Piece(Color.White, PieceType.Pawn)
+            ),
+          stored.get.board.get(Position('e', 4)).isEmpty
         )
       },
       test("commit persists the new state from the mutation") {
         for
           started <- GameService.newGame()
           (_, mutation) <- GameService.makeMove(started.gameId, "e2 e4")
-          _      <- GameService.commit(mutation)
+          _ <- GameService.commit(mutation)
           stored <- GameService.getState(started.gameId)
         yield assertTrue(
           stored.get.board.get(Position('e', 4)) == Some(

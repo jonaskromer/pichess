@@ -7,9 +7,9 @@ import chess.model.board.{GameState, Move}
 import chess.model.{GameError, GameEvent, GameId}
 import chess.persistence.{GameRepository, Mutation}
 
-/** Convenience alias — the [[Mutation]] shape used throughout the
-  * game-service: key is the [[GameId]], aggregate is [[GameState]],
-  * events are [[GameDomainEvent]]s that flow to the Kafka topic.
+/** Convenience alias — the [[Mutation]] shape used throughout the game-service:
+  * key is the [[GameId]], aggregate is [[GameState]], events are
+  * [[GameDomainEvent]]s that flow to the Kafka topic.
   */
 type GameMutation = Mutation[GameId, GameState, GameDomainEvent]
 
@@ -21,15 +21,14 @@ type GameMutation = Mutation[GameId, GameState, GameDomainEvent]
   *   - Applying moves (parsing + validation + building a pending mutation)
   *   - Reading and writing game state via the [[GameRepository]]
   *
-  * Mutating operations like [[makeMove]] return a [[Mutation]] describing
-  * the pending change rather than persisting eagerly. The caller (e.g.
+  * Mutating operations like [[makeMove]] return a [[Mutation]] describing the
+  * pending change rather than persisting eagerly. The caller (e.g.
   * [[chess.controller.GameController]]) can amend the Mutation with
-  * cross-cutting state transitions it has unique visibility into — for
-  * example, the per-session repetition history needed to detect a
-  * fivefold-repetition auto-draw — and then calls [[commit]] exactly
-  * once. [[Mutation.commit]] skips the save when the final state is
-  * value-equal to the loaded pre-state, so amendments that turn out to
-  * be no-ops don't generate write traffic.
+  * cross-cutting state transitions it has unique visibility into — for example,
+  * the per-session repetition history needed to detect a fivefold-repetition
+  * auto-draw — and then calls [[commit]] exactly once. [[Mutation.commit]]
+  * skips the save when the final state is value-equal to the loaded pre-state,
+  * so amendments that turn out to be no-ops don't generate write traffic.
   *
   * Does NOT manage session state (undo/redo history, error messages,
   * flipped-board UI state) — that lives in [[chess.controller.GameController]]
@@ -60,13 +59,13 @@ trait GameService:
       input: String
   ): IO[GameError, (GameEvent.GameStarted, List[(Move, GameState)])]
 
-  /** Parse `rawInput` as a move against the game identified by `id` and
-    * apply it. Returns the in-memory [[GameEvent.MoveMade]] (carrying the
-    * parsed `Move` and SAN string the session needs) plus a pending
-    * [[Mutation]] describing the persistence + publish work. The caller
-    * may amend the Mutation (e.g. attach a fivefold-draw amendment) and
-    * MUST eventually pass it to [[commit]] — without that, no state is
-    * persisted and no event is published.
+  /** Parse `rawInput` as a move against the game identified by `id` and apply
+    * it. Returns the in-memory [[GameEvent.MoveMade]] (carrying the parsed
+    * `Move` and SAN string the session needs) plus a pending [[Mutation]]
+    * describing the persistence + publish work. The caller may amend the
+    * Mutation (e.g. attach a fivefold-draw amendment) and MUST eventually pass
+    * it to [[commit]] — without that, no state is persisted and no event is
+    * published.
     *
     * `rawInput` is resolved through [[chess.notation.MoveParser]], which
     * accepts coordinate, castling, and SAN notations. The underlying state
@@ -83,16 +82,16 @@ trait GameService:
   /** Load the current persisted state for a game, or `None` if unknown. */
   def getState(id: GameId): IO[GameError, Option[GameState]]
 
-  /** Persist `state` under `id`, overwriting any previous value. Direct
-    * escape hatch for operations that don't fit the mutation flow
-    * (e.g. undo / redo / claim-draw / forfeit, where the state is
-    * derived from the session, not loaded from the store).
+  /** Persist `state` under `id`, overwriting any previous value. Direct escape
+    * hatch for operations that don't fit the mutation flow (e.g. undo / redo /
+    * claim-draw / forfeit, where the state is derived from the session, not
+    * loaded from the store).
     */
   def saveState(id: GameId, state: GameState): IO[GameError, Unit]
 
   /** Persist the final state and publish the accumulated events from
-    * `mutation`. The save is skipped if `mutation.changed` is false
-    * (final state value-equal to the loaded pre-state).
+    * `mutation`. The save is skipped if `mutation.changed` is false (final
+    * state value-equal to the loaded pre-state).
     */
   def commit(mutation: GameMutation): IO[GameError, Unit]
 

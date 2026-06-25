@@ -6,51 +6,68 @@ import zio.test.*
 import chess.bot.engine.{BotConfig, Difficulty}
 import chess.model.piece.Color
 
-/** Direct unit tests for [[GrpcMappers.parseBotConfig]] — the
-  * wire-format validation gatekeeping vs-bot game creation. */
+/** Direct unit tests for [[GrpcMappers.parseBotConfig]] — the wire-format
+  * validation gatekeeping vs-bot game creation.
+  */
 object BotConfigParseSpec extends ZIOSpecDefault:
 
   def spec = suite("GrpcMappers.parseBotConfig")(
     test("returns None when vs_bot is false (default proto3 values)") {
-      val req = NewGameRequest()  // all defaults: vsBot=false, empty strings
+      val req = NewGameRequest() // all defaults: vsBot=false, empty strings
       assertTrue(GrpcMappers.parseBotConfig(req) == Right(None))
     },
     test("parses a well-formed vsBot=true request") {
       val req = NewGameRequest(
-        vsBot         = true,
-        botSide       = "white",
+        vsBot = true,
+        botSide = "white",
         botDifficulty = "Hard",
-        allowUndo     = false,
+        allowUndo = false
       )
       assertTrue(
-        GrpcMappers.parseBotConfig(req) == Right(Some(BotConfig(
-          botSide    = Color.White,
-          difficulty = Difficulty.Hard,
-          allowUndo  = false,
-        )))
+        GrpcMappers.parseBotConfig(req) == Right(
+          Some(
+            BotConfig(
+              botSide = Color.White,
+              difficulty = Difficulty.Hard,
+              allowUndo = false
+            )
+          )
+        )
       )
     },
     test("accepts case-insensitive side and difficulty") {
       val req = NewGameRequest(
-        vsBot = true, botSide = "BLACK", botDifficulty = "expert",
-        allowUndo = true,
+        vsBot = true,
+        botSide = "BLACK",
+        botDifficulty = "expert",
+        allowUndo = true
       )
       assertTrue(
-        GrpcMappers.parseBotConfig(req) == Right(Some(BotConfig(
-          Color.Black, Difficulty.Expert, allowUndo = true,
-        )))
+        GrpcMappers.parseBotConfig(req) == Right(
+          Some(
+            BotConfig(
+              Color.Black,
+              Difficulty.Expert,
+              allowUndo = true
+            )
+          )
+        )
       )
     },
     test("rejects an unknown bot side") {
       val req = NewGameRequest(
-        vsBot = true, botSide = "rainbow", botDifficulty = "Medium",
+        vsBot = true,
+        botSide = "rainbow",
+        botDifficulty = "Medium"
       )
       assertTrue(GrpcMappers.parseBotConfig(req).isLeft)
     },
     test("rejects an unknown difficulty") {
       val req = NewGameRequest(
-        vsBot = true, botSide = "white", botDifficulty = "Impossible",
+        vsBot = true,
+        botSide = "white",
+        botDifficulty = "Impossible"
       )
       assertTrue(GrpcMappers.parseBotConfig(req).isLeft)
-    },
+    }
   )

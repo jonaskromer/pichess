@@ -25,8 +25,8 @@ import chess.service.{GameService, GameServiceLive}
   *   - `KafkaGameEventProducer` when `KAFKA_BOOTSTRAP_SERVERS` is set,
   *     `InMemoryGameEventProducer` otherwise (so dev runs without a broker)
   *
-  * In-memory mode loses state on restart. Postgres mode is durable and
-  * replays via Kafka on the read-side (the repository service).
+  * In-memory mode loses state on restart. Postgres mode is durable and replays
+  * via Kafka on the read-side (the repository service).
   */
 object GameServiceMain extends ZIOAppDefault:
 
@@ -41,11 +41,11 @@ object GameServiceMain extends ZIOAppDefault:
       "game-service",
       for
         port <- portFromEnv
-        cfg  <- BackendConfig.fromEnv
-        _    <- Console.printLine(
-                  s"pichess-game-service backend=${cfg.backend} cache=${cfg.cache}"
-                )
-        _    <- serve(port, cfg)
+        cfg <- BackendConfig.fromEnv
+        _ <- Console.printLine(
+          s"pichess-game-service backend=${cfg.backend} cache=${cfg.cache}"
+        )
+        _ <- serve(port, cfg)
       yield ()
     )
 
@@ -63,10 +63,11 @@ object GameServiceMain extends ZIOAppDefault:
       case None          => InMemoryGameEventProducer.layer
 
   /** Pick the `GameRepository` layer for the configured backend. Selection
-    * lives in `PersistenceLayers` — see [[chess.persistence.runtime.PersistenceLayers]].
-    * The layer now requires `Tracing` (added by the
-    * `TracedGameRepository` decorator wrapped in `PersistenceLayers`);
-    * the service Main provides it via `TracingLayer.fromEnv`.
+    * lives in `PersistenceLayers` — see
+    * [[chess.persistence.runtime.PersistenceLayers]]. The layer now requires
+    * `Tracing` (added by the `TracedGameRepository` decorator wrapped in
+    * `PersistenceLayers`); the service Main provides it via
+    * `TracingLayer.fromEnv`.
     */
   private[gameservice] def gameRepoLayer(
       cfg: BackendConfig
@@ -79,13 +80,13 @@ object GameServiceMain extends ZIOAppDefault:
         // Start JVM metric trackers — heap / GC / threads flow through
         // the Prometheus publisher so the persistence-experiment
         // resource-profile table has signal to read.
-        _           <- MetricsLayer.jvmMetricsBootstrap
+        _ <- MetricsLayer.jvmMetricsBootstrap
         metricsPort <- MetricsHttpServer.portFromEnv(defaultMetricsPort)
-        _           <- Console.printLine(
-                         s"pichess-game-service gRPC listening on 0.0.0.0:$port " +
-                           s"(metrics on 0.0.0.0:$metricsPort/metrics)"
-                       )
-        _           <- MetricsHttpServer.serve(metricsPort).forkDaemon
+        _ <- Console.printLine(
+          s"pichess-game-service gRPC listening on 0.0.0.0:$port " +
+            s"(metrics on 0.0.0.0:$metricsPort/metrics)"
+        )
+        _ <- MetricsHttpServer.serve(metricsPort).forkDaemon
         // zio-grpc 0.6.3's `Server.awaitTermination` wraps the blocking
         // Java call with `ZIO.attempt` (Server.scala:23) — not
         // `attemptBlockingInterrupt` — so ZIO can't deliver an
@@ -97,8 +98,8 @@ object GameServiceMain extends ZIOAppDefault:
         // forever until told to stop" semantics but stays
         // interruptible, and the explicit shutdown lets the gRPC
         // server drain cleanly when the interrupt arrives.
-        server      <- ZIO.service[scalapb.zio_grpc.Server]
-        _           <- ZIO.never.onInterrupt(server.shutdown.ignore)
+        server <- ZIO.service[scalapb.zio_grpc.Server]
+        _ <- ZIO.never.onInterrupt(server.shutdown.ignore)
       yield ()
 
     val producerLayer: ZLayer[Tracing, Throwable, GameEventProducer] =
@@ -120,6 +121,6 @@ object GameServiceMain extends ZIOAppDefault:
         // the standalone Lichess bot uses, assembled from the committed
         // weights JSON + opening-book PGN resources.
         chess.service.BotConfigRepository.inMemoryLayer,
-        chess.bot.engine.EngineLayer.live,
+        chess.bot.engine.EngineLayer.live
       )
     }

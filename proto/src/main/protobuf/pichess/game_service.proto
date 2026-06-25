@@ -27,9 +27,28 @@ service GameService {
   rpc ClaimDraw    (GameIdRequest)       returns (StateReply);
   rpc Forfeit      (GameIdRequest)       returns (StateReply);
 
+  // Overwrite a game's clock with externally-authoritative values — for a
+  // NowChess tournament *mirror*, where the upstream server owns the clock.
+  // Display-only: no decrement, no flagging, no persistence (unlike the timed
+  // games started via NewGame's clock fields). Each call simply refreshes the
+  // SSE-visible clock so spectators see the live tournament times.
+  rpc SetClock     (SetClockRequest)     returns (StateReply);
+
   // Queries
   rpc GetState     (GameIdRequest)       returns (StateReply);
   rpc ExportGame   (ExportRequest)       returns (ExportReply);
+
+  // Post-game analysis — rate every move (cp → win% → NAG), name the opening,
+  // and report per-side accuracy, reusing the resident vs-bot engine. Input is
+  // PGN (so it works for any finished game, incl. a pasted one); the result is
+  // the `GameAnalysisDto` JSON the web-ui consumes. On-demand + cached.
+  rpc AnalyzeGame  (AnalyzeRequest)      returns (AnalyzeReply);
+
+  // Replay — every position of a (typically finished) game, oldest first, for
+  // the web-ui's move-by-move review. Index 0 is the initial position; index k
+  // is the position after the k-th half-move. A read-only projection of the
+  // stored history (GameSnapshot.history) — never mutates the session.
+  rpc ReplayGame   (GameIdRequest)       returns (ReplayReply);
 
   // Index of the in-progress games the server holds (PvP + vs-bot), for the
   // gateway's spectate list. Only still-playing games are returned.
@@ -56,11 +75,18 @@ service GameService {
 //     undo/redo buttons in a "no take-backs" game.
 //
 // All bot fields are ignored when `vs_bot` is false.
+//
+// Clock fields make the game timed (server-authoritative clock):
+//   - `initial_seconds` is each side's starting time. 0 (the proto3 default)
+//     means untimed — the existing behaviour, no clock, no flagging.
+//   - `increment_seconds` is the Fischer increment banked after each move.
 message NewGameRequest {
-  bool   vs_bot         = 1;
-  string bot_side       = 2;
-  string bot_difficulty = 3;
-  bool   allow_undo     = 4;
+  bool   vs_bot            = 1;
+  string bot_side          = 2;
+  string bot_difficulty    = 3;
+  bool   allow_undo        = 4;
+  int32  initial_seconds   = 5;
+  int32  increment_seconds = 6;
 }
 
 message LoadGameRequest {
@@ -76,9 +102,29 @@ message GameIdRequest {
   string game_id = 1;
 }
 
+// Externally-authoritative clock values pushed by a tournament mirror. Times
+// are absolute remaining-milliseconds (not deltas); the server stores them
+// verbatim so the next SSE frame shows them. `running` marks whether the
+// side-to-move's clock is live (true → the browser interpolates it down between
+// pushes; false → frozen, e.g. once the upstream game has ended).
+message SetClockRequest {
+  string game_id  = 1;
+  int64  white_ms = 2;
+  int64  black_ms = 3;
+  bool   running  = 4;
+}
+
 message ExportRequest {
   string game_id = 1;
   string format  = 2;  // fen | pgn | json
+}
+
+message AnalyzeRequest {
+  string pgn   = 1;
+  int32  depth = 2;  // requested search depth (server clamps; 0 = server default)
+}
+message AnalyzeReply {
+  string analysis_json = 1;  // api.GameAnalysisDto serialised as JSON
 }
 
 // Universal state response.
@@ -107,6 +153,22 @@ message StateReply {
 message ExportReply {
   string format = 1;
   string body   = 2;
+}
+
+// One position in a game replay. `board_state` is an `api.BoardStateDto`
+// serialised via boopickle (exactly like `StateReply.board_state`), holding the
+// position at this ply. `move_index` is 0 for the initial position and k for the
+// position after the k-th half-move; `san` is the move that produced this
+// position ("" for the initial frame).
+message ReplayFrame {
+  int32  move_index  = 1;
+  bytes  board_state = 2;
+  string san         = 3;
+}
+
+message ReplayReply {
+  string game_id              = 1;
+  repeated ReplayFrame frames = 2;
 }
 
 message ListActiveGamesRequest {}

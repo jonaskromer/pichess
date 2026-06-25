@@ -7,7 +7,7 @@ import zio.test.*
 import chess.events.{GameEventProducer, InMemoryGameEventProducer}
 import chess.model.board.{DrawReason, GameState, GameStatus, Move, Position}
 import chess.model.piece.{Color, Piece, PieceType}
-import chess.model.{GameSnapshot, HistoryEntry, SessionState}
+import chess.model.{ClockState, GameSnapshot, HistoryEntry, SessionState}
 import chess.notation.SanSerializer
 import chess.persistence.InMemoryGameRepository
 import chess.service.{GameService, GameServiceLive}
@@ -28,6 +28,19 @@ object GameControllerSpec extends ZIOSpecDefault:
       event <- gs.newGame()
       session <- SubscriptionRef.make(
         SessionState(GameSnapshot.fresh(event.gameId, event.initialState))
+      )
+    yield (gs, producer, session)
+
+  private def withTimedSession(clock: ClockState) =
+    for
+      gs <- ZIO.service[GameService]
+      producer <- ZIO.service[GameEventProducer]
+      event <- gs.newGame()
+      session <- SubscriptionRef.make(
+        SessionState(
+          GameSnapshot.fresh(event.gameId, event.initialState),
+          clock = Some(clock)
+        )
       )
     yield (gs, producer, session)
 
@@ -235,7 +248,8 @@ object GameControllerSpec extends ZIOSpecDefault:
           _ <- session.update(st =>
             st.copy(game =
               st.game.copy(
-                history = List(HistoryEntry(dummyMove, drawableState, Color.White, "1"))
+                history =
+                  List(HistoryEntry(dummyMove, drawableState, Color.White, "1"))
               )
             )
           )
@@ -399,7 +413,9 @@ object GameControllerSpec extends ZIOSpecDefault:
         )
         for
           (gs, producer, session) <- withSession
-          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, producer, session, m))
+          _ <- ZIO.foreach(moves)(m =>
+            GameController.makeMove(gs, producer, session, m)
+          )
           _ <- GameController.claimDraw(gs, producer, session)
           s <- session.get
         yield assertTrue(
@@ -424,7 +440,9 @@ object GameControllerSpec extends ZIOSpecDefault:
         )
         for
           (gs, producer, session) <- withSession
-          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, producer, session, m))
+          _ <- ZIO.foreach(moves)(m =>
+            GameController.makeMove(gs, producer, session, m)
+          )
           s <- session.get
         yield assertTrue(
           GameController.countCurrentPosition(s.game) == 3,
@@ -455,7 +473,9 @@ object GameControllerSpec extends ZIOSpecDefault:
         )
         for
           (gs, producer, session) <- withSession
-          _ <- ZIO.foreach(setup)(m => GameController.makeMove(gs, producer, session, m))
+          _ <- ZIO.foreach(setup)(m =>
+            GameController.makeMove(gs, producer, session, m)
+          )
           afterAll <- session.get
           _ <- GameController.undo(gs, producer, session)
           afterUndo <- session.get
@@ -482,7 +502,9 @@ object GameControllerSpec extends ZIOSpecDefault:
           List.fill(4)(List("Nf3", "Nf6", "Ng1", "Ng8")).flatten
         for
           (gs, producer, session) <- withSession
-          _ <- ZIO.foreach(cycles)(m => GameController.makeMove(gs, producer, session, m))
+          _ <- ZIO.foreach(cycles)(m =>
+            GameController.makeMove(gs, producer, session, m)
+          )
           afterAll <- session.get
           _ <- GameController.undo(gs, producer, session)
           afterUndo <- session.get
@@ -505,7 +527,9 @@ object GameControllerSpec extends ZIOSpecDefault:
         val moves = List("Nf3", "Nc6", "Nc3", "Nf6")
         for
           (gs, producer, session) <- withSession
-          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, producer, session, m))
+          _ <- ZIO.foreach(moves)(m =>
+            GameController.makeMove(gs, producer, session, m)
+          )
           s <- session.get
         yield assertTrue(s.state.halfmoveClock == 4)
       },
@@ -513,7 +537,9 @@ object GameControllerSpec extends ZIOSpecDefault:
         val moves = List("Nf3", "Nc6", "Nc3", "Nf6", "e4")
         for
           (gs, producer, session) <- withSession
-          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, producer, session, m))
+          _ <- ZIO.foreach(moves)(m =>
+            GameController.makeMove(gs, producer, session, m)
+          )
           s <- session.get
         yield assertTrue(s.state.halfmoveClock == 0)
       },
@@ -522,7 +548,9 @@ object GameControllerSpec extends ZIOSpecDefault:
         val moves = List("Nf3", "Nc6", "Nc3", "d5", "Nxd5")
         for
           (gs, producer, session) <- withSession
-          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, producer, session, m))
+          _ <- ZIO.foreach(moves)(m =>
+            GameController.makeMove(gs, producer, session, m)
+          )
           s <- session.get
         yield assertTrue(s.state.halfmoveClock == 0)
       },
@@ -539,7 +567,9 @@ object GameControllerSpec extends ZIOSpecDefault:
           gameId <- session.get.map(_.gameId)
           _ <- gs.saveState(gameId, start)
           _ <- session.set(SessionState(GameSnapshot.fresh(gameId, start)))
-          _ <- ZIO.foreach(moves)(m => GameController.makeMove(gs, producer, session, m))
+          _ <- ZIO.foreach(moves)(m =>
+            GameController.makeMove(gs, producer, session, m)
+          )
           afterMoves <- session.get
           _ <- GameController.claimDraw(gs, producer, session)
           afterClaim <- session.get
@@ -593,6 +623,172 @@ object GameControllerSpec extends ZIOSpecDefault:
           // Active color flipped (confirms a move committed)
           s.state.activeColor == Color.Black
         )
+      }
+    ),
+    suite("timed clock")(
+      test(
+        "a move banks the increment and keeps the opponent's clock running"
+      ) {
+        // runningSince = None ⇒ no elapsed is banked, so the mover's clock is
+        // exactly initial + increment regardless of wall-clock timing.
+        for
+          (gs, producer, session) <- withTimedSession(
+            ClockState(300000, 300000, 2000, runningSince = None)
+          )
+          _ <- GameController.makeMove(gs, producer, session, "e2 e4")
+          s <- session.get
+        yield assertTrue(
+          s.clock.exists(c =>
+            c.whiteMs == 302000 && c.blackMs == 300000 && c.runningSince.isDefined
+          ),
+          s.state.status.isPlaying
+        )
+      },
+      test("a move that ends the game pauses the clock") {
+        // Fool's mate: after Qh4# the game is over, so the clock pauses.
+        for
+          (gs, producer, session) <- withTimedSession(
+            ClockState(300000, 300000, 2000, runningSince = None)
+          )
+          _ <- GameController.makeMove(gs, producer, session, "f3")
+          _ <- GameController.makeMove(gs, producer, session, "e5")
+          _ <- GameController.makeMove(gs, producer, session, "g4")
+          _ <- GameController.makeMove(gs, producer, session, "Qh4")
+          s <- session.get
+        yield assertTrue(
+          s.state.status == GameStatus.Checkmate(Color.Black),
+          s.clock.exists(_.runningSince.isEmpty)
+        )
+      },
+      test("flagIfTimedOut ends the game when the side to move has flagged") {
+        for
+          (gs, producer, session) <- withTimedSession(
+            ClockState(
+              whiteMs = 500,
+              blackMs = 300000,
+              incrementMs = 0,
+              runningSince = Some(0)
+            )
+          )
+          flagged <- GameController.flagIfTimedOut(gs, producer, session, 10000)
+          s <- session.get
+        yield assertTrue(
+          flagged,
+          s.state.status == GameStatus.Timeout(Color.Black),
+          s.clock.exists(_.runningSince.isEmpty)
+        )
+      },
+      test("flagIfTimedOut persists the timeout to the repository") {
+        for
+          (gs, producer, session) <- withTimedSession(
+            ClockState(0, 300000, 0, runningSince = Some(0))
+          )
+          gameId <- session.get.map(_.gameId)
+          _ <- GameController.flagIfTimedOut(gs, producer, session, 10000)
+          persisted <- gs.getState(gameId)
+        yield assertTrue(
+          persisted.exists(_.status == GameStatus.Timeout(Color.Black))
+        )
+      },
+      test("flagIfTimedOut is a no-op while time remains") {
+        for
+          (gs, producer, session) <- withTimedSession(
+            ClockState(300000, 300000, 0, runningSince = Some(0))
+          )
+          flagged <- GameController.flagIfTimedOut(gs, producer, session, 1000)
+          s <- session.get
+        yield assertTrue(!flagged, s.state.status.isPlaying)
+      },
+      test("flagIfTimedOut is a no-op for an untimed game") {
+        for
+          (gs, producer, session) <- withSession
+          flagged <- GameController.flagIfTimedOut(gs, producer, session, 10000)
+        yield assertTrue(!flagged)
+      },
+      test("flagIfTimedOut is a no-op when the game is already over") {
+        // An over state + a flagged clock: the !isOver guard wins (no re-flag).
+        val overState = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 8) -> Piece(Color.Black, PieceType.King)
+          ),
+          Color.White,
+          status = GameStatus.Resignation(Color.Black)
+        )
+        val dummyMove = Move(Position('e', 1), Position('e', 1))
+        for
+          (gs, producer, session) <- withTimedSession(
+            ClockState(0, 300000, 0, runningSince = Some(0))
+          )
+          _ <- session.update(st =>
+            st.copy(game =
+              st.game.copy(
+                history =
+                  List(HistoryEntry(dummyMove, overState, Color.White, "1"))
+              )
+            )
+          )
+          flagged <- GameController.flagIfTimedOut(gs, producer, session, 10000)
+          s <- session.get
+        yield assertTrue(
+          !flagged,
+          s.state.status == GameStatus.Resignation(Color.Black)
+        )
+      },
+      test(
+        "setClock overwrites a (possibly absent) clock with running values"
+      ) {
+        // A mirror starts untimed; the tournament follower pushes the upstream
+        // clock. running=true ⇒ the side-to-move's clock interpolates locally.
+        for
+          (_, _, session) <- withSession
+          _ <- GameController.setClock(session, 65000, 58000, true, 1000)
+          s <- session.get
+        yield assertTrue(
+          s.clock.exists(c =>
+            c.whiteMs == 65000 && c.blackMs == 58000 &&
+              c.incrementMs == 0 && c.runningSince.contains(1000L)
+          )
+        )
+      },
+      test("setClock with running=false freezes the clock") {
+        for
+          (_, _, session) <- withTimedSession(
+            ClockState(65000, 58000, 0, runningSince = Some(0))
+          )
+          _ <- GameController.setClock(session, 40000, 30000, false, 9000)
+          s <- session.get
+        yield assertTrue(
+          s.clock.exists(c =>
+            c.whiteMs == 40000 && c.blackMs == 30000 && c.runningSince.isEmpty
+          )
+        )
+      },
+      test("setClock never runs an already-over game's clock") {
+        // Even with running=true, an over mirror is frozen (no phantom ticking
+        // after the upstream game has ended).
+        val overState = GameState(
+          Map(
+            Position('e', 1) -> Piece(Color.White, PieceType.King),
+            Position('e', 8) -> Piece(Color.Black, PieceType.King)
+          ),
+          Color.White,
+          status = GameStatus.Resignation(Color.Black)
+        )
+        val dummyMove = Move(Position('e', 1), Position('e', 1))
+        for
+          (_, _, session) <- withSession
+          _ <- session.update(st =>
+            st.copy(game =
+              st.game.copy(
+                history =
+                  List(HistoryEntry(dummyMove, overState, Color.White, "1"))
+              )
+            )
+          )
+          _ <- GameController.setClock(session, 40000, 30000, true, 9000)
+          s <- session.get
+        yield assertTrue(s.clock.exists(_.runningSince.isEmpty))
       }
     )
   ).provide(appLayer) @@ TestAspect.withLiveClock

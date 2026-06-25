@@ -3,7 +3,7 @@ package chess.gameservice
 import zio.*
 import zio.stream.SubscriptionRef
 
-import chess.model.{GameError, GameId, GameSnapshot, SessionState}
+import chess.model.{ClockState, GameError, GameId, GameSnapshot, SessionState}
 
 /** Holds one `SubscriptionRef[SessionState]` per active game.
   *
@@ -18,10 +18,13 @@ import chess.model.{GameError, GameId, GameSnapshot, SessionState}
 final class GameSessions(
     sessions: Ref.Synchronized[Map[GameId, SubscriptionRef[SessionState]]]
 ):
-  def register(snapshot: GameSnapshot): UIO[SubscriptionRef[SessionState]] =
+  def register(
+      snapshot: GameSnapshot,
+      clock: Option[ClockState] = None
+  ): UIO[SubscriptionRef[SessionState]] =
     sessions.modifyZIO { map =>
       SubscriptionRef
-        .make(SessionState(snapshot))
+        .make(SessionState(snapshot, clock = clock))
         .map(ref => (ref, map + (snapshot.gameId -> ref)))
     }
 

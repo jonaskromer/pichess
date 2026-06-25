@@ -2,61 +2,123 @@ package chess.gameservice
 
 import com.google.protobuf.ByteString
 import io.grpc.{Status, StatusException}
-import pichess.game_service.{NewGameRequest, StateReply}
+import pichess.game_service.{NewGameRequest, ReplayFrame, StateReply}
 import zio.UIO
 
-import chess.api.{AnnotationsDto, BoardStateDto, WebBoardView}
-import chess.bot.engine.{BotConfig, Difficulty}
+import chess.api.{AnnotationsDto, BoardStateDto, ClockDto, WebBoardView}
+import chess.bot.engine.{BotConfig, Difficulty, TimeManager}
 import chess.model.board.{GameState, Position}
 import chess.model.piece.Color
 import chess.model.rules.MoveValidator
-import chess.model.{GameError, GameId, SessionState}
+import chess.model.{ClockState, GameError, GameId, SessionState}
 
 /** Pure mapping helpers for the gRPC service.
   *
   * Extracted out of [[GrpcServer]] so the GameError → Status mapping and
   * SessionState → StateReply projection are unit-testable independent of a
-  * running gRPC channel. GrpcServer itself stays behind a coverage
-  * exclusion (the rpc methods need an actual stub to drive).
+  * running gRPC channel. GrpcServer itself stays behind a coverage exclusion
+  * (the rpc methods need an actual stub to drive).
   */
 object GrpcMappers:
 
   /** Project a SessionState into the wire reply. The DTO is built here
-    * (server-side) using [[WebBoardView.toDto]] — which used to live in
-    * the gateway — and serialised via [[BoardStateDto.protobufCodec]].
-    * The gateway just decodes the bytes back into the same DTO and
-    * forwards it as JSON; no more FEN-parse round-trip on the reply
-    * path.
+    * (server-side) using [[WebBoardView.toDto]] — which used to live in the
+    * gateway — and serialised via [[BoardStateDto.protobufCodec]]. The gateway
+    * just decodes the bytes back into the same DTO and forwards it as JSON; no
+    * more FEN-parse round-trip on the reply path.
     *
     * The SAN log is read from the pre-computed
-    * [[chess.model.GameSnapshot.moveLog]] field — incrementally
-    * maintained by `recordMove` / `undoOnce` / `redoOnce` and seeded by
-    * `fromHistory` on load — so this projection avoids re-walking the
-    * history through `SanSerializer.deriveMoveLog` on every reply.
+    * [[chess.model.GameSnapshot.moveLog]] field — incrementally maintained by
+    * `recordMove` / `undoOnce` / `redoOnce` and seeded by `fromHistory` on load
+    * — so this projection avoids re-walking the history through
+    * `SanSerializer.deriveMoveLog` on every reply.
     */
   def toStateReply(
       gameId: GameId,
       session: SessionState
   ): UIO[StateReply] =
     buildAnnotations(session.state).map { annotations =>
-      val dto = WebBoardView.toDto(
-        state   = session.state,
-        moveLog = session.game.moveLog,
-        error   = session.error,
-      )
+      val dto = WebBoardView
+        .toDto(
+          state = session.state,
+          moveLog = session.game.moveLog,
+          error = session.error
+        )
+        .copy(clock =
+          session.clock.map(toClockDto(_, session.state.activeColor))
+        )
       StateReply(
-        gameId      = gameId,
-        boardState  = encodeBoardState(dto),
-        error       = session.error.getOrElse(""),
-        fen         = chess.codec.FenSerializer.serialize(session.state),
-        annotations = encodeAnnotations(annotations),
+        gameId = gameId,
+        boardState = encodeBoardState(dto),
+        error = session.error.getOrElse(""),
+        fen = chess.codec.FenSerializer.serialize(session.state),
+        annotations = encodeAnnotations(annotations)
       )
     }
 
+  /** Project a game's full position history into replay frames, oldest first:
+    * index 0 is the initial position, index k the position after the k-th
+    * half-move. A read-only projection of the stored [[GameSnapshot.history]] —
+    * no moves are re-applied (each [[chess.model.HistoryEntry]] already holds the
+    * post-move [[GameState]]). Pure + total, so it's unit-tested here while
+    * [[GrpcServer.replayGame]] (the rpc glue) stays coverage-excluded.
+    *
+    * Per-ply clocks are intentionally omitted (each frame's `clock` is `None`):
+    * timed-game clocks are reconstructed from move timestamps by the client, not
+    * stored per ply — see `docs/replay-plan.md` / `docs/timed-games-plan.md`.
+    */
+  def replayFrames(session: SessionState): List[ReplayFrame] =
+    val snap    = session.game
+    val ordered = snap.history.reverse // oldest-first: ordered(i) = state after move i+1
+    val fullLog = snap.moveLog         // oldest-first (Color, SAN); same length as `ordered`
+    val initial = ReplayFrame(
+      moveIndex = 0,
+      boardState = encodeBoardState(WebBoardView.toDto(snap.initialState, Nil, None)),
+      san = ""
+    )
+    val moves = ordered.zipWithIndex.map { case (entry, i) =>
+      ReplayFrame(
+        moveIndex = i + 1,
+        boardState =
+          encodeBoardState(WebBoardView.toDto(entry.state, fullLog.take(i + 1), None)),
+        san = entry.san
+      )
+    }
+    initial :: moves
+
+  /** Per-move search budget (ms) for the bot's reply in a **timed** game,
+    * derived from the bot's live remaining clock + increment via the flag-safe
+    * [[TimeManager.budgetMs]]. `None` for an untimed game ⇒ the caller falls
+    * back to the difficulty's fixed search depth. `now` is when the bot is about
+    * to move (its clock just started running on the opponent's move).
+    */
+  def botMoveBudgetMs(
+      clock: Option[ClockState],
+      botSide: Color,
+      now: Long
+  ): Option[Long] =
+    clock.map(c =>
+      TimeManager.budgetMs(c.liveRemaining(botSide, botSide, now), c.incrementMs)
+    )
+
+  /** Project the authoritative [[ClockState]] into its wire form. The banked
+    * `whiteMs`/`blackMs` are sent as-is (server is the source of truth);
+    * `runningFor` names the side whose clock is currently ticking (the browser
+    * interpolates only that side between pushes), or `None` when paused.
+    */
+  def toClockDto(clock: ClockState, sideToMove: Color): ClockDto =
+    ClockDto(
+      whiteMs = clock.whiteMs,
+      blackMs = clock.blackMs,
+      runningFor = clock.runningSince.map(_ =>
+        if sideToMove == Color.White then "white" else "black"
+      )
+    )
+
   /** Encode a [[BoardStateDto]] to the bytes carried by
     * [[StateReply.boardState]]. Delegates to [[BoardStateDto.encodeBytes]]
-    * (boopickle binary codec — picked over zio-schema-protobuf after
-    * the latter benched 33× slower on this DTO shape).
+    * (boopickle binary codec — picked over zio-schema-protobuf after the latter
+    * benched 33× slower on this DTO shape).
     */
   def encodeBoardState(dto: BoardStateDto): ByteString =
     ByteString.copyFrom(BoardStateDto.encodeBytes(dto))
@@ -65,17 +127,16 @@ object GrpcMappers:
   def encodeAnnotations(dto: AnnotationsDto): ByteString =
     ByteString.copyFrom(AnnotationsDto.encodeBytes(dto))
 
-  /** Build the full annotation bundle from a [[GameState]]: the
-    * per-piece legal-destinations index plus the threats list and
-    * attackers map. Used to populate [[StateReply.annotations]] so the
-    * gateway can skip its FEN-parse + recompute path on cache miss.
+  /** Build the full annotation bundle from a [[GameState]]: the per-piece
+    * legal-destinations index plus the threats list and attackers map. Used to
+    * populate [[StateReply.annotations]] so the gateway can skip its FEN-parse
+    * + recompute path on cache miss.
     *
-    * Cost is the [[MoveValidator.legalDestinationsIndex]] sweep
-    * (~50-70 µs for a mid-game position per Phase 3 bench) plus a few
-    * micros for the bitboard `isSquareAttacked` / `attackersOf` calls
-    * — Phase 2 made those essentially free. Same arithmetic the
-    * gateway used to do, just moved one hop upstream so the work
-    * happens once per state change rather than once per cache miss.
+    * Cost is the [[MoveValidator.legalDestinationsIndex]] sweep (~50-70 µs for
+    * a mid-game position per Phase 3 bench) plus a few micros for the bitboard
+    * `isSquareAttacked` / `attackersOf` calls — Phase 2 made those essentially
+    * free. Same arithmetic the gateway used to do, just moved one hop upstream
+    * so the work happens once per state change rather than once per cache miss.
     */
   def buildAnnotations(state: GameState): UIO[AnnotationsDto] =
     MoveValidator.legalDestinationsIndex(state).orDie.map { rawLegal =>
@@ -88,23 +149,23 @@ object GrpcMappers:
       // Mirror the gateway's old logic: a "threat" is an own-color
       // square currently attacked by the opponent.
       val ownSquares = ownPieceSquares(state, ownColor)
-      val threats    = ownSquares.filter(sq =>
-        MoveValidator.isSquareAttacked(state.board, sq, ownColor)
-      )
+      val threats = ownSquares
+        .filter(sq => MoveValidator.isSquareAttacked(state.board, sq, ownColor))
       val attackerEntries = threats.map { sq =>
         sq.toString ->
           MoveValidator.attackersOf(state.board, sq, opponent).map(_.toString)
       }.toMap
       AnnotationsDto(
         legalMovesFrom = legalMap,
-        threats        = threats.map(_.toString),
-        attackersOf    = attackerEntries,
+        threats = threats.map(_.toString),
+        attackersOf = attackerEntries
       )
     }
 
-  /** Bitboard-driven iteration of every square holding an own-color
-    * piece. Mirrors `MoveValidator.legalDestinationsIndex`'s active-
-    * piece walk so threats / attackers reuse the same active-piece set. */
+  /** Bitboard-driven iteration of every square holding an own-color piece.
+    * Mirrors `MoveValidator.legalDestinationsIndex`'s active- piece walk so
+    * threats / attackers reuse the same active-piece set.
+    */
   private def ownPieceSquares(state: GameState, color: Color): List[Position] =
     val bb =
       if color == Color.White then state.board.whitePieces.raw
@@ -117,28 +178,34 @@ object GrpcMappers:
       buf += Position(('a' + (idx % 8)).toChar, (idx / 8) + 1)
     buf.toList
 
-  /** Parse the optional bot-config fields of a [[NewGameRequest]]
-    * into a [[BotConfig]]. Returns `Right(None)` when `vs_bot` is
-    * false (non-bot game — backward-compatible with old clients
-    * that send no fields), `Right(Some(cfg))` for a well-formed
-    * bot config, `Left(reason)` for malformed values (unknown
-    * difficulty / side).
+  /** Parse the optional bot-config fields of a [[NewGameRequest]] into a
+    * [[BotConfig]]. Returns `Right(None)` when `vs_bot` is false (non-bot game
+    * — backward-compatible with old clients that send no fields),
+    * `Right(Some(cfg))` for a well-formed bot config, `Left(reason)` for
+    * malformed values (unknown difficulty / side).
     */
-  def parseBotConfig(request: NewGameRequest): Either[String, Option[BotConfig]] =
+  def parseBotConfig(
+      request: NewGameRequest
+  ): Either[String, Option[BotConfig]] =
     if !request.vsBot then Right(None)
     else
       for
         side <- parseColor(request.botSide)
         diff <- parseDifficulty(request.botDifficulty)
       yield Some(
-        BotConfig(botSide = side, difficulty = diff, allowUndo = request.allowUndo)
+        BotConfig(
+          botSide = side,
+          difficulty = diff,
+          allowUndo = request.allowUndo
+        )
       )
 
   private def parseColor(s: String): Either[String, Color] =
     s.toLowerCase match
       case "white" => Right(Color.White)
       case "black" => Right(Color.Black)
-      case other   => Left(s"Unknown bot side: '$other' (expected 'white' or 'black')")
+      case other =>
+        Left(s"Unknown bot side: '$other' (expected 'white' or 'black')")
 
   private def parseDifficulty(s: String): Either[String, Difficulty] =
     Difficulty.values
@@ -148,9 +215,9 @@ object GrpcMappers:
           Difficulty.values.map(_.toString).mkString(", ") + ")"
       )
 
-  /** Lift a domain GameError into the gRPC status it should surface as.
-    * The mapping is exhaustive across `GameError`'s variants — a new
-    * variant becomes a `match`-not-exhaustive compile error here.
+  /** Lift a domain GameError into the gRPC status it should surface as. The
+    * mapping is exhaustive across `GameError`'s variants — a new variant
+    * becomes a `match`-not-exhaustive compile error here.
     */
   def toStatusException(err: GameError): StatusException =
     val status = err match

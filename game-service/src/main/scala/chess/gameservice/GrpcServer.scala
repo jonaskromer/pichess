@@ -7,6 +7,8 @@ import io.opentelemetry.api.trace.SpanKind
 import pichess.game_service.{
   ActiveGame,
   ActiveGamesReply,
+  AnalyzeReply,
+  AnalyzeRequest,
   ExportReply,
   ExportRequest,
   GameIdRequest,
@@ -14,23 +16,29 @@ import pichess.game_service.{
   LoadGameRequest,
   MoveRequest,
   NewGameRequest,
+  ReplayReply,
+  SetClockRequest,
   StateReply,
   ZioGameService
 }
 import scalapb.zio_grpc.RequestContext
 import zio.*
+import zio.json.*
 import zio.stream.{Stream, SubscriptionRef, ZStream}
 import zio.telemetry.opentelemetry.context.IncomingContextCarrier
 import zio.telemetry.opentelemetry.tracing.Tracing
 import zio.telemetry.opentelemetry.tracing.propagation.TraceContextPropagator
 
+import chess.analysis.{AnalysisService, CachedAnalysisService, GameAnalyzer}
+import chess.api.GameAnalysisDto
 import chess.bot.engine.{BotConfig, Search}
 import chess.codec.{FenSerializer, JsonSerializer, PgnSerializer}
+import chess.opening.EcoBook
 import chess.controller.GameController
 import chess.events.GameEventProducer
 import chess.model.board.{GameState, Move}
 import chess.model.piece.{Color, PieceType}
-import chess.model.{GameError, GameId, GameSnapshot, SessionState}
+import chess.model.{ClockState, GameError, GameId, GameSnapshot, SessionState}
 import chess.notation.SanSerializer
 import chess.service.{BotConfigRepository, GameService}
 
@@ -78,7 +86,10 @@ final class GrpcServer(
         event <- gs.newGame()
         _ <- botCfg.fold(ZIO.unit)(botConfigs.save(event.gameId, _))
         snapshot = GameSnapshot.fresh(event.gameId, event.initialState)
-        ref <- sessions.register(snapshot)
+        clock0 <- clockFromRequest(request)
+        ref <- sessions.register(snapshot, clock0)
+        // Timed game: run the authoritative timeout daemon for its lifetime.
+        _ <- ZIO.when(clock0.isDefined)(clockDaemon(ref).forkDaemon)
         // If the bot has white, play its opening move so the very
         // first state reply reflects the bot's move (the client
         // doesn't have to handle "newGame, then await first move").
@@ -154,6 +165,26 @@ final class GrpcServer(
       runOn(request.gameId)(GameController.forfeit(gs, producer, _))
     }
 
+  def setClock(
+      request: SetClockRequest,
+      ctx: RequestContext
+  ): IO[StatusException, StateReply] =
+    serverSpan(ctx, "GameService/setClock") {
+      Clock
+        .currentTime(java.util.concurrent.TimeUnit.MILLISECONDS)
+        .flatMap { now =>
+          runOn(request.gameId)(
+            GameController.setClock(
+              _,
+              request.whiteMs,
+              request.blackMs,
+              request.running,
+              now
+            )
+          )
+        }
+    }
+
   def getState(
       request: GameIdRequest,
       ctx: RequestContext
@@ -162,6 +193,20 @@ final class GrpcServer(
       sessions
         .get(request.gameId)
         .flatMap(replyFor(request.gameId, _))
+        .mapError(GrpcMappers.toStatusException)
+    }
+
+  def replayGame(
+      request: GameIdRequest,
+      ctx: RequestContext
+  ): IO[StatusException, ReplayReply] =
+    serverSpan(ctx, "GameService/replayGame") {
+      sessions
+        .get(request.gameId)
+        .flatMap(_.get)
+        .map(s =>
+          ReplayReply(gameId = request.gameId, frames = GrpcMappers.replayFrames(s))
+        )
         .mapError(GrpcMappers.toStatusException)
     }
 
@@ -215,6 +260,36 @@ final class GrpcServer(
         .mapError(GrpcMappers.toStatusException)
     }
 
+  // Lazily-built, process-wide analyzer over the resident vs-bot engine + the
+  // bundled ECO book (loaded once on the first analysis), with a per-PGN cache.
+  private val analysisRef: Ref[Option[CachedAnalysisService]] =
+    Unsafe.unsafe(implicit u => Ref.unsafe.make(None))
+
+  private def analysisService: UIO[CachedAnalysisService] =
+    analysisRef.get.flatMap {
+      case Some(svc) => ZIO.succeed(svc)
+      case None =>
+        for
+          eco <- EcoBook.load.orDie
+          svc <- CachedAnalysisService.make(AnalysisService(GameAnalyzer(search, eco)))
+          _   <- analysisRef.set(Some(svc))
+        yield svc
+    }
+
+  def analyzeGame(
+      request: AnalyzeRequest,
+      ctx: RequestContext
+  ): IO[StatusException, AnalyzeReply] =
+    serverSpan(ctx, "GameService/analyzeGame") {
+      val depth =
+        if request.depth <= 0 then GrpcServer.DefaultAnalysisDepth
+        else math.min(request.depth, GrpcServer.MaxAnalysisDepth)
+      analysisService
+        .flatMap(_.analyze(request.pgn, depth))
+        .map(dto => AnalyzeReply(analysisJson = dto.toJson))
+        .mapError(GrpcMappers.toStatusException)
+    }
+
   def subscribeGame(
       request: GameIdRequest,
       ctx: RequestContext
@@ -254,6 +329,49 @@ final class GrpcServer(
   private def botShouldPlay(state: GameState, cfg: BotConfig): Boolean =
     state.activeColor == cfg.botSide && !state.status.isOver
 
+  /** Build the initial authoritative clock from the request, or `None` for an
+    * untimed game (`initialSeconds <= 0`, the proto3 default). White's clock
+    * starts running immediately (white moves first).
+    */
+  private def clockFromRequest(
+      request: NewGameRequest
+  ): UIO[Option[ClockState]] =
+    if request.initialSeconds <= 0 then ZIO.none
+    else
+      Clock
+        .currentTime(java.util.concurrent.TimeUnit.MILLISECONDS)
+        .map(now =>
+          Some(
+            ClockState.initial(
+              initialMs = request.initialSeconds.toLong * 1000L,
+              incrementMs = request.incrementSeconds.toLong * 1000L,
+              now = now
+            )
+          )
+        )
+
+  /** Per-game timeout daemon for a timed game: every 250 ms, flag the side to
+    * move if its clock has run out (the server is the source of truth). Exits
+    * once the game is over. Coverage-excluded glue — the decision logic it
+    * drives (`ClockState.flagged` + `GameController.flagIfTimedOut`) is
+    * unit-tested.
+    */
+  private def clockDaemon(ref: SubscriptionRef[SessionState]): UIO[Unit] =
+    def loop: UIO[Unit] =
+      ref.get.flatMap { s =>
+        if s.clock.isEmpty || s.state.status.isOver then ZIO.unit
+        else
+          for
+            now <- Clock.currentTime(
+              java.util.concurrent.TimeUnit.MILLISECONDS
+            )
+            _ <- GameController.flagIfTimedOut(gs, producer, ref, now).ignore
+            _ <- ZIO.sleep(250.millis)
+            _ <- loop
+          yield ()
+      }
+    loop
+
   private def playBotMove(
       ref: SubscriptionRef[SessionState],
       state: GameState,
@@ -266,8 +384,16 @@ final class GrpcServer(
       // the rules-gap the search would otherwise be blind to:
       // without `history` the bot can blunder into a 3-fold while
       // winning, or fail to claim one while losing.
-      history <- ref.get.map(_.game.positionCounts.keySet)
-      moveOpt <- search.bestMove(state, cfg.difficulty.searchDepth, history)
+      session <- ref.get
+      history = session.game.positionCounts.keySet
+      now <- Clock.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS)
+      // Timed game: budget the reply from the bot's remaining clock (flag-safe
+      // via TimeManager); untimed: the difficulty's fixed search depth.
+      moveOpt <- GrpcMappers.botMoveBudgetMs(session.clock, cfg.botSide, now) match
+        case Some(budgetMs) =>
+          search.bestMoveWithBudget(state, budgetMs, history)
+        case None =>
+          search.bestMove(state, cfg.difficulty.searchDepth, history)
       move <- ZIO
         .fromOption(moveOpt)
         .orElseFail(
@@ -340,6 +466,12 @@ final class GrpcServer(
     ref.get.flatMap(GrpcMappers.toStateReply(gameId, _))
 
 object GrpcServer:
+  // Analysis search depth: the request's depth is used, clamped to
+  // [1, MaxAnalysisDepth]; 0/absent falls back to the default (tuned for the
+  // 4-vCPU deploy box).
+  private val DefaultAnalysisDepth = 10
+  private val MaxAnalysisDepth     = 20
+
   val layer: URLayer[
     GameService & GameEventProducer & GameSessions & Tracing &
       BotConfigRepository & Search,

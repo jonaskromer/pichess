@@ -16,21 +16,20 @@ import zio.telemetry.opentelemetry.tracing.propagation.TraceContextPropagator
 import chess.model.GameError
 
 /** zio-kafka backed producer. Records are keyed by `gameId` so per-game
-  * ordering is preserved across event types (consumers see
-  * `GameStarted → MoveMade → … → GameEnded` in order for any one game).
+  * ordering is preserved across event types (consumers see `GameStarted →
+  * MoveMade → … → GameEnded` in order for any one game).
   *
   * `acks=all` and idempotence are on, so a successful `publish` means the
   * record is durably committed to Kafka. The MakeMove rpc returns to the
-  * gateway only after this future resolves — keeps the invariant that no
-  * client is told "your move succeeded" until the event is on the topic.
+  * gateway only after this future resolves — keeps the invariant that no client
+  * is told "your move succeeded" until the event is on the topic.
   *
-  * Each publish is wrapped in a PRODUCER span and the current trace
-  * context is injected as W3C `traceparent` into the Kafka record
-  * headers. The downstream consumers (`repository`, `opening-service`,
-  * `analytics-service`) extract that header to start their own CONSUMER
-  * span, so a single trace can follow an event from the originating
-  * HTTP request all the way through the Kafka boundary into every
-  * projection.
+  * Each publish is wrapped in a PRODUCER span and the current trace context is
+  * injected as W3C `traceparent` into the Kafka record headers. The downstream
+  * consumers (`repository`, `opening-service`, `analytics-service`) extract
+  * that header to start their own CONSUMER span, so a single trace can follow
+  * an event from the originating HTTP request all the way through the Kafka
+  * boundary into every projection.
   */
 final class KafkaGameEventProducer(producer: Producer, tracing: Tracing)
     extends GameEventProducer:
@@ -39,32 +38,32 @@ final class KafkaGameEventProducer(producer: Producer, tracing: Tracing)
     tracing.span(s"kafka.send ${Topics.GameEvents}", SpanKind.PRODUCER) {
       for
         kafkaHeaders <- buildHeaders
-        record        = new ProducerRecord[String, String](
-                          Topics.GameEvents,
-                          null,           // partition: let Kafka decide
-                          event.gameId,
-                          event.toJson,
-                          kafkaHeaders
-                        )
-        _            <- producer
-                          .produce[Any, String, String](
-                            record,
-                            keySerializer   = Serde.string,
-                            valueSerializer = Serde.string
-                          )
-                          .mapError(t =>
-                            GameError.InfrastructureError(
-                              s"Kafka publish failed: ${t.getMessage}"
-                            )
-                          )
+        record = new ProducerRecord[String, String](
+          Topics.GameEvents,
+          null, // partition: let Kafka decide
+          event.gameId,
+          event.toJson,
+          kafkaHeaders
+        )
+        _ <- producer
+          .produce[Any, String, String](
+            record,
+            keySerializer = Serde.string,
+            valueSerializer = Serde.string
+          )
+          .mapError(t =>
+            GameError.InfrastructureError(
+              s"Kafka publish failed: ${t.getMessage}"
+            )
+          )
       yield ()
     }
 
-  /** Build a Kafka `RecordHeaders` carrying the W3C trace context for
-    * the current span. The propagator writes `traceparent` (and
-    * optionally `tracestate`) into a transient mutable map; we then
-    * copy each entry into a `RecordHeader` with the ASCII bytes — the
-    * convention Kafka headers use for textual values.
+  /** Build a Kafka `RecordHeaders` carrying the W3C trace context for the
+    * current span. The propagator writes `traceparent` (and optionally
+    * `tracestate`) into a transient mutable map; we then copy each entry into a
+    * `RecordHeader` with the ASCII bytes — the convention Kafka headers use for
+    * textual values.
     */
   private def buildHeaders: UIO[RecordHeaders] =
     val carrier =
@@ -89,7 +88,7 @@ object KafkaGameEventProducer:
           .withProperty("acks", "all")
           .withProperty("enable.idempotence", "true")
       for
-        prod    <- Producer.make(settings)
+        prod <- Producer.make(settings)
         tracing <- ZIO.service[Tracing]
       yield new KafkaGameEventProducer(prod, tracing)
     }

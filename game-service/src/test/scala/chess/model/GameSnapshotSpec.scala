@@ -85,10 +85,10 @@ object GameSnapshotSpec extends ZIOSpecDefault:
         .fresh("id", GameState.initial)
         .recordMove(move, after, "e4")
       for viaFromHistory <- GameSnapshot.fromHistory(
-                              "id",
-                              GameState.initial,
-                              List((move, after))
-                            )
+          "id",
+          GameState.initial,
+          List((move, after))
+        )
       yield assertTrue(
         viaRecord.positionCounts == viaFromHistory.positionCounts
       )
@@ -106,10 +106,10 @@ object GameSnapshotSpec extends ZIOSpecDefault:
       // ply), so the hash count for the initial position becomes 2.
       val dummyMove = Move(Position('e', 2), Position('e', 4))
       for snapshot <- GameSnapshot.fromHistory(
-                       "id",
-                       GameState.initial,
-                       List((dummyMove, GameState.initial))
-                     )
+          "id",
+          GameState.initial,
+          List((dummyMove, GameState.initial))
+        )
       yield assertTrue(
         snapshot.positionCounts(Zobrist.hash(GameState.initial)) == 2
       )
