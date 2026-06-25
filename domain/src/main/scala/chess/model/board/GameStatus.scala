@@ -12,15 +12,16 @@ enum DrawReason:
 /** The current phase of a chess game.
   *
   * Transitions always go `Playing → Terminal` — once a game is over
-  * (`Checkmate`, `Draw`, or `Resignation`) it stays over. Future terminal cases
-  * (e.g. `Timeout`) should extend this enum and be treated as terminal by
-  * [[isOver]].
+  * (`Checkmate`, `Draw`, `Resignation`, or `Timeout`) it stays over. `Timeout`
+  * (a side ran out of clock) is a service-imposed terminal like `Resignation`,
+  * not a rules outcome — `chess.model.rules.Game` never produces it.
   */
 enum GameStatus:
   case Playing
   case Checkmate(winner: Color)
   case Draw(reason: DrawReason)
   case Resignation(winner: Color)
+  case Timeout(winner: Color)
 
   def isPlaying: Boolean = this == Playing
   def isOver: Boolean = !isPlaying

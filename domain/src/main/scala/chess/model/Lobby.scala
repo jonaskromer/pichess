@@ -31,7 +31,11 @@ case class Lobby(
     spectatorLimit: Int,
     status: LobbyStatus,
     createdAt: Long,
-    gameId: Option[GameId]
+    gameId: Option[GameId],
+    // Time control for the hosted game, carried so the guest sees it and the
+    // host's client creates the game with it. `0` = untimed (the default).
+    initialSeconds: Int = 0,
+    incrementSeconds: Int = 0
 ):
   /** A guest joins by supplying their nickname AND their session id; the
     * gateway's role registry needs both names tied to specific sessions
