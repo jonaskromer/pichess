@@ -2227,9 +2227,26 @@ object Main:
         }
       case _ => analyzeRequestedVar.set(false)
     }
+    // Safety net for a wedged backend that never answers: re-arm the button so
+    // it can't sit on "Analyzing…" forever. The server enforces its own
+    // (shorter) per-move budget, so a real run resolves via the branches above
+    // well before this fires.
+    dom.window.setTimeout(
+      () =>
+        if analyzeRequestedVar.now() && analysisVar.now().isEmpty then
+          analyzeRequestedVar.set(false)
+          showToast("Analysis timed out — try again"),
+      AnalysisClientTimeoutMs
+    )
 
-  /** Server clamps to its own ceiling; this is the depth the UI asks for. */
-  private val AnalysisDepth = 16
+  /** Engine search depth the UI asks for per move. Kept modest (the server
+    * clamps to its own ceiling anyway): a post-game pass rates every ply, so a
+    * deep search per ply across a whole game is expensive — depth 10 is the
+    * server's tuned default and analyses a full game in seconds. */
+  private val AnalysisDepth = 10
+  /** Client-side stuck-button guard; longer than the server's analysis deadline
+    * so it only fires if the backend never responds at all. */
+  private val AnalysisClientTimeoutMs = 165000.0
 
   private def postAndToastErrors(
       f: Future[Either[ErrorDto, BoardStateDto]]

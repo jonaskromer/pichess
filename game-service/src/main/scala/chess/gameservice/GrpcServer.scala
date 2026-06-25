@@ -260,11 +260,45 @@ final class GrpcServer(
       val depth =
         if request.depth <= 0 then GrpcServer.DefaultAnalysisDepth
         else math.min(request.depth, GrpcServer.MaxAnalysisDepth)
-      analysisService
-        .flatMap(_.analyze(request.pgn, depth))
-        .map(dto => AnalyzeReply(analysisJson = dto.toJson))
-        .mapError(GrpcMappers.toStatusException)
+      analysisDeadline(request.pgn).flatMap { deadline =>
+        analysisService
+          .flatMap(_.analyze(request.pgn, depth))
+          // Bound the whole pass: ~PerMoveBudget per ply, clamped. The engine's
+          // per-ply searches are uninterruptible, but ZIO interrupts at the
+          // between-ply boundaries, so this caps total wall-clock to roughly
+          // `deadline + one ply`. It's a safety ceiling (depth 10 finishes well
+          // under it) — on expiry we surface a clean error instead of hanging.
+          .timeoutFail(
+            GameError.InfrastructureError(
+              s"Analysis exceeded its ${deadline.toSeconds}s budget " +
+                "(too many moves at this depth)"
+            )
+          )(deadline)
+          .map(dto => AnalyzeReply(analysisJson = dto.toJson))
+          .mapError(GrpcMappers.toStatusException)
+      }
     }
+
+  /** Per-move time budget → an overall analysis deadline: `PerMoveBudget × plies`,
+    * clamped to `[Min, Max]`. Ply count comes from a cheap pre-parse (the parse
+    * recurs inside `analyze`, but it's microseconds against a multi-second
+    * search). A malformed PGN can't be counted, so it falls back to the floor —
+    * `analyze` will reject it on its own parse anyway. */
+  private def analysisDeadline(pgn: String): UIO[Duration] =
+    chess.codec.PgnParser
+      .parse(pgn)
+      .map(_.history.size)
+      .orElseSucceed(0)
+      .map { plies =>
+        val ms = math.max(
+          GrpcServer.MinAnalysisBudgetMs,
+          math.min(
+            GrpcServer.MaxAnalysisBudgetMs,
+            plies.toLong * GrpcServer.PerMoveBudgetMs
+          )
+        )
+        Duration.fromMillis(ms)
+      }
 
   def subscribeGame(
       request: GameIdRequest,
@@ -400,6 +434,15 @@ object GrpcServer:
   // 4-vCPU deploy box).
   private val DefaultAnalysisDepth = 10
   private val MaxAnalysisDepth     = 20
+
+  // Per-move time budget that sets the overall analysis deadline
+  // (`PerMoveBudget × plies`, clamped). 2 s/move is generous against an
+  // actual depth-10 ply (usually sub-second), so the deadline is a safety
+  // ceiling rather than the normal stopping point; the floor keeps short
+  // games from being starved, the cap keeps a long game from running away.
+  private val PerMoveBudgetMs    = 2000L
+  private val MinAnalysisBudgetMs = 20000L  // 20 s
+  private val MaxAnalysisBudgetMs = 150000L // 2.5 min hard ceiling
 
   val layer: URLayer[
     GameService & GameEventProducer & GameSessions & Tracing &
