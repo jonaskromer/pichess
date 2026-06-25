@@ -95,7 +95,7 @@ The chosen input is **FEN** (Forsyth–Edwards Notation), since it's the natural
 
 **Lecture task:** Start each microservice using Docker. Then start the entire application using Docker Compose.
 
-- The Phase-5 SBT split introduced the multi-service skeleton (it has since grown to **32 modules** as later phases added persistence, the bot, the lobby, the projections, and the tournament bot — see [architecture.md](architecture.md) for the full map):
+- The Phase-5 SBT split introduced the multi-service skeleton (it has since grown to **34 modules** as later phases added persistence, the bot, the lobby, the projections, the tournament bot, and post-game analysis — see [architecture.md](architecture.md) for the full map):
   - `domain` (cross JVM/JS), `api` (cross JVM/JS), `rules`, `codec`, `repositoryApi` — libraries (no Docker)
   - `events` — Kafka event ADT + zio-json codecs (new in this phase)
   - `proto` — generated zio-grpc stubs (new in this phase; `coverageEnabled := false` for generated code)

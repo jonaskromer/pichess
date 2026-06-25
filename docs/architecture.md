@@ -45,7 +45,7 @@ For background see:
 
 ## SBT Module Map
 
-The build is **33 sbt modules** (run `sbt projects` for the live list — it reports 35 + `root` because `domain` and `api` each expand into JVM + JS variants there). `domain` and `api` are cross-compiled to JVM **and** JS so the Scala.js web-ui shares types and DTOs with the JVM gateway. Modules group into libraries, persistence, the bot, the deployable services, and cross-cutting/test tooling:
+The build is **34 sbt modules** (run `sbt projects` for the live list — it reports 36 + `root` because `domain` and `api` each expand into JVM + JS variants there). `domain` and `api` are cross-compiled to JVM **and** JS so the Scala.js web-ui shares types and DTOs with the JVM gateway. Modules group into libraries, persistence, the bot, the deployable services, and cross-cutting/test tooling:
 
 ```
 root (aggregate)
@@ -73,6 +73,7 @@ root (aggregate)
 │
 ├─ Bot / engine
 │  ├── bot-engine          chess.bot — Search/AlphaBetaSearch, Evaluator family, EngineBundle, TT, OpeningBook
+│  ├── analysis            chess.analysis — post-game WinProb / MoveQuality / GameAnalyzer (drives the AnalyzeGame rpc)
 │  ├── bot-data            DuckDB-backed opening book + training-corpus accumulator
 │  ├── bot-train           offline training & Elo harness (TexelTuner, SelfPlay, NnueDataGen, TournamentMain)
 │  ├── bot-lichess         online Lichess Bot-API client (LichessBotMain, Bridge, GameRunner)
@@ -257,7 +258,7 @@ Orchestration plus the per-game session model and the gRPC entry point. These li
 | `GameService.scala` | `chess.service` | Trait: `newGame()`, `loadGame(input)` (auto-detects JSON / PGN / FEN), `makeMove(id, input)`, `getState(id)`, `saveState(id, state)`. Returns `IO[GameError, A]` |
 | `GameServiceLive.scala` | `chess.service` | Live impl. `makeMove` parses → validates → applies → persists, returning `(newState, GameEvent.MoveMade)`; the producer publishes the event to Kafka |
 | `SessionState.scala` | `chess.model` | `GameSnapshot` (game id, initial state, history newest-first, redo stack) + `SessionState` (snapshot + optional error/output), held in a `SubscriptionRef` |
-| `GrpcServer.scala` | `chess.gameservice` | zio-grpc service impl — the `MakeMove` / `NewGame` / `GetState` RPCs the gateway calls; also drives the synchronous vs-bot reply (below) |
+| `GrpcServer.scala` | `chess.gameservice` | zio-grpc service impl — the game-lifecycle RPCs the gateway calls (`NewGame`, `LoadGame`, `MakeMove`, `Undo`, `Redo`, `ClaimDraw`, `Forfeit`, `GetState`, `ExportGame`, `AnalyzeGame`, `ReplayGame`, `ListActiveGames`, and the streaming `SubscribeGame`); also drives the synchronous vs-bot reply (below) |
 
 The **vs-computer** path lives here too: `game-service` depends on `bot-engine`, and the bot's reply is computed **synchronously inside the `MakeMove` RPC** — `GrpcServer.makeMove` applies the player's move, then `maybeBotReply` blocks on the engine's fixed-depth search and applies the bot's move through the same `GameController` path. So one vs-bot move publishes **two** `MoveMade` Kafka events (player, then bot), while the SSE subscriber sees a single merged post-bot `state` frame rather than a transient "player moved, waiting" frame.
 
@@ -330,7 +331,7 @@ The 14-phase HTWG lecture plan ([roadmap.md](roadmap.md)) is essentially complet
 
 | Tool | Version | Purpose |
 |---|---|---|
-| sbt | 1.12.6 | Build tool (33-module multi-project) |
+| sbt | 1.12.6 | Build tool (34-module multi-project) |
 | Scala | 3.8.2 | Language |
 | ZIO | 2.1.26 | Effect system, DI, concurrency |
 | zio-http | 3.11.2 | HTTP server, SSE |

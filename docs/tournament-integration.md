@@ -93,8 +93,8 @@ always a synthesized `gameState` snapshot, then live events:
   `BotRef(sub, name)` as a participant; games are built with those `BotRef`s;
   `move` is authorised by `game.currentPlayer.id == sub`. So matching our
   registered id against the game's players is exactly what the server checks.
-- **No timeout enforcement** in this server version — `GameStatus.Timeout` is
-  never set and clocks aren't decremented in `makeMove`. We can't flag; the
+- **No timeout enforcement** in this server version — the server never flags on
+  time and clocks aren't decremented server-side. The bot can't force a flag; its
   `TimeManager` budget is still applied (bounded think time) but is advisory.
 
 **Move** — `POST /.../move/{uci}` → `200 {"ok":true}` or `4xx {"error":...}`
@@ -200,9 +200,10 @@ contract against the exact server JSON). `TournamentBotMain` is coverage-exclude
 like the other `*Main` entrypoints (`build.sbt:271`).
 
 Run it like the Lichess bot — straight from sbt:
-`TOURNAMENT_ID=… sbt 'botTournament/run'`. **Still open:** there is no dedicated
-Make target or Docker image yet — neither bot is containerised today (both run
-from sbt).
+`TOURNAMENT_ID=… sbt 'botTournament/run'`. It is also containerised:
+`make tournament-bot` builds the `pichess-bot-tournament` image, run via the
+compose `tournament` profile (`docker compose --profile tournament up`) or the
+k8s `full` overlay.
 
 ### Metrics & Grafana
 

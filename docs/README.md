@@ -6,9 +6,9 @@ the canonical system map — then dip into whichever area below you need.
 ## Architecture & decisions
 | Doc | What's in it |
 |---|---|
-| [architecture.md](architecture.md) | The system map: service graph, the 32-module SBT inventory, gRPC/Kafka contracts, the gateway HTTP/SSE surface, and the ADR index. The first thing to read. |
+| [architecture.md](architecture.md) | The system map: service graph, the 34-module SBT inventory, gRPC/Kafka contracts, the gateway HTTP/SSE surface, and the ADR index. The first thing to read. |
 | [design.md](design.md) | The **web-UI design system** — CSS tokens, Tailwind setup, Laminar component helpers, screen skeletons. (UI, not domain.) |
-| [adr/](adr/) | Architecture Decision Records (001–021) — one decision per file, with context/alternatives/consequences. Indexed in architecture.md. |
+| [adr/](adr/) | Architecture Decision Records (001–022) — one decision per file, with context/alternatives/consequences. Indexed in architecture.md. |
 
 ## Domain & rules
 | Doc | What's in it |

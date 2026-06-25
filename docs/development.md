@@ -122,7 +122,7 @@
 
 ### Multi-Project Tips
 
-The project has 32 SBT sub-projects (run `sbt projects` for the full list; `domain` and `api` each show up twice there, as JVM + JS variants). To run commands against a single module, prefix with the module name: `sbt codec/test`, `sbt gateway/compile`, etc. `sbt test` runs tests across all modules.
+The project has 36 SBT sub-projects (run `sbt projects` for the full list; `domain` and `api` each show up twice there, as JVM + JS variants). To run commands against a single module, prefix with the module name: `sbt codec/test`, `sbt gateway/compile`, etc. `sbt test` runs tests across all modules.
 
 Coverage is enforced at 100% on all JVM modules. The build fails if any line is uncovered. Scala.js modules (`web-ui`, `domain.js`, `api.js`) have coverage disabled since scoverage doesn't instrument JS output. The `proto` module has coverage disabled (generated code) and `KafkaGameEventProducer`/`KafkaGameEventConsumer`/`GameServiceMain`/`GatewayMain` are excluded via `coverageExcludedFiles` (they need a live broker / port to exercise; covered by docker-compose smoke tests instead). Use `scripts/check-coverage.py` after a `coverageReport` run to inspect uncovered lines per file.
 
@@ -219,7 +219,7 @@ set, so a new backend gets caching support for free.
 
 ## Docker
 
-Seven services are Docker-packaged via sbt-native-packager. The full set:
+Nine services are Docker-packaged via sbt-native-packager. The full set:
 
 | Service             | Container port | Module           | Role |
 |---------------------|----------------|------------------|------|
@@ -231,6 +231,7 @@ Seven services are Docker-packaged via sbt-native-packager. The full set:
 | `spark-analytics`   | (no HTTP)      | `spark-analytics`| Spark speed layer: `chess.game-events` → sessionize → `chess.analytics`. |
 | `analytics-service` | 8093 (REST)    | `analytics-service` | Kafka consumer (`chess.game-events` + `chess.analytics`) → zio-metrics for Grafana (no DB). |
 | `tui-service`       | (no HTTP)      | `tui`            | Headless control surface; spawn via `make tui`. |
+| `bot-tournament`    | (metrics :9107)| `bot-tournament` | Plays an external NowChess tournament server (gateway-signalled). Compose `tournament` profile / k8s `full` overlay. |
 
 Each service also exposes Prometheus metrics on a dedicated port (9101–9106) regardless of profile — see the "Inner-loop env vars" table above for `METRICS_PORT` defaults.
 

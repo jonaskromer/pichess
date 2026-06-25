@@ -427,9 +427,10 @@ runs only under the `obs` profile.
 `docker/grafana/provisioning/datasources/datasource.yml` auto-provisions
 Prometheus as the default datasource at startup.
 `docker/grafana/provisioning/dashboards/dashboards.yml` provisions every JSON
-file in `docker/grafana/dashboards/` — currently just `pichess.json`, the
-"piChess — JVM overview" dashboard (active fibers, JVM heap, GC pause time,
-thread count). Anonymous read-only login is on (single-user dev rig).
+file in `docker/grafana/dashboards/` — `pichess.json` (the "piChess — JVM
+overview": active fibers, JVM heap, GC pause time, thread count), plus
+`pichess-analytics.json` and `pichess-tournament.json`. Anonymous read-only
+login is on (single-user dev rig).
 
 ### Invocation
 
@@ -739,19 +740,29 @@ proto↔Scala translation step; it's not binary-encoding-as-a-virtue.
 
 ## Deferred work
 
-The plan in [the design ADR](adr/) called for additional tracing surfaces; they
-weren't required to ship the rest of the stack and carry known integration
-risk. All three slot in additively (no rework of what's shipped).
+The plan in [the design ADR](adr/) called for three additional tracing surfaces.
+**Two have since shipped**; one remains deferred (each slots in additively, no
+rework of what's shipped).
+
+**Shipped since:**
+- **Kafka context propagation** — `KafkaGameEventProducer` wraps the produce in a
+  `PRODUCER` span and injects the W3C `traceparent` into record headers
+  (`KafkaGameEventProducer.scala:38,68`); the `repository` and `opening-service`
+  consumers extract it (`extractSpan`, `SpanKind.CONSUMER`). The
+  `analytics-service` consumer does not yet extract — the one remaining gap.
+- **DB tracing decorator** — `TracedGameRepository` / `TracedLobbyRepository`
+  (in `persistence/runtime/`, not a separate `persistence/tracing/` module) wrap
+  any backend with uniform `db.<op>` spans, wired at `PersistenceLayers`.
+
+**Still deferred:**
 
 | Deferred | Wiring needed | Reasoning |
 |---|---|---|
-| **gRPC tracing** between gateway ↔ game-service | `ZServerInterceptor.fromServerInterceptor(otelInterceptor)` at `GameServiceMain.scala:79` + matching `ManagedChannelBuilder.intercept(...)` at `GatewayMain.scala:86`. Needs the `opentelemetry-grpc-1.6` instrumentation jar. | Today a gateway→game-service request shows as two unconnected traces. Adding this is the single highest-value tracing improvement. |
-| **Kafka context propagation** | Wrap `producer.produce(...)` in `Tracing.span("kafka.produce")` with header injection at `KafkaGameEventProducer.scala:21`, and header extraction at the three consumers (`repository/KafkaGameEventConsumer.scala:43-63`, `opening/.../KafkaOpeningConsumer.scala`, `analytics/.../KafkaAnalyticsConsumer.scala`). | zio-kafka 2.10 has no native OTel hook; this is a small amount of manual plumbing. |
-| **DB tracing decorator** | New `persistence/tracing/` module mirroring `persistence/cache/.../CachedGameRepository.scala:19-38`, wrapping `GameRepository` and `LobbyRepository` at the trait boundary so every backend gets `db.<op>` spans uniformly. Wire at `PersistenceLayers.gameRepository`. | Single point-of-instrumentation gives identical span shape across Postgres / Mongo / Redis / Cassandra. |
+| **gRPC tracing** between gateway ↔ game-service | `ZServerInterceptor.fromServerInterceptor(otelInterceptor)` at `GameServiceMain` + matching `ManagedChannelBuilder.intercept(...)` at `GatewayMain`. Needs the `opentelemetry-grpc-1.6` instrumentation jar. | Today a gateway→game-service request shows as two unconnected traces. Adding this is the single highest-value tracing improvement. |
 
 The observability module already pulls in `zio-opentelemetry` and
-`opentelemetry-sdk`, so all three land as new files + a few-line wiring change,
-no dependency churn.
+`opentelemetry-sdk`, so the remaining surface lands as new files + a few-line
+wiring change, no dependency churn.
 
 ---
 

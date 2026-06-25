@@ -1,12 +1,12 @@
 # Replaying completed games — plan
 
-> Status: **Planned** (2026-06-25). Read-only board time-travel by clicking
+> Status: **Shipped** (2026-06-25). Read-only board time-travel by clicking
 > half-moves in the move log of a **finished** game. The game-service already
 > stores every ply's position (`GameSnapshot.history`), so this is a pure
 > *projection* of existing state — no move re-computation, and no chess logic on
 > the client (`rules`/`codec` are JVM-only and can't run in Scala.js). Built as
-> the **substrate** that the in-progress timed-games and post-game-analysis
-> features layer onto without depending on it. See **"Tie-ins"**.
+> the **substrate** that the post-game-analysis feature layers onto without
+> depending on it. See **"Tie-ins"**.
 
 ## Context
 A completed game currently dead-ends: the board shows the final position and the
@@ -14,8 +14,8 @@ move log is inert. We want to step back through the game. On a completed game
 (and only then), clicking any half-move in the move log jumps the board to that
 position. The **active** move is marked with an emphatic scribble underline (full
 ink); moves **after** it are muted; **hovering** any move shows the same underline
-in muted ink (a preview). This is the review/learning surface the timed-games and
-analysis features build on.
+in muted ink (a preview). This is the review/learning surface the analysis
+feature builds on.
 
 ## What exists vs what's missing
 - ✅ **Every intermediate position is already stored** — `GameSnapshot.history:
@@ -100,28 +100,15 @@ scrubs locally (instant, offline, no per-click round-trip).
 - The move-log row keeps an **optional per-ply annotation slot** for the analysis
   feature's eval badge (see Tie-ins).
 
-## Tie-ins with timed-games & analysis (independent, but meet here)
-Aligned with `timed-games-plan.md` → "Tie-ins". All three ship independently.
-1. **`"timeout"` result kind (shared).** Timed games added
-   `GameStatusDto("timeout", winner)`. The result/end-screen the replay batch
-   renders must handle `"timeout"` in its exhaustive `status.kind` match
-   (e.g. "TIMEOUT · WHITE WINS"). The DTO carries it today.
-2. **Per-ply clocks are *derived*, not stored.** Per `timed-games-plan.md` #2,
-   `MoveMade` events carry `occurredAt`, so time-per-move = Δ of consecutive move
-   timestamps and remaining-at-ply = config − cumulative-used + increments. Replay
-   does **not** store per-ply clocks; when timed-games lands, replay reconstructs
-   them from timestamps + the (to-be-persisted) clock config and feeds the
-   **pure clock-face component** (timed-games Phase D) historical *paused* values —
-   no live interpolation in replay. The only data dependency on us: surface
-   per-move `occurredAt` in the replay payload when that work starts (additive).
-3. **Analysis layers a parallel per-ply map.** Post-game eval/quality lives in a
+## Tie-ins with analysis (independent, but meet here)
+Replay and analysis ship independently and meet at small, additive seams.
+1. **Analysis layers a parallel per-ply map.** Post-game eval/quality lives in a
    separate `Map[ply, …]` (computed via `Search.evaluate`/`bestMoves`,
    `bot-engine/.../Search.scala:68-101`) shipped through an `AnnotationsDto`-style
    sidecar and painted into the move-log's annotation slot. Replay provides the
    clickable log + `activePlyVar`; it never computes evals.
-4. **Shared files (additive, merge-prone):** `BoardStateDto.scala` (this adds the
-   replay DTOs; timed-games added `clock`; analysis may add eval), `renderMoveLog`,
-   and the result card.
+2. **Shared files (additive, merge-prone):** `BoardStateDto.scala` (this adds the
+   replay DTOs; analysis may add eval), `renderMoveLog`, and the result card.
 
 ## Files
 - `proto/src/main/protobuf/pichess/game_service.proto` — `ReplayGame` rpc + messages.
@@ -144,8 +131,8 @@ Aligned with `timed-games-plan.md` → "Tie-ins". All three ship independently.
 1. **Server replay, client-cached vector** — one `ReplayGame` fetch on completion;
    instant local scrubbing; read-only (no live-game mutation).
 2. **Endpoint open for any game**; the client gates interaction on "completed".
-3. **Replay substrate only now** — clock display and eval badges belong to the
-   parallel timed-games / analysis features; this defines and leaves their seams.
+3. **Replay substrate only now** — eval badges belong to the parallel analysis
+   feature; this defines and leaves its seams.
 4. **Active-move marker = emphatic scribble underline** (thicker / double-stroke
    `scribble-underline` mask under `#hand-drawn`): full ink active, muted ink on
    hover; later moves muted.

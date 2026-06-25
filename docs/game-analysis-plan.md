@@ -1,6 +1,6 @@
 # Game analysis — plan
 
-> Status: **Phases 1–2 implemented** (2026-06-25). Phase 1 — PGN `%clk`/`%emt` +
+> Status: **Implemented** (2026-06-25) — all phases shipped. Phase 1 — PGN `%clk`/`%emt` +
 > NAG + ECO/Opening codec (`PgnMove`/`MoveAnnotation`/`Nag`, `PgnCodec` clock/emt/
 > nag encode+decode, `PgnSerializer.serializeAnnotated`, annotation-preserving
 > `PgnParser`; also fixed the latent `1...`/glued-glyph import bugs). Phase 2 —
@@ -16,21 +16,25 @@
 > `analysis` module: `WinProb` (cp→win%, Lichess model), `MoveQuality`
 > (win-%-drop → full NAG `MoveClass` + per-side accuracy), and `GameAnalyzer`
 > (engine-driven per-move rating + opening + accuracy over a parsed game); 100%
-> gate, tested with a cheap evaluator. Phase 3b (DB backends + wiring +
-> tournament recorder) and Phases 4b/5/6 remain.
+> gate, tested with a cheap evaluator. **Phases 3b, 4b, 5, and 6 are now also
+> complete** (see Phasing): archive persisted across all four DB backends + the
+> tournament recorder, the `AnalyzeGame` gRPC / `POST /api/analyze` surface, and
+> the full web-ui analysis UI (move-quality glyphs, eval bar, opening label,
+> per-side accuracy, step-through).
 >
-> **Note (2026-06-25):** timed-games and replay are both **complete**, so the
-> coordination seams are resolved — the GUI phases reuse replay's
-> `positionAtPly` + clock face directly, and per-move clocks are now real (the
-> archive can carry explicit `%clk`, analysis can correlate time-per-move).
+> **Note (2026-06-25):** replay is **complete**, so the coordination seams are
+> resolved — the GUI phases reuse replay's `positionAtPly`/`activePlyVar`
+> directly. Per-move clocks come from **tournament** games (the external server's
+> authoritative clock, captured by the bot recorder) and from `occurredAt` deltas;
+> piChess's own local games are clockless, so the archive carries explicit `%clk`
+> only for tournament games.
 > Decisions locked (see end). Adds post-game
 > analysis to piChess: per-move quality glyphs (full NAG vocabulary), an eval /
 > win-% graph, the **named opening** (ECO-level, within reason), per-move
 > think-time, and a step-through review — for piChess's own games **and**
 > tournament (bot-vs-bot) games. Built as three layers that are independently
-> developable and decoupled — "in large parts" — from the in-flight **replay**
-> and **timed-games** features (see [timed-games-plan.md](timed-games-plan.md)
-> "Tie-ins"). Analysis runs **on-demand, cached**.
+> developable and decoupled — "in large parts" — from the **replay** feature
+> (see "Independence & coordination"). Analysis runs **on-demand, cached**.
 
 ## Standards we adopt (the "is there a standard?" answer)
 Yes — everything maps to **PGN** plus its de-facto annotation conventions, so a
@@ -94,17 +98,14 @@ the data to reconstruct clocks, exportable as PGN-with-`%clk`.
 - **`GameEnded` finalizes** the archive: assemble ordered plies → a `GameArchive`
   record + the PGN-with-`%clk` blob + headers (`Result`, `TimeControl`, players).
   Finalize is itself idempotent (rebuild from the per-move rows).
-- **Clocks** (reconciling the timed-games plan's tie-in #2/#3 with the
-  async-archiver steer):
-  - **time-per-move** comes from consecutive `occurredAt` Δ (always available).
-  - **remaining-per-ply** = `initial − cumulativeUsed + increments` from the
-    **clock config**, which must travel with the game — captured by the archiver
-    from `GameStarted` (coordinate: `GameStarted`/game-meta should carry the
-    clock config; timed-games plan already names "persist clock config" as its
-    one requirement here).
-  - If timed-games later puts an explicit clock on `MoveMade`, the archiver
-    prefers it (forward-compatible); otherwise it derives. Either way the archive
-    ends up with per-move time — `clockMs` is `Optional`/authoritative-when-present.
+- **Clocks** (tournament games only — piChess's own local games are clockless):
+  - **time-per-move** comes from consecutive `occurredAt` Δ (always available,
+    for any game).
+  - **remaining-per-ply** for tournament games is the external server's
+    authoritative clock, captured per move by the bot's recorder and submitted
+    with the archive — `clockMs` is `Optional`/authoritative-when-present.
+  - Local games carry no clock, so their archive has time-per-move (from
+    `occurredAt`) but no remaining-clock annotation.
 - **Tournament games** (off the Kafka path, bot sometimes off-cluster): the bot
   gets a small **per-game recorder** that accumulates `(uci, fen, GameClock)` from
   `MovePlayed`/`StateSnapshot` and, at game end, **POSTs a ready PGN-with-`%clk`
@@ -187,21 +188,18 @@ thresholds (tunable; "good/best" carry no glyph):
 robust `?!/?/??/best/book` core. Per-side **accuracy %** from mean win-% loss.
 
 ## Independence & coordination
-The three features (analysis, **replay**, **timed-games**) are largely parallel;
-they meet at small, additive seams — coordinate, don't serialize:
+Analysis and **replay** are largely parallel; they meet at small, additive seams
+— coordinate, don't serialize:
 
 - **Replay ↔ analysis share exactly one primitive:** `positionAtPly(moveLog, n)`
   + a `viewingPlyVar`. ~80% of analysis (glyphs, eval bar, win-% graph, opening
   label, accuracy) annotates the **static** move list and needs no stepping. Only
   "click move → board jumps" overlaps replay. Land `positionAtPly` as a thin PR
   either feature can merge first; the second reuses it.
-- **Timed-games ↔ analysis:** clocks are `Optional` throughout — analysis works
-  without them and gains a time-per-move overlay once present. The archiver
-  (Layer 1) is where the clock **config** capture (timed-games tie-in #2) and the
-  time-per-move correlation (tie-in #3) actually land.
-- **Shared `GameStatus.Timeout`:** any result-renderer (move list end, analysis
-  of the final position) must handle the `"timeout"` `GameStatusDto.kind`
-  (already in the DTO; see timed-games tie-in #1).
+- **Clocks (tournament only):** clocks are `Optional` throughout — analysis works
+  without them and gains a time-per-move overlay when present. Tournament archives
+  carry the external server's authoritative per-move clock; local games are
+  clockless. The archiver (Layer 1) is where the time-per-move correlation lands.
 - **Merge-prone files:** `BoardStateDto`/new DTOs (additive fields), `renderMoveLog`
   + `board()` (glyphs / ply-view). Keep changes additive; coordinate the
   `positionAtPly` helper.
@@ -284,9 +282,9 @@ they meet at small, additive seams — coordinate, don't serialize:
 1. **Rating: full NAG vocabulary** (`$1`–`$6` + book), win-%-based; robust core
    (`?!/?/??/best/book`) first, heuristic `!!/!/!?` after.
 2. **Clocks: async, idempotent archiver consumer** (order-agnostic, keyed
-   `(gameId, ply)`); time-per-move from `occurredAt`, clock **config** persisted
-   with the game; explicit clocks used when present (tournament always; timed
-   local if surfaced). game-service stays non-blocking.
+   `(gameId, ply)`); time-per-move from `occurredAt`; explicit per-move clocks
+   used when present (tournament games — the external server's authoritative
+   clock; local games are clockless). game-service stays non-blocking.
 3. **Trigger: on-demand + cached** in the archive.
 4. **Opening: bundled committable ECO TSV** (ECO-code granularity), coarse
    families as fallback.

@@ -10,9 +10,9 @@ exercised against the real HTWG box — the `mongo:4.4` pin in §8 was discovere
 watching `mongo:5+` crash‑loop on its AVX‑less QEMU vCPUs. What exists today:
 
 - **CI publishes images** — `.github/workflows/release.yml` builds multi‑arch
-  (amd64 + arm64) images for `gateway`, `game-service`, `repository`, and
-  `lobby-service` and pushes them to **GHCR** on every `v*` tag (gated by the
-  `test.yml` coverage suite).
+  (amd64 + arm64) images for `gateway`, `game-service`, `repository`,
+  `lobby-service`, and `bot-tournament`, and pushes them to **GHCR** on every
+  `v*` tag (gated by the `test.yml` coverage suite).
 - **Kubernetes manifests** — a **Kustomize** base + three nested overlays
   (`mvp` ⊂ `lobbies` ⊂ `full`) under `deploy/k8s/`.
 - **A local‑driven Ansible pipeline** (`deploy/ansible/`) — provisions a cluster
@@ -52,7 +52,7 @@ commands. The HTWG specifics we had to discover ourselves are now pinned down in
 
 ### 2.1 CI — image publishing (`.github/workflows/`)
 - `test.yml` — coverage gate on every push / PR (also `workflow_call`).
-- `release.yml` — on a `v*` tag: re‑runs `test.yml`, then for the four deployable
+- `release.yml` — on a `v*` tag: re‑runs `test.yml`, then for the five deployable
   services runs `sbt <svc>/Docker/stage` and `docker buildx build --platform
   linux/amd64,linux/arm64 --push`, tagging `:<version>` **and** `:sha-<sha>` under
   `ghcr.io/jonaskromer/pichess-*`, and cuts a GitHub Release.
@@ -72,7 +72,7 @@ deploy/k8s/
   overlays/
     mvp/      = base as-is
     lobbies/  = mvp + lobby-service + a gateway patch (PICHESS_LOBBY_URL)
-    full/     = lobbies + mongodb + redis + kafka + repository, ConfigMap merged to mongo+redis+kafka
+    full/     = lobbies + mongodb + redis + kafka + repository + bot-tournament, ConfigMap merged to mongo+redis+kafka
 ```
 
 Two Kustomize features carry real weight:
@@ -215,13 +215,13 @@ Image pulls need **no** pull‑secret either: the ghcr packages are **public**.
 
 > **Pre-deploy checklist** (each of these has bitten a real deploy):
 > 1. **The release images must exist on GHCR.** A deploy pulls
->    `ghcr.io/jonaskromer/pichess-{gateway,game-service,repository,lobby-service}:<version>`,
+>    `ghcr.io/jonaskromer/pichess-{gateway,game-service,repository,lobby-service,bot-tournament}:<version>`,
 >    published by `release.yml` **only if its 100%-coverage gate passed** — a coverage
 >    failure on the tagged commit means no images and the deploy `ImagePullBackOff`s.
->    Verify first: `for i in gateway game-service repository lobby-service; do docker manifest inspect ghcr.io/jonaskromer/pichess-$i:<version> >/dev/null 2>&1 && echo "$i ok" || echo "$i MISSING"; done`
+>    Verify first: `for i in gateway game-service repository lobby-service bot-tournament; do docker manifest inspect ghcr.io/jonaskromer/pichess-$i:<version> >/dev/null 2>&1 && echo "$i ok" || echo "$i MISSING"; done`
 > 2. **Bump the image tag** to `<version>`: set `newTag` in `deploy/k8s/base/kustomization.yaml`
 >    (gateway, game-service), `overlays/lobbies/kustomization.yaml` (lobby-service), and
->    `overlays/full/kustomization.yaml` (repository). The kustomize `newTag` is what the
+>    `overlays/full/kustomization.yaml` (repository, bot-tournament). The kustomize `newTag` is what the
 >    deploy applies — `image_tag` in `group_vars/all.yml` is reference-only. Keep
 >    `deploy/compose/*.env` in sync.
 > 3. **HTWG uses key auth** (no `sshpass` on the Mac): append

@@ -3,8 +3,11 @@
 Reference for the bot's strength levers, the shared training pipeline, and the
 validation strategy. Companion to [`bot.md`](bot.md) (Elo methodology + results).
 
-Status as of 2026-06-10. **Almost everything below is built but not yet
-A/B-validated** — see [Validation strategy](#validation-strategy).
+Status as of 2026-06-10, with later updates inline. Most levers below were built
+by then; several have **since been A/B-validated and adopted as defaults** —
+notably the NNUE endgame-boost retrain and the HCE+NNUE hybrid blend (see the
+per-lever notes and [bot.md](bot.md)). The rest still await A/B — see
+[Validation strategy](#validation-strategy).
 
 ---
 

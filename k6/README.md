@@ -9,8 +9,8 @@ Gatling owns the HTTP load shapes; k6 covers what Gatling can't:
 | Kafka    | `scripts/kafka/game-events.js`    | Direct producer load via `xk6-kafka`. Gatling can only reach Kafka via the upstream HTTP path. |
 | gRPC     | `scripts/grpc/game-service.js`    | Native gRPC against game-service. Today only reachable transitively through the gateway. |
 
-Only the browser surface ships in this first cut; the other two land later
-(see "Deferred work" in `docs/performance.md`).
+All three surfaces now ship — run them with `make k6-browser`, `make k6-kafka`,
+and `make k6-grpc` (see Quick start).
 
 ## Quick start
 

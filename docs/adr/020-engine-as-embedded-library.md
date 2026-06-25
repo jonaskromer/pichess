@@ -20,9 +20,9 @@ APIs, no giant data files.
 - It is a plain sbt module (`build.sbt:226-228`, "pure CPU search + evaluator …
   no DB / no network / no DTOs") that `game-service`, `bot-lichess`, and
   `bot-tournament` each `.dependsOn` (`:603`, `:244`, `:265`). There is **no**
-  engine service: the seven built images are repository / game-service /
-  lobby-service / opening-service / analytics-service / gateway / tui — no engine
-  among them.
+  engine service: the nine built images are repository / game-service /
+  lobby-service / opening-service / analytics-service / spark-analytics /
+  bot-tournament / gateway / tui — no engine among them.
 - `game-service` plays vs-bot by a direct call
   `search.bestMove(state, depth, …)` (`VsBotOrchestrator.scala:118`,
   `GrpcServer.scala:210`) — not gRPC/HTTP/UCI.

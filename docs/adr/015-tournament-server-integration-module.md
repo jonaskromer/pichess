@@ -62,5 +62,6 @@ for the verified wire formats and open operational items.
 - A few small codec helpers (module-local `internal.SyncCodec`) are copies rather
   than shared with `bot-lichess`'s equivalent — accepted to keep the modules
   decoupled.
-- Not yet containerised (run from sbt), and a handful of server-side details
-  remain externally-gated — tracked in `tournament-integration.md`.
+- Containerised as the `pichess-bot-tournament` image (compose `tournament`
+  profile, k8s `full` overlay, `make tournament-bot`). A handful of server-side
+  details remain externally-gated — tracked in `tournament-integration.md`.

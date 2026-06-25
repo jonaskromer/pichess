@@ -591,7 +591,7 @@ k6-grpc: ## Run only the native k6 gRPC load against game-service
 # --- Full performance suite -----------------------------------------------
 
 .PHONY: perf-all
-perf-all: ## Run the full perf suite — JMH bench + Gatling cross-backend + k6 browser. Honors BACKENDS, MODE, OBS, K6_VUS, K6_DURATION
+perf-all: ## Run the full perf suite — JMH bench + Gatling cross-backend + k6 (browser/grpc/kafka). Honors BACKENDS, MODE, OBS, K6_VUS, K6_DURATION
 	scripts/perf-all.sh
 
 .PHONY: stack-restart

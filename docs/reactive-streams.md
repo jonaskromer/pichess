@@ -16,11 +16,11 @@ out of the MongoDB driver. Every piece below is load-bearing in production.
 
 | Akka Streams concept | ZIO Streams equivalent | Where it lives in PiChess |
 |----------------------|------------------------|---------------------------|
-| `Source[A, _]` | `ZStream[R, E, A]` | `GrpcServer.subscribeGame` — a live Source of game-state snapshots (`GrpcServer.scala:161`) |
+| `Source[A, _]` | `ZStream[R, E, A]` | `GrpcServer.subscribeGame` — a live Source of game-state snapshots (`GrpcServer.scala:269`) |
 | `Flow[A, B, _]` | `ZPipeline[R, E, A, B]` | TUI SSE decode pipeline: bytes → UTF-8 → lines → events (`TuiEventStream.scala:45`) |
 | `Sink[A, _]` | `ZSink[R, E, A, _, _]` / `runDrain` | Kafka offset-commit sink (`KafkaGameEventConsumer.scala:86`); Kafka producer as terminal sink (`KafkaGameEventProducer.scala:49`) |
 | `RunnableGraph` / `.run()` | `stream.run* ` | `.runDrain` on the consumer (`KafkaGameEventConsumer.scala:86`) |
-| Fan-out (`Broadcast`) | `SubscriptionRef.changes` → N subscribers | One game's state Source fans out to every SSE subscriber (`GrpcServer.scala:171`); the gateway's live spectator count fans out the same way (`SpectatorPresence.changes`, `SpectatorPresence.scala:55`) |
+| Fan-out (`Broadcast`) | `SubscriptionRef.changes` → N subscribers | One game's state Source fans out to every SSE subscriber (`GrpcServer.scala:281`); the gateway's live spectator count fans out the same way (`SpectatorPresence.changes`, `SpectatorPresence.scala:55`) |
 | Backpressure | demand-driven `ZStream` pull + `aggregateAsync` | Kafka consumer batches commits under load (`KafkaGameEventConsumer.scala:84`) |
 | Reactive Streams SPI (`Publisher`/`Subscriber`) | `zio-interop-reactivestreams` | MongoDB driver `Publisher[T]` → `ZStream` (`MongoOps.scala:16`) |
 | `via` / `to` composition | `.via(pipeline)` / `>>>` | `.via(ZPipeline.utf8Decode).via(ZPipeline.splitLines)` (`TuiEventStream.scala:48`) |
@@ -35,7 +35,7 @@ backed by `SubscriptionRef.changes`. Every time a move mutates the game's
 source: it has no end until the subscription scope closes.
 
 ```scala
-// game-service/.../GrpcServer.scala:161
+// game-service/.../GrpcServer.scala:269
 def subscribeGame(request: GameIdRequest, ctx: RequestContext)
     : Stream[StatusException, StateReply] =
   ZStream
@@ -151,9 +151,9 @@ the element shape at each Flow hop.
 
 ## Dependencies (build.sbt)
 
-- `dev.zio %% zio-kafka` — backpressured event streaming (`build.sbt:567`)
-- `dev.zio %% zio-interop-reactivestreams` — Reactive Streams SPI bridge for Mongo (`build.sbt:436`)
-- `dev.zio %% zio-http` — SSE server (`Response.fromServerSentEvents`) (`build.sbt:566`)
-- `com.softwaremill.sttp.client3 %% zio` — streaming HTTP client (`ZioStreams`) (`build.sbt:571`)
+- `dev.zio %% zio-kafka` — backpressured event streaming (`build.sbt:617`)
+- `dev.zio %% zio-interop-reactivestreams` — Reactive Streams SPI bridge for Mongo (`build.sbt:486`)
+- `dev.zio %% zio-http` — SSE server (`Response.fromServerSentEvents`) (`build.sbt:616`)
+- `com.softwaremill.sttp.client3 %% zio` — streaming HTTP client (`ZioStreams`) (`build.sbt:621`)
 
 No Akka Streams, no fs2 — the streaming layer is uniformly ZIO Streams.

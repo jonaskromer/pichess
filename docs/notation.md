@@ -161,8 +161,8 @@ A `[FEN "..."]` header sets a custom starting position for the game.
 
 - Move numbers (`1.`, `2.`, etc.) are parsed and stripped
 - Result tokens (`1-0`, `0-1`, `1/2-1/2`, `*`) mark the game result
-- Comments in braces (`{this is a comment}`) are ignored
-- Numeric Annotation Glyphs (`$1`, `$2`, etc.) are ignored
+- Comments in braces (`{...}`) are parsed: `[%clk]`/`[%emt]` clock annotations are extracted and preserved (`MoveAnnotation`); other comment prose is dropped
+- Numeric Annotation Glyphs (`$1`, `$2`, …) are parsed and preserved as move annotations (`MoveAnnotation.nag`), including glyphs glued to a move (`Nf3!`)
 - Each SAN move is replayed through the game engine and validated
 
 ---

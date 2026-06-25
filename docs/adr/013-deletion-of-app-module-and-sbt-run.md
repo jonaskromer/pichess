@@ -32,4 +32,4 @@ We considered a small `dev` module that boots all three Mains in one JVM with em
 ## Consequences
 - Existing tutorial material that says "just `sbt run`" is wrong — `README.md` and `docs/development.md` updated accordingly.
 - Any user reaching for a one-command boot uses `./scripts/dev-up.sh`, which is the actual prod-shaped path.
-- The `tui` module is now a parser-only library; runtime (REST client to the gateway) is documented future work. This is a tradeoff: TUI runnability lost in this iteration, simpler module graph gained.
+- The `tui` module was left as a parser-only library **in this iteration** (runtime deferred) — a tradeoff for a simpler module graph. That runtime has since landed; see the **Update** banner at the top of this ADR.

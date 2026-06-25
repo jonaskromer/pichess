@@ -4,6 +4,15 @@
 
 Accepted
 
+> **Update (analytics half superseded by [ADR 022](022-spark-analytics-projection.md)):**
+> the **ClickHouse** `move_events` projection described below was removed. The
+> analytics-service no longer writes ClickHouse — `KafkaAnalyticsConsumer` now folds
+> events into in-process Prometheus metrics (`AnalyticsMetrics`), and the Spark
+> speed-layer (ADR 022) owns durable analytics. The `AnalyticsSchema.scala` /
+> `AnalyticsProjection.scala` files cited under "Decision" no longer exist. The
+> **Neo4j opening-tree** projection (the other half of this ADR) is unchanged and
+> still accurate.
+
 ## Context
 
 The single `chess.game-events` topic ([ADR 010](010-kafka-as-event-log.md)) was

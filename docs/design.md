@@ -307,11 +307,11 @@ never as a screen CTA (that's a post-it, §4.4).
 | `.form-row` | Wrapper for one label + one control (always handwritten label, never floating placeholder) |
 | `.form-row-checkbox` | Variant for checkbox rows (the label sits to the right of the box) |
 | `.form-row-label` | The handwritten label text |
-| `.form-control` | Any `<input>` / `<select>` / `<textarea>` — same handwritten font, faintly tinted background, single-pixel hairline border |
+| `.text-field` (+ `.text-field-wrap`) | Any `<input>` / `<select>` / `<textarea>` — same handwritten font, faintly tinted background, single-pixel hairline border. Built by the `Components.textInput` / `numberInput` / `selectInput` helpers |
 
-> ⚠️ Numeric inputs and selects should use the same `.form-control`
-> styling — currently number inputs in different screens look
-> different. Once `.form-control` is universal, drop bespoke selectors.
+> Numeric inputs and selects share the same `.text-field` styling via the
+> `Components.numberInput` / `selectInput` helpers, so inputs render uniformly
+> across screens.
 
 ### 5.3 Tab strip
 
@@ -393,9 +393,10 @@ Signal
   }
 ```
 
-When adding a modal, add its open-state Var to that combine list (or —
-better, see §13.4 — register it through a single
-`registerModal(signal)` helper).
+> **Implemented:** this hard-coded `Signal.combine` has been replaced by
+> `ModalRegistry` (`web-ui/.../components/ModalRegistry.scala`) — each modal calls
+> `register(name, openSignal)` and one `bindBodyClass()` toggles
+> `body.modal-open`. When adding a modal, register it there (see §12.4).
 
 ### 5.8 Tables (`.scrap-table`)
 
@@ -434,8 +435,8 @@ per-cell clip-path + paper-shadow is costly and reads as noise —
 cuttings stay on headers + key columns.
 
 > First consumer: tournament standings (numeric, many rows) — the case
-> this is tuned for. CSS `.scrap-table` + a `Components.scrapTable`
-> helper are pending.
+> this is tuned for. CSS `.scrap-table` (`bespoke.css`) + the
+> `Components.scrapTable` helper are **implemented**.
 
 ### 5.9 Disabled / cancelled state
 
@@ -816,8 +817,9 @@ bespoke class (e.g. `.btn-cta` for clip-path + drop-shadow + tilt).
 
 ### 12.4 Modal registry
 
-The scroll-lock signal in §5.7 hard-codes the four current modal Vars.
-Register modals through one helper instead:
+**Implemented** as `web-ui/.../components/ModalRegistry.scala` — it replaces the
+hard-coded `Signal.combine` shown in §5.7. Each modal registers itself and one
+binding toggles `body.modal-open`:
 
 ```scala
 private val modalRegistry: Var[Set[String]] = Var(Set.empty)
@@ -831,8 +833,8 @@ def registerModal(name: String, openSignal: Signal[Boolean])(using owner: Owner)
 modalRegistry.signal.map(_.nonEmpty).distinct.foreach(open => ...)
 ```
 
-Any new modal calls `registerModal("loadGame", loadOpenVar.signal)`
-once at App() mount and the scroll lock follows automatically.
+Any new modal calls `ModalRegistry.register("loadGame", loadOpenVar.signal)`
+and the scroll lock follows automatically — no edit to a shared list.
 
 ### 12.5 Migration order
 
