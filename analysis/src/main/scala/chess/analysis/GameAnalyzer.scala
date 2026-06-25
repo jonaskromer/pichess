@@ -5,7 +5,7 @@ import zio.*
 import chess.bot.engine.Search
 import chess.codec.UciCodec
 import chess.model.GameError
-import chess.model.board.{GameState, Move}
+import chess.model.board.{GameState, GameStatus, Move}
 import chess.model.piece.Color
 import chess.notation.SanSerializer
 import chess.opening.EcoBook
@@ -70,8 +70,21 @@ final class GameAnalyzer(search: Search, eco: EcoBook):
       scored          <- search.bestMoves(pre, depth, 2)
       (bestMv, bestCp) = scored.head
       gap              = bestCp - scored.lift(1).map(_._2).getOrElse(bestCp)
-      evalPost         <- search.evaluate(post, depth)
-      playedCp          = -evalPost
+      // A move that ENDS the game can't be re-rooted by `evaluate`: the post
+      // position has no legal moves, so the engine's root search returns 0,
+      // which scores a checkmate as a catastrophic drop (the "mate = blunder"
+      // bug). Take the played move's value from the rules verdict instead —
+      // delivering mate is the best possible outcome for the mover, a
+      // stalemate/draw is dead-even 0. (The bot never hits this: its negamax
+      // scores terminal nodes via `terminalScore` *inside* the search, so it
+      // picks mating moves normally.)
+      playedCp        <- post.status match
+                           case GameStatus.Checkmate(_) =>
+                             ZIO.succeed(Search.MateScore)
+                           case s if !s.isPlaying =>
+                             ZIO.succeed(0)
+                           case _ =>
+                             search.evaluate(post, depth).map(c => -c)
       cpLoss            = math.max(0, bestCp - playedCp)
       drop              = math.max(0.0, WinProb.pct(bestCp) - WinProb.pct(playedCp))
       cls               = MoveQuality.classify(drop, played == bestMv, gap, i < plyMatched)

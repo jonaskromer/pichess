@@ -44,6 +44,10 @@ object FullGameAnalysisSpec extends ZIOSpecDefault:
         analysis.moves.length == 33,
         analysis.moves.head.color == "white",
         analysis.moves.last.san == "Rd8#",
+        // Regression: the checkmating move must be scored as a (near-)mate, not
+        // a 0-eval blunder.
+        analysis.moves.last.evalCp >= 9000,
+        analysis.moves.last.moveClass != MoveClass.Blunder,
         analysis.accuracyWhite >= 0.0 && analysis.accuracyWhite <= 100.0,
         analysis.accuracyBlack >= 0.0 && analysis.accuracyBlack <= 100.0
       )
