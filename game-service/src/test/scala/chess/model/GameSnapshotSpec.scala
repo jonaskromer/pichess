@@ -1,9 +1,11 @@
 package chess.model
 
+import zio.*
 import zio.test.*
 
 import chess.model.board.{GameState, Move, Position}
-import chess.model.rules.Zobrist
+import chess.model.rules.{Game, Zobrist}
+import chess.notation.MoveParser
 
 /** Unit tests for the edge cases of [[GameSnapshot]]'s helpers that the
   * integration tests don't naturally exercise.
@@ -112,6 +114,44 @@ object GameSnapshotSpec extends ZIOSpecDefault:
         )
       yield assertTrue(
         snapshot.positionCounts(Zobrist.hash(GameState.initial)) == 2
+      )
+    },
+    test(
+      "fromHistory aligns each move with its own SAN and resolves the final position"
+    ) {
+      // Regression: a loaded PGN used to show only the first move on the board
+      // (state == position after move 1) while the move log looked complete.
+      // Cause was a newest-first `history` zipped against an oldest-first SAN
+      // `log`, which mispaired every entry and left `history.head` pointing at
+      // the first ply. Replay a multi-move game the way PgnParser does
+      // (chronological), then feed fromHistory the newest-first order the
+      // gRPC loadGame path passes.
+      val sans = List("e4", "e5", "Nf3", "Nc6", "Bb5")
+      for
+        chronological <- ZIO
+          .foldLeft(sans)((GameState.initial, List.empty[(Move, GameState)])) {
+            case ((state, acc), san) =>
+              for
+                mv   <- MoveParser.parse(san, state)
+                next <- Game.applyMove(state, mv)
+              yield (next, acc :+ (mv, next))
+          }
+          .map(_._2)
+        expectedFinal = chronological.last._2
+        snapshot <- GameSnapshot.fromHistory(
+          "id",
+          GameState.initial,
+          chronological.reverse
+        )
+      yield assertTrue(
+        // The board resolves to the final position, not the position after e4.
+        snapshot.state == expectedFinal,
+        // The SAN log is complete and chronological.
+        snapshot.moveLog.map(_._2) == sans,
+        // history is newest-first, each entry pairing the right move + SAN.
+        snapshot.history.head.move == chronological.last._1,
+        snapshot.history.head.san == sans.last,
+        snapshot.history.last.san == sans.head
       )
     }
   )

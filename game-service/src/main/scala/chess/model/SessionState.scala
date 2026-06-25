@@ -171,15 +171,18 @@ object GameSnapshot:
     SanSerializer
       .deriveMoveLog(initialState, history)
       .map { log =>
-        // `log` is chronological (oldest first); `history` is also
-        // chronological as it comes in. Zip them then reverse so the
-        // resulting list is newest-first, matching the storage convention.
+        // `history` arrives newest-first (the storage convention, and also
+        // what `deriveMoveLog` expects). `log` comes back chronological
+        // (oldest-first), so reverse it to newest-first before zipping, and
+        // keep the result newest-first — no trailing reverse. Zipping the two
+        // in mismatched orders silently pairs each move/state with the wrong
+        // SAN, which leaves `state` (history.head.state) pointing at the
+        // position after the *first* move instead of the last.
         val entries = history
-          .zip(log)
+          .zip(log.reverse)
           .map { case ((move, state), (preColor, san)) =>
             HistoryEntry(move, state, preColor, san)
           }
-          .reverse
         GameSnapshot(
           gameId,
           initialState,
