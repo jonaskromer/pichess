@@ -2196,7 +2196,18 @@ body.is-dragging { cursor: grabbing; }
 .result-dialog { width: 24rem; position: relative; z-index: 2; }
 /* Extra horizontal padding reserves the left/right gutters the flanking kings
    sit in, so the centred verdict text never collides with them. */
-.result-dialog .modal-body { align-items: center; text-align: center; padding-left: 3rem; padding-right: 3rem; }
+/* The toppled king is a `rotate(86deg)` transform whose box sweeps a hair past
+   the body's right edge; with the body's default `overflow: auto` that shows up
+   as a spurious horizontal scrollbar. Clip the X axis (computes to hidden next
+   to the Y `auto`) so the decorative overhang is just trimmed at the edge
+   instead of becoming scrollable; vertical scroll is untouched. */
+.result-dialog .modal-body {
+  align-items: center;
+  text-align: center;
+  padding-left: 3rem;
+  padding-right: 3rem;
+  overflow-x: clip;
+}
 /* Headline is an h2 wrapping a `newsprintClip` (same shape as
    `.section-title`): the h2 sets the scale + spacing, the inner
    `.code-inline` (sized in `em`) renders the big "Game Over" cutting. */
