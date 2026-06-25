@@ -1,6 +1,6 @@
 package chess.gameservice
 
-import pichess.game_service.NewGameRequest
+import pichess.game_service.{LoadGameRequest, NewGameRequest}
 import zio.test.*
 
 import chess.bot.engine.{BotConfig, Difficulty}
@@ -69,5 +69,19 @@ object BotConfigParseSpec extends ZIOSpecDefault:
         botDifficulty = "Impossible"
       )
       assertTrue(GrpcMappers.parseBotConfig(req).isLeft)
+    },
+    test("parses the same bot fields from a LoadGameRequest (load + vsBot)") {
+      val req = LoadGameRequest(
+        raw = "fen-here",
+        vsBot = true,
+        botSide = "black",
+        botDifficulty = "Max",
+        allowUndo = true
+      )
+      assertTrue(
+        GrpcMappers.parseBotConfig(req) == Right(
+          Some(BotConfig(Color.Black, Difficulty.Max, allowUndo = true))
+        )
+      )
     }
   )

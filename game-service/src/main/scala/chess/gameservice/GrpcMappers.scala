@@ -2,7 +2,7 @@ package chess.gameservice
 
 import com.google.protobuf.ByteString
 import io.grpc.{Status, StatusException}
-import pichess.game_service.{NewGameRequest, ReplayFrame, StateReply}
+import pichess.game_service.{LoadGameRequest, NewGameRequest, ReplayFrame, StateReply}
 import zio.UIO
 
 import chess.api.{AnnotationsDto, BoardStateDto, WebBoardView}
@@ -152,17 +152,39 @@ object GrpcMappers:
   def parseBotConfig(
       request: NewGameRequest
   ): Either[String, Option[BotConfig]] =
-    if !request.vsBot then Right(None)
+    botConfigFrom(
+      request.vsBot,
+      request.botSide,
+      request.botDifficulty,
+      request.allowUndo
+    )
+
+  /** Same parse for a [[LoadGameRequest]] — loading a position into a vs-bot
+    * game carries the identical bot fields (so the bot isn't dropped when the
+    * player starts from a pasted FEN/PGN). */
+  def parseBotConfig(
+      request: LoadGameRequest
+  ): Either[String, Option[BotConfig]] =
+    botConfigFrom(
+      request.vsBot,
+      request.botSide,
+      request.botDifficulty,
+      request.allowUndo
+    )
+
+  private def botConfigFrom(
+      vsBot: Boolean,
+      botSide: String,
+      botDifficulty: String,
+      allowUndo: Boolean
+  ): Either[String, Option[BotConfig]] =
+    if !vsBot then Right(None)
     else
       for
-        side <- parseColor(request.botSide)
-        diff <- parseDifficulty(request.botDifficulty)
+        side <- parseColor(botSide)
+        diff <- parseDifficulty(botDifficulty)
       yield Some(
-        BotConfig(
-          botSide = side,
-          difficulty = diff,
-          allowUndo = request.allowUndo
-        )
+        BotConfig(botSide = side, difficulty = diff, allowUndo = allowUndo)
       )
 
   private def parseColor(s: String): Either[String, Color] =

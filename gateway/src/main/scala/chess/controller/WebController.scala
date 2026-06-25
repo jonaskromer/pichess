@@ -102,7 +102,7 @@ object WebController:
         Endpoints.postCreateGame.zServerLogic[Any] { case (sessionId, req) =>
           val create = req.load match
             case None       => client.newGame(newGameRequestFor(req))
-            case Some(load) => client.loadGame(LoadGameRequest(load))
+            case Some(load) => client.loadGame(loadGameRequestFor(load, req))
           for
             reply <- create.mapError(toErrorDto)
             // Local-game registration: the creator is the only player and
@@ -233,6 +233,27 @@ object WebController:
         NewGameRequest()
       case Some(s) =>
         NewGameRequest(
+          vsBot = true,
+          botSide = s.botSide,
+          botDifficulty = s.difficulty,
+          allowUndo = s.allowUndo
+        )
+
+  /** Build the gRPC `LoadGameRequest` from the client's [[CreateGameRequest]]:
+    * the imported position plus the same optional vs-bot settings
+    * `newGameRequestFor` forwards. Without this the load path would silently
+    * drop the bot, so "Vs Bot" + a pasted FEN/PGN produced a botless game.
+    */
+  private[controller] def loadGameRequestFor(
+      load: String,
+      req: chess.api.CreateGameRequest
+  ): LoadGameRequest =
+    req.vsBot match
+      case None =>
+        LoadGameRequest(raw = load)
+      case Some(s) =>
+        LoadGameRequest(
+          raw = load,
           vsBot = true,
           botSide = s.botSide,
           botDifficulty = s.difficulty,

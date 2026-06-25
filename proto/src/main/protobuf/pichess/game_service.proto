@@ -75,8 +75,16 @@ message NewGameRequest {
   bool   allow_undo        = 4;
 }
 
+// `LoadGameRequest` imports a position (FEN/PGN/JSON). The bot fields mirror
+// `NewGameRequest`: set `vs_bot` to start the loaded game in vs-bot mode — the
+// server plays the bot's reply if the loaded position is already its turn.
+// All bot fields are ignored when `vs_bot` is false.
 message LoadGameRequest {
-  string raw = 1;  // FEN, PGN, or JSON — auto-detected server-side
+  string raw            = 1;  // FEN, PGN, or JSON — auto-detected server-side
+  bool   vs_bot         = 2;
+  string bot_side       = 3;
+  string bot_difficulty = 4;
+  bool   allow_undo     = 5;
 }
 
 message MoveRequest {
