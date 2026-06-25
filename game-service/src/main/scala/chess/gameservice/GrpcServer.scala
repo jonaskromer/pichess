@@ -430,17 +430,20 @@ final class GrpcServer(
 
 object GrpcServer:
   // Analysis search depth: the request's depth is used, clamped to
-  // [1, MaxAnalysisDepth]; 0/absent falls back to the default (tuned for the
-  // 4-vCPU deploy box).
-  private val DefaultAnalysisDepth = 10
-  private val MaxAnalysisDepth     = 20
+  // [1, MaxAnalysisDepth]; 0/absent falls back to the default. Kept shallow on
+  // purpose — analysis runs a FIXED-depth search per ply (no iterative-deepening
+  // time budget like the live bot), and quiescence makes each search costly on
+  // tactical positions. Measured on a full game: depth 4 ≈ 11s, depth 6 ≈ 90s,
+  // depth 10 ≈ minutes — for near-identical accuracy. So default 4, hard-cap 8.
+  private val DefaultAnalysisDepth = 4
+  private val MaxAnalysisDepth     = 8
 
   // Per-move time budget that sets the overall analysis deadline
   // (`PerMoveBudget × plies`, clamped). 2 s/move is generous against an
   // actual depth-10 ply (usually sub-second), so the deadline is a safety
   // ceiling rather than the normal stopping point; the floor keeps short
   // games from being starved, the cap keeps a long game from running away.
-  private val PerMoveBudgetMs    = 2000L
+  private val PerMoveBudgetMs    = 3000L     // headroom for the slow 4-vCPU box
   private val MinAnalysisBudgetMs = 20000L  // 20 s
   private val MaxAnalysisBudgetMs = 150000L // 2.5 min hard ceiling
 
