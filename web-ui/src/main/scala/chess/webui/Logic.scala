@@ -345,3 +345,36 @@ object Logic:
     * the name when there's no ECO code. */
   def openingLabel(opening: OpeningDto): String =
     opening.eco.fold(opening.name)(code => s"$code · ${opening.name}")
+
+  // -- Game title (board-screen "who vs whom" header) ------------------------
+
+  /** The board-screen title: the two players, already keyed to their colour,
+    * so the view just pairs each name with its colour dot. Built client-side at
+    * game start — the wire `BoardStateDto` carries no player identities. */
+  final case class GameTitle(white: String, black: String)
+
+  object GameTitle:
+    /** A plain local game with no named players. */
+    val local: GameTitle = GameTitle("White", "Black")
+
+    /** A vs-bot game: the player's nickname against `Bot (<difficulty>)`,
+      * placed by the side the *player* chose (the bot takes the other colour).
+      * A blank nickname falls back to "You". */
+    def vsBot(
+        nickname: String,
+        playerSide: String,
+        difficulty: String
+    ): GameTitle =
+      val player = blankTo(nickname, "You")
+      val bot    = s"Bot ($difficulty)"
+      if playerSide == "white" then GameTitle(player, bot)
+      else GameTitle(bot, player)
+
+    /** Two named players already keyed by colour (a lobby's host/guest, a
+      * spectated game's roster). Blank names fall back to the colour word. */
+    def players(white: String, black: String): GameTitle =
+      GameTitle(blankTo(white, "White"), blankTo(black, "Black"))
+
+    private def blankTo(name: String, default: String): String =
+      val t = name.trim
+      if t.isEmpty then default else t

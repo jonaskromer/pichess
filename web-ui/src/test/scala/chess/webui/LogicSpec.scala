@@ -449,6 +449,33 @@ object LogicSpec extends ZIOSpecDefault:
           Logic.analysisAtPly(Some(a), activePly).map(_.ply) == Some(i) // analysis selects move i
         )
       }
+    ),
+    suite("GameTitle")(
+      test("vsBot places the player on their chosen side, bot on the other") {
+        assertTrue(
+          Logic.GameTitle.vsBot("Alice", "white", "Expert") ==
+            Logic.GameTitle("Alice", "Bot (Expert)"),
+          Logic.GameTitle.vsBot("Alice", "black", "Expert") ==
+            Logic.GameTitle("Bot (Expert)", "Alice")
+        )
+      },
+      test("vsBot falls back to \"You\" for a blank nickname") {
+        assertTrue(
+          Logic.GameTitle.vsBot("   ", "white", "Medium") ==
+            Logic.GameTitle("You", "Bot (Medium)")
+        )
+      },
+      test("players keeps named sides and fills blanks with the colour word") {
+        assertTrue(
+          Logic.GameTitle.players("Alice", "Bob") ==
+            Logic.GameTitle("Alice", "Bob"),
+          Logic.GameTitle.players("", " ") ==
+            Logic.GameTitle("White", "Black")
+        )
+      },
+      test("local is the generic colour-word title") {
+        assertTrue(Logic.GameTitle.local == Logic.GameTitle("White", "Black"))
+      }
     )
   )
 

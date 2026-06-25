@@ -293,6 +293,18 @@ object Main:
     * link is almost always one's own local/bot game). */
   private val currentGameIsLocalVar: Var[Boolean] = Var(true)
 
+  /** The board-screen "who vs whom" title for the *active* game. Set by
+    * `enterGame` from `pendingTitleVar` (staged by whichever flow knew the
+    * matchup) or, for a lobby game, derived from `currentLobbyVar`. `None`
+    * renders the generic "White vs Black" fallback. */
+  private val gameTitleVar: Var[Option[Logic.GameTitle]] = Var(None)
+
+  /** Title staged for the NEXT game we navigate into, consumed once by
+    * `enterGame`. Decouples "the create / spectate flow knows the players"
+    * from "the router actually enters the game", and self-clears so a later
+    * deep-link entry falls back to generic instead of a stale title. */
+  private val pendingTitleVar: Var[Option[Logic.GameTitle]] = Var(None)
+
   /** Optional FEN/PGN/JSON to start a fresh local / vs-bot game FROM, set on
     * the New Game screen's import field (local + bot modes only). */
   private val newGameImportVar: Var[String] = Var("")
@@ -557,8 +569,27 @@ object Main:
     // set currentAllowUndoVar; this fires on navigate right after create, so a
     // `getOrElse(true)` here would clobber a vs-bot "Allow undo: off" back on.
     currentLobbyVar.now().foreach(l => currentAllowUndoVar.set(l.allowUndo))
+    // Resolve the board title: a flow that knew the matchup staged it; else a
+    // multiplayer lobby game takes its roster from the lobby (host = White by
+    // convention); else `None` → the generic "White vs Black" fallback. Always
+    // consume the pending slot so the next entry can't inherit a stale title.
+    gameTitleVar.set(
+      pendingTitleVar
+        .now()
+        .orElse(if currentGameIsLocalVar.now() then None else lobbyTitle())
+    )
+    pendingTitleVar.set(None)
     getStateClient((id, None)).foreach(handleStateResult)
     connectEvents(id, spectator)
+
+  /** A lobby game's title from `currentLobbyVar`: host plays White, guest
+    * Black (the seat-assignment convention). `None` when no lobby is active. */
+  private def lobbyTitle(): Option[Logic.GameTitle] =
+    currentLobbyVar
+      .now()
+      .map(l =>
+        Logic.GameTitle.players(l.hostNickname, l.guestNickname.toOption.getOrElse(""))
+      )
 
   private def mainUi(): HtmlElement =
     div(
@@ -761,6 +792,7 @@ object Main:
         className := "board-paper",
         paperLayer(crumpled = true),
         evalBar(),
+        gameTitle(),
         statusIndicator(),
         div(
           className := "board-row",
@@ -889,6 +921,7 @@ object Main:
         className := "board-paper",
         paperLayer(crumpled = true),
         evalBar(),
+        gameTitle(),
         statusIndicator(),
         div(
           className := "board-row",
@@ -1391,8 +1424,38 @@ object Main:
     val name = if s.activeColor == "white" then "White" else "Black"
     div(
       className := "turn-indicator",
-      div(className := s"turn-dot ${s.activeColor}"),
+      colorDot(s.activeColor),
       span(s"$name to move")
+    )
+
+  /** The small filled circle marking a chess side's colour — the cross-hatched
+    * marker-on-paper disc shared by the "X to move" status line and the
+    * game-title header. `color` is "white" / "black"; styling is in
+    * `.color-dot` (style.css). */
+  private def colorDot(color: String): HtmlElement =
+    div(className := s"color-dot $color")
+
+  /** Board-screen title: "(○) White ─ vs ─ (●) Black", each name behind its
+    * colour dot. Reactive on `gameTitleVar`; an unset title (deep link, raw
+    * `#game/<id>`) falls back to the generic colour words. */
+  private def gameTitle(): HtmlElement =
+    div(
+      className := "game-title",
+      children <-- gameTitleVar.signal.map { t0 =>
+        val t = t0.getOrElse(Logic.GameTitle.local)
+        List(
+          titlePlayer("white", t.white),
+          span(className := "game-title-vs", "vs"),
+          titlePlayer("black", t.black)
+        )
+      }
+    )
+
+  private def titlePlayer(color: String, name: String): HtmlElement =
+    span(
+      className := "game-title-player",
+      colorDot(color),
+      span(className := "game-title-name", name)
     )
 
   /** The verdict as a handwritten sentence with the winning colour and the
@@ -1619,6 +1682,21 @@ object Main:
           )
         )
     }
+
+  /** Cap a reactive ledger list (`scrapTable`) at a sane height and scroll
+    * the overflow. Dropped straight into the tilted `.content-card`, a long
+    * list (a full tournament's games, a busy lobby) grows the card tall
+    * enough that its 1.1° tilt swings the base sideways — the axis-aligned
+    * box widens and the panel slides off-screen. Capping + scrolling keeps
+    * the card short whatever the row count. OS rewrites the DOM under the
+    * skinned node, so the reactive child sits one level deeper on
+    * `.ledger-scroll-inner` (see `withCustomScrollbar`). */
+  private def ledgerScroll(content: Modifier[HtmlElement]*): HtmlElement =
+    div(
+      className := "ledger-scroll",
+      withCustomScrollbar,
+      div(className := "ledger-scroll-inner").amend(content*)
+    )
 
   /** Icon + text action button. The optional `modifier` adds an extra
     * class (e.g. `action-new`) so per-button styling — typically the
@@ -2933,17 +3011,20 @@ object Main:
             Seq("white" -> "White", "black" -> "Black")
           )
         ),
-        // Values match `chess.bot.engine.Difficulty` enum names; the
-        // server parses them case-insensitively and maps to search depth.
+        // Values match `chess.bot.engine.Difficulty` enum names; the server
+        // parses them case-insensitively and maps each to a think-time budget
+        // (harder = thinks longer + deeper). The labels surface that so players
+        // know "Max" really will sit and calculate.
         Components.formRow("Difficulty")(
           Components.selectInput(
             vsBotDifficultyVar,
             Seq(
-              "Beginner" -> "Beginner (depth 1)",
-              "Easy"     -> "Easy (depth 2)",
-              "Medium"   -> "Medium (depth 3)",
-              "Hard"     -> "Hard (depth 4)",
-              "Expert"   -> "Expert (depth 5)"
+              "Beginner" -> "Beginner (instant, blunders)",
+              "Easy"     -> "Easy (instant)",
+              "Medium"   -> "Medium (~0.4s)",
+              "Hard"     -> "Hard (~1s)",
+              "Expert"   -> "Expert (~2s)",
+              "Max"      -> "Max (full strength, ~6s)"
             )
           )
         ),
@@ -3012,6 +3093,7 @@ object Main:
         // Local games always allow undo.
         currentAllowUndoVar.set(true)
         currentGameIsLocalVar.set(true)
+        pendingTitleVar.set(Some(Logic.GameTitle.local))
         newGameImportVar.set("")
         navigate(Screen.Game(snapshot.id))
       case Left(err) => showToast(err.error)
@@ -3046,6 +3128,17 @@ object Main:
         stateVar.set(Some(snapshot.state))
         currentAllowUndoVar.set(settings.allowUndo)
         currentGameIsLocalVar.set(true)
+        // "<nickname> vs Bot (<difficulty>)", placed by the side the player
+        // chose (the bot took the opposite colour via `settings.botSide`).
+        pendingTitleVar.set(
+          Some(
+            Logic.GameTitle.vsBot(
+              nicknameVar.now(),
+              vsBotPlayerSideVar.now(),
+              settings.difficulty
+            )
+          )
+        )
         newGameImportVar.set("")
         navigate(Screen.Game(snapshot.id))
       case Left(err) => showToast(err.error)
@@ -3127,11 +3220,15 @@ object Main:
           }
         ),
         // The table, reactive on both the games and the active filter.
-        child <-- spectateGamesVar.signal
-          .combineWith(spectateFilterVar.signal)
-          .map { case (games, f) =>
-            spectateTable(Logic.filterGames(games, f))
-          },
+        // Height-capped + scrolled so a long games list can't tilt the card
+        // off-screen (a full tournament can return hundreds of games).
+        ledgerScroll(
+          child <-- spectateGamesVar.signal
+            .combineWith(spectateFilterVar.signal)
+            .map { case (games, f) =>
+              spectateTable(Logic.filterGames(games, f))
+            }
+        ),
         // Grafana-style auto-poll: tick only while an interval is chosen
         // (None ⇒ empty ⇒ nothing polls). Bound to the element, so it stops
         // when the screen unmounts.
@@ -3199,26 +3296,33 @@ object Main:
         "Spectate"
       )
     else
+      // The aggregator already labels each row's sides (real names for
+      // tournament / Lichess mirrors, "Player" / "piChess (bot)" / colour
+      // words for native games), so the watch title comes straight off the row.
+      val title = Logic.GameTitle.players(g.white, g.black)
       g.gameType match
         case "pvp" | "pvbot" =>
           Components.linkButton("Spectate") { _ =>
+            pendingTitleVar.set(Some(title))
             navigate(Screen.Watch(g.id))
           }
         case "tournament" =>
           Components.linkButton("Spectate") { _ =>
             openMirror(
-              s"/tournament/${g.tournamentId.getOrElse("")}/game/${g.id}/spectate"
+              s"/tournament/${g.tournamentId.getOrElse("")}/game/${g.id}/spectate",
+              title
             )
           }
         case "lichess" =>
           Components.linkButton("Spectate") { _ =>
-            openMirror(s"/lichess/games/${g.id}/spectate")
+            openMirror(s"/lichess/games/${g.id}/spectate", title)
           }
         case _ => span()
 
   /** POST a spectate-mirror endpoint, then open the returned mirror game in
-    * the read-only Watch view. Same response parse as `startLichessWatch`. */
-  private def openMirror(path: String): Unit =
+    * the read-only Watch view. Same response parse as `startLichessWatch`.
+    * `title` is staged for the board so the mirror shows the two players. */
+  private def openMirror(path: String, title: Logic.GameTitle): Unit =
     showToast("Opening spectate…")
     fetchJson("POST", path, None).onComplete {
       case scala.util.Success(raw) =>
@@ -3226,6 +3330,7 @@ object Main:
           val obj      = js.JSON.parse(raw).asInstanceOf[js.Dynamic]
           val mirrorId = obj.mirrorId.asInstanceOf[String]
           dismissToast()
+          pendingTitleVar.set(Some(title))
           navigate(Screen.Watch(mirrorId))
         catch
           case _: Throwable =>
@@ -3252,7 +3357,7 @@ object Main:
           className := "flex flex-row items-center justify-end gap-3 flex-wrap mb-3",
           refreshBar(tournamentsIntervalVar, () => refreshTournaments())
         ),
-        child <-- tournamentsVar.signal.map(tournamentTable),
+        ledgerScroll(child <-- tournamentsVar.signal.map(tournamentTable)),
         tournamentsIntervalVar.signal.flatMapSwitch {
           case Some(n) => EventStream.periodic(n * 1000)
           case None    => EventStream.empty
@@ -3372,8 +3477,8 @@ object Main:
             refreshButton(() => refreshPublicLobbies())
           ),
           // Canonical ruled-ledger table (the spectate screen's `scrapTable`),
-          // not a bespoke list.
-          child <-- publicLobbiesVar.signal.map(joinTable)
+          // not a bespoke list. Capped + scrolled like the others.
+          ledgerScroll(child <-- publicLobbiesVar.signal.map(joinTable))
         )
       )
     )

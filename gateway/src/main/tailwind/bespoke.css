@@ -1281,9 +1281,12 @@ body.is-dragging { cursor: grabbing; }
   color: var(--text-primary);
   padding: 0.2rem 0.5rem;
 }
-.turn-dot {
+/* Side-colour marker disc. Shared (`colorDot`) by the "X to move" status line
+   and the game-title header. */
+.color-dot {
   width: 0.95rem;
   height: 0.95rem;
+  flex-shrink: 0;
   border-radius: 50%;
   border: 0.13rem solid var(--text-secondary);
   /* Hand-drawn wobble (same #hand-drawn filter the move-preview circle uses)
@@ -1296,15 +1299,52 @@ body.is-dragging { cursor: grabbing; }
 /* Cross-hatched fill in the side colour — the move-preview technique, denser
    (0.08rem stripes / 0.2rem period). Hatch colours are fixed: a chess side's
    colour doesn't flip with the theme, same as the piece art. */
-.turn-dot.white {
+.color-dot.white {
   background: repeating-linear-gradient(45deg,
     rgb(247 237 220) 0, rgb(247 237 220) 0.08rem,
     transparent 0.08rem, transparent 0.2rem);
 }
-.turn-dot.black {
+.color-dot.black {
   background: repeating-linear-gradient(45deg,
     rgb(60 53 47) 0, rgb(60 53 47) 0.08rem,
     transparent 0.08rem, transparent 0.2rem);
+}
+
+/* ─── Game title (board-screen "who vs whom" header) ──────────────────────
+   Sits at the top of the board paper, above the "X to move" line: each
+   player's name behind its `.color-dot`, joined by a quiet "vs". Names are
+   handwritten (the player voice); "vs" is the smaller pencil connector. */
+.game-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.55rem;
+  padding: 0.1rem 0.5rem;
+  font-family: var(--font-hand);
+  font-size: 1.2rem;
+  color: var(--text-primary);
+}
+.game-title-player {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.game-title-name {
+  /* Long names (a verbose nickname, "Bot (Expert)") wrap/clip rather than
+     stretch the board panel. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 11rem;
+}
+.game-title-vs {
+  font-family: var(--font-press);
+  font-size: 0.8rem;
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
 }
 .section-title {
   /* Section heading shell — the visible cutting is a nested
@@ -2654,6 +2694,36 @@ body.is-dragging { cursor: grabbing; }
   color: var(--text-muted);
   padding: 0.9rem 0.7rem;
   text-align: center;
+}
+
+/* ─── Capped ledger-scroll region (`ledgerScroll`) ────────────────────────
+   A `.scrap-table` grows with its rows. Dropped straight into the tilted
+   `.content-card`, a long list (a full tournament's games, a busy lobby)
+   makes the card tall enough that its 1.1° tilt swings the base far
+   sideways — the card's axis-aligned box balloons wider than the viewport
+   and the panel slides off-screen. So cap the height and scroll the
+   overflow. OS skins this node and manages the overflow (same recipe as
+   `.move-log`); the reactive table lives one level deeper on
+   `.ledger-scroll-inner`, which OS leaves alone. */
+.ledger-scroll {
+  max-height: 26rem;
+  overflow: hidden;
+}
+.ledger-scroll-inner {
+  /* width-bounded so the table can't stretch past the OS viewport */
+  width: 100%;
+  box-sizing: border-box;
+}
+/* Pin the column headers while the rows scroll under them. The header
+   underline + separators are pseudo-elements on the th, so they travel with
+   it. A flat `--paper-color` band (the card's own base tone) occludes the
+   rows passing beneath — the grid SVG sits behind the whole card, so the
+   pinned strip reads as clean ledger paper. */
+.ledger-scroll .scrap-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--paper-color);
 }
 
 /* ─── Hand-drawn multi-stroke underline (decoration) ──────────────────────
