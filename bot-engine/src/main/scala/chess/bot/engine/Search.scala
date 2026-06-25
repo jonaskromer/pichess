@@ -53,6 +53,11 @@ trait Search:
     * is predicted to overflow `budgetMillis`, then returns the deepest
     * completed iteration's best move.
     *
+    * `maxDepth` is a hard ceiling on the iterative deepening — the loop stops at
+    * `maxDepth` even if the time budget would allow going deeper. It keeps a
+    * difficulty tier in its lane regardless of host CPU speed; pass a large
+    * value (the default) to let the clock alone bound the search.
+    *
     * Default falls through to `bestMove(state, fallbackDepth)` so
     * implementations without time management still compile; production callers
     * should target the override on `AlphaBetaSearch`.
@@ -61,9 +66,10 @@ trait Search:
       state: GameState,
       budgetMillis: Long,
       history: Set[Long] = Set.empty,
-      fallbackDepth: Int = 6
+      fallbackDepth: Int = 6,
+      maxDepth: Int = Int.MaxValue
   ): UIO[Option[Move]] =
-    bestMove(state, fallbackDepth, history)
+    bestMove(state, math.min(fallbackDepth, maxDepth), history)
 
   /** Search-derived eval of `state` at the given depth, from the
     * **side-to-move's** POV (matches what `negamax` returns at the root and

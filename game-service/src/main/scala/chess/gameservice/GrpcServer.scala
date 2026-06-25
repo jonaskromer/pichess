@@ -30,7 +30,7 @@ import zio.telemetry.opentelemetry.tracing.propagation.TraceContextPropagator
 
 import chess.analysis.{AnalysisService, CachedAnalysisService, GameAnalyzer}
 import chess.api.GameAnalysisDto
-import chess.bot.engine.{BotConfig, Search}
+import chess.bot.engine.{BotConfig, MovePolicy, Search}
 import chess.codec.{FenSerializer, JsonSerializer, PgnSerializer}
 import chess.opening.EcoBook
 import chess.controller.GameController
@@ -353,10 +353,11 @@ final class GrpcServer(
       // winning, or fail to claim one while losing.
       session <- ref.get
       history = session.game.positionCounts.keySet
-      // Vs-bot games are untimed: the bot searches to the difficulty's fixed
-      // depth. (The engine's time-budgeted search lives on for the Lichess /
-      // tournament bots, where an external server owns the clock.)
-      moveOpt <- search.bestMove(state, cfg.difficulty.searchDepth, history)
+      // The difficulty owns the effort: the weak levels search a shallow fixed
+      // depth (with human-like noise), the harder ones run time-budgeted
+      // iterative deepening that thinks longer/deeper per move — up to the same
+      // LazySMP config the Lichess / tournament bots use. See `MovePolicy`.
+      moveOpt <- MovePolicy.select(search, state, cfg.difficulty, history)
       move <- ZIO
         .fromOption(moveOpt)
         .orElseFail(

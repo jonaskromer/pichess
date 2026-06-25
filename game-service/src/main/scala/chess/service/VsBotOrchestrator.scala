@@ -2,7 +2,7 @@ package chess.service
 
 import zio.*
 
-import chess.bot.engine.{BotConfig, Search}
+import chess.bot.engine.{BotConfig, MovePolicy, Search}
 import chess.model.board.{GameState, Move}
 import chess.model.piece.PieceType
 import chess.model.{GameError, GameEvent, GameId}
@@ -126,7 +126,7 @@ object VsBotOrchestrator:
         config: BotConfig
     ): IO[GameError, GameEvent.MoveMade] =
       for
-        moveOpt <- search.bestMove(state, config.difficulty.searchDepth)
+        moveOpt <- MovePolicy.select(search, state, config.difficulty, Set.empty)
         move <- ZIO
           .fromOption(moveOpt)
           .orElseFail(

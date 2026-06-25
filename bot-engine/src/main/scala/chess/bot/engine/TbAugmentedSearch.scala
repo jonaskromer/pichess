@@ -53,13 +53,27 @@ final class TbAugmentedSearch(
       state: GameState,
       budgetMillis: Long,
       history: Set[Long] = Set.empty,
-      fallbackDepth: Int = 6
+      fallbackDepth: Int = 6,
+      maxDepth: Int = Int.MaxValue
   ): UIO[Option[Move]] =
     val pieces = state.board.occupancy.popCount
     if pieces <= pieceLimit then
       tb.bestMove(state, depth = 1, history).flatMap {
         case Some(m) => ZIO.some(m)
         case None =>
-          inner.bestMoveWithBudget(state, budgetMillis, history, fallbackDepth)
+          inner.bestMoveWithBudget(
+            state,
+            budgetMillis,
+            history,
+            fallbackDepth,
+            maxDepth
+          )
       }
-    else inner.bestMoveWithBudget(state, budgetMillis, history, fallbackDepth)
+    else
+      inner.bestMoveWithBudget(
+        state,
+        budgetMillis,
+        history,
+        fallbackDepth,
+        maxDepth
+      )

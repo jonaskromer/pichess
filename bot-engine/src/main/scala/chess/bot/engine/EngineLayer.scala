@@ -31,5 +31,29 @@ object EngineLayer:
             s"EngineBundle.fromResources failed, using fallback: ${err.getMessage}"
           )
         )
-      yield bundle.search
+        // vs-bot scales think-time with difficulty (see [[MovePolicy]]), so the
+        // shared search runs the production config: clock-aware budgeted
+        // iterative deepening + the in-search time-management upgrade + LazySMP
+        // across spare cores — the same engine the live Lichess / tournament
+        // bots play. The global spare-cores budget grabs helpers NON-blocking,
+        // so concurrent games and the rest of the in-VM stack are never starved
+        // (helpers only ever fill idle cores). Set `VSBOT_LAZYSMP=false` to pin
+        // it single-threaded on a tight host.
+        lazySmp = !sys.env.get("VSBOT_LAZYSMP").contains("false")
+        budget =
+          if lazySmp then ParallelismBudget.ofCores()
+          else ParallelismBudget.Single
+        _ <- ZIO.logInfo(
+          s"vs-bot engine: budgeted iterative deepening, LazySMP=${
+              if lazySmp then s"on (≤${budget.permits} spare cores)" else "off"
+            }"
+        )
+        search = Search.alphaBeta(
+          bundle.eval,
+          bundle.openingBook,
+          lazySmpEnabled = lazySmp,
+          budget = budget,
+          timeManagementUpgradeEnabled = true
+        )
+      yield search
     }

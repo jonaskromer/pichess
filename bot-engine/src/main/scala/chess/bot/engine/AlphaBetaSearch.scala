@@ -557,7 +557,8 @@ private[engine] final class AlphaBetaSearch(
       state: GameState,
       budgetMillis: Long,
       history: Set[Long] = Set.empty,
-      fallbackDepth: Int = 6
+      fallbackDepth: Int = 6,
+      maxDepth: Int = Int.MaxValue
   ): UIO[Option[Move]] =
     book.lookup(state).flatMap {
       case Some(move) => ZIO.some(move)
@@ -568,8 +569,9 @@ private[engine] final class AlphaBetaSearch(
         if ttAgingEnabled then
           tt.setAgingEnabled(true)
           tt.bumpGeneration()
-        if lazySmpEnabled then lazySmpBudgeted(state, budgetMillis, history)
-        else budgetedBestMove(state, budgetMillis, history)
+        if lazySmpEnabled then
+          lazySmpBudgeted(state, budgetMillis, history, maxDepth)
+        else budgetedBestMove(state, budgetMillis, history, maxDepth)
     }
 
   /** Time-budgeted LazySMP. The main worker runs the full budgeted iterative
@@ -589,17 +591,18 @@ private[engine] final class AlphaBetaSearch(
   private def lazySmpBudgeted(
       state: GameState,
       budgetMillis: Long,
-      history: Set[Long]
+      history: Set[Long],
+      maxDepth: Int
   ): UIO[Option[Move]] =
     val helpers = budget.acquireHelpers(budget.permits)
-    if helpers == 0 then budgetedBestMove(state, budgetMillis, history)
+    if helpers == 0 then budgetedBestMove(state, budgetMillis, history, maxDepth)
     else
       ZIO
         .foreach(0 until helpers)(_ =>
-          budgetedBestMove(state, budgetMillis, history).forkDaemon
+          budgetedBestMove(state, budgetMillis, history, maxDepth).forkDaemon
         )
         .flatMap { fibers =>
-          budgetedBestMove(state, budgetMillis, history)
+          budgetedBestMove(state, budgetMillis, history, maxDepth)
             .ensuring(ZIO.foreachDiscard(fibers)(_.interrupt.unit))
             .ensuring(ZIO.succeed(budget.release(helpers)))
         }
@@ -612,7 +615,8 @@ private[engine] final class AlphaBetaSearch(
   private def budgetedBestMove(
       state: GameState,
       budgetMillis: Long,
-      history: Set[Long]
+      history: Set[Long],
+      maxDepth: Int = Int.MaxValue
   ): UIO[Option[Move]] =
     val rootHash = Zobrist.hash(state)
     ZIO.succeed {
@@ -673,7 +677,7 @@ private[engine] final class AlphaBetaSearch(
         // only hard stop (and by then `last` is always defined, since the
         // depth-1 search always yields a move at a legal position).
         val softStop = (outOfBudget || mateFound) && last.isDefined
-        if d > MaxPly || softStop then last
+        if d > MaxPly || d > maxDepth || softStop then last
         else
           val iterStart = System.nanoTime()
           val result = runAtDepth(d)
