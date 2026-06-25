@@ -22,14 +22,14 @@ final case class SquareDto(
 object SquareDto:
   given JsonEncoder[SquareDto] = DeriveJsonEncoder.gen[SquareDto]
   given JsonDecoder[SquareDto] = DeriveJsonDecoder.gen[SquareDto]
-  given Pickler[SquareDto]     = generatePickler
+  given Pickler[SquareDto] = generatePickler
 
 final case class MoveEntryDto(color: String, san: String)
 
 object MoveEntryDto:
   given JsonEncoder[MoveEntryDto] = DeriveJsonEncoder.gen[MoveEntryDto]
   given JsonDecoder[MoveEntryDto] = DeriveJsonDecoder.gen[MoveEntryDto]
-  given Pickler[MoveEntryDto]     = generatePickler
+  given Pickler[MoveEntryDto] = generatePickler
 
 /** Wire-format game outcome.
   *
@@ -56,10 +56,31 @@ object GameStatusDto:
     GameStatusDto("draw", None, Some(reason))
   def resignation(winner: String): GameStatusDto =
     GameStatusDto("resignation", Some(winner), None)
+  def timeout(winner: String): GameStatusDto =
+    GameStatusDto("timeout", Some(winner), None)
 
   given JsonEncoder[GameStatusDto] = DeriveJsonEncoder.gen[GameStatusDto]
   given JsonDecoder[GameStatusDto] = DeriveJsonDecoder.gen[GameStatusDto]
-  given Pickler[GameStatusDto]     = generatePickler
+  given Pickler[GameStatusDto] = generatePickler
+
+/** Wire-format chess clock for a timed game. `whiteMs`/`blackMs` are the
+  * authoritative remaining milliseconds as of the last state push (server is
+  * the source of truth). `runningFor` names the side whose clock is currently
+  * counting down ("white"/"black"), or `None` when the clock is paused (game
+  * over, or not yet started) — the browser interpolates only the running side
+  * locally between pushes and never decides the game is over. Absent entirely
+  * (`BoardStateDto.clock == None`) for untimed games.
+  */
+final case class ClockDto(
+    whiteMs: Long,
+    blackMs: Long,
+    runningFor: Option[String]
+)
+
+object ClockDto:
+  given JsonEncoder[ClockDto] = DeriveJsonEncoder.gen[ClockDto]
+  given JsonDecoder[ClockDto] = DeriveJsonDecoder.gen[ClockDto]
+  given Pickler[ClockDto] = generatePickler
 
 final case class BoardStateDto(
     squares: List[SquareDto],
@@ -68,13 +89,14 @@ final case class BoardStateDto(
     @jsonExplicitNull error: Option[String],
     inCheck: Boolean,
     @jsonExplicitNull checkedKingPos: Option[String],
-    status: GameStatusDto
+    status: GameStatusDto,
+    clock: Option[ClockDto] = None
 )
 
 object BoardStateDto:
   given JsonEncoder[BoardStateDto] = DeriveJsonEncoder.gen[BoardStateDto]
   given JsonDecoder[BoardStateDto] = DeriveJsonDecoder.gen[BoardStateDto]
-  given Pickler[BoardStateDto]     = generatePickler
+  given Pickler[BoardStateDto] = generatePickler
 
   /** Encode a [[BoardStateDto]] to the bytes carried as the `board_state`
     * payload of gRPC `StateReply`. Picked from a JMH shoot-out
@@ -88,9 +110,9 @@ object BoardStateDto:
     buf.get(arr)
     arr
 
-  /** Decode the bytes back into a [[BoardStateDto]]. Throws if the
-    * bytes are corrupted — gateway's `replyToDto` catches via
-    * `ZIO.attempt`. */
+  /** Decode the bytes back into a [[BoardStateDto]]. Throws if the bytes are
+    * corrupted — gateway's `replyToDto` catches via `ZIO.attempt`.
+    */
   def decodeBytes(bytes: Array[Byte]): BoardStateDto =
     Unpickle[BoardStateDto].fromBytes(ByteBuffer.wrap(bytes))
 
@@ -118,41 +140,49 @@ object ExportResponse:
   given JsonEncoder[ExportResponse] = DeriveJsonEncoder.gen[ExportResponse]
   given JsonDecoder[ExportResponse] = DeriveJsonDecoder.gen[ExportResponse]
 
-/** Body for `POST /api/games`. With `load = None` the gateway creates a
-  * fresh game from the standard initial position. With `load = Some(raw)`
-  * it imports a serialised game (FEN, PGN, or JSON, auto-detected). The
-  * old `POST /api/new` and `POST /api/load` collapsed into this one
-  * endpoint when routing went game-scoped.
+/** Body for `POST /api/games`. With `load = None` the gateway creates a fresh
+  * game from the standard initial position. With `load = Some(raw)` it imports
+  * a serialised game (FEN, PGN, or JSON, auto-detected). The old `POST
+  * /api/new` and `POST /api/load` collapsed into this one endpoint when routing
+  * went game-scoped.
   *
-  * The optional `vsBot` field opts into vs-bot mode. When present, the
-  * server creates the game with the supplied bot config: which side
-  * the bot plays, its difficulty level, and whether the player has
-  * undo/redo enabled in the UI. When absent the game is a regular PvP
-  * game (existing behaviour).
+  * The optional `vsBot` field opts into vs-bot mode. When present, the server
+  * creates the game with the supplied bot config: which side the bot plays, its
+  * difficulty level, and whether the player has undo/redo enabled in the UI.
+  * When absent the game is a regular PvP game (existing behaviour).
+  *
+  * `initialSeconds` / `incrementSeconds` make the game timed (server-authoritative
+  * clock), independent of mode — local, host/PvP, or vs-bot. `0` (the default)
+  * means untimed, preserving the existing behaviour. Ignored on the `load` path
+  * (imported games are untimed).
   */
 final case class CreateGameRequest(
     load: Option[String] = None,
     vsBot: Option[VsBotSettings] = None,
+    initialSeconds: Int = 0,
+    incrementSeconds: Int = 0
 )
 
 object CreateGameRequest:
-  given JsonEncoder[CreateGameRequest] = DeriveJsonEncoder.gen[CreateGameRequest]
-  given JsonDecoder[CreateGameRequest] = DeriveJsonDecoder.gen[CreateGameRequest]
+  given JsonEncoder[CreateGameRequest] =
+    DeriveJsonEncoder.gen[CreateGameRequest]
+  given JsonDecoder[CreateGameRequest] =
+    DeriveJsonDecoder.gen[CreateGameRequest]
 
 /** Settings the client supplies when starting a vs-bot game.
   *
-  *   - `botSide`:    "white" or "black"
+  *   - `botSide`: "white" or "black"
   *   - `difficulty`: one of "Beginner" | "Easy" | "Medium" | "Hard" | "Expert"
-  *   - `allowUndo`:  whether the client should expose undo/redo controls
+  *   - `allowUndo`: whether the client should expose undo/redo controls
   *
-  * Mirrors `chess.bot.engine.BotConfig` exactly (same field names),
-  * but lives here as a JSON-DTO so the api module (web-ui shared)
-  * doesn't have to pull in the engine package.
+  * Mirrors `chess.bot.engine.BotConfig` exactly (same field names), but lives
+  * here as a JSON-DTO so the api module (web-ui shared) doesn't have to pull in
+  * the engine package.
   */
 final case class VsBotSettings(
     botSide: String,
     difficulty: String,
-    allowUndo: Boolean,
+    allowUndo: Boolean
 )
 
 object VsBotSettings:
@@ -160,8 +190,8 @@ object VsBotSettings:
   given JsonDecoder[VsBotSettings] = DeriveJsonDecoder.gen[VsBotSettings]
 
 /** Response for `POST /api/games`. Carries the new game's id alongside its
-  * initial state so the client can address subsequent calls without an
-  * extra round-trip.
+  * initial state so the client can address subsequent calls without an extra
+  * round-trip.
   */
 final case class GameSnapshot(id: String, state: BoardStateDto)
 
@@ -169,14 +199,14 @@ object GameSnapshot:
   given JsonEncoder[GameSnapshot] = DeriveJsonEncoder.gen[GameSnapshot]
   given JsonDecoder[GameSnapshot] = DeriveJsonDecoder.gen[GameSnapshot]
 
-/** Body for `POST /internal/games/{id}/players`. Lobby-service calls this
-  * when a hosted lobby starts a game so the gateway swaps the local-only
-  * session registration for the lobby's actual host+guest pair.
+/** Body for `POST /internal/games/{id}/players`. Lobby-service calls this when
+  * a hosted lobby starts a game so the gateway swaps the local-only session
+  * registration for the lobby's actual host+guest pair.
   *
-  * Internal coordination only — the endpoint is intentionally absent from
-  * the public Swagger surface (Endpoints.all). Production deployments
-  * should add a shared-secret check before exposing this route on a
-  * public-facing gateway port.
+  * Internal coordination only — the endpoint is intentionally absent from the
+  * public Swagger surface (Endpoints.all). Production deployments should add a
+  * shared-secret check before exposing this route on a public-facing gateway
+  * port.
   */
 final case class RegisterPlayersRequest(
     hostSessionId: String,
@@ -195,12 +225,12 @@ object RegisterPlayersRequest:
   given JsonDecoder[RegisterPlayersRequest] =
     DeriveJsonDecoder.gen[RegisterPlayersRequest]
 
-/** Response for `GET /api/stack-info` — read-only identification of
-  * which persistence stack the running gateway has been configured
-  * with (driven by the `PICHESS_BACKEND` / `PICHESS_EXTRAS` env vars
-  * the Makefile's `stack-*` targets set). The UI's `/dev` index
-  * surfaces this as a chip so an operator can tell at a glance which
-  * backend is being exercised during a perf-test run.
+/** Response for `GET /api/stack-info` — read-only identification of which
+  * persistence stack the running gateway has been configured with (driven by
+  * the `PICHESS_BACKEND` / `PICHESS_EXTRAS` env vars the Makefile's `stack-*`
+  * targets set). The UI's `/dev` index surfaces this as a chip so an operator
+  * can tell at a glance which backend is being exercised during a perf-test
+  * run.
   */
 final case class StackInfoResponse(backend: String, extras: List[String])
 
@@ -210,18 +240,16 @@ object StackInfoResponse:
   given JsonDecoder[StackInfoResponse] =
     DeriveJsonDecoder.gen[StackInfoResponse]
 
-/** Phase 4 server-side annotation bundle. Carries the full
-  * legal-moves / threats / attackers triple the gateway used to compute
-  * locally on cache miss. Game-service builds this from the in-memory
-  * `GameState` after every state change and ships it on the wire so the
-  * gateway just shuttles it to its annotation cache — no FEN parse, no
-  * per-piece `legalMovesFrom` loop.
+/** Phase 4 server-side annotation bundle. Carries the full legal-moves /
+  * threats / attackers triple the gateway used to compute locally on cache
+  * miss. Game-service builds this from the in-memory `GameState` after every
+  * state change and ships it on the wire so the gateway just shuttles it to its
+  * annotation cache — no FEN parse, no per-piece `legalMovesFrom` loop.
   *
   * Keys are canonical square labels ("e4", "g1", …) matching
   * [[LegalMovesResponse.from]] / [[ThreatsResponse.threatened]] /
-  * [[AttackersResponse.of]] so the gateway can hand each bundle field
-  * straight through to its corresponding HTTP endpoint without
-  * remapping.
+  * [[AttackersResponse.of]] so the gateway can hand each bundle field straight
+  * through to its corresponding HTTP endpoint without remapping.
   */
 final case class AnnotationsDto(
     legalMovesFrom: Map[String, List[String]],
@@ -232,16 +260,17 @@ final case class AnnotationsDto(
 object AnnotationsDto:
   given JsonEncoder[AnnotationsDto] = DeriveJsonEncoder.gen[AnnotationsDto]
   given JsonDecoder[AnnotationsDto] = DeriveJsonDecoder.gen[AnnotationsDto]
-  given Pickler[AnnotationsDto]     = generatePickler
+  given Pickler[AnnotationsDto] = generatePickler
 
-  /** Empty bundle — used as the proto3 default when the server didn't
-    * attach annotations to the reply (graceful fallback path on the
-    * gateway). */
+  /** Empty bundle — used as the proto3 default when the server didn't attach
+    * annotations to the reply (graceful fallback path on the gateway).
+    */
   val Empty: AnnotationsDto = AnnotationsDto(Map.empty, Nil, Map.empty)
 
-  /** Same boopickle round-trip as `BoardStateDto.encodeBytes` —
-    * boopickle was the winner of the bench shoot-out for our DTO shapes
-    * (zio-schema-protobuf was 33× slower for nested case-class trees). */
+  /** Same boopickle round-trip as `BoardStateDto.encodeBytes` — boopickle was
+    * the winner of the bench shoot-out for our DTO shapes (zio-schema-protobuf
+    * was 33× slower for nested case-class trees).
+    */
   def encodeBytes(dto: AnnotationsDto): Array[Byte] =
     val buf = Pickle.intoBytes(dto)
     val arr = new Array[Byte](buf.remaining)
@@ -251,12 +280,11 @@ object AnnotationsDto:
   def decodeBytes(bytes: Array[Byte]): AnnotationsDto =
     Unpickle[AnnotationsDto].fromBytes(ByteBuffer.wrap(bytes))
 
-/** Response for `GET /api/games/{id}/legal-moves?from=<sq>` — the
-  * destinations the piece at `from` can legally move to. Pawn promotions
-  * collapse to one entry per destination (the promotion choice happens
-  * client-side via the existing promotion overlay). Empty list means
-  * either the square is empty, holds an opponent piece, or the piece is
-  * pinned with no legal move.
+/** Response for `GET /api/games/{id}/legal-moves?from=<sq>` — the destinations
+  * the piece at `from` can legally move to. Pawn promotions collapse to one
+  * entry per destination (the promotion choice happens client-side via the
+  * existing promotion overlay). Empty list means either the square is empty,
+  * holds an opponent piece, or the piece is pinned with no legal move.
   */
 final case class LegalMovesResponse(from: String, moves: List[String])
 
@@ -266,9 +294,9 @@ object LegalMovesResponse:
   given JsonDecoder[LegalMovesResponse] =
     DeriveJsonDecoder.gen[LegalMovesResponse]
 
-/** Response for `GET /api/games/{id}/threats` — squares of own pieces
-  * (active color) currently under attack by an opposing piece. Drives
-  * the web-ui's "red ring" highlight on threatened pieces.
+/** Response for `GET /api/games/{id}/threats` — squares of own pieces (active
+  * color) currently under attack by an opposing piece. Drives the web-ui's "red
+  * ring" highlight on threatened pieces.
   */
 final case class ThreatsResponse(threatened: List[String])
 
@@ -278,9 +306,8 @@ object ThreatsResponse:
   given JsonDecoder[ThreatsResponse] =
     DeriveJsonDecoder.gen[ThreatsResponse]
 
-/** Response for `GET /api/games/{id}/attackers?of=<sq>` — squares of
-  * opposing pieces attacking `of`. Empty list when nothing attacks the
-  * square.
+/** Response for `GET /api/games/{id}/attackers?of=<sq>` — squares of opposing
+  * pieces attacking `of`. Empty list when nothing attacks the square.
   */
 final case class AttackersResponse(of: String, attackers: List[String])
 
@@ -307,3 +334,25 @@ sealed trait StateResponse
 object StateResponse:
   final case class View(value: BoardStateDto) extends StateResponse
   final case class Export(value: ExportResponse) extends StateResponse
+
+/** One position in a finished game's replay — the gateway decodes the
+  * game-service's boopickle board bytes into a full [[BoardStateDto]] for the
+  * ply. `moveIndex` is 0 for the initial position and `k` for the position after
+  * the k-th half-move; `san` is the move that produced this position ("" for the
+  * initial frame).
+  */
+final case class ReplayFrame(moveIndex: Int, boardState: BoardStateDto, san: String)
+
+object ReplayFrame:
+  given JsonEncoder[ReplayFrame] = DeriveJsonEncoder.gen[ReplayFrame]
+  given JsonDecoder[ReplayFrame] = DeriveJsonDecoder.gen[ReplayFrame]
+
+/** Response for `GET /api/games/{id}/replay` — every position of the game,
+  * oldest first, so the web-ui can replay a finished game move-by-move entirely
+  * client-side (one fetch, cached). Read-only.
+  */
+final case class ReplayResponse(gameId: String, frames: List[ReplayFrame])
+
+object ReplayResponse:
+  given JsonEncoder[ReplayResponse] = DeriveJsonEncoder.gen[ReplayResponse]
+  given JsonDecoder[ReplayResponse] = DeriveJsonDecoder.gen[ReplayResponse]

@@ -9,9 +9,13 @@ object VsBotSettingsSpec extends ZIOSpecDefault:
     test("round-trips a vsBot CreateGameRequest through JSON") {
       val req = CreateGameRequest(
         load = None,
-        vsBot = Some(VsBotSettings(
-          botSide = "black", difficulty = "Hard", allowUndo = true,
-        )),
+        vsBot = Some(
+          VsBotSettings(
+            botSide = "black",
+            difficulty = "Hard",
+            allowUndo = true
+          )
+        )
       )
       val json = req.toJson
       assertTrue(
@@ -39,12 +43,18 @@ object VsBotSettingsSpec extends ZIOSpecDefault:
           |             "allowUndo": false } }""".stripMargin
       assertTrue(
         sample.fromJson[CreateGameRequest] ==
-          Right(CreateGameRequest(
-            load = None,
-            vsBot = Some(VsBotSettings(
-              botSide = "white", difficulty = "Medium", allowUndo = false,
-            )),
-          ))
+          Right(
+            CreateGameRequest(
+              load = None,
+              vsBot = Some(
+                VsBotSettings(
+                  botSide = "white",
+                  difficulty = "Medium",
+                  allowUndo = false
+                )
+              )
+            )
+          )
       )
-    },
+    }
   )

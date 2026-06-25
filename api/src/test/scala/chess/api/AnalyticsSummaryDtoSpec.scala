@@ -24,7 +24,18 @@ object AnalyticsSummaryDtoSpec extends ZIOSpecDefault:
         """{"gameId":"g2","totalMoves":2,"captures":0,"durationMs":3000,"opening":"e4 e5","result":"Forfeited","outcome":"White","avgThinkTimeMs":3000.0}"""
       assertTrue(
         json.fromJson[AnalyticsSummaryDto] ==
-          Right(AnalyticsSummaryDto("g2", 2, 0, 3000L, "e4 e5", "Forfeited", "White", 3000.0))
+          Right(
+            AnalyticsSummaryDto(
+              "g2",
+              2,
+              0,
+              3000L,
+              "e4 e5",
+              "Forfeited",
+              "White",
+              3000.0
+            )
+          )
       )
     }
   )

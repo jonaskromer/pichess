@@ -5,17 +5,17 @@ import zio.json.*
 import chess.model.board.{DrawReason, GameState, GameStatus, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 
-/** Builds the [[BoardStateDto]] consumed by the browser UI (and shipped
-  * over the gRPC wire as bytes) from a domain [[GameState]].
+/** Builds the [[BoardStateDto]] consumed by the browser UI (and shipped over
+  * the gRPC wire as bytes) from a domain [[GameState]].
   *
-  * Lives in `api` (cross-platform) so both producers — the gateway and
-  * the game-service — can construct the DTO without each side having
-  * its own private converter. The web-ui (Scala.js) just consumes the
-  * decoded `BoardStateDto`; it doesn't need this object.
+  * Lives in `api` (cross-platform) so both producers — the gateway and the
+  * game-service — can construct the DTO without each side having its own
+  * private converter. The web-ui (Scala.js) just consumes the decoded
+  * `BoardStateDto`; it doesn't need this object.
   *
-  * The wire field `SquareDto.piece` holds a lowercase piece-type name
-  * ("pawn", "knight", …) rather than a Unicode glyph; the Laminar UI
-  * uses it as the symbol id when fetching from `/web/pieces/<name>.svg`.
+  * The wire field `SquareDto.piece` holds a lowercase piece-type name ("pawn",
+  * "knight", …) rather than a Unicode glyph; the Laminar UI uses it as the
+  * symbol id when fetching from `/web/pieces/<name>.svg`.
   */
 object WebBoardView:
 
@@ -94,6 +94,8 @@ object WebBoardView:
     case GameStatus.Draw(reason) => GameStatusDto.draw(drawReasonStr(reason))
     case GameStatus.Resignation(winner) =>
       GameStatusDto.resignation(colorStr(winner))
+    case GameStatus.Timeout(winner) =>
+      GameStatusDto.timeout(colorStr(winner))
 
   private def drawReasonStr(reason: DrawReason): String = reason match
     case DrawReason.Stalemate            => "stalemate"

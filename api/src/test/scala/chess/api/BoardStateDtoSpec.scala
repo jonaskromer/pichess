@@ -50,6 +50,18 @@ object BoardStateDtoSpec extends ZIOSpecDefault:
         entry.toJson.fromJson[MoveEntryDto] == Right(entry)
       )
     },
+    test("round-trip a replay response (frames carry per-ply board states)") {
+      val replay = ReplayResponse(
+        gameId = "g1",
+        frames = List(
+          ReplayFrame(0, sampleState, ""),
+          ReplayFrame(1, sampleState, "e4")
+        )
+      )
+      assertTrue(
+        replay.toJson.fromJson[ReplayResponse] == Right(replay)
+      )
+    },
     test("round-trip a move request") {
       val req = MoveRequest("e2 e4")
       assertTrue(

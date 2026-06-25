@@ -14,25 +14,24 @@ import sttp.tapir.json.zio.*
   * `api` module — adding or changing an endpoint is a compile-breaking change
   * on both sides until they agree.
   *
-  * **Routing**: every game endpoint is scoped under `/api/games/{id}/...`
-  * so multiple games can run side-by-side. The single un-scoped exception is
-  * `POST /api/games`, which mints a new game (with optional `load` body) and
-  * returns its id. The previous `POST /api/new` and `POST /api/load`
-  * collapsed into that one shape.
+  * **Routing**: every game endpoint is scoped under `/api/games/{id}/...` so
+  * multiple games can run side-by-side. The single un-scoped exception is `POST
+  * /api/games`, which mints a new game (with optional `load` body) and returns
+  * its id. The previous `POST /api/new` and `POST /api/load` collapsed into
+  * that one shape.
   */
 object Endpoints:
 
   /** Tapir alias for the path's gameId segment — keeps the type signatures
-    * legible (the codec module already aliases `GameId = String` but the
-    * api module shouldn't depend on `domain` for this one-line alias).
+    * legible (the codec module already aliases `GameId = String` but the api
+    * module shouldn't depend on `domain` for this one-line alias).
     */
   type GameId = String
 
-  /** Header name carrying the caller's session id. Generated client-side
-    * (UUID, persisted in localStorage on the web-ui, generated at startup
-    * on the TUI) and required on every mutating request so the gateway
-    * can refuse moves from sessions that aren't an active player on the
-    * targeted game.
+  /** Header name carrying the caller's session id. Generated client-side (UUID,
+    * persisted in localStorage on the web-ui, generated at startup on the TUI)
+    * and required on every mutating request so the gateway can refuse moves
+    * from sessions that aren't an active player on the targeted game.
     */
   val SessionHeader: String = "X-Session-Id"
 
@@ -41,27 +40,57 @@ object Endpoints:
       statusCode(StatusCode.BadRequest).and(jsonBody[ErrorDto])
     )
 
-  /** Game-scoped base — `/api/games/{id}/…`. Every per-game endpoint
-    * inherits this prefix so the path scheme stays uniform.
+  /** Game-scoped base — `/api/games/{id}/…`. Every per-game endpoint inherits
+    * this prefix so the path scheme stays uniform.
     */
   private val gameBase =
     errorBase.in("api" / "games" / path[GameId]("id"))
 
-  /** Tapir input fragment for the session header. Mutating endpoints
-    * compose this in so the gateway can gate by session-id; read-only
-    * endpoints (state, export, SSE) leave it off — spectators are
-    * welcome to follow without identifying themselves.
+  /** Tapir input fragment for the session header. Mutating endpoints compose
+    * this in so the gateway can gate by session-id; read-only endpoints (state,
+    * export, SSE) leave it off — spectators are welcome to follow without
+    * identifying themselves.
     */
   private val sessionHeader = header[String](SessionHeader)
 
-  /** POST /api/games — create a new game. With an empty body (or `load:
-    * null`) the gateway starts from the standard initial position. With
-    * `load` set the gateway tries to import the payload as FEN, PGN, or
-    * JSON (auto-detected) and starts from that position.
+  // Explicit derived Schemas for the replay DTOs. `ReplayFrame` embeds a
+  // `BoardStateDto`; without `ReplayFrame`'s Schema as a given, tapir's
+  // `generic.auto` mis-derives the `List[ReplayFrame]` in `ReplayResponse` as a
+  // sum type. Deriving them here (BoardStateDto's own Schema still comes from
+  // `generic.auto`) makes the list resolve via its element schema.
+  private given Schema[ReplayFrame]    = Schema.derived
+  private given Schema[ReplayResponse] = Schema.derived
+
+  // Analysis DTOs: derive explicitly so the nested `List[MoveAnalysisDto]` in
+  // `GameAnalysisDto` resolves via its element schema (same reason as replay).
+  private given Schema[OpeningDto]        = Schema.derived
+  private given Schema[MoveAnalysisDto]   = Schema.derived
+  private given Schema[GameAnalysisDto]   = Schema.derived
+  private given Schema[AnalyzeRequestDto] = Schema.derived
+
+  /** POST /api/analyze — rate a game given as PGN (per-move quality, named
+    * opening, per-side accuracy). Read-only; works for any finished game,
+    * including a pasted one. Reuses the engine in game-service.
+    */
+  val postAnalyze
+      : PublicEndpoint[AnalyzeRequestDto, ErrorDto, GameAnalysisDto, Any] =
+    errorBase.post
+      .in("api" / "analyze")
+      .in(jsonBody[AnalyzeRequestDto])
+      .out(jsonBody[GameAnalysisDto])
+      .name("postAnalyze")
+      .description(
+        "Analyze a game given as PGN: per-move ratings (NAG glyphs), the named " +
+          "opening, and per-side accuracy."
+      )
+
+  /** POST /api/games — create a new game. With an empty body (or `load: null`)
+    * the gateway starts from the standard initial position. With `load` set the
+    * gateway tries to import the payload as FEN, PGN, or JSON (auto-detected)
+    * and starts from that position.
     *
-    * Returns the new id alongside the initial state so the client can
-    * address subsequent calls (`/api/games/{id}/...`) without an extra
-    * round-trip.
+    * Returns the new id alongside the initial state so the client can address
+    * subsequent calls (`/api/games/{id}/...`) without an extra round-trip.
     */
   val postCreateGame: PublicEndpoint[
     (String, CreateGameRequest),
@@ -128,8 +157,7 @@ object Endpoints:
       .description("Apply a move (coordinate or SAN notation)")
 
   /** POST /api/games/{id}/undo — revert the last half-move. */
-  val postUndo
-      : PublicEndpoint[(GameId, String), ErrorDto, BoardStateDto, Any] =
+  val postUndo: PublicEndpoint[(GameId, String), ErrorDto, BoardStateDto, Any] =
     gameBase.post
       .in("undo")
       .in(sessionHeader)
@@ -137,8 +165,7 @@ object Endpoints:
       .name("postUndo")
 
   /** POST /api/games/{id}/redo — reapply an undone half-move. */
-  val postRedo
-      : PublicEndpoint[(GameId, String), ErrorDto, BoardStateDto, Any] =
+  val postRedo: PublicEndpoint[(GameId, String), ErrorDto, BoardStateDto, Any] =
     gameBase.post
       .in("redo")
       .in(sessionHeader)
@@ -146,8 +173,7 @@ object Endpoints:
       .name("postRedo")
 
   /** POST /api/games/{id}/draw — claim a draw. */
-  val postDraw
-      : PublicEndpoint[(GameId, String), ErrorDto, BoardStateDto, Any] =
+  val postDraw: PublicEndpoint[(GameId, String), ErrorDto, BoardStateDto, Any] =
     gameBase.post
       .in("draw")
       .in(sessionHeader)
@@ -166,11 +192,10 @@ object Endpoints:
         "The side to move forfeits; the opponent is recorded as the winner."
       )
 
-  /** GET /api/games/{id}/export/{format} — serialise the current
-    * position.
+  /** GET /api/games/{id}/export/{format} — serialise the current position.
     *
-    * Kept as an alias for back-compat; new clients should prefer
-    * `GET /api/games/{id}/state?format=…`.
+    * Kept as an alias for back-compat; new clients should prefer `GET
+    * /api/games/{id}/state?format=…`.
     */
   val getExport
       : PublicEndpoint[(GameId, String), ErrorDto, ExportResponse, Any] =
@@ -183,10 +208,10 @@ object Endpoints:
           + "Prefer GET /api/games/{id}/state?format=… for new clients."
       )
 
-  /** GET /api/stack-info — read-only "which backend is this gateway
-    * configured for" probe. Surfaced as a chip on the `/dev` index in
-    * the web-ui and inside the TUI prompt during perf testing. Public,
-    * not dev-gated — knowing the backend is useful in any deployment.
+  /** GET /api/stack-info — read-only "which backend is this gateway configured
+    * for" probe. Surfaced as a chip on the `/dev` index in the web-ui and
+    * inside the TUI prompt during perf testing. Public, not dev-gated — knowing
+    * the backend is useful in any deployment.
     */
   val getStackInfo: PublicEndpoint[Unit, ErrorDto, StackInfoResponse, Any] =
     errorBase.get
@@ -198,9 +223,9 @@ object Endpoints:
       )
 
   /** GET /api/games/{id}/legal-moves?from=<sq> — destinations the piece at
-    * `from` can legally move to. Powers the web-ui's move-preview overlay
-    * and the TUI's `preview <sq>` command. Server-side cached per
-    * `(gameId, position)` and invalidated whenever the game state changes.
+    * `from` can legally move to. Powers the web-ui's move-preview overlay and
+    * the TUI's `preview <sq>` command. Server-side cached per `(gameId,
+    * position)` and invalidated whenever the game state changes.
     */
   val getLegalMoves: PublicEndpoint[
     (GameId, String),
@@ -227,10 +252,9 @@ object Endpoints:
       .name("getThreats")
       .description("Own pieces (active color) under attack.")
 
-  /** GET /api/games/{id}/attackers?of=<sq> — squares of pieces attacking
-    * `of`. Caller decides which color: typically the UI passes a square
-    * that's currently threatened and gets back the opposing pieces
-    * threatening it.
+  /** GET /api/games/{id}/attackers?of=<sq> — squares of pieces attacking `of`.
+    * Caller decides which color: typically the UI passes a square that's
+    * currently threatened and gets back the opposing pieces threatening it.
     */
   val getAttackers: PublicEndpoint[
     (GameId, String),
@@ -247,9 +271,24 @@ object Endpoints:
         "Squares of opposing pieces attacking the given square."
       )
 
-  /** All public endpoints — useful for generating OpenAPI docs. The
-    * internal coordination endpoint (`postRegisterPlayers`) is not in
-    * this list so it doesn't show up in Swagger.
+  /** GET /api/games/{id}/replay — every position of the game, oldest first
+    * (index 0 = initial position, k = the position after the k-th half-move),
+    * for the web-ui's move-by-move replay of a finished game. Read-only (no
+    * session header) like `getState`/`getExport` — spectators replay too.
+    */
+  val getReplay: PublicEndpoint[GameId, ErrorDto, ReplayResponse, Any] =
+    gameBase.get
+      .in("replay")
+      .out(jsonBody[ReplayResponse])
+      .name("getReplay")
+      .description(
+        "Every position of the game, oldest first (0 = initial, k = after " +
+          "move k), for client-side replay of a finished game."
+      )
+
+  /** All public endpoints — useful for generating OpenAPI docs. The internal
+    * coordination endpoint (`postRegisterPlayers`) is not in this list so it
+    * doesn't show up in Swagger.
     */
   val all: List[AnyEndpoint] = List(
     postCreateGame,
@@ -260,23 +299,24 @@ object Endpoints:
     postDraw,
     postForfeit,
     getExport,
+    getReplay,
     getLegalMoves,
     getThreats,
     getAttackers,
-    getStackInfo
+    getStackInfo,
+    postAnalyze
   )
 
   /** POST /internal/games/{id}/players — lobby-service hand-off.
     *
-    * Called by the lobby-service when a lobby transitions Waiting→Started
-    * so the gateway's `SessionRegistry` swaps the local-only entry (host
-    * was registered alone via `POST /api/games`) for the lobby's actual
-    * host+guest pair. Returns 200 with no body on success.
+    * Called by the lobby-service when a lobby transitions Waiting→Started so
+    * the gateway's `SessionRegistry` swaps the local-only entry (host was
+    * registered alone via `POST /api/games`) for the lobby's actual host+guest
+    * pair. Returns 200 with no body on success.
     *
-    * Excluded from `all` so Swagger doesn't expose it. A production
-    * deployment should additionally gate this route with a shared secret;
-    * for the dev demo we rely on the docker-compose network not being
-    * publicly reachable.
+    * Excluded from `all` so Swagger doesn't expose it. A production deployment
+    * should additionally gate this route with a shared secret; for the dev demo
+    * we rely on the docker-compose network not being publicly reachable.
     */
   val postRegisterPlayers
       : PublicEndpoint[(GameId, RegisterPlayersRequest), ErrorDto, Unit, Any] =
