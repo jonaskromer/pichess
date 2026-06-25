@@ -451,13 +451,16 @@ object GrpcServer:
   private val MaxAnalysisDepth     = 12
 
   // Per-move time budget that sets the overall analysis deadline
-  // (`PerMoveBudget × plies`, clamped). 2 s/move is generous against an
-  // actual depth-10 ply (usually sub-second), so the deadline is a safety
-  // ceiling rather than the normal stopping point; the floor keeps short
-  // games from being starved, the cap keeps a long game from running away.
-  private val PerMoveBudgetMs    = 3000L     // headroom for the slow 4-vCPU box
-  private val MinAnalysisBudgetMs = 20000L  // 20 s
-  private val MaxAnalysisBudgetMs = 150000L // 2.5 min hard ceiling
+  // (`PerMoveBudget × plies`, clamped). The adaptive analyzer is fast (~12 s for
+  // a 166-ply game here), so this is a safety ceiling, not the normal stop. The
+  // budget must SCALE with game length: a long game legitimately needs more wall
+  // time, and the no-AVX deploy box runs NNUE eval scalar (≈5-10× slower), so a
+  // flat low cap timed out long games before they finished. 3 s/ply, clamped to
+  // [30 s, 6 min] — the high ceiling only ever binds on a very long game on a
+  // very slow box; a normal game still finishes far inside it.
+  private val PerMoveBudgetMs     = 3000L
+  private val MinAnalysisBudgetMs = 30000L  // 30 s
+  private val MaxAnalysisBudgetMs = 360000L // 6 min — long-game-on-slow-box ceiling
 
   val layer: URLayer[
     GameService & GameEventProducer & GameSessions & Tracing &

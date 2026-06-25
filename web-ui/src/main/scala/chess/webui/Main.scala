@@ -2381,8 +2381,9 @@ object Main:
     * get a genuinely deep look. */
   private val AnalysisDepth = 8
   /** Client-side stuck-button guard; longer than the server's analysis deadline
-    * so it only fires if the backend never responds at all. */
-  private val AnalysisClientTimeoutMs = 165000.0
+    * (its 6-min long-game ceiling) so it only fires if the backend never
+    * responds at all, not while a long game is legitimately still analysing. */
+  private val AnalysisClientTimeoutMs = 375000.0
 
   private def postAndToastErrors(
       f: Future[Either[ErrorDto, BoardStateDto]]
