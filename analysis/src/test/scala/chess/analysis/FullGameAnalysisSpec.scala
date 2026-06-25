@@ -25,10 +25,11 @@ object FullGameAnalysisSpec extends ZIOSpecDefault:
       "12. O-O-O Rd8 13. Rxd7 Rxd7 14. Rd1 Qe6 15. Bxd7+ Nxd7 16. Qb8+ " +
       "Nxb8 17. Rd8# 1-0"
 
-  // Mirrors GrpcServer.DefaultAnalysisDepth — the depth the service actually
-  // runs. Kept in sync by intent; the point of the test is that THIS depth
-  // finishes a full game quickly.
-  private val ProdDepth = 4
+  // Mirrors GrpcServer.DefaultAnalysisDepth — the deep cap the service runs.
+  // Adaptive deepening (shallow scan + pivot-only deep search) keeps a full
+  // game fast even at this cap; the point of the test is that it finishes
+  // quickly AND the deep pass catches the forced mate.
+  private val ProdDepth = 8
 
   def spec = suite("full-game analysis (real engine)")(
     test("the reported tactical game analyses at the production depth, fast") {

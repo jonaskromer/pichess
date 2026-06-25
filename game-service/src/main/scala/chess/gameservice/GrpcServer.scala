@@ -100,8 +100,14 @@ final class GrpcServer(
   ): IO[StatusException, StateReply] =
     serverSpan(ctx, "GameService/loadGame") {
       (for
+        // Validate the optional bot-config up-front, exactly like newGame —
+        // loading a position into a vs-bot game must keep its bot.
+        botCfg <- ZIO
+          .fromEither(GrpcMappers.parseBotConfig(request))
+          .mapError(GameError.ParseError(_))
         result <- gs.loadGame(request.raw)
         (event, history) = result
+        _ <- botCfg.fold(ZIO.unit)(botConfigs.save(event.gameId, _))
         snapshot <-
           GameSnapshot.fromHistory(
             event.gameId,
@@ -109,6 +115,9 @@ final class GrpcServer(
             history.reverse
           )
         ref <- sessions.register(snapshot)
+        // If the loaded position is already the bot's turn, play its reply so
+        // the first state reflects it (mirrors newGame's opening-move handling).
+        _ <- maybeBotReply(ref)
         reply <- replyFor(event.gameId, ref)
       yield reply).mapError(GrpcMappers.toStatusException)
     }
@@ -430,14 +439,16 @@ final class GrpcServer(
     ref.get.flatMap(GrpcMappers.toStateReply(gameId, _))
 
 object GrpcServer:
-  // Analysis search depth: the request's depth is used, clamped to
-  // [1, MaxAnalysisDepth]; 0/absent falls back to the default. Kept shallow on
-  // purpose — analysis runs a FIXED-depth search per ply (no iterative-deepening
-  // time budget like the live bot), and quiescence makes each search costly on
-  // tactical positions. Measured on a full game: depth 4 ≈ 11s, depth 6 ≈ 90s,
-  // depth 10 ≈ minutes — for near-identical accuracy. So default 4, hard-cap 8.
-  private val DefaultAnalysisDepth = 4
-  private val MaxAnalysisDepth     = 8
+  // Analysis depth is now the DEEP CAP for the adaptive analyzer, not a flat
+  // per-ply depth (see GameAnalyzer): a shallow dynamic-depth scan rates the
+  // whole game, then only the pivotal moves are re-searched up to this cap, and
+  // even those stop early once the eval converges. That makes a high cap cheap —
+  // measured ≈ 3 s for a full game at cap 8 (vs. ~11 s for the old FLAT depth 4
+  // and minutes for flat depth 8), while actually searching the sharp moments
+  // deeper (e.g. it now finds the forced mate the flat-4 pass missed). Default 8,
+  // hard-cap 12; the per-game deadline below remains the backstop.
+  private val DefaultAnalysisDepth = 8
+  private val MaxAnalysisDepth     = 12
 
   // Per-move time budget that sets the overall analysis deadline
   // (`PerMoveBudget × plies`, clamped). 2 s/move is generous against an

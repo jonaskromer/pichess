@@ -2374,13 +2374,12 @@ object Main:
       AnalysisClientTimeoutMs
     )
 
-  /** Engine search depth the UI asks for per move. Deliberately shallow: a
-    * post-game pass runs a fixed-depth search on every ply (no time budget /
-    * early-stop like the live bot), and quiescence makes each search expensive
-    * on tactical, capture-heavy positions. Measured on a full game, depth 4 is
-    * ~8× faster than depth 6 for essentially identical accuracy (the extra plies
-    * barely move the eval), so deeper buys nothing but latency. */
-  private val AnalysisDepth = 4
+  /** Deep-search cap the UI asks for. With the adaptive analyzer this is not a
+    * flat per-ply depth — a shallow scan rates the whole game and only the
+    * pivotal moves are deepened to this cap (stopping early once the eval
+    * converges). So a high cap stays cheap (~3s/game) while the sharp moments
+    * get a genuinely deep look. */
+  private val AnalysisDepth = 8
   /** Client-side stuck-button guard; longer than the server's analysis deadline
     * so it only fires if the backend never responds at all. */
   private val AnalysisClientTimeoutMs = 165000.0

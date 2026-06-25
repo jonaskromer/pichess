@@ -57,5 +57,20 @@ object GameAnalyzerSpec extends ZIOSpecDefault:
         analysis.moves.head.color == "black",
         analysis.moves.head.san == "Ka7"
       )
+    },
+    test("stalemating a won position scores as a blunder (terminal = 0)") {
+      // White is up a queen and stalemates with Qg6 — the played move ends the
+      // game in a draw, so its value is a dead-even 0 against a ~+900 best,
+      // exercising the non-checkmate terminal branch and the win-throwaway case.
+      val pgn = "[FEN \"7k/5K2/8/8/8/8/8/6Q1 w - - 0 1\"]\n\n1. Qg6 *"
+      for
+        game     <- PgnParser.parse(pgn)
+        analysis <- analyzer.analyze(game.initialState, game.history, depth = 2)
+      yield assertTrue(
+        analysis.moves.length == 1,
+        analysis.moves.head.san == "Qg6",
+        analysis.moves.head.evalCp == 0,
+        analysis.moves.head.moveClass == MoveClass.Blunder
+      )
     }
   )

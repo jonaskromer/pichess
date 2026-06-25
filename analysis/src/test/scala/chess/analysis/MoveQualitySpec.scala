@@ -37,5 +37,30 @@ object MoveQualitySpec extends ZIOSpecDefault:
         MoveClass.Blunder.nag == Some(Nag.Blunder),
         nags.length == 8
       )
+    },
+    test("volatilityWeights: floor on a flat game, spikes at a swing") {
+      // Flat win% → every weight at the floor; a 30-point jump → a big weight
+      // on the moves whose window straddles it.
+      val flat = MoveQuality.volatilityWeights(List(50.0, 50.0, 50.0))
+      val swing = MoveQuality.volatilityWeights(List(50.0, 50.0, 80.0))
+      assertTrue(
+        flat == List(0.5, 0.5),
+        swing.length == 2,
+        swing.forall(_ >= 0.5),
+        swing.max > 5.0
+      )
+    },
+    test("weightedAccuracy: blend, empty→100, zero-weights→plain mean") {
+      assertTrue(
+        // Equal weights → weighted mean == plain mean == harmonic-blended here
+        // only when all equal; with one low score the harmonic mean pulls down.
+        MoveQuality.weightedAccuracy(Nil) == 100.0,
+        // All-zero weights fall back to the unweighted mean (then blended with
+        // the harmonic mean of the identical value → the value itself).
+        MoveQuality.weightedAccuracy(List((80.0, 0.0))) == 80.0,
+        // A blunder (low accuracy) at a high-volatility moment tanks the score
+        // more than a flat average would.
+        MoveQuality.weightedAccuracy(List((100.0, 0.5), (10.0, 8.0))) < 55.0
+      )
     }
   )
