@@ -1188,17 +1188,39 @@ body.is-dragging { cursor: grabbing; }
 /* Status header for the board — sits inside .board-paper at the top. No
    own paper backdrop (board-paper provides it); just typography on the
    shared paper. */
-.banner {
-  /* End-of-game headline (§5.10) — a heading `newsprintClip` (Special Elite on
-     newsprint, cut edge, strong shadow) pasted over the board. The cutting now
-     carries the surface + shadow; this host just centres it (text-align works
-     whether the parent is flex or block) and sets the headline weight/size,
-     which the cutting inherits. */
+/* End-of-game row pasted across the top of the board (§5.10): the verdict
+   banner, a doodle arrow, and the "Analyze game" CTA, centred and wrapping. */
+.end-state {
   align-self: center;
-  text-align: center;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+}
+.banner {
+  /* End-of-game verdict (§5.10) — the same clipping + handwriting pattern as
+     the result modal's subtitle, at headline size: the winning colour and the
+     end-condition are heading `newsprintClip` cuttings, the connective ("wins
+     by" / "by") is handwriting flowed between them. flex + gap keeps the
+     cuttings and connector on one centred, wrapping line. */
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
   font-size: 1.5rem;
   font-weight: 700;
   letter-spacing: 0.02em;
+}
+/* The connective word, in pen — matches `.result-conn` so the banner and the
+   modal subtitle read identically. */
+.banner-conn {
+  font-family: var(--font-hand);
+  font-weight: 400;
+  font-size: 1.15rem;
+  letter-spacing: normal;
+  color: var(--text-secondary);
 }
 /* The banner is a verdict sentence, not a title — drop the headline drop-cap. */
 .banner .clip-heading::first-letter { font-size: inherit; text-shadow: none; }
@@ -1206,6 +1228,32 @@ body.is-dragging { cursor: grabbing; }
    tint lands on the cutting, since the text lives there now. */
 .banner.win  .clip-heading { color: var(--accent-strong); }
 .banner.draw .clip-heading { color: var(--newsprint-text); }
+/* The arrow doodle + opt-in "Analyze game" CTA. */
+.analyze-prompt {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+/* arrow-26 from the doodle pack, inked in the accent colour via a mask. The
+   doodle points up by default; rotate it a quarter-turn clockwise so it points
+   right, at the CTA. */
+.analyze-arrow {
+  flex: none;
+  width: 2.4rem;
+  height: 2.4rem;
+  background-color: var(--accent-strong);
+  -webkit-mask: url(/web/dddoodle_pack/arrows/arrow-26.svg) center/contain no-repeat;
+          mask: url(/web/dddoodle_pack/arrows/arrow-26.svg) center/contain no-repeat;
+  transform: rotate(90deg);
+}
+/* A `.btn-link` turned up into the primary next step: a larger label on an
+   always-on blue highlighter stripe (the blue the analysis glyphs use). */
+.analyze-cta { font-size: 1.7rem; }
+.analyze-cta::before { background: var(--marker-blue); opacity: 0.85; }
+.analyze-cta:hover::before,
+.analyze-cta:focus-visible::before { opacity: 1; }
+.analyze-cta:disabled { cursor: default; color: var(--text-secondary); }
+.analyze-cta:disabled::before { opacity: 0.4; }
 .turn-indicator {
   display: flex;
   align-items: center;

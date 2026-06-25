@@ -34,10 +34,15 @@ object Main:
   private val activePlyVar: Var[Int]                    = Var(0)
 
   // -- Analysis (post-game move quality) -------------------------------------
-  // Fetched on game completion (POST /api/analyze with the game PGN). The eval
-  // bar + move-detail panel read this alongside `activePlyVar`, so the analysis
+  // Opt-in: the engine rates the game (POST /api/analyze with the game PGN)
+  // only when the player presses "Analyze game" on the end-of-game banner — it
+  // is a deep per-move search, so we don't spend it unless asked. The eval bar
+  // + move-detail panel read this alongside `activePlyVar`, so the analysis
   // scrubs in lock-step with the replay board.
   private val analysisVar: Var[Option[GameAnalysisDto]] = Var(None)
+  // True from the moment "Analyze game" is pressed until the result lands (or
+  // the request fails) — drives the button's "Analyzing…" / disabled state.
+  private val analyzeRequestedVar: Var[Boolean] = Var(false)
 
   /** The position shown on the board: the live `stateVar`, except while
     * replaying a finished game, when it's the selected historical frame. Only
@@ -475,15 +480,14 @@ object Main:
             replayFramesVar.set(Vector.empty)
             activePlyVar.set(0)
             analysisVar.set(None)
+            analyzeRequestedVar.set(false)
           }
           // On completion, pull the full position history once so the move log
-          // becomes a clickable replay scrubber (board time-travel), and request
-          // the engine analysis (eval bar + move glyphs + detail, replay-synced).
+          // becomes a clickable replay scrubber (board time-travel). Engine
+          // analysis is opt-in (the "Analyze game" banner button), not fetched
+          // here — it's a deep search we only spend when the player asks.
           gameOverSignal.changes.filter(identity).foreach { _ =>
-            gameIdVar.now().foreach { id =>
-              fetchReplay(id)
-              requestAnalysis(id)
-            }
+            gameIdVar.now().foreach(fetchReplay)
           }
           ModalRegistry.register("export",  exportVar.signal.map(_.isDefined))
         }
@@ -1287,11 +1291,46 @@ object Main:
         case None => emptyNode
         case Some(s) =>
           s.status.kind match
-            case "checkmate"   => checkmateBanner(s.status)
-            case "draw"        => drawBanner(s.status)
-            case "resignation" => resignationBanner(s.status)
-            case _             => turnIndicator(s)
+            case "checkmate" | "draw" | "resignation" => endStatePanel(s.status)
+            case _                                    => turnIndicator(s)
       }
+    )
+
+  /** The end-of-game row pasted across the top of the board: the verdict
+    * banner, then a doodle arrow pointing at the "Analyze game" CTA. The arrow
+    * + CTA drop away once the analysis has come back (it then lives in the
+    * move-log sidebar, so the prompt has done its job). */
+  private def endStatePanel(status: GameStatusDto): HtmlElement =
+    div(
+      className := "end-state",
+      resultBanner(status),
+      child <-- analysisVar.signal.map {
+        case Some(_) => emptyNode
+        case None    => analyzePrompt()
+      }
+    )
+
+  /** Arrow doodle + the opt-in "Analyze game" CTA. The button is disabled while
+    * a request is in flight ("Analyzing…"); on success the panel hides, on
+    * failure it resets so the player can retry. */
+  private def analyzePrompt(): HtmlElement =
+    div(
+      className := "analyze-prompt",
+      div(className := "analyze-arrow", aria.hidden := true),
+      button(
+        typ := "button",
+        className := "btn-link analyze-cta",
+        disabled <-- analyzeRequestedVar.signal,
+        child.text <-- analyzeRequestedVar.signal.map(r =>
+          if r then "Analyzing…" else "Analyze game"
+        ),
+        onClick --> { _ =>
+          gameIdVar.now().foreach { id =>
+            analyzeRequestedVar.set(true)
+            requestAnalysis(id)
+          }
+        }
+      )
     )
 
   // Status panel-header — rendered inside .board-paper so it sits on the
@@ -1305,21 +1344,49 @@ object Main:
       span(s"$name to move")
     )
 
-  private def banner(cls: String, text: String): HtmlElement =
-    div(className := s"banner $cls", Components.newsprintClip(heading = true)(text))
+  /** The verdict as a handwritten sentence with the winning colour and the
+    * end-condition pasted in as newspaper cuttings — e.g. "[Black] wins by
+    * [checkmate!]" or "[Draw] by [stalemate]". Shared by the in-board banner
+    * and the result modal's subtitle so both read identically: cuttings for
+    * the nouns, handwriting for the connective. `heading` switches the cuttings
+    * to headline size (the banner); `verb` is the tense ("wins" / "won"). */
+  private def verdictParts(
+      status: GameStatusDto,
+      clipClass: String,
+      connClass: String,
+      heading: Boolean,
+      verb: String
+  ): List[HtmlElement] =
+    def clip(text: String): HtmlElement =
+      Components.newsprintClip(clipClass, heading = heading)(text)
+    def conn(text: String): HtmlElement =
+      span(className := connClass, text)
+    def winnerName: String = status.winner.map(capitalize).getOrElse("Someone")
+    status.kind match
+      case "checkmate" =>
+        List(clip(winnerName), conn(s"$verb by"), clip("checkmate!"))
+      case "resignation" =>
+        List(clip(winnerName), conn(s"$verb by"), clip("resignation"))
+      case "draw" =>
+        val reason =
+          status.reason.map(Logic.humanizeDrawReason).getOrElse("agreement")
+        List(clip("Draw"), conn("by"), clip(reason))
+      case _ => List.empty
 
-  private def checkmateBanner(status: GameStatusDto): HtmlElement =
-    val winner = status.winner.map(capitalize).getOrElse("Someone")
-    banner("win", s"$winner wins by checkmate")
-
-  private def drawBanner(status: GameStatusDto): HtmlElement =
-    val reason =
-      status.reason.map(Logic.humanizeDrawReason).getOrElse("agreement")
-    banner("draw", s"Draw — $reason")
-
-  private def resignationBanner(status: GameStatusDto): HtmlElement =
-    val winner = status.winner.map(capitalize).getOrElse("Someone")
-    banner("win", s"$winner wins by resignation")
+  /** The in-board verdict banner — same clipping/handwriting pattern as the
+    * result modal's subtitle, at headline size. */
+  private def resultBanner(status: GameStatusDto): HtmlElement =
+    val kind = if status.kind == "draw" then "draw" else "win"
+    div(
+      className := s"banner $kind",
+      verdictParts(
+        status,
+        clipClass = "banner-clip",
+        connClass = "banner-conn",
+        heading = true,
+        verb = "wins"
+      )
+    )
 
   private def capitalize(s: String): String =
     if s.isEmpty then s else s"${s.head.toUpper}${s.tail}"
@@ -1875,22 +1942,13 @@ object Main:
     * "[Black] won by [checkmate!]". A draw has no winner, so its subject
     * cutting is "Draw" and the sentence becomes "[Draw] by [stalemate]". */
   private def resultSubtitle(s: BoardStateDto): List[HtmlElement] =
-    def clip(text: String): HtmlElement =
-      Components.newsprintClip("result-clip")(text)
-    def conn(text: String): HtmlElement =
-      span(className := "result-conn", text)
-    s.status.kind match
-      case "checkmate" =>
-        val winner = s.status.winner.map(capitalize).getOrElse("Someone")
-        List(clip(winner), conn("won by"), clip("checkmate!"))
-      case "resignation" =>
-        val winner = s.status.winner.map(capitalize).getOrElse("Someone")
-        List(clip(winner), conn("won by"), clip("resignation"))
-      case "draw" =>
-        val reason =
-          s.status.reason.map(Logic.humanizeDrawReason).getOrElse("agreement")
-        List(clip("Draw"), conn("by"), clip(reason))
-      case _ => List.empty
+    verdictParts(
+      s.status,
+      clipClass = "result-clip",
+      connClass = "result-conn",
+      heading = false,
+      verb = "won"
+    )
 
   private def resultSummary(s: BoardStateDto): List[HtmlElement] =
     val fullMoves = (s.moveLog.length + 1) / 2
@@ -2158,15 +2216,16 @@ object Main:
 
   /** Fetch the finished game's PGN, then ask the engine to rate it. Result lands
     * in `analysisVar`, which the eval bar + move glyphs + detail panel render —
-    * all keyed on `activePlyVar`, so analysis tracks the replay scrubber. */
+    * all keyed on `activePlyVar`, so analysis tracks the replay scrubber. On any
+    * failure we clear `analyzeRequestedVar` so the CTA re-arms for a retry. */
   private def requestAnalysis(id: String): Unit =
     getStateClient((id, Some("pgn"))).foreach {
       case Right(StateResponse.Export(resp)) =>
         postAnalyzeClient(AnalyzeRequestDto(resp.content, AnalysisDepth)).foreach {
           case Right(analysis) => analysisVar.set(Some(analysis))
-          case Left(_)         => () // analysis is best-effort; stay silent
+          case Left(_)         => analyzeRequestedVar.set(false)
         }
-      case _ => ()
+      case _ => analyzeRequestedVar.set(false)
     }
 
   /** Server clamps to its own ceiling; this is the depth the UI asks for. */
