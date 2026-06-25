@@ -1,8 +1,19 @@
 package chess.webui
 
+import zio.json.*
 import zio.test.*
 
-import chess.api.{BoardStateDto, GameStatusDto, MoveEntryDto, SquareDto}
+import chess.api.{
+  BoardStateDto,
+  ClockDto,
+  GameAnalysisDto,
+  GameStatusDto,
+  MoveAnalysisDto,
+  MoveEntryDto,
+  OngoingGame,
+  OpeningDto,
+  SquareDto
+}
 
 object LogicSpec extends ZIOSpecDefault:
 
@@ -216,8 +227,239 @@ object LogicSpec extends ZIOSpecDefault:
         val (white, black) = Logic.capturedFromSquares(squares)
         assertTrue(white.isEmpty, black.isEmpty)
       }
+    ),
+    suite("spectate filters")(
+      test("matchesFilter: All matches all; each chip matches its own token") {
+        assertTrue(
+          Logic.matchesFilter("pvp", Logic.SpectateFilter.All),
+          Logic.matchesFilter("tournament", Logic.SpectateFilter.All),
+          Logic.matchesFilter("pvp", Logic.SpectateFilter.Pvp),
+          !Logic.matchesFilter("pvp", Logic.SpectateFilter.Pvbot),
+          Logic.matchesFilter("pvbot", Logic.SpectateFilter.Pvbot),
+          Logic.matchesFilter("lichess", Logic.SpectateFilter.Lichess),
+          Logic.matchesFilter("tournament", Logic.SpectateFilter.Tournament)
+        )
+      },
+      test("filterGames keeps only matching rows, order preserved") {
+        val games = List(og("a", "pvp"), og("b", "tournament"), og("c", "pvp"))
+        assertTrue(
+          Logic
+            .filterGames(games, Logic.SpectateFilter.Pvp)
+            .map(_.id) == List("a", "c"),
+          Logic.filterGames(games, Logic.SpectateFilter.All).size == 3
+        )
+      },
+      test("chips carry live counts; empty type chips disabled, All enabled") {
+        val games = List(og("a", "pvp"), og("b", "pvp"), og("c", "lichess"))
+        val byFilter =
+          Logic.spectateFilterChips(games).map { case (f, l, e) =>
+            (f, (l, e))
+          }.toMap
+        assertTrue(
+          Logic.spectateFilterChips(games).head._1 == Logic.SpectateFilter.All,
+          byFilter(Logic.SpectateFilter.All) == ("All (3)", true),
+          byFilter(Logic.SpectateFilter.Pvp) == ("PvP (2)", true),
+          byFilter(Logic.SpectateFilter.Lichess) == ("Bot v Lichess (1)", true),
+          byFilter(Logic.SpectateFilter.Pvbot) == ("PvBot (0)", false),
+          byFilter(Logic.SpectateFilter.Tournament) == ("Tournament (0)", false)
+        )
+      },
+      test("All chip stays enabled even with no games") {
+        assertTrue(
+          Logic
+            .spectateFilterChips(Nil)
+            .find(_._1 == Logic.SpectateFilter.All)
+            .exists(_._3)
+        )
+      },
+      test("gameBadge: full → Full/full, otherwise Live/live") {
+        assertTrue(
+          Logic.gameBadge(og("a", "pvp", spectateable = false)) ==
+            ("Full", "full"),
+          Logic.gameBadge(og("b", "pvp", spectateable = true)) ==
+            ("Live", "live")
+        )
+      }
+    ),
+    suite("refresh")(
+      test("refreshIntervals starts Off (None) — nothing polls by default") {
+        assertTrue(
+          Logic.refreshIntervals.head == (None, "Off"),
+          Logic.refreshIntervals.map(_._2) == List("Off", "5s", "10s", "30s", "1m")
+        )
+      }
+    ),
+    suite("replayMoveState")(
+      test("active = move that produced the shown frame; later moves muted") {
+        assertTrue(
+          // Showing the position after 2 half-moves (activePly = 2):
+          Logic.replayMoveState(0, 2) == (false, false), // played, not active
+          Logic.replayMoveState(1, 2) == (true, false),  // the active move
+          Logic.replayMoveState(2, 2) == (false, true),  // not yet played → muted
+          Logic.replayMoveState(3, 2) == (false, true),
+          // Initial position (activePly 0): nothing active, all future.
+          Logic.replayMoveState(0, 0) == (false, true),
+          // Final frame (activePly N): the last move is active, nothing future.
+          Logic.replayMoveState(4, 5) == (true, false)
+        )
+      }
+    ),
+    suite("tournaments")(
+      test("tournamentBadge maps statuses; canEnter only while created") {
+        assertTrue(
+          Logic.tournamentBadge("created") == ("Open", "waiting"),
+          Logic.tournamentBadge("started") == ("Live", "live"),
+          Logic.tournamentBadge("finished") == ("Done", "done"),
+          Logic.tournamentBadge("weird") == ("weird", ""),
+          Logic.canEnterTournament("created"),
+          !Logic.canEnterTournament("started")
+        )
+      },
+      test("orderTournaments flattens created → started → finished") {
+        val list = Logic.TournamentList(
+          created = List(tr("c1", "created")),
+          started = List(tr("s1", "started"), tr("s2", "started")),
+          finished = List(tr("f1", "finished"))
+        )
+        assertTrue(
+          Logic.orderTournaments(list).map(_.id) == List("c1", "s1", "s2", "f1")
+        )
+      },
+      test("TournamentList decodes the NowChess envelope, ignoring extras") {
+        val json =
+          """{"created":[{"id":"t1","fullName":"Tournament 0.1","nbPlayers":4,"status":"created","round":0,"clock":{"limit":300,"increment":2},"rated":true}],"started":[],"finished":[]}"""
+        val decoded = json.fromJson[Logic.TournamentList]
+        assertTrue(
+          decoded.map(_.created.map(_.id)) == Right(List("t1")),
+          decoded.map(_.created.head.fullName) == Right("Tournament 0.1"),
+          decoded.map(_.created.head.nbPlayers) == Right(4)
+        )
+      }
+    ),
+    suite("clock display")(
+      test("formatClock: m:ss, with tenths under 10s, clamped at 0:00") {
+        assertTrue(
+          Logic.formatClock(300000) == "5:00",
+          Logic.formatClock(65000) == "1:05",
+          Logic.formatClock(9300) == "0:09.3",
+          Logic.formatClock(0) == "0:00.0",
+          Logic.formatClock(-500) == "0:00.0"
+        )
+      },
+      test("clockRemainingMs: only the running side ticks, clamped at 0") {
+        val c = ClockDto(whiteMs = 120000, blackMs = 90000, runningFor = Some("white"))
+        assertTrue(
+          Logic.clockRemainingMs(c, "white", 5000) == 115000,
+          Logic.clockRemainingMs(c, "black", 5000) == 90000,
+          Logic.clockRemainingMs(c, "white", 999999) == 0
+        )
+      },
+      test("clockRemainingMs: a paused clock never ticks") {
+        val c = ClockDto(100000, 100000, runningFor = None)
+        assertTrue(
+          Logic.clockRemainingMs(c, "white", 5000) == 100000,
+          Logic.clockRemainingMs(c, "black", 5000) == 100000
+        )
+      },
+      test("clockIsUrgent: running side under ten seconds") {
+        val c = ClockDto(5000, 90000, runningFor = Some("white"))
+        assertTrue(
+          Logic.clockIsUrgent(c, "white", 5000),
+          !Logic.clockIsUrgent(c, "white", 15000),
+          !Logic.clockIsUrgent(c, "black", 5000)
+        )
+      }
+    ),
+    suite("analysis helpers")(
+      test("evalText: signed pawns, mate marker") {
+        assertTrue(
+          Logic.evalText(150) == "+1.5",
+          Logic.evalText(-200) == "-2.0",
+          Logic.evalText(0) == "+0.0",
+          Logic.evalText(99950) == "#",
+          Logic.evalText(-99950) == "-#"
+        )
+      },
+      test("evalBarWhitePct clamps to [0,100]") {
+        assertTrue(
+          Logic.evalBarWhitePct(63.0) == 63.0,
+          Logic.evalBarWhitePct(140.0) == 100.0,
+          Logic.evalBarWhitePct(-5.0) == 0.0
+        )
+      },
+      test("glyphClass maps each NAG symbol") {
+        assertTrue(
+          Logic.glyphClass(Some("!!")) == "brilliant",
+          Logic.glyphClass(Some("!")) == "good",
+          Logic.glyphClass(Some("!?")) == "interesting",
+          Logic.glyphClass(Some("?!")) == "inaccuracy",
+          Logic.glyphClass(Some("?")) == "mistake",
+          Logic.glyphClass(Some("??")) == "blunder",
+          Logic.glyphClass(None) == ""
+        )
+      },
+      test("analysisForMove / analysisAtPly index by ply") {
+        val a = GameAnalysisDto(
+          OpeningDto(Some("B20"), "Sicilian Defense", "Sicilian", 1),
+          List(
+            MoveAnalysisDto(0, "white", "e4", 20, 53, 0, 100, "Book", None, "e4", Nil),
+            MoveAnalysisDto(1, "black", "c5", 10, 49, 5, 96, "Best", None, "c5", Nil)
+          ),
+          95.0,
+          90.0
+        )
+        assertTrue(
+          Logic.analysisForMove(Some(a), 1).map(_.san) == Some("c5"),
+          Logic.analysisForMove(Some(a), 9) == None,
+          Logic.analysisForMove(None, 0) == None,
+          Logic.analysisAtPly(Some(a), 0) == None,         // initial position
+          Logic.analysisAtPly(Some(a), 1).map(_.san) == Some("e4"),
+          Logic.analysisAtPly(Some(a), 2).map(_.san) == Some("c5")
+        )
+      },
+      test("accuracyText formats one decimal percent") {
+        assertTrue(Logic.accuracyText(92.37) == "92.4%")
+      },
+      test("openingLabel: eco + name, or bare name") {
+        assertTrue(
+          Logic.openingLabel(OpeningDto(Some("B90"), "Sicilian: Najdorf", "Sicilian", 10)) ==
+            "B90 · Sicilian: Najdorf",
+          Logic.openingLabel(OpeningDto(None, "Other", "Other", 0)) == "Other"
+        )
+      },
+      test("replay + analysis agree on the active ply (cross-system wiring)") {
+        // Clicking the move at flat index i sets activePly = i+1 (Main.moveCell).
+        // At that ply the replay scrubber marks move i active, and the analysis
+        // panels must select the SAME move — identical 0-based ply indexing.
+        val a = GameAnalysisDto(
+          OpeningDto(None, "x", "x", 0),
+          List(
+            MoveAnalysisDto(0, "white", "e4", 0, 50, 0, 100, "Best", None, "e4", Nil),
+            MoveAnalysisDto(1, "black", "c5", 0, 50, 0, 100, "Best", None, "c5", Nil)
+          ),
+          100.0,
+          100.0
+        )
+        val i = 1
+        val activePly = i + 1 // what moveCell(i).onClick sets
+        assertTrue(
+          Logic.replayMoveState(i, activePly)._1,                       // move i highlighted
+          !Logic.replayMoveState(i, activePly)._2,                      // …and not "future"
+          Logic.analysisAtPly(Some(a), activePly).map(_.ply) == Some(i) // analysis selects move i
+        )
+      }
     )
   )
+
+  private def og(
+      id: String,
+      gameType: String,
+      spectateable: Boolean = true
+  ): OngoingGame =
+    OngoingGame(id, gameType, "White", "Black", "ongoing", 0, 0, spectateable, None)
+
+  private def tr(id: String, status: String): Logic.TournamentRow =
+    Logic.TournamentRow(id, s"T $id", 2, status, 0)
 
   // Build a starting-position square list using piece-type names —
   // matches the wire format emitted by WebBoardView.toDto.

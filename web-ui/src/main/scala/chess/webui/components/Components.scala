@@ -123,14 +123,69 @@ object Components:
       onClick --> { e => action(e) }
     )
 
-  /** In-flow text-style action (menu item, settings row link, mode tab,
-    * doc link). Plain transparent button with marker-stripe hover. */
-  def linkButton(
+  /** Affirmative / proceed action in a confirmation modal — a newsprint
+    * decision clip with a green marker (§5.1 / §5.9). A "stamped decision",
+    * distinct from a casual post-it CTA. */
+  def confirmButton(
       label: String
   )(action: dom.MouseEvent => Unit): HtmlElement =
     button(
       typ := "button",
-      className := "btn-link",
+      className := "btn-confirm",
+      label,
+      onClick --> { e => action(e) }
+    )
+
+  /** Cancel / back-out action in a confirmation modal — a newsprint
+    * decision clip with a red marker. Pairs with [[confirmButton]]. */
+  def cancelButton(
+      label: String
+  )(action: dom.MouseEvent => Unit): HtmlElement =
+    button(
+      typ := "button",
+      className := "btn-cancel",
+      label,
+      onClick --> { e => action(e) }
+    )
+
+  /** Diagonal "photo-corner" tape strips for an overlay card (§4.3 / §5.7).
+    * `corners` selects which of `tl`/`tr`/`bl`/`br` get a strip — default all
+    * four (the modal look); pass a subset for a looser, varied taping (the help
+    * panels each use a different combination so they don't read as stamped
+    * copies). Render as a child of the non-clipping frame so the strips spill
+    * past the torn paper edge. Decorative — `pointer-events: none`. */
+  def tapeCorners(
+      corners: Seq[String] = Seq("tl", "tr", "bl", "br")
+  ): HtmlElement =
+    div(
+      className := "tape-corners",
+      corners.map(c => span(className := s"tape-strip tape-$c"))
+    )
+
+  /** A lighter taping than [[tapeCorners]]: just two near-horizontal strips
+    * across the top edge, as if the card were taped to the page by its top
+    * corners. For small dialogs (e.g. the promotion picker) where four diagonal
+    * corner strips read as fussy. */
+  def tapeStripsTop(): HtmlElement =
+    div(
+      className := "tape-corners",
+      span(className := "tape-strip tape-top-l"),
+      span(className := "tape-strip tape-top-r")
+    )
+
+  /** In-flow text-style action (menu item, settings row link, mode tab,
+    * doc link). Plain transparent button with marker-stripe hover.
+    *
+    * `extraClass` rides alongside `btn-link` for per-use tweaks — most
+    * commonly a marker-colour override (e.g. `marker-green` swaps the
+    * default yellow highlight for green on an affirmative action). */
+  def linkButton(
+      label: String,
+      extraClass: String = ""
+  )(action: dom.MouseEvent => Unit): HtmlElement =
+    button(
+      typ := "button",
+      className := (if extraClass.isEmpty then "btn-link" else s"btn-link $extraClass"),
       label,
       onClick --> { e => action(e) }
     )
@@ -167,6 +222,17 @@ object Components:
       if dom.window.history.length > 1 then dom.window.history.back()
       else onStart()
     }
+
+  /** Brand peach sticker for the header-less routed screens — slapped into
+    * the title card's top-left corner. Positioned absolute to the card (a
+    * structural anchor, so it's out of layout flow without viewport-coordinate
+    * fragility; §10.1). Decorative — the back link handles navigation. */
+  def cornerPeach(): SvgElement =
+    svg.svg(
+      svg.viewBox := "-3 -3 43 44",
+      svg.cls := "corner-peach",
+      svg.use(svg.href := "/web/peach.svg#peach")
+    )
 
   // --------------------------------------------------------------------------
   // Form controls
@@ -257,6 +323,29 @@ object Components:
       )
     )
 
+  /** Hand-drawn range slider bound to a `Var[Int]` over [min, max]. A native
+    * `<input type=range>` (no JS library — see design.md): appearance reset,
+    * the thumb + track restyled into a scribbled look via the `#hand-drawn`
+    * filter (bespoke.css). The current value shows beside it; no fill (the
+    * thumb position + value convey it). */
+  def rangeSlider(state: Var[Int], min: Int, max: Int): HtmlElement =
+    span(
+      className := "range-slider-wrap",
+      input(
+        typ := "range",
+        className := "range-slider",
+        minAttr := min.toString,
+        maxAttr := max.toString,
+        stepAttr := "1",
+        value <-- state.signal.map(_.toString),
+        onInput.mapToValue --> { s => state.set(s.toIntOption.getOrElse(min)) }
+      ),
+      span(
+        className := "range-slider-value",
+        child.text <-- state.signal.map(_.toString)
+      )
+    )
+
   /** Single-select dropdown bound to a `Var[A]`. Options pair the
     * value with its display label. The optional `show` derives the
     * `<option>`'s `value` attribute from the option value (defaults
@@ -317,10 +406,11 @@ object Components:
       }
     )
 
-  /** The single screen heading at the top of every routed screen. The
-    * font + size + colour live in the `.screen-heading` bespoke rule. */
+  /** The single screen heading at the top of every routed screen — a headline
+    * newspaper cutting. The `h1.screen-heading` drives the font-size + layout;
+    * the cutting itself is the shared [[newsprintClip]] (heading variant). */
   def screenHeading(text: String): HtmlElement =
-    h1(className := "screen-heading", text)
+    h1(className := "screen-heading", newsprintClip(heading = true)(text))
 
   /** Small status pill — a torn-paper chip for lobby/game state (Open /
     * Full / Live …). `variant` selects the colour via a `status-<variant>`
@@ -330,3 +420,87 @@ object Components:
       className := s"status-badge${if variant.nonEmpty then s" status-$variant" else ""}",
       label
     )
+
+  /** A scrap of newsprint — a run of typewriter (Special Elite) text on
+    * cream cut-paper with a jagged scissor-cut edge, lifted off the page by
+    * a real drop-shadow. The single home for the "cut out of a newspaper and
+    * pasted into the notebook" treatment (design.md §5.8 / §12.3). Every
+    * newspaper-clipping surface routes through here: move-log tokens, the
+    * end-game verdict clips + "Game Over" headline, the on-board result
+    * banner, every screen / modal / help heading, scrap-table headers, help
+    * inline code + block listings.
+    *
+    * The drop-shadow MUST live on an outer wrapper: `filter: drop-shadow`
+    * applied to the clipped cutting itself is clipped to the same jagged
+    * silhouette and disappears. So this renders
+    * `span.newsprint-shadow > <cutting>` — the wrapper carries the shadow
+    * (no clip-path of its own), the inner cutting carries the clip-path +
+    * newsprint background.
+    *
+    * Three shapes via the flags:
+    *   - default        an inline pill (`.code-inline`, near-straight cut)
+    *   - `heading=true` a headline cutting (`.clip-heading`: all-around cut,
+    *                     drop-cap, strong shadow). Wrap it in the semantic
+    *                     `h1`/`h2`, which drives the font-size; the cutting
+    *                     inherits it.
+    *   - `block=true`   a multi-line `<pre>` listing (`.help-pre`, all-around
+    *                     cut, strong block shadow + tape corners)
+    *
+    * `extraClass` lands on the inner cutting for per-use sizing / ink
+    * overrides (e.g. `move-san`, `result-stat`, `result-clip`). */
+  def newsprintClip(
+      extraClass: String = "",
+      block: Boolean = false,
+      heading: Boolean = false
+  )(body: Modifier[HtmlElement]*): HtmlElement =
+    // Wrapper shadow strength scales with the cutting: `is-block` for the
+    // multi-line listing, `is-strong` for headline cuttings, the plain
+    // contact shadow for inline pills.
+    val wrapCls =
+      if block then "newsprint-shadow is-block"
+      else if heading then "newsprint-shadow is-strong"
+      else "newsprint-shadow"
+    // Inner cutting: `.help-pre` is the block (<pre>) substrate; otherwise the
+    // shared `.code-inline` pill, with `.clip-heading` switching it to the
+    // all-around scissor cut + drop-cap for headline use.
+    val innerBase =
+      if block then "help-pre"
+      else if heading then "code-inline clip-heading"
+      else "code-inline"
+    val innerCls =
+      if extraClass.isEmpty then innerBase else s"$innerBase $extraClass"
+    val inner =
+      if block then pre(className := innerCls).amend(body*)
+      else span(className := innerCls).amend(body*)
+    span(className := wrapCls, inner)
+
+  /** Ruled-ledger table — `.scrap-table` (design.md §5.8). Lives inside a paper
+    * content card (no surface of its own). `columns` is a `(label, cellClass)`
+    * spec: each label renders as a newspaper cutting (a header is a clipping,
+    * not a sticker), and `cellClass` (`"col-num"` / `"col-status"` /
+    * `"col-action"`, or `""` for a plain name column) carries alignment and
+    * lines the header up with its body cells; an empty label is a bare header
+    * (e.g. the action column). The caller supplies the body `<tr>` rows;
+    * `emptyText` shows when there are none. */
+  def scrapTable(
+      columns: Seq[(String, String)],
+      rows: Seq[HtmlElement],
+      emptyText: String
+  ): HtmlElement =
+    if rows.isEmpty then div(className := "scrap-empty", emptyText)
+    else
+      table(
+        className := "scrap-table",
+        thead(
+          tr(
+            columns.map { case (label0, cellClass) =>
+              th(
+                className := cellClass,
+                if label0.isEmpty then emptyNode
+                else newsprintClip()(label0)
+              )
+            }
+          )
+        ),
+        tbody(rows)
+      )

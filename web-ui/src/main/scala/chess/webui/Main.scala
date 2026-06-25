@@ -10,7 +10,7 @@ import sttp.client3.FetchBackend
 import sttp.tapir.client.sttp.SttpClientInterpreter
 import zio.json.*
 
-import chess.api.{BoardStateDto, CreateGameRequest, Endpoints, ErrorDto, ExportResponse, GameStatusDto, MoveEntryDto, MoveRequest, SquareDto, StackInfoResponse, StateResponse, VsBotSettings}
+import chess.api.{AnalyzeRequestDto, BoardStateDto, CreateGameRequest, Endpoints, ErrorDto, ExportResponse, GameAnalysisDto, GameStatusDto, MoveEntryDto, MoveRequest, OngoingGame, ReplayFrame, ReplayResponse, SquareDto, StackInfoResponse, StateResponse, VsBotSettings}
 import chess.webui.components.{Components, ModalRegistry}
 
 object Main:
@@ -25,6 +25,32 @@ object Main:
   // --------------------------------------------------------------------------
 
   private val stateVar: Var[Option[BoardStateDto]] = Var(None)
+
+  // -- Replay (review a finished game move-by-move) ---------------------------
+  // Fetched once when a game completes (GET /api/games/{id}/replay), cached so
+  // scrubbing is instant + offline. `activePlyVar` is the shown frame index
+  // (0 = initial position … N = final), default N. See docs/replay-plan.md.
+  private val replayFramesVar: Var[Vector[ReplayFrame]] = Var(Vector.empty)
+  private val activePlyVar: Var[Int]                    = Var(0)
+
+  // -- Analysis (post-game move quality) -------------------------------------
+  // Fetched on game completion (POST /api/analyze with the game PGN). The eval
+  // bar + move-detail panel read this alongside `activePlyVar`, so the analysis
+  // scrubs in lock-step with the replay board.
+  private val analysisVar: Var[Option[GameAnalysisDto]] = Var(None)
+
+  /** The position shown on the board: the live `stateVar`, except while
+    * replaying a finished game, when it's the selected historical frame. Only
+    * the board + captured pieces follow this; the move log + result card stay on
+    * the live `stateVar` (so the result never reads "playing" mid-replay). */
+  private val boardViewSignal: Signal[Option[BoardStateDto]] =
+    stateVar.signal
+      .combineWith(replayFramesVar.signal)
+      .combineWith(activePlyVar.signal)
+      .map { case (live, frames, ply) =>
+        if frames.isEmpty then live
+        else frames.lift(ply).map(_.boardState).orElse(live)
+      }
 
   /** Pointer-event drag state. Replaces the previous HTML5-drag setup
     * (which had unreliable `setDragImage` snapshots for inline SVG with
@@ -84,8 +110,6 @@ object Main:
   // `spectators` event and shown in the header eye badge.
   private val spectatorCountVar: Var[Int] = Var(0)
 
-  // Whether the header spectator-share popover is open.
-  private val sharePanelOpenVar: Var[Boolean] = Var(false)
   private val flippedVar: Var[Boolean] = Var(false)
   /** Per-tab session id, generated on first load and persisted in
     * localStorage. Sent as `X-Session-Id` on every mutating request so the
@@ -168,6 +192,10 @@ object Main:
     // Read-only spectator view of a mirrored game (Lichess bot-game or a
     // lobby game watched as a non-player). Same board, no input.
     case Watch(gameId: String)
+    // Unified list of ongoing games to watch (PvP / PvBot / Lichess /
+    // tournament), and the list of NowChess tournaments to enter piChess into.
+    case Spectate
+    case Tournaments
     case Settings
     case Help
     case Analytics
@@ -183,6 +211,8 @@ object Main:
       case "" | "/"             => Screen.Start
       case "new"                => Screen.NewGameMenu
       case "join"               => Screen.Join
+      case "spectate"           => Screen.Spectate
+      case "tournaments"        => Screen.Tournaments
       case "settings"           => Screen.Settings
       case "help"               => Screen.Help
       case "analytics"          => Screen.Analytics
@@ -195,6 +225,8 @@ object Main:
     case Screen.Start          => ""
     case Screen.NewGameMenu    => "#new"
     case Screen.Join           => "#join"
+    case Screen.Spectate       => "#spectate"
+    case Screen.Tournaments    => "#tournaments"
     case Screen.Lobby(code)    => s"#lobby/$code"
     case Screen.Game(id)       => s"#game/$id"
     case Screen.Watch(id)      => s"#watch/$id"
@@ -227,6 +259,39 @@ object Main:
   private val vsBotPlayerSideVar: Var[String] = Var("white")
   private val vsBotDifficultyVar: Var[String] = Var("Medium")
   private val vsBotAllowUndoVar: Var[Boolean] = Var(true)
+
+  /** Whether the *active* game permits undo/redo. Set at each game-start
+    * path (true for local games; the vs-bot / host setting otherwise); the
+    * board controls strike the Undo/Redo post-its when this is false (§5.9). */
+  private val currentAllowUndoVar: Var[Boolean] = Var(true)
+
+  /** Whether the active game is a solo local / vs-bot game the player fully
+    * controls (as opposed to a multiplayer lobby game). Drives whether the
+    * board's Load action — which rewrites the position — is offered: you can't
+    * unilaterally load a position into a shared two-player game. Set at the
+    * create / lobby-entry choke points; defaults true (a bare `#game/<id>` deep
+    * link is almost always one's own local/bot game). */
+  private val currentGameIsLocalVar: Var[Boolean] = Var(true)
+
+  /** Optional FEN/PGN/JSON to start a fresh local / vs-bot game FROM, set on
+    * the New Game screen's import field (local + bot modes only). */
+  private val newGameImportVar: Var[String] = Var("")
+
+  /** True once the active game has ended (checkmate / draw / resignation).
+    * Drives the §5.10 end-screen: gates the move input + Draw / Forfeit and
+    * triggers the result card. Lazy so it doesn't touch `stateVar` during
+    * field init. */
+  private lazy val gameOverSignal: Signal[Boolean] =
+    stateVar.signal.map(_.exists(_.status.kind != "playing"))
+
+  /** The result card auto-shows when the game ends and hides once dismissed.
+    * The dismiss flag is reset when the game returns to "playing" (new game /
+    * undo) by an observer in App() so the card shows again next time (§5.10). */
+  private val resultDismissedVar: Var[Boolean] = Var(false)
+  private lazy val resultOpenSignal: Signal[Boolean] =
+    gameOverSignal
+      .combineWith(resultDismissedVar.signal)
+      .map { case (over, dismissed) => over && !dismissed }
   // Help is rendered as an in-SPA view — not a separate route — so that the
   // browser back button returns to the game without a full page reload.
   // We sync this var with `location.hash` so deep-links (#help) and the back
@@ -330,6 +395,11 @@ object Main:
           clearPreviewState()
           if threatDetectionVar.now() then refreshThreats()
         }(using ctx.owner)
+        // Stamp every state push so the clock display can interpolate the
+        // running side locally between pushes (the server stays authoritative).
+        stateVar.signal.foreach(_ => clockReceivedAtVar.set(jsNow()))(using
+          ctx.owner
+        )
         // Toggling threatDetection on should immediately fetch /threats so
         // the rings appear without waiting for the next move; toggling off
         // should clear them. Same subscription persists the new value to
@@ -399,6 +469,27 @@ object Main:
           )
           ModalRegistry.register("load",    loadOpenVar.signal)
           ModalRegistry.register("confirm", confirmVar.signal.map(_.isDefined))
+          ModalRegistry.register("result",  resultOpenSignal)
+          // Reset the result card's dismiss flag whenever the game returns to
+          // "playing" (a new game, or an undo past the end) so the card shows
+          // again the next time a game ends (§5.10).
+          gameOverSignal.changes.filter(!_).foreach { _ =>
+            resultDismissedVar.set(false)
+            // Back to "playing" (new game / undo past the end): drop the replay
+            // cache so the move log stops being clickable, and clear analysis.
+            replayFramesVar.set(Vector.empty)
+            activePlyVar.set(0)
+            analysisVar.set(None)
+          }
+          // On completion, pull the full position history once so the move log
+          // becomes a clickable replay scrubber (board time-travel), and request
+          // the engine analysis (eval bar + move glyphs + detail, replay-synced).
+          gameOverSignal.changes.filter(identity).foreach { _ =>
+            gameIdVar.now().foreach { id =>
+              fetchReplay(id)
+              requestAnalysis(id)
+            }
+          }
           ModalRegistry.register("export",  exportVar.signal.map(_.isDefined))
         }
         // Fetch the active stack identity once at boot. Used by the
@@ -431,6 +522,8 @@ object Main:
     case Screen.Start           => startScreen()
     case Screen.NewGameMenu     => newGameMenu()
     case Screen.Join            => joinScreen()
+    case Screen.Spectate        => spectateScreen()
+    case Screen.Tournaments     => tournamentsScreen()
     case Screen.Lobby(code)     => lobbyScreen(code)
     case Screen.Game(_)         => mainUi()
     case Screen.Watch(_)        => spectatorUi()
@@ -445,6 +538,11 @@ object Main:
     */
   private def enterGame(id: String, spectator: Boolean): Unit =
     gameIdVar.set(Some(id))
+    // Adopt the lobby's allowUndo ONLY when we actually came through a lobby
+    // (hosted / joined games). For vs-bot / local games the create path already
+    // set currentAllowUndoVar; this fires on navigate right after create, so a
+    // `getOrElse(true)` here would clobber a vs-bot "Allow undo: off" back on.
+    currentLobbyVar.now().foreach(l => currentAllowUndoVar.set(l.allowUndo))
     getStateClient((id, None)).foreach(handleStateResult)
     connectEvents(id, spectator)
 
@@ -461,6 +559,7 @@ object Main:
       loadModal(),
       exportModal(),
       confirmModal(),
+      resultCard(),
       // Floating clone of the dragged piece. Mounted ONCE — the inner
       // piece span is the only thing that re-renders, and only when the
       // piece identity changes (drag start / drag end). The transform
@@ -621,17 +720,21 @@ object Main:
     div(
       className := "app-shell",
       header(),
-      spectatorBody()
+      spectatorBody(),
+      // Spectators get the same end-of-game card when the watched game ends —
+      // but without "New Game" (they're not a player).
+      resultCard(spectator = true)
     )
 
   private def spectatorBody(): HtmlElement =
     div(
       className := "app",
       spectatorBoardArea(),
-      // Move log only — no game-state post-it (New / Load / Draw / Forfeit).
+      // Move log only — no game-state post-it (New / Load / Draw / Forfeit)
+      // and no move-input field (the board is read-only).
       div(
         className := "sidebar",
-        moveLogContainer()
+        moveLogContainer(showInput = false)
       )
     )
 
@@ -643,6 +746,8 @@ object Main:
       div(
         className := "board-paper",
         paperLayer(crumpled = true),
+        clockBar(),
+        evalBar(),
         statusIndicator(),
         div(
           className := "board-row",
@@ -656,6 +761,14 @@ object Main:
         )
       )
     )
+
+  /** Whether the server has Lichess configured (a token), injected as the
+    * `pichess-lichess` meta by HtmlPage. Lichess is an opt-in external
+    * integration, so its UI (the "Challenge a bot" link) is hidden when off. */
+  private val lichessEnabled: Boolean =
+    Option(dom.document.querySelector("meta[name='pichess-lichess']"))
+      .flatMap(e => Option(e.getAttribute("content")))
+      .contains("true")
 
   /** Kick off a live Lichess bot-game on the server, then navigate to the
     * read-only spectator view of its mirror game. */
@@ -672,7 +785,13 @@ object Main:
           case _: Throwable =>
             showToast("Couldn't start a game (bad response).")
       case scala.util.Failure(err) =>
-        showToast(s"Couldn't start a game: ${err.getMessage}")
+        // A 404 here means the /lichess routes aren't mounted — i.e. no Lichess
+        // token is configured on this server (it's an opt-in external
+        // integration), so surface that rather than a raw "HTTP 404".
+        val msg = Option(err.getMessage).getOrElse("")
+        if msg.contains("404") then
+          showToast("Lichess play isn't configured on this server.")
+        else showToast(s"Couldn't start a game: $msg")
     }
 
   // --------------------------------------------------------------------------
@@ -722,67 +841,22 @@ object Main:
     )
   )
 
-  /** Header control: an eye glyph + live spectator count that toggles a
-    * paper "invite spectators" popover. Only meaningful on the Game /
-    * Watch screens, which are the only screens that render the header. */
+  /** Header control: an eye glyph + live spectator count for the current
+    * game. Read-only — there's no share popover; spectators discover games
+    * to watch through the Spectate menu. Only meaningful on the Game / Watch
+    * screens, which are the only screens that render the header. */
   private def spectatorHeaderWidget(): HtmlElement =
     div(
       className := "spectator-widget",
-      button(
-        typ := "button",
-        className := "btn-icon spectator-eye",
-        title := "Spectators — click to share",
-        onClick --> { _ => sharePanelOpenVar.update(!_) },
+      span(
+        className := "spectator-eye",
+        title := "Spectators watching",
         icon("spectate"),
         span(
           className := "spectator-count",
           child.text <-- spectatorCountVar.signal.map(_.toString)
         )
-      ),
-      child <-- sharePanelOpenVar.signal.map {
-        case true  => sharePopover()
-        case false => emptyNode
-      }
-    )
-
-  /** Anchored share popover: the read-only watch link (works for any
-    * game) plus the invite code when we know the lobby this game came
-    * from. Both copy to the clipboard. */
-  private def sharePopover(): HtmlElement =
-    val gid       = gameIdVar.now().getOrElse("")
-    val watchLink = s"${dom.window.location.origin}/#watch/$gid"
-    div(
-      className := "share-popover",
-      div(
-        className := "share-popover-head",
-        h3(className := "share-popover-title", "Invite spectators"),
-        Components.iconButton("✕") { _ => sharePanelOpenVar.set(false) }
-      ),
-      p(
-        className := "share-popover-hint",
-        "Anyone with this link can watch the game live."
-      ),
-      div(
-        className := "share-row",
-        span(className := "share-value", watchLink),
-        Components.iconButton("⧉") { _ =>
-          copyToClipboard(watchLink)
-          showToast("Spectator link copied")
-        }
-      ),
-      child <-- currentLobbyVar.signal.map {
-        case Some(l) if l.gameId.toOption.contains(gid) =>
-          div(
-            className := "share-row",
-            span(className := "share-label", "Code"),
-            span(className := "share-value", l.inviteCode),
-            Components.iconButton("⧉") { _ =>
-              copyToClipboard(l.inviteCode)
-              showToast("Invite code copied")
-            }
-          )
-        case _ => emptyNode
-      }
+      )
     )
 
   // --------------------------------------------------------------------------
@@ -801,6 +875,8 @@ object Main:
       div(
         className := "board-paper",
         paperLayer(crumpled = true),
+        clockBar(),
+        evalBar(),
         statusIndicator(),
         div(
           className := "board-row",
@@ -828,8 +904,10 @@ object Main:
         className := "post-it-card",
         div(
           className := "post-it-row",
-          actionButton("undo", "Undo", modifier = "", () => postUndo()),
-          actionButton("redo", "Redo", modifier = "", () => postRedo()),
+          actionButton("undo", "Undo", modifier = "", () => postUndo(),
+                       disabled = currentAllowUndoVar.signal.map(!_)),
+          actionButton("redo", "Redo", modifier = "", () => postRedo(),
+                       disabled = currentAllowUndoVar.signal.map(!_)),
           flipActionButton()
         ),
         div(
@@ -867,9 +945,12 @@ object Main:
       div(
         className := "post-it-card cyan",
         actionButton("new",     "New Game", "action-new",     () => askConfirm(confirmNewGame)),
-        actionButton("load",    "Load",     "action-load",    () => loadOpenVar.set(true)),
-        actionButton("draw",    "Draw",     "action-draw",    () => askConfirm(confirmDraw)),
-        actionButton("forfeit", "Forfeit",  "action-forfeit", () => askConfirm(confirmForfeit))
+        // Load rewrites the board position, which only makes sense for a solo
+        // local / vs-bot game — struck out (§5.9) on a multiplayer lobby game.
+        actionButton("load",    "Load",     "action-load",    () => loadOpenVar.set(true),
+                     disabled = currentGameIsLocalVar.signal.map(!_)),
+        actionButton("draw",    "Draw",     "action-draw",    () => askConfirm(confirmDraw),    disabled = gameOverSignal),
+        actionButton("forfeit", "Forfeit",  "action-forfeit", () => askConfirm(confirmForfeit), disabled = gameOverSignal)
       )
     )
 
@@ -897,7 +978,7 @@ object Main:
   // jitter so the two stacks read as separate physical piles rather than
   // one continuous list.
   private def capturedPile(): HtmlElement =
-    val signal = stateVar.signal.combineWith(flippedVar.signal).map {
+    val signal = boardViewSignal.combineWith(flippedVar.signal).map {
       case (None, _) => (List.empty[String], List.empty[String], false)
       case (Some(s), flipped) =>
         val (whiteLost, blackLost) = Logic.capturedFromSquares(s.squares)
@@ -911,26 +992,63 @@ object Main:
         val (topPieces, topColor, bottomPieces, bottomColor) =
           if flipped then (blackLost, "black", whiteLost, "white")
           else (whiteLost, "white", blackLost, "black")
-        // Top section: DOM order reversed so newest is at the visual top
-        // (farthest from board) AND the painting order naturally puts older
-        // pieces on top of newer (user-requested z-flip for that pile).
-        // Bottom section uses regular DOM order: newest paints on top of
-        // older — physical-stacking convention.
+        // Each section collapses to one little stack per piece TYPE (the
+        // pieces arrive value-sorted, so same types are already adjacent), with
+        // a handwritten count chip — so the gutter height is bounded by the 5
+        // capturable types, not by how many were taken (it no longer stretches
+        // the board on a heavy endgame).
         List(
           div(
             className := "captured-section captured-section-top",
-            topPieces.reverse.map(renderCapturedPiece(_, topColor))
+            groupCaptures(topPieces).map { case (n, c) =>
+              renderCapturedStack(n, topColor, c)
+            }
           ),
           div(
             className := "captured-section captured-section-bottom",
-            bottomPieces.map(renderCapturedPiece(_, bottomColor))
+            groupCaptures(bottomPieces).map { case (n, c) =>
+              renderCapturedStack(n, bottomColor, c)
+            }
           )
         )
       }
     )
 
-  private def renderCapturedPiece(name: String, color: String): HtmlElement =
-    span(className := s"captured-piece $color-piece", pieceSvg(name))
+  /** Collapse a value-sorted run of piece names into `(name, count)` groups,
+    * preserving order (same types are already consecutive). */
+  private def groupCaptures(pieces: List[String]): List[(String, Int)] =
+    pieces
+      .foldLeft(List.empty[(String, Int)]) { (acc, name) =>
+        acc match
+          case (n, c) :: tail if n == name => (n, c + 1) :: tail
+          case _                           => (name, 1) :: acc
+      }
+      .reverse
+
+  /** One captured-piece stack: up to three overlapping stickers (deterministic
+    * per-index tilt — NOT RNG, so it stays put across the per-move re-render)
+    * plus a handwritten count chip when 2+ were taken. */
+  private def renderCapturedStack(
+      name: String,
+      color: String,
+      count: Int
+  ): HtmlElement =
+    span(
+      className := "captured-stack",
+      (0 until math.min(count, 3)).map { i =>
+        span(
+          className := s"captured-piece $color-piece",
+          styleAttr := s"bottom: ${i * 0.16}rem; transform: rotate(${capturedTilt(i)}deg);",
+          pieceSvg(name)
+        )
+      },
+      if count >= 2 then span(className := "captured-count", count.toString)
+      else emptyNode
+    )
+
+  private val capturedTilts = Array(-4, 4, -2)
+  private def capturedTilt(i: Int): Int =
+    capturedTilts(i % capturedTilts.length)
 
   private def rankLabels(): HtmlElement =
     div(
@@ -956,12 +1074,19 @@ object Main:
   private def board(readOnly: Boolean = false): HtmlElement =
     div(
       className := "board",
-      children <-- stateVar.signal.combineWith(flippedVar.signal).map {
-        case (None, _) => List.empty
-        case (Some(s), flipped) =>
-          val squares = if flipped then s.squares.reverse else s.squares
-          squares.map(renderSquare(s, _, readOnly))
-      }
+      children <-- boardViewSignal
+        .combineWith(flippedVar.signal)
+        .combineWith(gameOverSignal)
+        .map {
+          case (None, _, _) => List.empty
+          case (Some(s), flipped, over) =>
+            // A finished game is read-only — viewing a past ply (or the final
+            // position) is review, not play; this also stops dragging on a
+            // completed board.
+            val ro      = readOnly || over
+            val squares = if flipped then s.squares.reverse else s.squares
+            squares.map(renderSquare(s, _, ro))
+        }
     )
 
   private def renderSquare(
@@ -990,6 +1115,14 @@ object Main:
         .distinct,
       cls("is-attacker") <-- attackersVar.signal
         .map(_.contains(sq.pos))
+        .distinct,
+      // Promotion: solid green ring on the pawn's origin square, dashed green
+      // ring on the square it's about to promote onto (akin to threat/attacker).
+      cls("is-promoting") <-- pendingPromotionVar.signal
+        .map(_.exists(_.from == sq.pos))
+        .distinct,
+      cls("is-promo-dest") <-- pendingPromotionVar.signal
+        .map(_.exists(_.to == sq.pos))
         .distinct,
       // Spectator boards are read-only: no click-to-move, no drag.
       if readOnly then emptyMod else onClick --> { _ => onSquareClick(sq) },
@@ -1082,6 +1215,123 @@ object Main:
       gameStatePostIt()
     )
 
+  /** Wall-clock (ms) when the last server state push arrived — used to
+    * interpolate the running clock locally between pushes. Stamped on every
+    * `stateVar` change by the effect wired at App mount. */
+  private val clockReceivedAtVar: Var[Double] = Var(0d)
+  private def jsNow(): Double = js.Date.now()
+
+  /** Two chess-clock faces for a timed game, flip-aware (the side shown at the
+    * top of the board is on top). Rendered only when the state carries a clock.
+    * Pure display: reads the authoritative `BoardStateDto.clock` and only
+    * interpolates the running side down between pushes — the server flags, never
+    * the client. Reusable by the replay view with paused (non-running) values. */
+  /** Win-probability eval bar for the position currently shown (live or the
+    * replay-scrubbed ply). White's share is the move's white-relative win%;
+    * the centre label is the eval (`+1.5` / `#`). Renders only once the engine
+    * analysis has arrived; tracks `activePlyVar` so it scrubs with the board. */
+  private def evalBar(): HtmlElement =
+    div(
+      className := "eval-bar",
+      child <-- analysisVar.signal
+        .combineWith(activePlyVar.signal)
+        .map { (analysis, ply) =>
+          analysis match
+            case None => emptyNode
+            case Some(_) =>
+              val mv = Logic.analysisAtPly(analysis, ply)
+              val whitePct = mv.map(m => Logic.evalBarWhitePct(m.winPct)).getOrElse(50.0)
+              val label = mv.map(m => Logic.evalText(m.evalCp)).getOrElse("")
+              div(
+                className := "eval-bar-track",
+                div(
+                  className := "eval-bar-white",
+                  styleAttr := s"width: $whitePct%"
+                ),
+                span(className := "eval-bar-label", label)
+              )
+        }
+    )
+
+  /** Named opening (ECO + name) and per-side accuracy, shown once analysis
+    * arrives. A static summary of the whole game (not ply-keyed). */
+  private def openingLabel(): HtmlElement =
+    div(
+      className := "opening-label",
+      child <-- analysisVar.signal.map {
+        case None => emptyNode
+        case Some(a) =>
+          div(
+            className := "opening-label-inner",
+            Components.newsprintClip("opening-name")(Logic.openingLabel(a.opening)),
+            span(
+              className := "opening-accuracy",
+              s"♙ ${Logic.accuracyText(a.accuracyWhite)} · ♟ ${Logic.accuracyText(a.accuracyBlack)}"
+            )
+          )
+      }
+    )
+
+  /** Detail for the move that produced the shown ply: quality class, eval, the
+    * engine's best move, and accuracy — empty until analysis arrives / on the
+    * initial position. Keyed on `activePlyVar`, so clicking a move (which the
+    * replay scrubber already does) also updates this panel. */
+  private def analysisDetail(): HtmlElement =
+    div(
+      className := "analysis-detail",
+      child <-- analysisVar.signal
+        .combineWith(activePlyVar.signal)
+        .map { (analysis, ply) =>
+          Logic.analysisAtPly(analysis, ply) match
+            case None => emptyNode
+            case Some(m) =>
+              val cls = Logic.glyphClass(m.glyph)
+              div(
+                className := "analysis-detail-inner",
+                span(
+                  className := s"analysis-class analysis-class-$cls",
+                  if cls.isEmpty then m.moveClass else s"${m.moveClass} ${m.glyph.getOrElse("")}"
+                ),
+                span(className := "analysis-eval", Logic.evalText(m.evalCp)),
+                span(className := "analysis-best", s"best: ${m.bestMove}"),
+                span(className := "analysis-acc", Logic.accuracyText(m.accuracy))
+              )
+        }
+    )
+
+  private def clockBar(): HtmlElement =
+    div(
+      className := "clock-bar",
+      child <-- stateVar.signal.combineWith(flippedVar.signal).map {
+        case (Some(s), flipped) if s.clock.isDefined =>
+          val (top, bottom) =
+            if flipped then ("white", "black") else ("black", "white")
+          div(className := "clock-bar-inner", clockFace(top), clockFace(bottom))
+        case _ => emptyNode
+      }
+    )
+
+  /** One clock face. Re-renders every 250ms to tick the running side down,
+    * interpolating from the last push (`clockReceivedAtVar`). */
+  private def clockFace(side: String): HtmlElement =
+    val face: Signal[(String, Boolean)] =
+      EventStream
+        .periodic(250)
+        .startWith(0)
+        .map { _ =>
+          stateVar.now().flatMap(_.clock) match
+            case Some(c) =>
+              val elapsed = (jsNow() - clockReceivedAtVar.now()).toLong
+              val ms = Logic.clockRemainingMs(c, side, elapsed)
+              (Logic.formatClock(ms), Logic.clockIsUrgent(c, side, ms))
+            case None => ("", false)
+        }
+    div(
+      className := s"clock-face clock-$side",
+      cls("is-urgent") <-- face.map(_._2),
+      span(className := "clock-time", child.text <-- face.map(_._1))
+    )
+
   private def statusIndicator(): HtmlElement =
     div(
       child <-- stateVar.signal.map {
@@ -1091,6 +1341,7 @@ object Main:
             case "checkmate"   => checkmateBanner(s.status)
             case "draw"        => drawBanner(s.status)
             case "resignation" => resignationBanner(s.status)
+            case "timeout"     => timeoutBanner(s.status)
             case _             => turnIndicator(s)
       }
     )
@@ -1107,7 +1358,7 @@ object Main:
     )
 
   private def banner(cls: String, text: String): HtmlElement =
-    div(className := s"banner $cls", span(text))
+    div(className := s"banner $cls", Components.newsprintClip(heading = true)(text))
 
   private def checkmateBanner(status: GameStatusDto): HtmlElement =
     val winner = status.winner.map(capitalize).getOrElse("Someone")
@@ -1122,10 +1373,14 @@ object Main:
     val winner = status.winner.map(capitalize).getOrElse("Someone")
     banner("win", s"$winner wins by resignation")
 
+  private def timeoutBanner(status: GameStatusDto): HtmlElement =
+    val winner = status.winner.map(capitalize).getOrElse("Someone")
+    banner("win", s"$winner wins on time")
+
   private def capitalize(s: String): String =
     if s.isEmpty then s else s"${s.head.toUpper}${s.tail}"
 
-  private def moveLogContainer(): HtmlElement =
+  private def moveLogContainer(showInput: Boolean = true): HtmlElement =
     // The "Moves" heading is rendered ON the paper (inside .move-log-paper)
     // rather than as a separate label above it — reads as a label scribbled
     // on the note itself. The yellow marker stripe (from CSS ::before mask)
@@ -1146,11 +1401,10 @@ object Main:
         // rather than reading as another button.
         h2(
           className := "section-title",
-          span(
-            className := "newsprint-shadow",
-            span(className := "code-inline", "Moves")
-          )
+          Components.newsprintClip()("Moves")
         ),
+        // Named opening + per-side accuracy, shown once the analysis arrives.
+        openingLabel(),
         div(
           // Stable outer — OS wraps this on mount. Laminar's `children <--`
           // can't go on this element because OS rewrites the DOM under it
@@ -1160,67 +1414,67 @@ object Main:
           // bug). The dynamic content lives on .move-log-inner instead;
           // OS doesn't touch that node, so Laminar updates it freely.
           className := "move-log",
-          onMountCallback { ctx =>
-            val OS = js.Dynamic.global.OverlayScrollbarsGlobal.OverlayScrollbars
-            OS(
-              ctx.thisNode.ref,
-              js.Dynamic.literal(
-                scrollbars = js.Dynamic.literal(theme = "os-theme-pichess")
-              )
-            )
-          },
+          withCustomScrollbar,
           div(
             className := "move-log-inner",
+            // `.replayable` (game over) turns on the clickable-move affordance
+            // (pointer cursor + hover underline) via CSS.
+            cls("replayable") <-- gameOverSignal,
             children <-- stateVar.signal.map {
               case None    => List.empty
               case Some(s) => renderMoveLog(s.moveLog)
             }
           )
         ),
-        // Move input lives BELOW the scrolling log, on the same paper
-        // but outside the OS-managed scroll viewport — putting it inside
-        // the scroll container would scroll it out of reach. Pairing it
-        // with the log keeps the visual relationship "history above,
-        // next move below" intact and frees the sidebar from a tiny
-        // dedicated post-it whose only resident was this one input.
-        form(
-          idAttr := "moveForm",
-          onSubmit.preventDefault --> { _ =>
-            val v = moveInputVar.now().trim
-            if v.nonEmpty then
-              postMove(v)
-              moveInputVar.set("")
-          },
-          // The wrapper carries the hand-drawn underline pseudo so the
-          // input itself can stay borderless. `min-w-[8rem]` is the
-          // wrap-floor: when the sidebar narrows, the input shrinks
-          // to that width before the form wraps onto a new line.
-          span(
-            className := "text-field-wrap min-w-[8rem]",
-            input(
-              tpe := "text",
-              className := "text-field",
-              idAttr := "moveInput",
-              placeholder := "e.g. e2e4 or Nf3",
-              autoComplete := "off",
-              spellCheck := false,
-              controlled(
-                value <-- moveInputVar.signal,
-                onInput.mapToValue --> moveInputVar
-              )
-            )
-          ),
-          // Icon-only submit — matches the visual vocabulary of Undo /
-          // Redo / Flip in the post-its. The neon-orange marker stripe
-          // on hover (--marker-yellow) ties it to the heading marker
-          // colour family.
-          button(
-            className := "post-it-action icon-only action-move",
-            aria.label := "Submit move",
-            tpe := "submit",
-            icon("move")
+        // Per-move analysis detail for the shown ply (replay-synced).
+        analysisDetail(),
+        // Move input lives BELOW the scrolling log, on the same paper but
+        // outside the OS-managed scroll viewport. Player view only — a
+        // spectator's read-only board has no move entry, so it's dropped
+        // entirely there (showInput = false).
+        if showInput then moveInputForm() else emptyNode
+      )
+    )
+
+  private def moveInputForm(): HtmlElement =
+    form(
+      idAttr := "moveForm",
+      // Struck out once the game ends (§5.9/§5.10): `.is-struck` draws the
+      // line + blocks pointer events; the submit guard below stops Enter.
+      className <-- gameOverSignal.map(o => if o then "is-struck" else ""),
+      onSubmit.preventDefault --> { _ =>
+        val v = moveInputVar.now().trim
+        if v.nonEmpty && stateVar.now().exists(_.status.kind == "playing")
+        then
+          postMove(v)
+          moveInputVar.set("")
+      },
+      // The wrapper carries the hand-drawn underline pseudo so the input
+      // itself can stay borderless. `min-w-[8rem]` is the wrap-floor: when the
+      // sidebar narrows, the input shrinks to that width before the form wraps.
+      span(
+        className := "text-field-wrap min-w-[8rem]",
+        input(
+          tpe := "text",
+          className := "text-field",
+          idAttr := "moveInput",
+          placeholder := "e.g. e2e4 or Nf3",
+          autoComplete := "off",
+          spellCheck := false,
+          controlled(
+            value <-- moveInputVar.signal,
+            onInput.mapToValue --> moveInputVar
           )
         )
+      ),
+      // Icon-only submit — matches the visual vocabulary of Undo / Redo / Flip
+      // in the post-its. The neon-orange marker stripe on hover
+      // (--marker-yellow) ties it to the heading marker colour family.
+      button(
+        className := "post-it-action icon-only action-move",
+        aria.label := "Submit move",
+        tpe := "submit",
+        icon("move")
       )
     )
 
@@ -1229,12 +1483,48 @@ object Main:
       List(div(className := "move-log-empty", "No moves yet"))
     else
       Logic.groupMovesByTwo(moves).map { case (num, white, blackOpt) =>
+        // Each SAN is its own little newspaper cutting (the reusable
+        // `newsprintClip`), so the clipping hugs the move token — "Nf3" —
+        // rather than the whole row sitting on one newsprint slab. The move
+        // number stays as plain pencil text on the grid paper between them.
+        val whiteIdx = (num - 1) * 2
         val cells = List(
           span(className := "move-number", s"$num."),
-          span(className := "move-san", white.san)
-        ) ++ blackOpt.map(m => span(className := "move-san", m.san))
+          moveCell(whiteIdx, white.san)
+        ) ++ blackOpt.map(m => moveCell(whiteIdx + 1, m.san))
         div(className := "move-row", cells)
       }
+
+  /** One clickable half-move cutting for replay. `i` is the flat half-move
+    * index (0-based). Once a finished game's frames are loaded, clicking jumps
+    * the board to the position after this move; the **active** move (the one
+    * that produced the shown position) gets the emphatic underline and **later**
+    * moves are muted — both reactive on `activePlyVar`, so a click restyles
+    * without re-rendering the log. The click is a no-op while a game is still in
+    * progress (no frames). */
+  private def moveCell(i: Int, san: String): HtmlElement =
+    val st = activePlyVar.signal.map(Logic.replayMoveState(i, _))
+    // Per-move quality glyph (!!/!/?!/?/?? …) from the analysis, when present.
+    val glyph: Signal[Option[String]] =
+      analysisVar.signal.map(a => Logic.analysisForMove(a, i).flatMap(_.glyph))
+    span(
+      className := "move-cell-wrap",
+      Components
+        .newsprintClip("move-san")(san)
+        .amend(
+          cls := "move-cell",
+          cls("is-active") <-- st.map(_._1),
+          cls("is-future") <-- st.map(_._2),
+          onClick --> { _ =>
+            if replayFramesVar.now().nonEmpty then activePlyVar.set(i + 1)
+          }
+        ),
+      child <-- glyph.map {
+        case Some(g) =>
+          span(className := s"move-glyph move-glyph-${Logic.glyphClass(Some(g))}", g)
+        case None => emptyNode
+      }
+    )
 
   /** A doodle icon inlined as a `<span>` whose backing CSS rule (`.icon-…`)
     * sets `--icon-url` and the masking machinery — keeps Laminar-side code
@@ -1243,6 +1533,24 @@ object Main:
     */
   private def icon(name: String): HtmlElement =
     span(className := s"icon icon-$name", aria.hidden := true)
+
+  /** Skin an element's scrollbar with the hand-drawn OverlayScrollbars theme
+    * (os-theme-pichess) — vendored locally + guarded, so a missing OS global
+    * just leaves the native scrollbar. Apply to any scroll container
+    * (overflow: auto/scroll). NOTE: OS rewrites the element's content into its
+    * own wrappers, so never put a Laminar `children <--` directly on the same
+    * node — keep dynamic content one level deeper (see the move-log). */
+  private def withCustomScrollbar =
+    onMountCallback { ctx =>
+      val osg = js.Dynamic.global.OverlayScrollbarsGlobal
+      if !js.isUndefined(osg) && osg != null then
+        osg.OverlayScrollbars(
+          ctx.thisNode.ref,
+          js.Dynamic.literal(
+            scrollbars = js.Dynamic.literal(theme = "os-theme-pichess")
+          )
+        )
+    }
 
   /** Icon + text action button. The optional `modifier` adds an extra
     * class (e.g. `action-new`) so per-button styling — typically the
@@ -1253,12 +1561,16 @@ object Main:
       iconName: String,
       label: String,
       modifier: String,
-      action: () => Unit
+      action: () => Unit,
+      disabled: Signal[Boolean] = Val(false)
   ): HtmlElement =
-    val cls = if modifier.isEmpty then "post-it-action"
-              else s"post-it-action $modifier"
+    val base = if modifier.isEmpty then "post-it-action"
+               else s"post-it-action $modifier"
     button(
-      className := cls,
+      // `.is-struck` (§5.9) strikes the button through when disabled; its
+      // pointer-events:none also blocks the click, so no extra gating needed.
+      className <-- disabled.map(d => if d then s"$base is-struck" else base),
+      aria.disabled <-- disabled,
       onClick --> { _ => action() },
       icon(iconName),
       label
@@ -1296,7 +1608,7 @@ object Main:
     message =
       "Only valid if the 50-move rule applies or the position has occurred at least three times.",
     confirmLabel = "Claim Draw",
-    destructive = false,
+    destructive = true, // ends the game — red proceed, like Forfeit
     action = () => postDraw()
   )
 
@@ -1329,10 +1641,17 @@ object Main:
       className <-- pendingPromotionVar.signal.map(p =>
         if p.isDefined then "promotion-overlay visible" else "promotion-overlay"
       ),
+      // Click the scrim (anywhere but a piece) to cancel — the move isn't
+      // committed until a piece is picked, so this just returns the pawn.
+      onClick --> { _ => pendingPromotionVar.set(None) },
+      // No paper panel: the target pieces float as stickers over a dimmed,
+      // lightly-blurred board (the origin/destination squares are ringed
+      // behind the scrim). The board context carries the layout, so the row
+      // just centres.
       div(
         idAttr := "promotionDialog",
-        className := "promotion-dialog",
-        paperLayer(),
+        className := "promotion-pieces",
+        onClick.stopPropagation --> { _ => () },
         children <-- pendingPromotionVar.signal
           .combineWith(stateVar.signal)
           .map {
@@ -1353,132 +1672,332 @@ object Main:
         Logic.promotionChoices.map { case (key, name) =>
           div(
             className := s"promotion-choice $colorClass",
-            onClick --> { _ =>
+            onClick.stopPropagation --> { _ =>
               pendingPromotionVar.set(None)
               postMove(s"${p.from} ${p.to}=$key")
             },
+            // Card-style 3D tilt toward the cursor (§ promotion picker).
+            onMouseMove --> { e => tiltTowardCursor(e) },
+            onMouseLeave --> { e => resetTilt(e) },
             pieceSvg(name)
           )
         }
 
-  private def loadModal(): HtmlElement =
+  /** Tilt a promotion sticker in 3D so it "faces" the cursor (the card-follows-
+    * pointer effect). The shared `perspective` lives on `.promotion-pieces`;
+    * here we just set the per-piece `rotateX/rotateY` from the cursor's offset
+    * to the sticker centre (−1..1 on each axis), plus a small lift. Flip the
+    * sign of either rotate term to reverse that axis. */
+  private def tiltTowardCursor(e: dom.MouseEvent): Unit =
+    val el   = e.currentTarget.asInstanceOf[dom.html.Element]
+    val rect = el.getBoundingClientRect()
+    val dx   = (e.clientX - (rect.left + rect.width / 2)) / (rect.width / 2)
+    val dy   = (e.clientY - (rect.top + rect.height / 2)) / (rect.height / 2)
+    val max  = 14.0
+    el.style.transform =
+      s"rotateY(${dx * max}deg) rotateX(${-dy * max}deg) scale(1.14)"
+
+  private def resetTilt(e: dom.MouseEvent): Unit =
+    e.currentTarget.asInstanceOf[dom.html.Element].style.transform = ""
+
+  /** The canonical modal (design.md § modals). A blurred backdrop that
+    * dismisses on outside-click, a torn-paper dialog with photo-corner tape,
+    * and a fixed head / scrolling body / fixed footer split by hand-drawn
+    * rules. Every dialog (load, confirm, export, result) is built from this so
+    * the chrome stays consistent — one place to tune. `backdropExtra` is a
+    * sibling of the dialog inside the backdrop (the result card's sticker
+    * rain); pass `Nil` for any empty band. */
+  private def modalShell(
+      open: Signal[Boolean],
+      onDismiss: () => Unit,
+      dialogClass: String,
+      head: Seq[Modifier[HtmlElement]],
+      body: Seq[Modifier[HtmlElement]],
+      footer: Seq[Modifier[HtmlElement]],
+      backdropExtra: Modifier[HtmlElement] = emptyNode
+  ): HtmlElement =
     div(
-      className <-- loadOpenVar.signal.map(o =>
-        if o then "modal visible" else "modal"
-      ),
-      onClick --> { _ => loadOpenVar.set(false) },
+      className <-- open.map(o => if o then "modal visible" else "modal"),
+      onClick --> { _ => onDismiss() },
+      backdropExtra,
       div(
-        className := "modal-dialog load-dialog",
+        className := s"modal-dialog $dialogClass",
         onClick.stopPropagation --> { _ => () },
         paperLayer(),
-        h2("Load Game"),
-        p(
-          "Paste FEN, PGN, or JSON — the format is auto-detected."
-        ),
-        textArea(
-          className := "load-input",
-          rows := 10,
-          placeholder := "rnbqkbnr/pppppppp/8/...  or  1. e4 e5 2. Nf3 ...",
-          spellCheck := false,
-          controlled(
-            value <-- loadInputVar.signal,
-            onInput.mapToValue --> loadInputVar
-          )
-        ),
+        Components.tapeCorners(),
+        div(className := "modal-head").amend(head*),
+        div(className := "modal-body", withCustomScrollbar).amend(body*),
+        div(className := "modal-footer").amend(footer*)
+      )
+    )
+
+  private def loadModal(): HtmlElement =
+    modalShell(
+      open = loadOpenVar.signal,
+      onDismiss = () => loadOpenVar.set(false),
+      dialogClass = "load-dialog",
+      head = Seq(h2(Components.newsprintClip(heading = true)("Load Game"))),
+      body = Seq(
+        p("Paste FEN, PGN, or JSON — the format is auto-detected."),
+        // Hand-drawn frame on the grid paper (.load-field) wrapping a
+        // transparent, handwritten-font textarea (§ paper input convention).
         div(
-          className := "modal-actions flex flex-row gap-3 justify-end",
-          Components.ctaButton("Load") { _ =>
-            val raw = loadInputVar.now().trim
-            if raw.nonEmpty then
-              postLoad(raw)
-              loadInputVar.set("")
-              loadOpenVar.set(false)
-          },
-          Components.secondaryButton("Cancel") { _ => loadOpenVar.set(false) }
+          className := "load-field",
+          textArea(
+            className := "load-input",
+            rows := 8,
+            placeholder := "rnbqkbnr/pppppppp/8/...  or  1. e4 e5 2. Nf3 ...",
+            spellCheck := false,
+            controlled(
+              value <-- loadInputVar.signal,
+              onInput.mapToValue --> loadInputVar
+            )
+          )
         )
+      ),
+      footer = Seq(
+        Components.linkButton("Cancel") { _ => loadOpenVar.set(false) },
+        Components.linkButton("Load", extraClass = "marker-green") { _ =>
+          val raw = loadInputVar.now().trim
+          if raw.nonEmpty then
+            postLoad(raw)
+            loadInputVar.set("")
+            loadOpenVar.set(false)
+        }
       )
     )
 
   private def confirmModal(): HtmlElement =
-    div(
-      className <-- confirmVar.signal.map(c =>
-        if c.isDefined then "modal visible" else "modal"
+    modalShell(
+      open = confirmVar.signal.map(_.isDefined),
+      onDismiss = () => confirmVar.set(None),
+      dialogClass = "confirm-dialog",
+      head = Seq(
+        h2(
+          Components.newsprintClip(heading = true)(
+            child.text <-- confirmVar.signal.map(_.map(_.title).getOrElse(""))
+          )
+        )
       ),
-      onClick --> { _ => confirmVar.set(None) },
-      div(
-        className := "modal-dialog confirm-dialog",
-        onClick.stopPropagation --> { _ => () },
-        paperLayer(),
-        h2(child.text <-- confirmVar.signal.map(_.map(_.title).getOrElse(""))),
-        p(child.text <-- confirmVar.signal.map(_.map(_.message).getOrElse(""))),
-        div(
-          className := "modal-actions flex flex-row gap-3 justify-end",
-          Components.secondaryButton("Cancel") { _ => confirmVar.set(None) },
-          // The confirm button swaps between destructive (coral) and
-          // secondary (cyan) based on the request's `destructive` flag.
-          // Build it inline so the className can flip reactively
-          // — Components helpers hard-code their variant class.
-          button(
-            typ := "button",
-            className <-- confirmVar.signal.map(c =>
-              if c.exists(_.destructive) then
-                "btn-destructive inline-flex items-center justify-center px-6 py-2 cursor-pointer outline-none"
-              else
-                "btn-secondary inline-flex items-center justify-center px-6 py-2 cursor-pointer outline-none"
-            ),
-            onClick --> { _ =>
-              confirmVar.now().foreach(_.action())
-              confirmVar.set(None)
-            },
-            child.text <-- confirmVar.signal.map(
-              _.map(_.confirmLabel).getOrElse("Confirm")
-            )
+      body = Seq(
+        p(child.text <-- confirmVar.signal.map(_.map(_.message).getOrElse("")))
+      ),
+      footer = Seq(
+        Components.linkButton("Cancel") { _ => confirmVar.set(None) },
+        // Proceed marker codes intent (§5.1): red for a destructive request
+        // (Draw / Forfeit / discard-and-restart), green otherwise. Built inline
+        // because both the label and the colour are reactive on the active
+        // ConfirmRequest.
+        button(
+          typ := "button",
+          className := "btn-link",
+          cls("marker-red") <-- confirmVar.signal.map(_.exists(_.destructive)),
+          cls("marker-green") <-- confirmVar.signal.map(_.exists(!_.destructive)),
+          onClick --> { _ =>
+            confirmVar.now().foreach(_.action())
+            confirmVar.set(None)
+          },
+          child.text <-- confirmVar.signal.map(
+            _.map(_.confirmLabel).getOrElse("Confirm")
           )
         )
       )
     )
 
   private def exportModal(): HtmlElement =
-    div(
-      className <-- exportVar.signal.map(o =>
-        if o.isDefined then "modal visible" else "modal"
-      ),
-      onClick --> { _ => exportVar.set(None) },
-      div(
-        className := "modal-dialog export-dialog",
-        onClick.stopPropagation --> { _ => () },
-        paperLayer(),
+    modalShell(
+      open = exportVar.signal.map(_.isDefined),
+      onDismiss = () => exportVar.set(None),
+      dialogClass = "export-dialog",
+      head = Seq(
         h2(
-          child.text <-- exportVar.signal.map {
-            case Some(r) => s"Export (${r.format.toUpperCase})"
-            case None    => "Export"
-          }
-        ),
-        textArea(
-          className := "export-output",
-          rows := 10,
-          readOnly := true,
-          value <-- exportVar.signal.map(_.map(_.content).getOrElse(""))
-        ),
+          Components.newsprintClip(heading = true)(
+            child.text <-- exportVar.signal.map {
+              case Some(r) => s"Export (${r.format.toUpperCase})"
+              case None    => "Export"
+            }
+          )
+        )
+      ),
+      // The data rides a newspaper clipping; a big hand-drawn copy glyph sits
+      // on its top-right corner (no separate Copy button).
+      body = Seq(
         div(
-          className := "modal-actions",
+          className := "export-clip",
+          Components.newsprintClip(block = true)(
+            child.text <-- exportVar.signal.map(_.map(_.content).getOrElse(""))
+          ),
           button(
-            className := "secondary-btn",
+            typ := "button",
+            className := "export-copy",
+            aria.label := "Copy to clipboard",
             onClick --> { _ =>
               exportVar.now().foreach { r =>
                 copyToClipboard(r.content)
                 showToast(s"Copied ${r.format.toUpperCase} to clipboard")
               }
             },
-            "Copy"
-          ),
-          button(
-            className := "secondary-btn",
-            onClick --> { _ => exportVar.set(None) },
-            "Close"
+            icon("copy")
           )
         )
+      ),
+      footer = Seq(
+        Components.linkButton("Close") { _ => exportVar.set(None) }
       )
+    )
+
+  /** Auto-shown end-of-game card (§5.10): verdict headline, reason, a small
+    * summary, and next-step actions. A modal-variant — reuses the paper frame
+    * + photo-corner tape + blurred backdrop. Dismissible; the headline
+    * (Layer 1) stays on the board after dismissal. */
+  /** `spectator = true` (the Watch view) drops the "New Game" action — a
+    * spectator can't start a new game for someone else's match — leaving just
+    * Close. The board verdict + kings still show. */
+  private def resultCard(spectator: Boolean = false): HtmlElement =
+    modalShell(
+      open = resultOpenSignal,
+      onDismiss = () => resultDismissedVar.set(true),
+      dialogClass = "result-dialog",
+      backdropExtra = stickerRain(),
+      // Head: the "Game Over" headline cutting — not the verdict itself
+      // (§5.10). Who won + how drops into the body subtitle, where the winning
+      // colour and end-reason are their own cuttings pasted into the sentence.
+      head = Seq(
+        h2(
+          className := "result-headline",
+          Components.newsprintClip(heading = true)("Game Over")
+        )
+      ),
+      body = Seq(
+        // Two king stickers — winner standing, loser toppled (a draw leaves
+        // both up) — as a visual verdict above the sentence.
+        div(
+          className := "result-kings",
+          children <-- stateVar.signal.map {
+            case Some(s) => resultKings(s)
+            case None    => List.empty
+          }
+        ),
+        p(
+          className := "result-subtitle",
+          children <-- stateVar.signal.map {
+            case Some(s) => resultSubtitle(s)
+            case None    => List.empty
+          }
+        ),
+        div(
+          className := "result-summary",
+          children <-- stateVar.signal.map {
+            case Some(s) => resultSummary(s)
+            case None    => List.empty
+          }
+        )
+      ),
+      // Close rides the default (yellow) marker, New Game the green one — and
+      // New Game is dropped entirely when spectating.
+      footer =
+        Components.linkButton("Close") { _ => resultDismissedVar.set(true) } ::
+          (if spectator then Nil
+           else
+             List(
+               Components.linkButton("New Game", extraClass = "marker-green") {
+                 _ =>
+                   resultDismissedVar.set(true)
+                   postNew()
+               }
+             ))
+    )
+
+  /** Two king stickers flanking the result card: the WINNER on the left
+    * (standing), the LOSER on the right (toppled ~90°, the CSS pivots it about
+    * its base). A draw has no winner, so it falls back to white-left /
+    * black-right with both standing. */
+  private def resultKings(s: BoardStateDto): List[HtmlElement] =
+    def king(color: String, toppled: Boolean): HtmlElement =
+      span(
+        className :=
+          s"result-king $color-piece${if toppled then " is-toppled" else ""}",
+        pieceSvg("king")
+      )
+    s.status.winner match
+      case Some(w) =>
+        val loser = if w == "white" then "black" else "white"
+        List(king(w, toppled = false), king(loser, toppled = true))
+      case None =>
+        List(king("white", toppled = false), king("black", toppled = false))
+
+  /** The result subtitle as a handwritten sentence with two newspaper
+    * cuttings pasted in — the winning colour and the end-reason — so it reads
+    * "[Black] won by [checkmate!]". A draw has no winner, so its subject
+    * cutting is "Draw" and the sentence becomes "[Draw] by [stalemate]". */
+  private def resultSubtitle(s: BoardStateDto): List[HtmlElement] =
+    def clip(text: String): HtmlElement =
+      Components.newsprintClip("result-clip")(text)
+    def conn(text: String): HtmlElement =
+      span(className := "result-conn", text)
+    s.status.kind match
+      case "checkmate" =>
+        val winner = s.status.winner.map(capitalize).getOrElse("Someone")
+        List(clip(winner), conn("won by"), clip("checkmate!"))
+      case "resignation" =>
+        val winner = s.status.winner.map(capitalize).getOrElse("Someone")
+        List(clip(winner), conn("won by"), clip("resignation"))
+      case "draw" =>
+        val reason =
+          s.status.reason.map(Logic.humanizeDrawReason).getOrElse("agreement")
+        List(clip("Draw"), conn("by"), clip(reason))
+      case _ => List.empty
+
+  private def resultSummary(s: BoardStateDto): List[HtmlElement] =
+    val fullMoves = (s.moveLog.length + 1) / 2
+    val (whiteLost, blackLost) = Logic.capturedFromSquares(s.squares)
+    val captures = whiteLost.size + blackLost.size
+    List(
+      resultStat(fullMoves, "moves"),
+      resultStat(captures, "captures")
+    )
+
+  /** One mini stat as a newspaper cutting: the count is scrawled in
+    * handwriting (pen-blue ink — "added in after the fact") next to the
+    * typewriter label. */
+  private def resultStat(count: Int, label: String): HtmlElement =
+    Components.newsprintClip("result-stat")(
+      span(className := "result-stat-num", count.toString),
+      span(className := "result-stat-label", label)
+    )
+
+  private val stickerPieces =
+    List("pawn", "knight", "bishop", "rook", "queen", "king")
+
+  /** Layer 3 of the end-screen (§5.10): piece stickers raining behind the
+    * result card. A decisive result rains the winner's colour; a draw rains
+    * BOTH colours (same total count, split evenly + interleaved). Positions /
+    * delays are index-derived (no RNG) so it's deterministic + cheap; count is
+    * capped and the fall is a GPU-only transform animation (see
+    * `.sticker-rain`). */
+  private def stickerRain(): HtmlElement =
+    val count = 18
+    def rainPiece(color: String, i: Int): HtmlElement =
+      span(
+        className := s"sticker-rain-piece ${color}-piece",
+        styleAttr := s"left: ${(i * 100) / count}%; " +
+          s"animation-delay: ${(i % 6) * 0.4}s; " +
+          s"animation-duration: ${3.4 + (i % 4) * 0.7}s;",
+        pieceSvg(stickerPieces(i % stickerPieces.length))
+      )
+    div(
+      className := "sticker-rain",
+      children <-- stateVar.signal.map {
+        case Some(s) =>
+          s.status.winner match
+            case Some(winner) =>
+              (0 until count).toList.map(i => rainPiece(winner, i))
+            case None if s.status.kind == "draw" =>
+              (0 until count).toList
+                .map(i => rainPiece(if i % 2 == 0 then "white" else "black", i))
+            case None => List.empty
+        case None => List.empty
+      }
     )
 
   // --------------------------------------------------------------------------
@@ -1490,6 +2009,12 @@ object Main:
   private val postCreateGameClient =
     SttpClientInterpreter().toClientThrowDecodeFailures(
       Endpoints.postCreateGame,
+      None,
+      backend
+    )
+  private val postAnalyzeClient =
+    SttpClientInterpreter().toClientThrowDecodeFailures(
+      Endpoints.postAnalyze,
       None,
       backend
     )
@@ -1569,6 +2094,7 @@ object Main:
       case Right(snapshot) =>
         gameIdVar.set(Some(snapshot.id))
         stateVar.set(Some(snapshot.state))
+        currentAllowUndoVar.set(true) // local games always allow undo
         connectEvents(snapshot.id, spectator = false)
       case Left(err) =>
         showToast(err.error)
@@ -1582,11 +2108,9 @@ object Main:
     sseHandle.foreach(_.close())
     sseHandle = None
     spectatorCountVar.set(0)
-    sharePanelOpenVar.set(false)
 
   private def connectEvents(gameId: String, spectator: Boolean): Unit =
     sseHandle.foreach(_.close())
-    sharePanelOpenVar.set(false)
     spectatorCountVar.set(0)
     // `role` lets the gateway tally spectators apart from players: the
     // Watch screen connects as a spectator (counted in the eye badge),
@@ -1661,6 +2185,23 @@ object Main:
 
   private def postLoad(raw: String): Unit = bootstrapGame(load = Some(raw))
 
+  /** Pull the full position history of a finished game so the move log becomes a
+    * clickable replay scrubber. Cached in `replayFramesVar`; `activePlyVar`
+    * starts at the final position (no visible change until the user clicks a
+    * move). Read-only endpoint, so it works for spectators too. Silent on
+    * failure — replay just stays unavailable. */
+  private def fetchReplay(id: String): Unit =
+    fetchJson("GET", s"/api/games/$id/replay", None).onComplete {
+      case scala.util.Success(raw) =>
+        raw.fromJson[ReplayResponse] match
+          case Right(r) =>
+            val frames = r.frames.toVector
+            replayFramesVar.set(frames)
+            activePlyVar.set(math.max(0, frames.length - 1))
+          case Left(_) => ()
+      case scala.util.Failure(_) => ()
+    }
+
   private def doExport(format: String): Unit =
     gameIdVar.now() match
       case Some(id) =>
@@ -1670,6 +2211,22 @@ object Main:
           case Left(err)                         => showToast(err.error)
         }
       case None => showToast("No active game")
+
+  /** Fetch the finished game's PGN, then ask the engine to rate it. Result lands
+    * in `analysisVar`, which the eval bar + move glyphs + detail panel render —
+    * all keyed on `activePlyVar`, so analysis tracks the replay scrubber. */
+  private def requestAnalysis(id: String): Unit =
+    getStateClient((id, Some("pgn"))).foreach {
+      case Right(StateResponse.Export(resp)) =>
+        postAnalyzeClient(AnalyzeRequestDto(resp.content, AnalysisDepth)).foreach {
+          case Right(analysis) => analysisVar.set(Some(analysis))
+          case Left(_)         => () // analysis is best-effort; stay silent
+        }
+      case _ => ()
+    }
+
+  /** Server clamps to its own ceiling; this is the depth the UI asks for. */
+  private val AnalysisDepth = 16
 
   private def postAndToastErrors(
       f: Future[Either[ErrorDto, BoardStateDto]]
@@ -2050,12 +2607,16 @@ object Main:
           className := "flex flex-col gap-1 items-center",
           Components.linkButton("New Game") { _ => navigate(Screen.NewGameMenu) },
           Components.linkButton("Join")     { _ => navigate(Screen.Join) },
+          // Tournaments gets its own menu entry — a crown doodle + a
+          // scribbled multi-stroke underline mark it as the headline feature.
+          tournamentMenuItem(),
           Components.linkButton("Settings") { _ => navigate(Screen.Settings) }
         ),
         Components.sidePostIt(
-          // Kick off a live Lichess bot-game (our bot vs a random online
-          // bot) and spectate it on our own board, read-only.
-          Components.linkButton("Watch a bot game") { _ => startLichessWatch() },
+          // Spectate any ongoing game (PvP / vs-bot / Lichess / tournament)
+          // from one filterable list. Replaces the old single-purpose
+          // "Watch a bot game" link.
+          Components.linkButton("Spectate") { _ => navigate(Screen.Spectate) },
           Components.linkAnchor("Live analytics", "#analytics"),
           Components.linkAnchor("Help", "#help")
         )
@@ -2069,6 +2630,7 @@ object Main:
   private def analyticsScreen(): HtmlElement =
     Components.screenLayout("analytics")(
       Components.titleCard(
+        Components.cornerPeach(),
         Components.backLink(() => navigate(Screen.Start)),
         Components.screenHeading("Analytics")
       ),
@@ -2154,6 +2716,7 @@ object Main:
   private def settingsScreen(): HtmlElement =
     Components.screenLayout("settings")(
       Components.titleCard(
+        Components.cornerPeach(),
         Components.backLink(() => navigate(Screen.Start)),
         Components.screenHeading("Settings")
       ),
@@ -2188,6 +2751,7 @@ object Main:
   private def helpScreen(): HtmlElement =
     Components.screenLayout("help")(
       Components.titleCard(
+        Components.cornerPeach(),
         Components.backLink(() => navigate(Screen.Start)),
         Components.screenHeading("Help")
       ),
@@ -2214,9 +2778,47 @@ object Main:
   private val hostAllowSpectateVar: Var[Boolean] = Var(true)
   private val hostSpectatorLimitVar: Var[Int] = Var(8)
 
+  /** Shared "timed game" control state for the New Game forms — applies to all
+    * three modes. Off ⇒ untimed (the default). */
+  private val enableClockVar: Var[Boolean] = Var(false)
+  private val clockMinutesVar: Var[Int] = Var(5)
+
+  /** Initial time per side, in seconds, from the clock control (`0` = untimed). */
+  private def clockSeconds(): Int =
+    if enableClockVar.now() then clockMinutesVar.now() * 60 else 0
+
+  /** The "Enable clock + minutes" control. Mutually exclusive with allow-undo —
+    * a timed game has no take-backs — so the whole control greys (§5.9) while
+    * `undoOn`, and the minutes slider greys while the clock is off (mirroring the
+    * Allow-spectators ↔ Spectator-limit precedent). */
+  private def clockControl(undoOn: Signal[Boolean]): HtmlElement =
+    div(
+      className := "clock-control flex flex-col gap-3",
+      div(
+        className <-- undoOn.map(on => if on then "is-erased" else ""),
+        Components.checkboxRow(enableClockVar, "Enable clock")
+      ),
+      div(
+        className <-- enableClockVar.signal
+          .combineWith(undoOn)
+          .map((clockOn, undo) => if clockOn && !undo then "" else "is-erased"),
+        label(
+          className := "form-row",
+          span(
+            className := "form-row-label",
+            child.text <-- clockMinutesVar.signal.map(m =>
+              if m == 1 then "1 minute per side" else s"$m minutes per side"
+            )
+          ),
+          Components.rangeSlider(clockMinutesVar, min = 1, max = 10)
+        )
+      )
+    )
+
   private def newGameMenu(): HtmlElement =
     Components.screenLayout("new-game")(
       Components.titleCard(
+        Components.cornerPeach(),
         Components.backLink(() => navigate(Screen.Start)),
         Components.screenHeading("New Game")
       ),
@@ -2246,7 +2848,34 @@ object Main:
         "Both colours are played from this browser tab. " +
           "No invite code, no opponent — just a board."
       ),
+      importField(),
+      // Local has no undo toggle (it always allows undo unless timed), so the
+      // clock control is never undo-greyed.
+      clockControl(Val(false)),
       Components.linkButton("Start local game") { _ => createLocalGame() }
+    )
+
+  /** Optional "start from a position" paste box, offered on the local + vs-bot
+    * modes only (a hosted multiplayer game always starts from the standard
+    * position). Same hand-drawn grid-paper field as the board's Load modal;
+    * blank means a fresh game. Feeds `newGameImportVar` → `CreateGameRequest.load`. */
+  private def importField(): HtmlElement =
+    div(
+      className := "mode-import flex flex-col gap-2",
+      span(className := "mode-import-label", "Start from a position (optional)"),
+      div(
+        className := "load-field",
+        textArea(
+          className := "load-input",
+          rows := 4,
+          placeholder := "Paste FEN, PGN, or JSON — or leave blank for a new board.",
+          spellCheck := false,
+          controlled(
+            value <-- newGameImportVar.signal,
+            onInput.mapToValue --> newGameImportVar
+          )
+        )
+      )
     )
 
   private def botModeDetails(): HtmlElement =
@@ -2279,8 +2908,14 @@ object Main:
             )
           )
         ),
-        Components.checkboxRow(vsBotAllowUndoVar, "Allow undo")
+        div(
+          className <-- enableClockVar.signal
+            .map(on => if on then "is-erased" else ""),
+          Components.checkboxRow(vsBotAllowUndoVar, "Allow undo")
+        ),
+        clockControl(vsBotAllowUndoVar.signal)
       ),
+      importField(),
       Components.linkButton("Start game vs bot") { _ => createBotGame() }
     )
 
@@ -2295,11 +2930,22 @@ object Main:
             Seq("Public" -> "Public", "Private" -> "Private")
           )
         ),
-        Components.checkboxRow(hostAllowUndoVar,     "Allow undo"),
+        div(
+          className <-- enableClockVar.signal
+            .map(on => if on then "is-erased" else ""),
+          Components.checkboxRow(hostAllowUndoVar, "Allow undo")
+        ),
         Components.checkboxRow(hostAllowSpectateVar, "Allow spectators"),
-        Components.formRow("Spectator limit")(
-          Components.numberInput(hostSpectatorLimitVar, min = 0, max = 64)
-        )
+        div(
+          // Spectator limit is moot when spectators aren't allowed — fade it
+          // out (§5.9 erased disabled state) and block interaction.
+          className <-- hostAllowSpectateVar.signal
+            .map(on => if on then "" else "is-erased"),
+          Components.formRow("Spectator limit")(
+            Components.rangeSlider(hostSpectatorLimitVar, min = 0, max = 64)
+          )
+        ),
+        clockControl(hostAllowUndoVar.signal)
       ),
       Components.linkButton("Create lobby") { _ => createHostedLobby() }
     )
@@ -2310,9 +2956,11 @@ object Main:
         hostNickname = nicknameVar.now(),
         hostSessionId = sessionId,
         visibility = hostVisibilityVar.now(),
-        allowUndo = hostAllowUndoVar.now(),
+        allowUndo = hostAllowUndoVar.now() && !enableClockVar.now(),
         allowSpectate = hostAllowSpectateVar.now(),
-        spectatorLimit = hostSpectatorLimitVar.now()
+        spectatorLimit = hostSpectatorLimitVar.now(),
+        initialSeconds = clockSeconds(),
+        incrementSeconds = 0
       )
     )
     fetchJson("POST", s"$lobbyBaseUrl/lobbies", Some(payload)).onComplete {
@@ -2328,13 +2976,26 @@ object Main:
     }
 
   private def createLocalGame(): Unit =
-    postCreateGameClient((sessionId, CreateGameRequest(None))).foreach {
+    val timed = enableClockVar.now()
+    postCreateGameClient(
+      (sessionId, CreateGameRequest(newGameImport(), None, clockSeconds(), 0))
+    ).foreach {
       case Right(snapshot) =>
         gameIdVar.set(Some(snapshot.id))
         stateVar.set(Some(snapshot.state))
+        // Local games allow undo, except a timed one (no take-backs).
+        currentAllowUndoVar.set(!timed)
+        currentGameIsLocalVar.set(true)
+        newGameImportVar.set("")
         navigate(Screen.Game(snapshot.id))
       case Left(err) => showToast(err.error)
     }
+
+  /** The optional import text from the New Game screen, trimmed to `None` when
+    * blank so a fresh game starts from the standard position. */
+  private def newGameImport(): Option[String] =
+    val raw = newGameImportVar.now().trim
+    if raw.isEmpty then None else Some(raw)
 
   /** Mint a vs-bot game from the new-game menu. The player picks their
     * own colour; the bot takes the opposite. If the bot is white the
@@ -2346,23 +3007,324 @@ object Main:
     val settings = VsBotSettings(
       botSide    = if playerWhite then "black" else "white",
       difficulty = vsBotDifficultyVar.now(),
-      allowUndo  = vsBotAllowUndoVar.now(),
+      // A timed game has no take-backs, regardless of the (greyed) toggle.
+      allowUndo  = vsBotAllowUndoVar.now() && !enableClockVar.now(),
     )
-    postCreateGameClient((sessionId, CreateGameRequest(None, Some(settings)))).foreach {
+    postCreateGameClient(
+      (
+        sessionId,
+        CreateGameRequest(newGameImport(), Some(settings), clockSeconds(), 0)
+      )
+    ).foreach {
       case Right(snapshot) =>
         gameIdVar.set(Some(snapshot.id))
         stateVar.set(Some(snapshot.state))
+        currentAllowUndoVar.set(settings.allowUndo)
+        currentGameIsLocalVar.set(true)
+        newGameImportVar.set("")
         navigate(Screen.Game(snapshot.id))
       case Left(err) => showToast(err.error)
     }
 
   // -- Join screen ----------------------------------------------------------
 
+  // ==========================================================================
+  // Spectate + Tournaments (Phase 5)
+  //
+  // Two screens sharing the FilterBar / scrap-table / Grafana-refresh
+  // vocabulary (design.md §5.3/§5.8): a unified list of ongoing games to
+  // WATCH, and the list of NowChess tournaments to ENTER piChess into. Data is
+  // same-origin from the gateway — `GET /spectate/games`
+  // (chess.controller.SpectateIndex) and `GET /tournament/list`
+  // (chess.controller.TournamentProxy). Pure transforms live in `Logic`.
+  // ==========================================================================
+
+  /** The start-screen Tournament entry: a crown doodle + a scribbled
+    * multi-stroke underline, on the same `.btn-link` base as its siblings. */
+  private def tournamentMenuItem(): HtmlElement =
+    button(
+      typ := "button",
+      className := "btn-link inline-flex items-center gap-1",
+      onClick --> { _ => navigate(Screen.Tournaments) },
+      icon("crown"),
+      span(className := "scribble-underline", "Tournament")
+    )
+
+  // -- Spectate ---------------------------------------------------------------
+
+  private val spectateGamesVar: Var[List[OngoingGame]]     = Var(Nil)
+  private val spectateFilterVar: Var[Logic.SpectateFilter] =
+    Var(Logic.SpectateFilter.All)
+  private val spectateIntervalVar: Var[Option[Int]]        = Var(None)
+  // Default-on: show only piChess's own tournament games (cheap + local — the
+  // gateway asks our bot service, no external call). Unchecking fetches every
+  // tournament's games (`scope=all`, the slower external fan).
+  private val spectateBotOnlyVar: Var[Boolean]             = Var(true)
+
+  private def spectateScreen(): HtmlElement =
+    Components.screenLayout("spectate")(
+      Components.titleCard(
+        Components.cornerPeach(),
+        Components.backLink(() => navigate(Screen.Start)),
+        Components.screenHeading("Spectate")
+      ),
+      Components.contentCard(
+        onMountCallback { _ => refreshSpectateGames() },
+        // FilterBar (reactive on the list for live counts), a "challenge a
+        // fresh Lichess bot-game to watch" link, and the refresh bar.
+        // Two stacked rows so the panel doesn't stretch wide: the scope toggle
+        // + challenge + refresh controls on top, the filter chips alone below.
+        div(
+          className := "flex flex-col gap-2 mb-3",
+          // Flipping the scope re-fetches (ours ⇄ all). `.changes` only — the
+          // first load is the onMountCallback above, so we don't double-fetch.
+          spectateBotOnlyVar.signal.changes --> { (_: Boolean) =>
+            refreshSpectateGames()
+          },
+          // Top: the scope toggle (left) and the challenge link + refresh /
+          // auto-poll controls (right).
+          div(
+            className := "flex flex-row items-center justify-between gap-3 flex-wrap",
+            Components.checkboxRow(spectateBotOnlyVar, "piChess bot games only"),
+            div(
+              className := "flex flex-row items-center gap-3 flex-wrap",
+              // Lichess is an opt-in external integration — hide the challenge
+              // link unless the server has it configured (pichess-lichess meta).
+              if lichessEnabled then
+                Components.linkButton("Challenge a bot") { _ => startLichessWatch() }
+              else emptyNode,
+              refreshBar(spectateIntervalVar, () => refreshSpectateGames())
+            )
+          ),
+          // Bottom: the type-filter chips (both shape the list).
+          child <-- spectateGamesVar.signal.map { games =>
+            Components.tabStrip(spectateFilterVar, Logic.spectateFilterChips(games))
+          }
+        ),
+        // The table, reactive on both the games and the active filter.
+        child <-- spectateGamesVar.signal
+          .combineWith(spectateFilterVar.signal)
+          .map { case (games, f) =>
+            spectateTable(Logic.filterGames(games, f))
+          },
+        // Grafana-style auto-poll: tick only while an interval is chosen
+        // (None ⇒ empty ⇒ nothing polls). Bound to the element, so it stops
+        // when the screen unmounts.
+        spectateIntervalVar.signal.flatMapSwitch {
+          case Some(n) => EventStream.periodic(n * 1000)
+          case None    => EventStream.empty
+        } --> { (_: Int) => refreshSpectateGames() }
+      )
+    )
+
+  private def refreshSpectateGames(): Unit =
+    // `ours` (default) keeps it cheap + local; `all` opts into the full
+    // external tournament fan — see SpectateIndex.
+    val scope = if spectateBotOnlyVar.now() then "ours" else "all"
+    fetchJson("GET", s"/spectate/games?scope=$scope", None).onComplete {
+      case scala.util.Success(raw) =>
+        raw.fromJson[List[OngoingGame]] match
+          case Right(games) => spectateGamesVar.set(games)
+          case Left(_)      => showToast("Couldn't read the games list.")
+      case scala.util.Failure(err) =>
+        showToast(s"Could not fetch games: ${err.getMessage}")
+    }
+
+  private def spectateTable(games: List[OngoingGame]): HtmlElement =
+    Components.scrapTable(
+      Seq(
+        "White"    -> "",
+        "Black"    -> "",
+        "Status"   -> "col-status",
+        "Watching" -> "col-num",
+        ""         -> "col-action"
+      ),
+      games.map(spectateRow),
+      "No games to watch right now."
+    )
+
+  private def spectateRow(g: OngoingGame): HtmlElement =
+    val (badgeLabel, badgeVariant) = Logic.gameBadge(g)
+    val watching =
+      if g.limit > 0 then s"${g.spectators}/${g.limit}"
+      else g.spectators.toString
+    tr(
+      td(g.white),
+      td(g.black),
+      td(
+        className := "col-status",
+        Components.statusBadge(badgeLabel, badgeVariant)
+      ),
+      td(className := "col-num", watching),
+      td(className := "col-action", spectateAction(g))
+    )
+
+  /** The Spectate action for a row — an in-flow `.btn-link` (matching the
+    * `publicLobbyAction` list-row precedent; a per-row post-it would flood the
+    * secondary colour, §2.4). Native games (pvp/pvbot) are watched directly via
+    * the existing SSE board; external games (tournament/lichess) open a
+    * server-side mirror first. A full game is listed but its link is erased
+    * (§5.9 — loose handwriting), not removed. */
+  private def spectateAction(g: OngoingGame): HtmlElement =
+    if !g.spectateable then
+      button(
+        typ := "button",
+        className := "btn-link is-erased",
+        aria.disabled := true,
+        "Spectate"
+      )
+    else
+      g.gameType match
+        case "pvp" | "pvbot" =>
+          Components.linkButton("Spectate") { _ =>
+            navigate(Screen.Watch(g.id))
+          }
+        case "tournament" =>
+          Components.linkButton("Spectate") { _ =>
+            openMirror(
+              s"/tournament/${g.tournamentId.getOrElse("")}/game/${g.id}/spectate"
+            )
+          }
+        case "lichess" =>
+          Components.linkButton("Spectate") { _ =>
+            openMirror(s"/lichess/games/${g.id}/spectate")
+          }
+        case _ => span()
+
+  /** POST a spectate-mirror endpoint, then open the returned mirror game in
+    * the read-only Watch view. Same response parse as `startLichessWatch`. */
+  private def openMirror(path: String): Unit =
+    showToast("Opening spectate…")
+    fetchJson("POST", path, None).onComplete {
+      case scala.util.Success(raw) =>
+        try
+          val obj      = js.JSON.parse(raw).asInstanceOf[js.Dynamic]
+          val mirrorId = obj.mirrorId.asInstanceOf[String]
+          dismissToast()
+          navigate(Screen.Watch(mirrorId))
+        catch
+          case _: Throwable =>
+            showToast("Couldn't open spectate (bad response).")
+      case scala.util.Failure(err) =>
+        showToast(s"Couldn't open spectate: ${err.getMessage}")
+    }
+
+  // -- Tournaments ------------------------------------------------------------
+
+  private val tournamentsVar: Var[List[Logic.TournamentRow]] = Var(Nil)
+  private val tournamentsIntervalVar: Var[Option[Int]]       = Var(None)
+
+  private def tournamentsScreen(): HtmlElement =
+    Components.screenLayout("tournaments")(
+      Components.titleCard(
+        Components.cornerPeach(),
+        Components.backLink(() => navigate(Screen.Start)),
+        Components.screenHeading("Tournaments")
+      ),
+      Components.contentCard(
+        onMountCallback { _ => refreshTournaments() },
+        div(
+          className := "flex flex-row items-center justify-end gap-3 flex-wrap mb-3",
+          refreshBar(tournamentsIntervalVar, () => refreshTournaments())
+        ),
+        child <-- tournamentsVar.signal.map(tournamentTable),
+        tournamentsIntervalVar.signal.flatMapSwitch {
+          case Some(n) => EventStream.periodic(n * 1000)
+          case None    => EventStream.empty
+        } --> { (_: Int) => refreshTournaments() }
+      )
+    )
+
+  private def refreshTournaments(): Unit =
+    fetchJson("GET", "/tournament/list", None).onComplete {
+      case scala.util.Success(raw) =>
+        raw.fromJson[Logic.TournamentList] match
+          case Right(list) => tournamentsVar.set(Logic.orderTournaments(list))
+          case Left(_)     => showToast("Couldn't read the tournament list.")
+      case scala.util.Failure(err) =>
+        showToast(s"Could not fetch tournaments: ${err.getMessage}")
+    }
+
+  private def tournamentTable(rows: List[Logic.TournamentRow]): HtmlElement =
+    Components.scrapTable(
+      Seq(
+        "Tournament" -> "",
+        "Players"    -> "col-num",
+        "Round"      -> "col-num",
+        "Status"     -> "col-status",
+        ""           -> "col-action"
+      ),
+      rows.map(tournamentRow),
+      "No tournaments right now."
+    )
+
+  private def tournamentRow(t: Logic.TournamentRow): HtmlElement =
+    val (badgeLabel, badgeVariant) = Logic.tournamentBadge(t.status)
+    tr(
+      td(t.fullName),
+      td(className := "col-num", t.nbPlayers.toString),
+      td(className := "col-num", t.round.toString),
+      td(
+        className := "col-status",
+        Components.statusBadge(badgeLabel, badgeVariant)
+      ),
+      td(className := "col-action", tournamentAction(t))
+    )
+
+  private def tournamentAction(t: Logic.TournamentRow): HtmlElement =
+    if Logic.canEnterTournament(t.status) then
+      Components.linkButton("Enter piChess") { _ =>
+        enterTournament(t.id, t.fullName)
+      }
+    else span()
+
+  private def enterTournament(id: String, name: String): Unit =
+    showToast(s"Entering $name…")
+    fetchJson("POST", s"/tournament/$id/join", None).onComplete {
+      case scala.util.Success(_) =>
+        showToast(s"piChess is entering $name")
+        refreshTournaments()
+      case scala.util.Failure(err) =>
+        showToast(s"Couldn't enter: ${err.getMessage}")
+    }
+
+  // -- Shared Grafana-style refresh bar ---------------------------------------
+
+  /** Manual ⟳ + an auto-poll interval select. The interval `Var` is the single
+    * source of truth that drives both the select and the screen's poll stream;
+    * `None` ("Off") is the default so nothing polls until the user opts in. */
+  /** Icon button with the doodle refresh glyph (the old "⟳" text glyph read as
+    * a stray character). Used by the refresh bar + the Join screen. */
+  private def refreshButton(onRefresh: () => Unit): HtmlElement =
+    button(
+      typ := "button",
+      className := "btn-icon",
+      aria.label := "Refresh",
+      onClick --> { _ => onRefresh() },
+      icon("refresh")
+    )
+
+  private def refreshBar(
+      intervalVar: Var[Option[Int]],
+      onRefresh: () => Unit
+  ): HtmlElement =
+    div(
+      className := "flex flex-row items-center gap-2 flex-shrink-0",
+      refreshButton(() => onRefresh()),
+      span(className := "font-hand text-text-secondary", "Auto"),
+      Components.selectInput[Option[Int]](
+        intervalVar,
+        Logic.refreshIntervals,
+        i => i.fold("off")(_.toString)
+      )
+    )
+
   private val joinCodeVar: Var[String] = Var("")
 
   private def joinScreen(): HtmlElement =
     Components.screenLayout("join")(
       Components.titleCard(
+        Components.cornerPeach(),
         Components.backLink(() => navigate(Screen.Start)),
         Components.screenHeading("Join Game")
       ),
@@ -2371,20 +3333,36 @@ object Main:
         Components.formRow("Invite code")(
           Components.textInput(joinCodeVar, placeholder := "ABCDEF")
         ),
-        Components.ctaButton("Join") { _ => joinByCode(joinCodeVar.now()) },
+        Components.linkButton("Join", extraClass = "marker-green") { _ =>
+          joinByCode(joinCodeVar.now())
+        },
         div(
           className := "join-public flex flex-col gap-2",
           div(
             className := "flex flex-row items-center justify-between",
-            h2(className := "section-heading", "Public lobbies"),
-            Components.iconButton("⟳") { _ => refreshPublicLobbies() }
+            h2(
+              className := "section-heading",
+              Components.newsprintClip()("Public lobbies")
+            ),
+            refreshButton(() => refreshPublicLobbies())
           ),
-          ul(
-            className := "public-list flex flex-col gap-1 list-none p-0",
-            children <-- publicLobbiesVar.signal.map(_.map(publicLobbyRow))
-          )
+          // Canonical ruled-ledger table (the spectate screen's `scrapTable`),
+          // not a bespoke list.
+          child <-- publicLobbiesVar.signal.map(joinTable)
         )
       )
+    )
+
+  private def joinTable(lobbies: List[LobbyJson]): HtmlElement =
+    Components.scrapTable(
+      Seq(
+        "Host"   -> "",
+        "Code"   -> "col-num",
+        "Status" -> "col-status",
+        ""       -> "col-action"
+      ),
+      lobbies.map(publicLobbyRow),
+      "No public games right now."
     )
 
   private def refreshPublicLobbies(): Unit =
@@ -2404,18 +3382,14 @@ object Main:
       case "Full"    => ("Full", "full")
       case "Started" => ("Live", "live")
       case other     => (other, "")
-    li(
-      className := "public-list-item flex flex-row items-center justify-between gap-3",
-      div(
-        className := "flex flex-col gap-1 min-w-0",
-        span(className := "public-host", l.hostNickname),
-        span(className := "public-code", l.inviteCode)
+    tr(
+      td(l.hostNickname),
+      td(className := "col-num", l.inviteCode),
+      td(
+        className := "col-status",
+        Components.statusBadge(badgeLabel, badgeVariant)
       ),
-      div(
-        className := "flex flex-row items-center gap-2 flex-shrink-0",
-        Components.statusBadge(badgeLabel, badgeVariant),
-        publicLobbyAction(l)
-      )
+      td(className := "col-action", publicLobbyAction(l))
     )
 
   /** The state-appropriate action for a browser row, or nothing when
@@ -2471,7 +3445,9 @@ object Main:
         else showToast("This game is full and not open to spectators")
       case "Started" =>
         l.gameId.toOption match
-          case Some(gid) if isPlayer        => navigate(Screen.Game(gid))
+          case Some(gid) if isPlayer        =>
+            currentGameIsLocalVar.set(false) // multiplayer lobby game
+            navigate(Screen.Game(gid))
           case Some(gid) if l.allowSpectate => navigate(Screen.Watch(gid))
           case Some(_)                      =>
             showToast("This game isn't open to spectators")
@@ -2535,6 +3511,7 @@ object Main:
         pollHandle = 0
       },
       Components.titleCard(
+        Components.cornerPeach(),
         Components.backLink(() => navigate(Screen.Start)),
         Components.screenHeading("Lobby")
       ),
@@ -2618,7 +3595,9 @@ object Main:
             l.gameId.toOption.foreach { gid =>
               val isPlayer = l.hostSessionId == sessionId ||
                 l.guestSessionId.toOption.contains(sessionId)
-              if isPlayer then navigate(Screen.Game(gid))
+              if isPlayer then
+                currentGameIsLocalVar.set(false) // multiplayer lobby game
+                navigate(Screen.Game(gid))
               else if l.allowSpectate then navigate(Screen.Watch(gid))
             }
         }
@@ -2641,6 +3620,7 @@ object Main:
           Some(payload)
         ).onComplete {
           case scala.util.Success(_) =>
+            currentGameIsLocalVar.set(false) // multiplayer lobby game
             navigate(Screen.Game(snapshot.id))
           case scala.util.Failure(err) =>
             showToast(s"Start failed: ${err.getMessage}")

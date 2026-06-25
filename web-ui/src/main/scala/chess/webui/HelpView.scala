@@ -23,13 +23,19 @@ object HelpView:
     )
 
   /** Each section is its own paper panel — first child is the paper-layer
-    * SVG backdrop (drives the crumple + grid via CSS variables), real
-    * content stacks above via `.help-section`'s `isolation: isolate`. */
-  private def section(title: String, body: HtmlElement*): HtmlElement =
+    * SVG backdrop (drives the crumple + grid via CSS variables), then the
+    * photo-corner tape, real content stacking above via `.help-section`'s
+    * `isolation: isolate`. */
+  private def section(
+      title: String,
+      tape: Seq[String],
+      body: HtmlElement*
+  ): HtmlElement =
     sectionTag(
       className := "help-section",
       Components.paperLayer(),
-      h2(title),
+      Components.tapeCorners(tape),
+      h2(Components.newsprintClip(heading = true)(title)),
       body
     )
 
@@ -38,35 +44,22 @@ object HelpView:
   private def row(cmd: String, desc: Modifier[HtmlElement]*): HtmlElement =
     tr(td(code(cmd)), td(desc*))
 
-  /** Newspaper-clipping pill. The cutting itself (`.code-inline`) has
-    * the jagged clip-path; the parent `.newsprint-shadow` carries the
-    * drop-shadow — drop-shadow on a clipped element gets clipped to the
-    * same silhouette and disappears, so the wrapper is structural. */
+  /** Newspaper-clipping pill — the shared [[Components.newsprintClip]]. */
   private def code(text: String): HtmlElement =
-    span(
-      className := "newsprint-shadow",
-      span(className := "code-inline", text)
-    )
+    Components.newsprintClip()(text)
 
   /** Definition-list term as a newspaper clipping (Special Elite + cut). */
   private def term(label: String): HtmlElement =
-    dt(
-      span(
-        className := "newsprint-shadow",
-        span(className := "code-inline", label)
-      )
-    )
+    dt(Components.newsprintClip()(label))
 
   /** Block-sized newspaper clipping for the multi-line `<pre>` listing. */
   private def helpPre(text: String): HtmlElement =
-    div(
-      className := "newsprint-shadow is-block",
-      pre(className := "help-pre", text)
-    )
+    Components.newsprintClip(block = true)(text)
 
   private val commandsSection: HtmlElement =
     section(
       "Commands",
+      Seq("tl", "br"),
       table(
         className := "help-table",
         row("<from> <to>", "Move a piece (e.g. ", code("e2 e4"), ")"),
@@ -90,6 +83,7 @@ object HelpView:
   private val importExportSection: HtmlElement =
     section(
       "Import / Export",
+      Seq("tr"),
       p(
         "The ",
         code("load"),
@@ -110,6 +104,7 @@ export json"""
   private val fenSection: HtmlElement =
     section(
       "FEN (Forsyth-Edwards Notation)",
+      Seq("tl", "tr", "br"),
       p("FEN encodes a complete board position as a single line of text."),
       p(
         strong("Format: "),
@@ -152,6 +147,7 @@ export json"""
   private val pgnSection: HtmlElement =
     section(
       "PGN (Portable Game Notation)",
+      Seq("bl", "br"),
       p("PGN records a full game as a sequence of SAN moves."),
       p(strong("Example: "), code("1. e4 e5 2. Nf3 Nc6 *")),
       p(
@@ -178,6 +174,7 @@ export json"""
   private val moveNotationSection: HtmlElement =
     section(
       "Move Notation",
+      Seq("tr", "bl"),
       p("Both coordinate and Standard Algebraic Notation (SAN) are accepted."),
       table(
         className := "help-table",
@@ -237,6 +234,7 @@ export json"""
   private val rulesSection: HtmlElement =
     section(
       "Implemented Rules",
+      Seq("tl"),
       dl(
         className := "help-dl",
         term("Pawn"),
