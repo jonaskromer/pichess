@@ -1336,6 +1336,15 @@ object Main:
   private def endStatePanel(status: GameStatusDto): HtmlElement =
     div(
       className := "end-state-wrap",
+      // Crown to the left of the line — always visible (sibling of `.end-state`,
+      // so it survives the analysis fade) and re-opens the game-end modal.
+      button(
+        typ := "button",
+        className := "end-state-crown",
+        aria.label := "Show game result",
+        onClick --> { _ => resultDismissedVar.set(false) },
+        icon("crown")
+      ),
       // The verdict banner + "Analyze game" prompt. Once analysis arrives it
       // fades to opacity 0 (but keeps its box) and the per-move analysis detail
       // is laid over the same spot — so the status line shows the move quality

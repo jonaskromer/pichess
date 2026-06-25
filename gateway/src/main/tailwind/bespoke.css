@@ -1545,8 +1545,28 @@ body.is-dragging { cursor: grabbing; }
 /* End-of-game status line: the verdict banner / "Analyze game" prompt, with
    the per-move analysis detail laid over the SAME box once analysis exists —
    the banner fades to opacity 0 (keeping its height) so nothing shifts. */
-.end-state-wrap { align-self: center; position: relative; display: flex; justify-content: center; }
+.end-state-wrap { align-self: center; position: relative; display: flex; align-items: center; justify-content: center; gap: 0.6rem; }
 .end-state.is-faded { opacity: 0; pointer-events: none; }
+/* Crown button left of the status line — re-opens the game-end modal. Stays
+   above the (non-interactive) analysis-detail overlay so it's always clickable
+   and visible, even with analysis open. */
+.end-state-crown {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.2rem;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--accent-strong);
+  transition: transform 0.1s ease, color 0.15s ease;
+}
+.end-state-crown > .icon { width: 1.6rem; height: 1.6rem; }
+.end-state-crown:hover { transform: translateY(-0.05rem) rotate(-4deg); color: var(--accent); }
+.end-state-crown:active { transform: translateY(0.05rem); }
 .analysis-detail {
   position: absolute;
   inset: 0;
