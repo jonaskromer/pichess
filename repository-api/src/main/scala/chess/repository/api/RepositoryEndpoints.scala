@@ -63,4 +63,35 @@ object RepositoryEndpoints:
       .name("deleteGame")
       .description("Delete a game's state by ID; idempotent")
 
-  val all: List[AnyEndpoint] = List(saveGame, loadGame, deleteGame)
+  // -- Game archive (finished games persisted for analysis / replay) ---------
+
+  private val archivesBase = endpoint.in("archives")
+
+  // Explicit derivation so the nested `List[SubmittedMoveDto]` resolves via its
+  // element schema rather than being mis-derived as a sum type.
+  private given Schema[SubmittedMoveDto]     = Schema.derived
+  private given Schema[ArchiveSubmissionDto] = Schema.derived
+  private given Schema[ArchivePgnDto]        = Schema.derived
+
+  val postArchive: PublicEndpoint[ArchiveSubmissionDto, String, Unit, Any] =
+    archivesBase.post
+      .in(jsonBody[ArchiveSubmissionDto])
+      .out(statusCode(StatusCode.NoContent))
+      .errorOut(statusCode(StatusCode.InternalServerError).and(stringBody))
+      .name("postArchive")
+      .description(
+        "Persist a finished game (UCI moves + per-move clocks) as an analyzable archive"
+      )
+
+  val getArchive: PublicEndpoint[String, LoadFailure, ArchivePgnDto, Any] =
+    archivesBase.get
+      .in(path[String]("id"))
+      .out(jsonBody[ArchivePgnDto])
+      .errorOut(loadErrorOut)
+      .name("getArchive")
+      .description(
+        "Fetch an archived game's PGN-with-clocks + metadata; 404 if unknown"
+      )
+
+  val all: List[AnyEndpoint] =
+    List(saveGame, loadGame, deleteGame, postArchive, getArchive)

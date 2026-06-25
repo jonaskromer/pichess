@@ -6,8 +6,10 @@ import zio.*
 import zio.http.*
 
 import chess.codec.{FenParserRegex, FenSerializer}
-import chess.persistence.GameRepository
+import chess.opening.EcoBook
+import chess.persistence.{GameArchiveRepository, GameRepository}
 import chess.repository.api.{
+  ArchivePgnDto,
   GameStateEnvelope,
   LoadFailure,
   RepositoryEndpoints
@@ -26,9 +28,41 @@ import chess.repository.api.{
   */
 object RepositoryServer:
 
-  def routes(repo: GameRepository): Routes[Any, Response] =
+  def routes(
+      repo: GameRepository,
+      archiveRepo: GameArchiveRepository,
+      eco: EcoBook
+  ): Routes[Any, Response] =
     ZioHttpInterpreter().toHttp(
       List(
+        RepositoryEndpoints.postArchive.zServerLogic[Any] { dto =>
+          TournamentArchive
+            .fromSubmission(dto, eco)
+            .mapError(err => s"Archive build failed: ${err.message}")
+            .flatMap(archive =>
+              archiveRepo
+                .save(archive)
+                .mapError(err => s"Archive save failed: ${err.message}")
+            )
+            .unit
+        },
+        RepositoryEndpoints.getArchive.zServerLogic[Any] { id =>
+          archiveRepo
+            .find(id)
+            .foldZIO(
+              err =>
+                ZIO.fail(
+                  LoadFailure.ServerError(s"Archive load failed: ${err.message}")
+                ),
+              {
+                case Some(a) =>
+                  ZIO.succeed(
+                    ArchivePgnDto(a.pgn, a.white, a.black, a.result, a.openingName)
+                  )
+                case None => ZIO.fail(LoadFailure.NotFound)
+              }
+            )
+        },
         RepositoryEndpoints.saveGame.zServerLogic[Any] { case (id, env) =>
           FenParserRegex
             .parse(env.fen)

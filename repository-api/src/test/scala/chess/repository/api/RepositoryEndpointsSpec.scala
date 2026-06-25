@@ -92,8 +92,8 @@ object RepositoryEndpointsSpec extends ZIOSpecDefault:
         // (Swagger docs generator, server interpreter, etc.).
         val names = RepositoryEndpoints.all.map(_.showShort)
         assertTrue(
-          RepositoryEndpoints.all.size == 3,
-          names.distinct.size == 3
+          RepositoryEndpoints.all.size == 5,
+          names.distinct.size == 5
         )
       }
     )

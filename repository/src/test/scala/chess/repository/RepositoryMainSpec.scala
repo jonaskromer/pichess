@@ -3,7 +3,13 @@ package chess.repository
 import zio.*
 import zio.test.*
 
-import chess.persistence.{Backend, BackendConfig, CacheBackend, InMemoryGameRepository}
+import chess.persistence.{
+  Backend,
+  BackendConfig,
+  CacheBackend,
+  InMemoryGameArchiveRepository,
+  InMemoryGameRepository
+}
 
 object RepositoryMainSpec extends ZIOSpecDefault:
 
@@ -41,7 +47,11 @@ object RepositoryMainSpec extends ZIOSpecDefault:
       for
         fiber <- RepositoryMain
           .serve(0)
-          .provide(InMemoryGameRepository.layer, chess.obs.TracingLayer.noop)
+          .provide(
+            InMemoryGameRepository.layer,
+            InMemoryGameArchiveRepository.layer,
+            chess.obs.TracingLayer.noop
+          )
           .fork
         _ <- Live.live(ZIO.sleep(300.millis))
         _ <- fiber.interrupt

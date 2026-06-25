@@ -7,7 +7,7 @@ import zio.telemetry.opentelemetry.tracing.Tracing
 
 import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer, TracingLayer, TracingMiddleware}
 import chess.persistence.runtime.PersistenceLayers
-import chess.persistence.{BackendConfig, GameRepository}
+import chess.persistence.{BackendConfig, GameArchiveRepository, GameRepository}
 
 /** Standalone entry point for the repository microservice.
   *
@@ -42,6 +42,7 @@ object RepositoryMain extends ZIOAppDefault:
                 )
         _    <- serve(port).provide(
                   gameRepoLayer(cfg),
+                  PersistenceLayers.archiveRepository(cfg),
                   TracingLayer.fromEnv("repository")
                 )
       yield ()
@@ -69,15 +70,22 @@ object RepositoryMain extends ZIOAppDefault:
 
   private[repository] def serve(
       port: Int
-  ): ZIO[GameRepository & Tracing & ContextStorage, Throwable, Unit] =
+  ): ZIO[
+    GameRepository & GameArchiveRepository & Tracing & ContextStorage,
+    Throwable,
+    Unit
+  ] =
     val program: ZIO[
-      GameRepository & Server & Tracing & ContextStorage & Scope,
+      GameRepository & GameArchiveRepository & Server & Tracing &
+        ContextStorage & Scope,
       Throwable,
       Unit,
     ] =
       for
         _           <- MetricsLayer.jvmMetricsBootstrap
         repo        <- ZIO.service[GameRepository]
+        archiveRepo <- ZIO.service[GameArchiveRepository]
+        eco         <- chess.opening.EcoBook.load
         bootstrap   <- zio.System.env("KAFKA_BOOTSTRAP_SERVERS")
         group       <- zio.System
                          .env("KAFKA_CONSUMER_GROUP")
@@ -99,19 +107,28 @@ object RepositoryMain extends ZIOAppDefault:
                                  KafkaGameEventConsumer.consumerLayer(servers, group)
                                )
                                .forkDaemon *>
+                             // Archive projection: its own consumer group so it
+                             // tracks offsets independently of the FEN read-side.
+                             KafkaGameArchiveConsumer
+                               .run(archiveRepo)
+                               .provideSomeLayer(
+                                 KafkaGameArchiveConsumer
+                                   .consumerLayer(servers, s"$group-archive")
+                               )
+                               .forkDaemon *>
                              Server.serve(
-                               RepositoryServer.routes(repo)
+                               RepositoryServer.routes(repo, archiveRepo, eco)
                                  @@ TracingMiddleware.serverSpan
                              )
                          case None =>
                            Server.serve(
-                             RepositoryServer.routes(repo)
+                             RepositoryServer.routes(repo, archiveRepo, eco)
                                @@ TracingMiddleware.serverSpan
                            )
       yield ()
 
     ZIO.scoped {
-      program.provideSomeLayer[GameRepository & Tracing & ContextStorage & Scope](
-        Server.defaultWithPort(port)
-      )
+      program.provideSomeLayer[
+        GameRepository & GameArchiveRepository & Tracing & ContextStorage & Scope
+      ](Server.defaultWithPort(port))
     }
