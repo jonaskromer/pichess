@@ -1249,10 +1249,13 @@ object Main:
               val whitePct = mv.map(m => Logic.evalBarWhitePct(m.winPct)).getOrElse(50.0)
               val label = mv.map(m => Logic.evalText(m.evalCp)).getOrElse("")
               div(
-                className := "eval-bar-track",
+                className := "eval-bar-row",
                 div(
-                  className := "eval-bar-white",
-                  styleAttr := s"width: $whitePct%"
+                  className := "eval-bar-track",
+                  div(
+                    className := "eval-bar-white",
+                    styleAttr := s"width: $whitePct%"
+                  )
                 ),
                 span(className := "eval-bar-label", label)
               )
@@ -1263,16 +1266,23 @@ object Main:
     * arrives. A static summary of the whole game (not ply-keyed). */
   private def openingLabel(): HtmlElement =
     div(
-      className := "opening-label",
+      className := "opening-postit-wrap",
       child <-- analysisVar.signal.map {
         case None => emptyNode
         case Some(a) =>
+          // A little post-it slapped on the top-right corner of the move-log
+          // panel (same vocabulary as the board post-it), carrying the named
+          // opening + per-side accuracy. Content flex-wraps so a long opening
+          // name stacks instead of overflowing the sticky.
           div(
-            className := "opening-label-inner",
-            Components.newsprintClip("opening-name")(Logic.openingLabel(a.opening)),
-            span(
-              className := "opening-accuracy",
-              s"♙ ${Logic.accuracyText(a.accuracyWhite)} · ♟ ${Logic.accuracyText(a.accuracyBlack)}"
+            className := "post-it-shadow opening-post-it",
+            div(
+              className := "post-it-card opening-post-it-card",
+              span(className := "opening-postit-name", Logic.openingLabel(a.opening)),
+              span(
+                className := "opening-postit-acc",
+                s"♙ ${Logic.accuracyText(a.accuracyWhite)} · ♟ ${Logic.accuracyText(a.accuracyBlack)}"
+              )
             )
           )
       }
@@ -1291,16 +1301,19 @@ object Main:
           Logic.analysisAtPly(analysis, ply) match
             case None => emptyNode
             case Some(m) =>
-              val cls = Logic.glyphClass(m.glyph)
+              // The move-quality bucket ("blunder", "best", …) drives both the
+              // doodle icon and the colour; works for Book/Best too (which have
+              // no NAG glyph).
+              val cls = m.moveClass.toLowerCase
               div(
-                className := "analysis-detail-inner",
+                className := s"analysis-detail-inner quality-$cls",
                 span(
-                  className := s"analysis-class analysis-class-$cls",
-                  if cls.isEmpty then m.moveClass else s"${m.moveClass} ${m.glyph.getOrElse("")}"
+                  className := s"icon analysis-quality-icon icon-quality-$cls",
+                  aria.hidden := true
                 ),
+                span(className := "analysis-class", m.moveClass),
                 span(className := "analysis-eval", Logic.evalText(m.evalCp)),
-                span(className := "analysis-best", s"best: ${m.bestMove}"),
-                span(className := "analysis-acc", Logic.accuracyText(m.accuracy))
+                span(className := "analysis-best", s"best ${m.bestMove}")
               )
         }
     )
@@ -1322,12 +1335,21 @@ object Main:
     * move-log sidebar, so the prompt has done its job). */
   private def endStatePanel(status: GameStatusDto): HtmlElement =
     div(
-      className := "end-state",
-      resultBanner(status),
-      child <-- analysisVar.signal.map {
-        case Some(_) => emptyNode
-        case None    => analyzePrompt()
-      }
+      className := "end-state-wrap",
+      // The verdict banner + "Analyze game" prompt. Once analysis arrives it
+      // fades to opacity 0 (but keeps its box) and the per-move analysis detail
+      // is laid over the same spot — so the status line shows the move quality
+      // while scrubbing, with no layout shift.
+      div(
+        className := "end-state",
+        cls("is-faded") <-- analysisVar.signal.map(_.isDefined),
+        resultBanner(status),
+        child <-- analysisVar.signal.map {
+          case Some(_) => emptyNode
+          case None    => analyzePrompt()
+        }
+      ),
+      analysisDetail()
     )
 
   /** Arrow doodle + the opt-in "Analyze game" CTA. The button is disabled while
@@ -1457,8 +1479,8 @@ object Main:
             }
           )
         ),
-        // Per-move analysis detail for the shown ply (replay-synced).
-        analysisDetail(),
+        // (Per-move analysis detail now lives over the board's end-state line,
+        // not here — see `endStatePanel`.)
         // Move input lives BELOW the scrolling log, on the same paper but
         // outside the OS-managed scroll viewport. Player view only — a
         // spectator's read-only board has no move entry, so it's dropped
