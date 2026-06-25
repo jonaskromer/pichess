@@ -35,8 +35,9 @@ here first, then implement everywhere.
    raw IDs).
 4. **Colour is reserved for hierarchy.** Most ink is the warm dark
    `--post-text` brown. Yellow = primary action. Cyan = secondary.
-   Coral = destructive. Newsprint = navigation link. Anything else is
-   a one-off and should justify itself.
+   Coral = destructive. Newsprint = navigation link — or, with a neon
+   marker, a modal decision clip (§5.7). Anything else is a one-off and
+   should justify itself.
 5. **Decorations are ambient, not load-bearing.** Doodles, scribbles,
    marginalia, and the chess-piece shelf are texture — never required
    to understand or operate the screen.
@@ -93,7 +94,7 @@ flow through.
 | `--post-yellow` / `--post-yellow-shadow` | `#fff2a3` | **Primary** — the only "do this" colour |
 | `--post-cyan` / `--post-cyan-shadow` | `#b8e8eb` | **Secondary** |
 | `--post-coral` / `--post-coral-shadow` | `#ff9a8a` | **Destructive** — reserved for forfeit / delete / quit |
-| `--newsprint` / `--newsprint-shadow` | `#f8eab0` | **Navigation** — Help / Docs / Back, anything that opens a new screen |
+| `--newsprint` / `--newsprint-shadow` | `#f2f1eb` | **Navigation** — Help / Docs / Back; also the substrate for modal **decision clips** (§5.7), set apart by a neon marker |
 | `--post-text` | `#2d1b14` | Ink colour for any sticker / clipping |
 
 #### Marker highlight
@@ -101,7 +102,7 @@ flow through.
 | Token | Use |
 |---|---|
 | `--marker-yellow` | Default highlight under hovered text (and `is-active` tabs) |
-| `--marker-pink` / `-blue` / `-green` / `-red` | Reserved per-action variants — pick one only when "yellow" would not communicate intent |
+| `--marker-pink` / `-blue` / `-green` / `-red` | Per-action variants — pick one only when "yellow" wouldn't communicate intent. **In use:** `green` = confirm, `red` = cancel on modal decision clips (§5.7) |
 
 ### 3.3 Shape — torn / clipped polygons
 
@@ -210,6 +211,13 @@ To bridge a gap (e.g. menu card → title card above), override `top`
 and `height` on the card's `::before/::after` so the strip spans both
 surfaces.
 
+**Photo-corner variant** (modals, framed scraps) — four diagonal
+strips, one per corner, rotated ~45° so each sits across its corner
+and overhangs the paper edge. Because the strips spill out, the host
+must **not** clip or scroll them away: on a scrollable surface the
+tape lives on a non-scrolling outer frame while the inner content
+keeps `overflow: auto` (see §5.7).
+
 ### 4.4 Post-it sticker
 
 The yellow / cyan / coral / newsprint variants of the action palette.
@@ -275,6 +283,18 @@ Three classes, no others.
 | `.btn-link` | In-flow text-style action (menu item, settings row link, mode tab, doc link) | Plain transparent button, hand font, marker-stripe hover |
 | `.btn-icon` | Header back-arrow, theme toggle, single-glyph control | Plain transparent button, slight opacity, scale on hover |
 
+**Plus — confirmation modals only — decision clips.** The two buttons
+in a confirm dialog are newspaper clippings (Special Elite, torn
+corners — the `.header-link` substrate) carrying a neon marker stripe
+that codes intent: **`.btn-confirm`** = green marker (proceed /
+submit), **`.btn-cancel`** = red marker (back out). The neon marker —
+not the substrate — is what separates a decision clip from a plain
+navigation clip. Destructive proceeds (Forfeit, Delete) lean on the
+modal title + button label for the danger signal; if a sharper read is
+wanted, swap the proceed clip to a red marker and drop Cancel's marker
+to plain. Decision clips appear **only** inside a modal action row —
+never as a screen CTA (that's a post-it, §4.4).
+
 > ⚠️ Today's CSS has bespoke selectors per call site
 > (`.start-menu-item`, `.mode-tab`, `.start-side-link`, `.mode-cta`,
 > `.btn`, `.theme-toggle-btn`, etc.). Refactor: collapse to the five
@@ -298,7 +318,8 @@ Three classes, no others.
 `.tab-strip` is a flex row of `.btn-link` children separated by a
 dotted hairline below (`border-bottom: 1px dashed var(--hairline)`).
 The active tab pins its marker stripe on (`is-active`); a disabled
-tab is `opacity: 0.5` with `cursor: not-allowed` and no marker stripe.
+tab takes the §5.9 disabled treatment — erased text + muted marker,
+with `cursor: not-allowed`.
 
 ### 5.4 Screen heading
 
@@ -319,9 +340,37 @@ re-render per screen. Use `showToast(...)` from any handler.
 
 ### 5.7 Modal / dialog
 
-`.modal-dialog` paper-card variant — same primitives as a card
-(paperLayer + tape + drop-shadow), centred in a `.modal-overlay` that
-holds the `--overlay-bg` scrim. Existing rules in `style.css`.
+A modal is a **torn grid-paper card** (§4.2) centred in a `.modal`
+overlay that holds the `--overlay-bg` scrim — same family as the title
+/ content cards, **never** a giant post-it (a post-it is an action,
+not a container; §4.4).
+
+**Backdrop** — a *very low* opacity scrim plus `backdrop-filter:
+blur(…)` (with the `-webkit-` prefix), **not** a heavy dark veil: the
+scrapbook page reads through, softly blurred, so the dialog floats as a
+sheet of paper hovering over it. The blur samples already-composited
+pixels (it does **not** re-run the board's SVG filter), so a static
+blurred backdrop is cheap — but never animate content *beneath* the
+blur (forces a re-blur per frame); keep any motion layer above it.
+
+**Tape** — the photo-corner variant (§4.3): four diagonal strips
+spilling past the edge. Because they overhang, the **scroll lives on
+an inner element** (`overflow: auto`) while the tape sits on a
+non-scrolling outer frame — otherwise the overhang is clipped.
+
+**Content obeys the same rules as everywhere else.** Today's modals
+predate the paper system and break it — fix on the next pass:
+- Headings → §5.4 logo font; body copy → `--font-hand`.
+- Inputs / text areas → §5.2 `.form-control` (paper tint + hairline);
+  **no `border-radius`** (sharp / torn, not rounded plastic).
+- The promotion picker's choices → `--torn-tile` translucent squares
+  like the board, **not** rounded `--accent-soft` boxes.
+- System-data dumps (FEN / PGN) → Special Elite cutting (`.code-inline`, §5.8).
+
+**Action row** — confirmation buttons are **decision clips** (§5.1):
+green-marker confirm, red-marker cancel. This fixes today's bug where a
+non-destructive confirm (Claim Draw) renders cyan, identical to its
+Cancel.
 
 **Scroll lock is mandatory.** While any modal is open, the page
 beneath must not scroll. One shared rule
@@ -347,6 +396,91 @@ Signal
 When adding a modal, add its open-state Var to that combine list (or —
 better, see §13.4 — register it through a single
 `registerModal(signal)` helper).
+
+### 5.8 Tables (`.scrap-table`)
+
+Tables are **ruled-ledger scraps** — a grid-paper card with
+newspaper-cutting headers and hand-drawn rules. Generalises the
+`.help-table` pattern (HelpView) into one class.
+
+**Surface** — a `paperLayer()` grid-paper card (§4.2); torn edge +
+tape per placement.
+
+**Header `<th>`** — newspaper cuttings (`.newsprint-shadow >
+.code-inline`, Special Elite on cut-paper), the same vocabulary as
+`.section-title`. A header is a label → a clipping, not a sticker
+(§2.4, §4.4).
+
+**Body `<td>` — font by *content type*, not one font per table:**
+
+| Cell content | Treatment |
+|---|---|
+| Code / keys / raw IDs | Special Elite newsprint cutting (`.code-inline`) |
+| Numbers (Elo, score, W/L/D) | `--font-press`, plain on the grid, **right-aligned** |
+| Names / prose | `--font-hand` (Caveat) body text |
+
+**Rules — hand-drawn, ledger style:**
+- Header underline + vertical column separators only, via
+  `filter: url(#hand-drawn)` on **rule elements** (never a text-bearing
+  cell — the turbulence smears glyphs). Stroke `--hairline`.
+- **No** horizontal row rules — grid paper + uniform row height carry
+  the rows.
+- **No** outer frame — the card's torn edge frames it.
+
+**Facts box (≤ 3×3)** — a tiny key/value table may instead be a single
+cutting (whole block in `.newsprint-shadow`, Special Elite, internal
+hairlines). Never give every cell of a large table its own cutting:
+per-cell clip-path + paper-shadow is costly and reads as noise —
+cuttings stay on headers + key columns.
+
+> First consumer: tournament standings (numeric, many rows) — the case
+> this is tuned for. CSS `.scrap-table` + a `Components.scrapTable`
+> helper are pending.
+
+### 5.9 Disabled / cancelled state
+
+The default for *any* element that becomes invalid or disabled —
+settings-disabled Undo / Redo, game-over Draw / Forfeit + move input
+(§5.10), a disabled tab. **Never remove it** (that shifts layout and
+hides that it was ever there) and **never** flat-`opacity` it. Strike
+it off in place, keyed to what the element *is*:
+
+| Element | Mark | Its marker highlight |
+|---|---|---|
+| **Loose handwriting** — Caveat text not on a sticker (menu item, tab, link, blurb) | **Erased**: *uneven* alpha via an eraser-smudge mask (patchy, not uniform `opacity`) — pencil rubbed out | **Muted too** — the eraser lifts the highlighter with the pencil |
+| **Printed marks + paper objects** — Special Elite / newsprint runs, form fields, **and post-it / icon buttons** (Undo, Redo, Draw, Forfeit) | **Strikethrough**: a hand-drawn ink line (`filter: url(#hand-drawn)`, not alarm-red) across it | **Stays at full strength** — the strike alone says disabled |
+
+A post-it is an *object*, so it's struck through (crossed off) even
+though its label is handwriting — the rule keys on the element, not its
+text. The element stays non-interactive (`pointer-events: none` +
+`aria-disabled`). This **replaces** the old flat-opacity disabled
+treatment: `.tab-item.is-disabled` (was `opacity: 0.5` + hidden marker)
+→ erased + muted marker; the `allowUndo: false` "grey out the controls"
+hint → struck-through Undo / Redo.
+
+### 5.10 Game-end screen
+
+The board must read as *finished*, not paused. Three layers:
+
+1. **Result headline + gated board.** The status line becomes a
+   **newspaper-headline cutting** (Special Elite on newsprint —
+   "CHECKMATE · WHITE WINS"). The move input + Draw / Forfeit enter the
+   cancelled state (§5.9); New Game / Rematch surface. Review
+   affordances (Flip, Undo) stay live — Undo naturally retracts the
+   end state by un-ending the game.
+2. **Result card.** An auto-shown, dismissible modal variant (§5.7 —
+   grid-paper, photo-corner tape, blurred backdrop) with the headline,
+   the end reason, and a summary: move count + captures / material
+   (v1). Dismissing leaves the headline (1) in place. Duration +
+   opening name are v2 (need a start timestamp / ECO detection exposed
+   to the client).
+3. **Celebration.** Winning-colour piece stickers (reuse `.piece-svg`)
+   raining behind the card from a fixed `pointer-events: none` layer
+   **above** the backdrop — capped count, `transform` / `opacity`
+   keyframes only. Draw → neutral torn-paper scraps, or none. Under
+   **`prefers-reduced-motion`**, drop the animation and place a static
+   scatter of the winning-colour pieces instead (the `pieceShelf()` /
+   `.shelf-piece` vocabulary).
 
 ## 6. Screen skeleton
 
@@ -504,9 +638,12 @@ The following are explicit "no":
 5. **Bespoke button shapes per screen.** If `.btn-cta` doesn't fit,
    extend the spec — don't invent `.start-cta`, `.mode-cta`,
    `.lobby-cta`, etc.
-6. **px values for anything user-facing.** `rem` for sizing,
-   `0.something rem` for hairlines below 1px equivalents. Px is
-   reserved for `box-shadow` blur (where rem rounds badly).
+6. **px for layout / type sizing.** `rem` for all sizing + spacing. Px
+   is reserved for the cases where rem rounds badly: `box-shadow` /
+   `drop-shadow` blur, and **hairline borders & rules ≤ 2px** (1px
+   dividers, input borders, the turn ring). Anything thicker or
+   layout-bearing uses `rem`. (§5.2's "single-pixel hairline border" is
+   this exception, not a contradiction.)
 7. **Heading / wordmark variants per screen.** One `.screen-heading`,
    one `.start-brand`. Don't fork them.
 8. **Mounting `pageBackground()` inside a screen.** It's a global; it

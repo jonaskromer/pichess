@@ -97,7 +97,7 @@ root (aggregate)
    └── bench              chess.bench — JMH microbenchmarks for rules/codec/domain/bot (see performance.md)
 ```
 
-Each service exposes Prometheus metrics on a dedicated port (gateway 9101, game-service 9102, repository 9103, lobby 9104, opening 9105, analytics 9106). Under `EXTRA=analytics,obs` a `kafka-exporter` (:9308) adds broker/lag/throughput metrics, and Grafana (:3000) auto-provisions the JVM-overview and game-analytics dashboards. **spark-analytics is the one module on Scala 3.3 / Java 17** (Spark 3.3 needs a genuine 2.13 stdlib + Java 17) and is kept out of the root aggregate; everything else is Scala 3.8.2 / Java 23.
+Each service exposes Prometheus metrics on a dedicated port (gateway 9101, game-service 9102, repository 9103, lobby 9104, opening 9105, analytics 9106, **bot-tournament 9107**). Under `EXTRA=analytics,obs` a `kafka-exporter` (:9308) adds broker/lag/throughput metrics, and Grafana (:3000) auto-provisions the JVM-overview, game-analytics, **and tournament** dashboards. The **bot-tournament** container emits its tournament-play metrics in-process (win/loss vs each opponent, opening families, per-move think-time, clocks) — scraped by the `tournament` job (compose `tournament` profile or the k8s full overlay), no Kafka round-trip, since it plays an external server and may run off-cluster. **spark-analytics is the one module on Scala 3.3 / Java 17** (Spark 3.3 needs a genuine 2.13 stdlib + Java 17) and is kept out of the root aggregate; everything else is Scala 3.8.2 / Java 23.
 
 ## Module Dependency Graph
 
