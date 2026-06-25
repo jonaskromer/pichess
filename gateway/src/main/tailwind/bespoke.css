@@ -1437,8 +1437,11 @@ body.is-dragging { cursor: grabbing; }
   opacity: 0.5;
 }
 
-/* Moves after the shown position (not yet "played" at this ply) read muted. */
-.move-cell.is-future .move-san { color: var(--text-muted); }
+/* Moves after the shown position (not yet "played" at this ply) read muted.
+   The SAN sits on an always-light newsprint cutting, so mute via opacity (which
+   keeps the dark cutting ink) rather than a theme-dependent text colour — the
+   old `--text-muted` went light-on-light on the cutting in dark mode. */
+.move-cell.is-future .move-san { opacity: 0.5; }
 
 /* ---- Post-game analysis (move glyphs, eval bar, opening, detail) -------- */
 /* Per-move quality glyph next to the SAN cutting. */
@@ -1481,19 +1484,22 @@ body.is-dragging { cursor: grabbing; }
 /* Win-probability eval bar — white's share fills from the left. Hatched track
    (pencil shading) so it reads as drawn, taller than before, with the eval
    label beside it at a readable size. */
-.eval-bar { display: flex; justify-content: center; margin: 0.2rem auto 0.5rem; }
+.eval-bar { display: flex; justify-content: center; width: 92%; margin: 0.2rem auto 0.5rem; }
 .eval-bar-row { display: flex; align-items: center; gap: 0.6rem; width: 100%; justify-content: center; }
 .eval-bar-track {
   position: relative;
-  width: 60%;
-  height: 1.05rem;
-  border: 0.1rem solid var(--text-secondary);
-  border-radius: 0.2rem;
-  filter: url(#hand-drawn);
-  /* Diagonal pencil hatching = the "black" side of the bar. */
+  flex: 1;
+  max-width: 15rem;
+  height: 1.1rem;
+  border: 0.12rem solid var(--text-secondary);
+  border-radius: 0.25rem;
+  /* Solid "black" base so the bar is always visible, with diagonal pencil
+     hatching drawn over it (no #hand-drawn filter — its displacement erases a
+     bar this thin). White's share is the light overlay below. */
+  background-color: var(--color-board-dark);
   background-image: repeating-linear-gradient(
     45deg,
-    var(--text-secondary) 0, var(--text-secondary) 0.06rem,
+    rgba(0, 0, 0, 0.22) 0, rgba(0, 0, 0, 0.22) 0.06rem,
     transparent 0.06rem, transparent 0.34rem
   );
   overflow: hidden;
@@ -1593,14 +1599,26 @@ body.is-dragging { cursor: grabbing; }
 .analysis-eval { font-family: var(--font-press); font-size: 1rem; color: var(--text-primary); }
 .analysis-best { color: var(--text-secondary); }
 /* Per-quality hue tints the icon (mask → background-color: currentColor) + the
-   class word; eval/best stay neutral via the rules above. Yellow reads poorly
-   as text on paper, so inaccuracy uses the warm accent instead. */
+   class word; eval/best stay neutral via the rules above. The bright marker
+   hues read fine on the dark board (dark mode) but wash out on light paper, so
+   the light-mode values are darkened; dark mode keeps the pure markers. Yellow
+   reads poorly as text either way, so inaccuracy uses the warm accent. */
+:root {
+  --q-brilliant: color-mix(in srgb, var(--marker-blue) 62%, #000);
+  --q-good:      color-mix(in srgb, var(--marker-green) 56%, #000);
+  --q-mistake:   color-mix(in srgb, var(--marker-pink) 70%, #000);
+}
+:root.dark {
+  --q-brilliant: var(--marker-blue);
+  --q-good:      var(--marker-green);
+  --q-mistake:   var(--marker-pink);
+}
 .analysis-detail-inner.quality-brilliant,
-.analysis-detail-inner.quality-interesting { color: var(--marker-blue); }
+.analysis-detail-inner.quality-interesting { color: var(--q-brilliant); }
 .analysis-detail-inner.quality-best,
-.analysis-detail-inner.quality-good        { color: var(--marker-green); }
+.analysis-detail-inner.quality-good        { color: var(--q-good); }
 .analysis-detail-inner.quality-inaccuracy  { color: var(--accent); }
-.analysis-detail-inner.quality-mistake     { color: var(--marker-pink); }
+.analysis-detail-inner.quality-mistake     { color: var(--q-mistake); }
 .analysis-detail-inner.quality-blunder     { color: var(--accent-strong); }
 .analysis-detail-inner.quality-book        { color: var(--text-secondary); }
 
