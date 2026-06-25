@@ -43,12 +43,18 @@ object PostgresSchema:
     """ >> sqlu"""
       CREATE INDEX IF NOT EXISTS lobbies_public_waiting_idx
         ON lobbies (visibility, status, created_at)
+    """ >> sqlu"""
+      CREATE TABLE IF NOT EXISTS game_archives (
+        id    TEXT PRIMARY KEY,
+        json  TEXT NOT NULL
+      )
     """
 
     db.run(createIfMissing.transactionally).unit
 
   /** Used by tests to start from a clean slate. NOT exposed at runtime. */
   def reset(db: PostgresDatabase): Task[Unit] =
-    val drop = sqlu"DROP TABLE IF EXISTS lobbies" >>
+    val drop = sqlu"DROP TABLE IF EXISTS game_archives" >>
+      sqlu"DROP TABLE IF EXISTS lobbies" >>
       sqlu"DROP TABLE IF EXISTS games"
     db.run(drop.transactionally).unit *> ensure(db)

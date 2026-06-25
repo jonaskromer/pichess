@@ -44,6 +44,10 @@ object CassandraSchema:
         s"""CREATE TABLE IF NOT EXISTS $keyspace.lobbies_by_invite (
               invite_code text PRIMARY KEY,
               lobby_id    text
+            )""",
+        s"""CREATE TABLE IF NOT EXISTS $keyspace.game_archives (
+              game_id text PRIMARY KEY,
+              json    text
             )"""
       )
       // Wrap in SimpleStatement to dodge Scala 3's overload-resolution

@@ -6,22 +6,26 @@ import zio.telemetry.opentelemetry.tracing.Tracing
 import chess.opt.Optimisation
 import chess.persistence.cache.{CachedGameRepository, CachedLobbyRepository}
 import chess.persistence.cassandra.{
+  CassandraGameArchiveRepository,
   CassandraGameRepository,
   CassandraLobbyRepository,
   CassandraSession
 }
 import chess.persistence.mongo.{
   MongoClientLayer,
+  MongoGameArchiveRepository,
   MongoGameRepository,
   MongoLobbyRepository
 }
 import chess.persistence.postgres.PostgresDatabaseOptimisations.given
 import chess.persistence.postgres.{
   PostgresDatabase,
+  PostgresGameArchiveRepository,
   PostgresGameRepository,
   PostgresLobbyRepository
 }
 import chess.persistence.redis.{
+  RedisGameArchiveRepository,
   RedisGameRepository,
   RedisLayers,
   RedisLobbyRepository
@@ -30,7 +34,9 @@ import chess.persistence.{
   Backend,
   BackendConfig,
   CacheBackend,
+  GameArchiveRepository,
   GameRepository,
+  InMemoryGameArchiveRepository,
   InMemoryGameRepository,
   InMemoryLobbyRepository,
   LobbyRepository
@@ -110,6 +116,24 @@ object PersistenceLayers:
         RedisLayers.live >>> RedisLobbyRepository.layer
       case Backend.Cassandra =>
         CassandraSession.withSchemaLayer >>> CassandraLobbyRepository.layer
+
+  /** Finished-game archive store (post-game analysis). No cache decorator — the
+    * archive is write-once-per-game + read-on-demand — and no `Tracing`
+    * requirement, so it composes into any Main without the tracing env.
+    */
+  def archiveRepository(
+      cfg: BackendConfig
+  ): TaskLayer[GameArchiveRepository] =
+    cfg.backend match
+      case Backend.InMemory  => InMemoryGameArchiveRepository.layer
+      case Backend.Postgres  =>
+        Optimisation.select[PostgresDatabase] >>> PostgresGameArchiveRepository.layer
+      case Backend.Mongo     =>
+        MongoClientLayer.layer >>> MongoGameArchiveRepository.layer
+      case Backend.Redis     =>
+        RedisLayers.live >>> RedisGameArchiveRepository.layer
+      case Backend.Cassandra =>
+        CassandraSession.withSchemaLayer >>> CassandraGameArchiveRepository.layer
 
   private def cachedLobbyRepo(
       backend: Backend
