@@ -2,7 +2,7 @@ package chess.codec
 
 import zio.test.*
 
-import chess.model.board.{GameState, Position}
+import chess.model.board.{GameState, GameStatus, Position}
 import chess.model.piece.{Color, Piece, PieceType}
 import chess.notation.SanSerializer
 
@@ -129,6 +129,69 @@ object PgnParserSpec extends ZIOSpecDefault:
         result.moves.length == 1,
         sanLog.head._1 == Color.Black,
         result.state.activeColor == Color.White
+      )
+    },
+    test("PgnGame defaults annotations to empty (3-arg construction)") {
+      val g = PgnParser.PgnGame(Map.empty, GameState.initial, Nil)
+      assertTrue(g.annotations.isEmpty, g.state == GameState.initial)
+    },
+    test("preserves clock + NAG annotations aligned with moves") {
+      val pgn = """[Event "T"]
+                  |
+                  |1. e4 {[%clk 0:03:00]} c5 $6 {[%emt 2.5][%clk 0:02:55]} *"""
+        .stripMargin
+      for r <- PgnParser.parse(pgn)
+      yield assertTrue(
+        r.moves.length == 2,
+        r.annotations(0).clockMs == Some(180000L),
+        r.annotations(0).nag == None,
+        r.annotations(1).nag == Some(6),
+        r.annotations(1).emtMs == Some(2500L),
+        r.annotations(1).clockMs == Some(175000L)
+      )
+    },
+    test("converts a glued glyph suffix (Nf3!, Nc6?!) to a NAG") {
+      for r <- PgnParser.parse("1. e4 e5 2. Nf3! Nc6?! *")
+      yield assertTrue(
+        r.moves.length == 4,
+        r.annotations(2).nag == Some(Nag.Good),
+        r.annotations(3).nag == Some(Nag.Dubious)
+      )
+    },
+    test("handles the 1... black move-number continuation") {
+      for r <- PgnParser.parse("1. e4 {pause} 1... c5 *")
+      yield assertTrue(r.moves.length == 2)
+    },
+    test("ignores a comment before any move; drops a standalone glyph token") {
+      for
+        pre <- PgnParser.parse("{pre-game} 1. e4 *")
+        glyph <- PgnParser.parse("1. e4 ?? e5 *")
+      yield assertTrue(
+        pre.moves.length == 1,
+        glyph.moves.length == 2,
+        glyph.annotations.forall(_.isEmpty)
+      )
+    },
+    test("round-trips annotated moves through serialize → parse") {
+      val moves = List(
+        PgnMove(Color.White, "e4", clockMs = Some(180000L)),
+        PgnMove(
+          Color.Black,
+          "c5",
+          nag = Some(Nag.Dubious),
+          clockMs = Some(175000L),
+          emtMs = Some(2000L)
+        )
+      )
+      for
+        pgn <- PgnSerializer.serializeAnnotated(moves, GameStatus.Playing)
+        r <- PgnParser.parse(pgn)
+      yield assertTrue(
+        r.moves.length == 2,
+        r.annotations(0).clockMs == Some(180000L),
+        r.annotations(1).nag == Some(6),
+        r.annotations(1).clockMs == Some(175000L),
+        r.annotations(1).emtMs == Some(2000L)
       )
     }
   )

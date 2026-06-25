@@ -69,6 +69,22 @@ object PgnSerializerSpec extends ZIOSpecDefault:
         pgn.endsWith("1/2-1/2")
       )
     },
+    test("serializes timeout result as 1-0 when black flags") {
+      // Timeout collapses onto the same PGN result token as a checkmate win
+      // for the side that still had time — PGN doesn't distinguish the cause.
+      for pgn <- PgnSerializer.serialize(Nil, GameStatus.Timeout(Color.White))
+      yield assertTrue(
+        pgn.contains("[Result \"1-0\"]"),
+        pgn.endsWith("1-0")
+      )
+    },
+    test("serializes timeout result as 0-1 when white flags") {
+      for pgn <- PgnSerializer.serialize(Nil, GameStatus.Timeout(Color.Black))
+      yield assertTrue(
+        pgn.contains("[Result \"0-1\"]"),
+        pgn.endsWith("0-1")
+      )
+    },
     test("serializes white-resignation result as 0-1 (white loses)") {
       // Resignation collapses onto the same result token as a checkmate
       // loss for the resigning side — PGN itself doesn't distinguish.
@@ -112,5 +128,62 @@ object PgnSerializerSpec extends ZIOSpecDefault:
         _ <- TestClock.setTime(fixed)
         pgn <- PgnSerializer.serialize(Nil, GameStatus.Playing)
       yield assertTrue(pgn.contains("""[Date "2026.04.16"]"""))
+    },
+    test("emits NAG + clock annotations; black after an annotated move gets N...") {
+      val moves = List(
+        PgnMove(Color.White, "e4", clockMs = Some(90000)),
+        PgnMove(
+          Color.Black,
+          "c5",
+          nag = Some(Nag.Dubious),
+          clockMs = Some(88000),
+          emtMs = Some(2000)
+        )
+      )
+      for pgn <- PgnSerializer.serializeAnnotated(moves, GameStatus.Playing)
+      yield assertTrue(
+        pgn.contains("1. e4 {[%clk 0:01:30]}"),
+        pgn.contains("1... c5 $6 {[%emt 2] [%clk 0:01:28]}")
+      )
+    },
+    test("a leading black move takes no number prefix (i==0 branch)") {
+      for pgn <- PgnSerializer.serializeAnnotated(
+          List(PgnMove(Color.Black, "e5")),
+          GameStatus.Playing
+        )
+      yield assertTrue(
+        pgn.endsWith("\n\ne5 *"),
+        !pgn.contains("1... e5"),
+        !pgn.contains("1. e5")
+      )
+    },
+    test("serializeWithResult takes an explicit result token") {
+      for pgn <- PgnSerializer.serializeWithResult(
+          List(PgnMove(Color.White, "e4")),
+          "1/2-1/2",
+          List("ECO" -> "B20")
+        )
+      yield assertTrue(
+        pgn.contains("[Result \"1/2-1/2\"]"),
+        pgn.contains("[ECO \"B20\"]"),
+        pgn.endsWith("1/2-1/2")
+      )
+    },
+    test("overlays extra headers, overriding defaults and appending new tags") {
+      for pgn <- PgnSerializer.serializeAnnotated(
+          List(PgnMove(Color.White, "e4")),
+          GameStatus.Playing,
+          extraHeaders = List(
+            "White"   -> "piChess",
+            "ECO"     -> "B20",
+            "Opening" -> "Sicilian Defense"
+          )
+        )
+      yield assertTrue(
+        pgn.contains("""[White "piChess"]"""),
+        !pgn.contains("""[White "Player 1"]"""),
+        pgn.contains("""[ECO "B20"]"""),
+        pgn.contains("""[Opening "Sicilian Defense"]""")
+      )
     }
   )

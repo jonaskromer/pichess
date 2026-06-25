@@ -136,21 +136,21 @@ object ZobristSpec extends ZIOSpecDefault:
     test("pawnHash tracks the pawn skeleton, ignoring piece moves") {
       for
         afterKnight <- play(List("Nf3")) // only a knight moved
-        afterPawn   <- play(List("e4"))  // a pawn moved
+        afterPawn <- play(List("e4")) // a pawn moved
       yield assertTrue(
         // a non-pawn move leaves the pawn key unchanged …
         Zobrist.pawnHash(afterKnight) == Zobrist.pawnHash(GameState.initial),
         // … but moving a pawn changes it
-        Zobrist.pawnHash(afterPawn) != Zobrist.pawnHash(GameState.initial),
+        Zobrist.pawnHash(afterPawn) != Zobrist.pawnHash(GameState.initial)
       )
     },
     test("materialKey is stable across quiet moves and shifts on a capture") {
       for
-        quiet    <- play(List("Nf3", "Nf6"))       // no material change
+        quiet <- play(List("Nf3", "Nf6")) // no material change
         captured <- play(List("e4", "d5", "exd5")) // White wins a pawn
       yield assertTrue(
         Zobrist.materialKey(quiet) == Zobrist.materialKey(GameState.initial),
-        Zobrist.materialKey(captured) != Zobrist.materialKey(GameState.initial),
+        Zobrist.materialKey(captured) != Zobrist.materialKey(GameState.initial)
       )
     },
     test("pieceIndex and squareIndex encode the table-index scheme") {
@@ -164,7 +164,7 @@ object ZobristSpec extends ZIOSpecDefault:
         Zobrist.squareIndex(Position('a', 1)) == 0,
         Zobrist.squareIndex(Position('h', 1)) == 7,
         Zobrist.squareIndex(Position('a', 2)) == 8,
-        Zobrist.squareIndex(Position('h', 8)) == 63,
+        Zobrist.squareIndex(Position('h', 8)) == 63
       )
     }
   )

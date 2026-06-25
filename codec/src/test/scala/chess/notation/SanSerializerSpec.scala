@@ -206,6 +206,10 @@ object SanSerializerSpec extends ZIOSpecDefault:
         for san <- SanSerializer
             .toSan(Move(Position('e', 2), Position('e', 4)), initial)
         yield assertTrue(san == "e4")
+      },
+      test("deriveMoveLog of an empty history is empty") {
+        for log <- SanSerializer.deriveMoveLog(initial, Nil)
+        yield assertTrue(log.isEmpty)
       }
     )
   )
