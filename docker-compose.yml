@@ -166,6 +166,10 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
       CLUSTER_ID: "pichess-cluster-0001"
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # Cap broker heap so it fits the deploy's 1Gi container limit (the image
+      # default -Xmx1G == the limit → OOMKill under load). Matches the
+      # KAFKA_HEAP_OPTS in deploy/k8s/overlays/full/kafka.yaml.
+      KAFKA_HEAP_OPTS: "-Xmx512m -Xms512m"
     # Persist log dirs so topics survive `make` down/up (which does NOT pass
     # -v). Keeps the broker consistent with the Spark sink's persistent
     # checkpoint — otherwise a wiped broker + surviving checkpoint makes the
@@ -479,7 +483,9 @@ services:
   prometheus:
     image: prom/prometheus:v2.55.0
     container_name: pichess-prometheus
-    profiles: ["obs"]
+    # Metrics belong in prod too (live monitoring/alerting), so prometheus is in
+    # both obs tiers. Only jaeger (tracing/profiling) is dev-obs-only.
+    profiles: ["dev-obs", "prod-obs"]
     ports:
       - "9090:9090"
     volumes:
@@ -495,7 +501,7 @@ services:
   grafana:
     image: grafana/grafana:11.3.0
     container_name: pichess-grafana
-    profiles: ["obs"]
+    profiles: ["dev-obs", "prod-obs"]
     depends_on:
       prometheus:
         condition: service_started
@@ -506,7 +512,7 @@ services:
       # for a login screen. Override these for any non-dev deployment.
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
-      GF_USERS_DEFAULT_THEME: "light"
+      GF_USERS_DEFAULT_THEME: "dark"
     volumes:
       - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
@@ -519,7 +525,10 @@ services:
   jaeger:
     image: jaegertracing/all-in-one:1.62.0
     container_name: pichess-jaeger
-    profiles: ["obs"]
+    # dev-obs only: tracing/profiling is a development concern. Prod runs
+    # prod-obs (prometheus + grafana) without jaeger — TRACING_ENABLED stays
+    # false in prod so services never try to export spans.
+    profiles: ["dev-obs"]
     ports:
       - "16686:16686"   # web UI
       - "4317:4317"     # OTLP gRPC receiver
