@@ -351,11 +351,15 @@ object Logic:
   /** The board-screen title: the two players, already keyed to their colour,
     * so the view just pairs each name with its colour dot. Built client-side at
     * game start — the wire `BoardStateDto` carries no player identities. */
-  final case class GameTitle(white: String, black: String)
+  final case class GameTitle(white: String, black: String, event: String)
 
   object GameTitle:
-    /** A plain local game with no named players. */
-    val local: GameTitle = GameTitle("White", "Black")
+    /** Fallback PGN `Event` when none is known (e.g. an imported PGN with no
+      * `[Event]` tag). */
+    val DefaultEvent = "piChess Game"
+
+    /** A plain local game (both colours from one tab). */
+    val local: GameTitle = GameTitle("White", "Black", "piChess Local Game")
 
     /** A vs-bot game: the player's nickname against `Bot (<difficulty>)`,
       * placed by the side the *player* chose (the bot takes the other colour).
@@ -367,14 +371,83 @@ object Logic:
     ): GameTitle =
       val player = blankTo(nickname, "You")
       val bot    = s"Bot ($difficulty)"
-      if playerSide == "white" then GameTitle(player, bot)
-      else GameTitle(bot, player)
+      if playerSide == "white" then GameTitle(player, bot, "piChess PvBot Game")
+      else GameTitle(bot, player, "piChess PvBot Game")
 
     /** Two named players already keyed by colour (a lobby's host/guest, a
-      * spectated game's roster). Blank names fall back to the colour word. */
-    def players(white: String, black: String): GameTitle =
-      GameTitle(blankTo(white, "White"), blankTo(black, "Black"))
+      * spectated game's roster). Blank names fall back to the colour word; the
+      * `Event` defaults to an online game but can be overridden (a tournament /
+      * Lichess mirror, an imported PGN's own event). */
+    def players(
+        white: String,
+        black: String,
+        event: String = "piChess Online Game"
+    ): GameTitle =
+      GameTitle(blankTo(white, "White"), blankTo(black, "Black"), event)
 
     private def blankTo(name: String, default: String): String =
       val t = name.trim
       if t.isEmpty then default else t
+
+  // ── PGN metadata (import ↔ export) ────────────────────────────────────────
+
+  /** The value of a single PGN tag (`[Key "value"]`), unescaped, or None if the
+    * tag is absent. Tag keys here are fixed literals (White/Black/Event), so the
+    * pattern is built without escaping. */
+  def pgnHeader(pgn: String, key: String): Option[String] =
+    // A PGN tag is a unique bracketed token, so match it anywhere (no line
+    // anchor — Scala.js lacks the `(?m)` flag). The value group allows escaped
+    // quotes/backslashes (`\"`, `\\`) so quoted names round-trip.
+    val rx = ("\\[" + key + "\\s+\"((?:[^\"\\\\]|\\\\.)*)\"\\]").r
+    rx.findFirstMatchIn(pgn).map(m => unescapePgn(m.group(1)))
+
+  /** Player roster of a pasted PGN as a [[GameTitle]] (preserving its `[Event]`
+    * if present) — so importing a PGN shows the real names on the board. `None`
+    * when neither `[White]` nor `[Black]` is present (not a roster'd PGN, e.g. a
+    * FEN/JSON paste), so the caller keeps its default title. */
+  def titleFromPgn(pgn: String): Option[GameTitle] =
+    val white = pgnHeader(pgn, "White")
+    val black = pgnHeader(pgn, "Black")
+    if white.isEmpty && black.isEmpty then None
+    else
+      val event =
+        pgnHeader(pgn, "Event").filter(_.nonEmpty).getOrElse(GameTitle.DefaultEvent)
+      Some(GameTitle.players(white.getOrElse(""), black.getOrElse(""), event))
+
+  /** Rewrite a PGN's headers for export: override `Event`/`White`/`Black` from
+    * `title`, append any `extraTags` not already present (e.g. `PlyCount`,
+    * `ECO`), and keep everything else (Date/Result/Site/Round) and the movetext
+    * verbatim. Returns the input unchanged if it isn't the expected
+    * `headers\n\nmovetext` shape. */
+  def pgnWithMeta(
+      pgn: String,
+      title: GameTitle,
+      extraTags: List[(String, String)]
+  ): String =
+    val sep = pgn.indexOf("\n\n")
+    if sep < 0 then pgn
+    else
+      val headers  = parseHeaderLines(pgn.substring(0, sep))
+      val movetext = pgn.substring(sep + 2)
+      val overrides =
+        List("Event" -> title.event, "White" -> title.white, "Black" -> title.black)
+      val overrideMap = overrides.toMap
+      val present     = headers.map(_._1).toSet
+      val updated     = headers.map((k, v) => k -> overrideMap.getOrElse(k, v))
+      val addedOverrides = overrides.filterNot((k, _) => present.contains(k))
+      val addedExtras    = extraTags.filterNot((k, _) => present.contains(k))
+      val all = updated ::: addedOverrides ::: addedExtras
+      val headerStr =
+        all.map((k, v) => s"""[$k "${escapePgn(v)}"]""").mkString("\n")
+      s"$headerStr\n\n$movetext"
+
+  private val headerLine = """\s*\[(\w+)\s+"((?:[^"\\]|\\.)*)"\]\s*""".r
+  private def parseHeaderLines(block: String): List[(String, String)] =
+    block.linesIterator.collect { case headerLine(k, v) =>
+      k -> unescapePgn(v)
+    }.toList
+
+  private def escapePgn(v: String): String =
+    v.replace("\\", "\\\\").replace("\"", "\\\"")
+  private def unescapePgn(v: String): String =
+    v.replace("\\\"", "\"").replace("\\\\", "\\")

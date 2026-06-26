@@ -791,9 +791,7 @@ object Main:
       div(
         className := "board-paper",
         paperLayer(crumpled = true),
-        evalBar(),
-        gameTitle(),
-        statusIndicator(),
+        statusRow(),
         div(
           className := "board-row",
           div(
@@ -866,6 +864,11 @@ object Main:
         span("piChess")
       ),
       div(className := "header-spacer"),
+      // "White vs Black" lives in the header now, centred between two equal
+      // flex spacers (one before, one after) so it sits midway between the
+      // brand and the actions rather than on its own line above the board.
+      gameTitle(),
+      div(className := "header-spacer"),
       div(
         className := "header-actions",
         gameHeaderActions
@@ -920,9 +923,7 @@ object Main:
       div(
         className := "board-paper",
         paperLayer(crumpled = true),
-        evalBar(),
-        gameTitle(),
-        statusIndicator(),
+        statusRow(),
         div(
           className := "board-row",
           div(
@@ -1349,6 +1350,19 @@ object Main:
                 span(className := "analysis-best", s"best ${m.bestMove}")
               )
         }
+    )
+
+  /** The status line (turn indicator, or the post-game end-state / per-move
+    * analysis panel) with the win-probability eval bar pinned to its right.
+    * Pairing them on one row keeps the eval bar off its own line above the
+    * board — that extra line pushed the board down. `evalBar()` self-gates to
+    * nothing until analysis arrives, so a live game shows just the centred
+    * status with no bar. */
+  private def statusRow(): HtmlElement =
+    div(
+      className := "board-status-row",
+      statusIndicator(),
+      evalBar()
     )
 
   private def statusIndicator(): HtmlElement =
@@ -2232,6 +2246,11 @@ object Main:
         gameIdVar.set(Some(snapshot.id))
         stateVar.set(Some(snapshot.state))
         currentAllowUndoVar.set(true) // local games always allow undo
+        // A loaded PGN's roster becomes the board title; a FEN/fresh load
+        // falls back to the plain local title.
+        gameTitleVar.set(
+          load.flatMap(Logic.titleFromPgn).orElse(Some(Logic.GameTitle.local))
+        )
         connectEvents(snapshot.id, spectator = false)
       case Left(err) =>
         showToast(err.error)
@@ -2343,11 +2362,38 @@ object Main:
     gameIdVar.now() match
       case Some(id) =>
         getStateClient((id, Some(format))).foreach {
-          case Right(StateResponse.Export(resp)) => exportVar.set(Some(resp))
-          case Right(_: StateResponse.View)      => ()
-          case Left(err)                         => showToast(err.error)
+          case Right(StateResponse.Export(resp)) =>
+            // The backend builds a generic PGN (it doesn't know the players);
+            // stamp the real roster + event + a few extra tags client-side,
+            // where that context lives. FEN/JSON pass through untouched.
+            val out =
+              if format == "pgn" then
+                resp.copy(content =
+                  Logic.pgnWithMeta(
+                    resp.content,
+                    gameTitleVar.now().getOrElse(Logic.GameTitle.local),
+                    exportExtraTags()
+                  )
+                )
+              else resp
+            exportVar.set(Some(out))
+          case Right(_: StateResponse.View) => ()
+          case Left(err)                    => showToast(err.error)
         }
       case None => showToast("No active game")
+
+  /** Optional PGN tags added on export beyond the seven-tag roster: the
+    * half-move count always, and the named opening (`ECO`/`Opening`) when the
+    * game has been analysed. */
+  private def exportExtraTags(): List[(String, String)] =
+    val plies = stateVar.now().map(_.moveLog.length).getOrElse(0)
+    val plyTag = if plies > 0 then List("PlyCount" -> plies.toString) else Nil
+    val openingTags = analysisVar.now() match
+      case Some(a) if a.opening.name.nonEmpty =>
+        a.opening.eco.filter(_.nonEmpty).map("ECO" -> _).toList :::
+          List("Opening" -> a.opening.name)
+      case _ => Nil
+    plyTag ::: openingTags
 
   /** Fetch the finished game's PGN, then ask the engine to rate it. Result lands
     * in `analysisVar`, which the eval bar + move glyphs + detail panel render —
@@ -3093,7 +3139,10 @@ object Main:
         // Local games always allow undo.
         currentAllowUndoVar.set(true)
         currentGameIsLocalVar.set(true)
-        pendingTitleVar.set(Some(Logic.GameTitle.local))
+        // Importing a PGN → show its roster; a fresh/FEN game → the local title.
+        pendingTitleVar.set(
+          newGameImport().flatMap(Logic.titleFromPgn).orElse(Some(Logic.GameTitle.local))
+        )
         newGameImportVar.set("")
         navigate(Screen.Game(snapshot.id))
       case Left(err) => showToast(err.error)
@@ -3299,7 +3348,14 @@ object Main:
       // The aggregator already labels each row's sides (real names for
       // tournament / Lichess mirrors, "Player" / "piChess (bot)" / colour
       // words for native games), so the watch title comes straight off the row.
-      val title = Logic.GameTitle.players(g.white, g.black)
+      // The PGN Event follows the source (the tournament name isn't on the row,
+      // so tournament games use the generic "Tournament").
+      val event = g.gameType match
+        case "tournament" => "Tournament"
+        case "pvbot"      => "piChess PvBot Game"
+        case "lichess"    => "Lichess Game"
+        case _            => "piChess Online Game"
+      val title = Logic.GameTitle.players(g.white, g.black, event)
       g.gameType match
         case "pvp" | "pvbot" =>
           Components.linkButton("Spectate") { _ =>

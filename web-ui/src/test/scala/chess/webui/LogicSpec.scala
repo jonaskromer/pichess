@@ -452,29 +452,86 @@ object LogicSpec extends ZIOSpecDefault:
     ),
     suite("GameTitle")(
       test("vsBot places the player on their chosen side, bot on the other") {
+        val w = Logic.GameTitle.vsBot("Alice", "white", "Expert")
+        val b = Logic.GameTitle.vsBot("Alice", "black", "Expert")
         assertTrue(
-          Logic.GameTitle.vsBot("Alice", "white", "Expert") ==
-            Logic.GameTitle("Alice", "Bot (Expert)"),
-          Logic.GameTitle.vsBot("Alice", "black", "Expert") ==
-            Logic.GameTitle("Bot (Expert)", "Alice")
+          (w.white, w.black) == ("Alice", "Bot (Expert)"),
+          (b.white, b.black) == ("Bot (Expert)", "Alice"),
+          w.event == "piChess PvBot Game"
         )
       },
       test("vsBot falls back to \"You\" for a blank nickname") {
-        assertTrue(
-          Logic.GameTitle.vsBot("   ", "white", "Medium") ==
-            Logic.GameTitle("You", "Bot (Medium)")
-        )
+        val t = Logic.GameTitle.vsBot("   ", "white", "Medium")
+        assertTrue((t.white, t.black) == ("You", "Bot (Medium)"))
       },
-      test("players keeps named sides and fills blanks with the colour word") {
+      test("players keeps named sides, fills blanks, defaults the event") {
+        val t = Logic.GameTitle.players("Alice", "Bob")
+        val blanks = Logic.GameTitle.players("", " ")
         assertTrue(
-          Logic.GameTitle.players("Alice", "Bob") ==
-            Logic.GameTitle("Alice", "Bob"),
-          Logic.GameTitle.players("", " ") ==
-            Logic.GameTitle("White", "Black")
+          (t.white, t.black) == ("Alice", "Bob"),
+          t.event == "piChess Online Game",
+          (blanks.white, blanks.black) == ("White", "Black"),
+          Logic.GameTitle.players("a", "b", "Tournament").event == "Tournament"
         )
       },
       test("local is the generic colour-word title") {
-        assertTrue(Logic.GameTitle.local == Logic.GameTitle("White", "Black"))
+        assertTrue(
+          (Logic.GameTitle.local.white, Logic.GameTitle.local.black) ==
+            ("White", "Black"),
+          Logic.GameTitle.local.event == "piChess Local Game"
+        )
+      }
+    ),
+    suite("PGN metadata")(
+      test("titleFromPgn reads the roster + event; None without a roster") {
+        val pgn =
+          "[Event \"piChess PvBot Game\"]\n[White \"Merkel\"]\n" +
+            "[Black \"Bot (Max)\"]\n[Result \"1/2-1/2\"]\n\n1. d4 d5 1/2-1/2"
+        val t = Logic.titleFromPgn(pgn)
+        assertTrue(
+          t.map(x => (x.white, x.black, x.event)) ==
+            Some(("Merkel", "Bot (Max)", "piChess PvBot Game")),
+          // A FEN/JSON paste has no roster → no title override.
+          Logic.titleFromPgn("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w").isEmpty
+        )
+      },
+      test("pgnWithMeta overrides Event/White/Black, adds tags, keeps the rest") {
+        val raw =
+          "[Event \"piChess Game\"]\n[Site \"Local\"]\n[Date \"2026.06.25\"]\n" +
+            "[Round \"1\"]\n[White \"Player 1\"]\n[Black \"Player 2\"]\n" +
+            "[Result \"1-0\"]\n\n1. e4 e5 2. Qh5 Nc6 1-0"
+        val out = Logic.pgnWithMeta(
+          raw,
+          Logic.GameTitle("Merkel", "Bot (Max)", "piChess PvBot Game"),
+          List("PlyCount" -> "4")
+        )
+        assertTrue(
+          out.contains("[Event \"piChess PvBot Game\"]"),
+          out.contains("[White \"Merkel\"]"),
+          out.contains("[Black \"Bot (Max)\"]"),
+          out.contains("[Date \"2026.06.25\"]"), // preserved
+          out.contains("[Result \"1-0\"]"),      // preserved
+          out.contains("[PlyCount \"4\"]"),       // appended
+          out.endsWith("1. e4 e5 2. Qh5 Nc6 1-0") // movetext verbatim
+        )
+      },
+      test("pgnWithMeta leaves a non-PGN string untouched") {
+        assertTrue(
+          Logic.pgnWithMeta("just a fen", Logic.GameTitle.local, Nil) == "just a fen"
+        )
+      },
+      test("pgnHeader unescapes; quotes in names round-trip on export") {
+        val raw =
+          "[Event \"x\"]\n[White \"a\"]\n[Black \"b\"]\n[Result \"*\"]\n\n*"
+        val out = Logic.pgnWithMeta(
+          raw,
+          Logic.GameTitle("Quote \"Q\"", "b", "E"),
+          Nil
+        )
+        assertTrue(
+          out.contains("""[White "Quote \"Q\""]"""),
+          Logic.pgnHeader(out, "White") == Some("Quote \"Q\"")
+        )
       }
     )
   )
