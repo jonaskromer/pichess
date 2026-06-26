@@ -1311,9 +1311,9 @@ body.is-dragging { cursor: grabbing; }
 }
 
 /* ─── Game title (board-screen "who vs whom" header) ──────────────────────
-   Sits at the top of the board paper, above the "X to move" line: each
-   player's name behind its `.color-dot`, joined by a quiet "vs". Names are
-   handwritten (the player voice); "vs" is the smaller pencil connector. */
+   Lives in the page header, centred between two flex spacers: each player's
+   name behind its `.color-dot`, joined by a quiet "vs". Names are handwritten
+   (the player voice); "vs" is the smaller pencil connector. */
 .game-title {
   display: flex;
   align-items: center;
@@ -1428,7 +1428,23 @@ body.is-dragging { cursor: grabbing; }
 /* `align-items: center` lines the plain-text move number up with the
    inline-block SAN cuttings; the bottom margin gives each row breathing
    room so adjacent cuttings' drop-shadows don't graze. */
-.move-row { display: flex; align-items: center; gap: 0.3rem; margin-bottom: 0.25rem; }
+.move-row {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 0.25rem;
+  /* A long game stacks 100+ of these rows, each carrying newsprint cuttings
+     whose wrapper runs four stacked drop-shadows (--paper-contact/-diffuse) and
+     whose pill paints an SVG texture through a multiply blend — costly to
+     rasterise, paid ×every ply. content-visibility lets the browser skip
+     layout + paint for rows scrolled out of the move-log viewport, and isolates
+     on-screen rows so scrubbing the active move repaints one row, not the list.
+     contain-intrinsic-size is the placeholder height for a skipped row (≈ one
+     line) so the scrollbar stays stable; `auto` swaps in each row's real
+     measured height once it has rendered, self-correcting the estimate. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 1.85rem;
+}
 /* Move number — a muted pencil note on the grid paper, sitting between the
    cuttings (the score no longer rides one big newsprint slab). */
 .move-number { color: var(--text-muted); min-width: 1.75rem; text-align: right; margin-right: 0.25rem; }
@@ -1469,9 +1485,12 @@ body.is-dragging { cursor: grabbing; }
 }
 .move-cell.is-active .move-san::after { opacity: 1; }
 
-/* Hover-preview a non-active move: muted ink + a fainter underline. */
+/* Hover-preview a non-active move: muted ink + a fainter underline. Mute via
+   opacity, NOT a `--text-muted` colour swap — the SAN sits on an always-light
+   newsprint cutting, and `--text-muted` reads light-on-light there in dark mode
+   (washed-out, unreadable). Same trap the `.is-future` rule below documents. */
 .move-log-inner.replayable .move-cell:hover:not(.is-active) .move-san {
-  color: var(--text-muted);
+  opacity: 0.6;
 }
 .move-log-inner.replayable .move-cell:hover:not(.is-active) .move-san::after {
   opacity: 0.5;
@@ -1524,12 +1543,23 @@ body.is-dragging { cursor: grabbing; }
 /* Win-probability eval bar — white's share fills from the left. Hatched track
    (pencil shading) so it reads as drawn, taller than before, with the eval
    label beside it at a readable size. */
-.eval-bar { display: flex; justify-content: center; width: 92%; margin: 0.2rem auto 0.5rem; }
-.eval-bar-row { display: flex; align-items: center; gap: 0.6rem; width: 100%; justify-content: center; }
+/* The status line (turn / end-state / per-move analysis panel) carries the eval
+   bar on its right. `.board-status-row` is the relative anchor; the bar is
+   absolutely placed so it overlays the row's right end instead of taking its
+   own line above the board (which pushed the board down). See statusRow(). */
+.board-status-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+.eval-bar { position: absolute; right: 0; top: 50%; transform: translateY(-50%); display: flex; }
+.eval-bar-row { display: flex; align-items: center; gap: 0.6rem; justify-content: center; }
 .eval-bar-track {
   position: relative;
-  flex: 1;
-  max-width: 15rem;
+  flex: none;
+  width: 6.5rem;
   height: 1.1rem;
   border: 0.12rem solid var(--text-secondary);
   border-radius: 0.25rem;
@@ -2027,6 +2057,42 @@ body.is-dragging { cursor: grabbing; }
 .icon-copy    { --icon-url: url(/web/doodle_icons/interface/copy.svg); }
 .icon-resize  { --icon-url: url(/web/doodle_icons/interface/maximize.svg); }
 .icon-refresh { --icon-url: url(/web/doodle_icons/interface/sync.svg); }
+.icon-nav-first { --icon-url: url(/web/doodle_icons/interface/fast-rewind.svg); }
+.icon-nav-prev  { --icon-url: url(/web/doodle_icons/interface/backward.svg); }
+.icon-nav-next  { --icon-url: url(/web/doodle_icons/interface/forward.svg); }
+.icon-nav-last  { --icon-url: url(/web/doodle_icons/interface/fast-forward.svg); }
+
+/* Replay navigation bar — first / prev / next / last + ply counter, shown in
+   the move-input slot during analysis so the panel doesn't jump. */
+.replay-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0;
+}
+.replay-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.25rem;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-primary);
+  transition: transform 0.1s ease, color 0.15s ease, opacity 0.15s ease;
+}
+.replay-nav-btn > .icon { width: 1.45rem; height: 1.45rem; }
+.replay-nav-btn:hover:not(:disabled) { transform: translateY(-0.05rem); color: var(--accent); }
+.replay-nav-btn:active:not(:disabled) { transform: translateY(0.05rem); }
+.replay-nav-btn:disabled { opacity: 0.3; cursor: default; }
+.replay-nav-counter {
+  font-family: var(--font-press);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  min-width: 3.5rem;
+  text-align: center;
+}
 
 /* Export bullet list inside post-it 2 — buttons sit inside <li> so each
    format reads as a list entry rather than a row of identical bars. The

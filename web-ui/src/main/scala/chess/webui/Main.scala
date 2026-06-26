@@ -470,6 +470,14 @@ object Main:
             dragVar.set(None)
           }): js.Function1[dom.Event, Unit],
         )
+        // Replay navigation by keyboard (←/→ step, Home/End jump) — only while a
+        // finished game's frames are loaded and the user isn't typing in a field.
+        dom.document.addEventListener(
+          "keydown",
+          ((e: dom.Event) =>
+            handleReplayKey(e.asInstanceOf[dom.KeyboardEvent])
+          ): js.Function1[dom.Event, Unit],
+        )
         // Flip a `body.is-dragging` class while a drag is in flight so
         // the cursor turns to `grabbing` everywhere on the page (the
         // CSS rule lives in style.css). `.distinct` so it only fires
@@ -1567,13 +1575,76 @@ object Main:
         ),
         // (Per-move analysis detail now lives over the board's end-state line,
         // not here — see `endStatePanel`.)
-        // Move input lives BELOW the scrolling log, on the same paper but
-        // outside the OS-managed scroll viewport. Player view only — a
-        // spectator's read-only board has no move entry, so it's dropped
-        // entirely there (showInput = false).
-        if showInput then moveInputForm() else emptyNode
+        // Bottom slot, BELOW the scrolling log (outside the OS scroll viewport):
+        // the move input while a game is live, swapped IN PLACE for the replay
+        // navigation bar once a finished game's frames are loaded — so the panel
+        // doesn't jump. A spectator's read-only board (showInput = false) shows
+        // the nav when replaying and nothing otherwise.
+        child <-- replayFramesVar.signal.map(_.nonEmpty).distinct.map { replaying =>
+          if replaying then navBar()
+          else if showInput then moveInputForm()
+          else emptyNode
+        }
       )
     )
+
+  /** Replay navigation: first / prev / next / last + a ply counter. Occupies the
+    * move-input slot during analysis (frames loaded), mirroring the ←/→/Home/End
+    * keyboard shortcuts. Buttons disable at the ends. */
+  private def navBar(): HtmlElement =
+    def go(target: => Int): Unit =
+      val max = replayFramesVar.now().length - 1
+      if max >= 0 then activePlyVar.set(Logic.clampPly(target, max))
+    def navBtn(
+        iconName: String,
+        label: String,
+        target: => Int,
+        disabledSig: Signal[Boolean]
+    ): HtmlElement =
+      button(
+        typ := "button",
+        className := "replay-nav-btn",
+        aria.label := label,
+        disabled <-- disabledSig,
+        onClick --> { _ => go(target) },
+        icon(iconName)
+      )
+    val ply    = activePlyVar.signal
+    val maxSig = replayFramesVar.signal.map(_.length - 1)
+    val atStart = ply.map(_ <= 0).distinct
+    val atEnd   = ply.combineWith(maxSig).map((p, m) => p >= m).distinct
+    div(
+      className := "replay-nav",
+      navBtn("nav-first", "First move", 0, atStart),
+      navBtn("nav-prev", "Previous move", activePlyVar.now() - 1, atStart),
+      span(
+        className := "replay-nav-counter",
+        child.text <-- ply.combineWith(maxSig).map((p, m) => s"$p / ${math.max(0, m)}")
+      ),
+      navBtn("nav-next", "Next move", activePlyVar.now() + 1, atEnd),
+      navBtn("nav-last", "Last move", replayFramesVar.now().length - 1, atEnd)
+    )
+
+  /** Document-level replay keyboard nav. No-op unless a finished game's frames
+    * are loaded, and ignored while a text field is focused (so the load modal /
+    * nickname inputs keep their arrow keys) or a modifier is held. */
+  private def handleReplayKey(e: dom.KeyboardEvent): Unit =
+    val frames = replayFramesVar.now()
+    val ae     = dom.document.activeElement
+    val typing = ae != null && (ae.tagName == "INPUT" || ae.tagName == "TEXTAREA")
+    if frames.nonEmpty && !typing && !e.ctrlKey && !e.metaKey && !e.altKey then
+      val max = frames.length - 1
+      val cur = activePlyVar.now()
+      val target = e.key match
+        case "ArrowLeft"  => Some(cur - 1)
+        case "ArrowRight" => Some(cur + 1)
+        case "Home"       => Some(0)
+        case "End"        => Some(max)
+        case _            => None
+      target.foreach { t =>
+        e.preventDefault()
+        activePlyVar.set(Logic.clampPly(t, max))
+      }
 
   private def moveInputForm(): HtmlElement =
     form(

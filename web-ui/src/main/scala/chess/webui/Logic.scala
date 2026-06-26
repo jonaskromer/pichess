@@ -82,6 +82,12 @@ object Logic:
   def replayMoveState(i: Int, activePly: Int): (Boolean, Boolean) =
     (i == activePly - 1, i >= activePly)
 
+  /** Clamp a target replay ply into `[0, max]` (max = last frame index). Used by
+    * the replay nav buttons + keyboard shortcuts so stepping past either end is
+    * a no-op rather than an out-of-range index. */
+  def clampPly(target: Int, max: Int): Int =
+    math.max(0, math.min(target, math.max(0, max)))
+
   /** The squares whose occupant changed between two replay frames — i.e. the
     * from/to of the move that produced `cur` from `prev`. Derived by diffing the
     * boards (the replay frames don't carry move coordinates), so it naturally

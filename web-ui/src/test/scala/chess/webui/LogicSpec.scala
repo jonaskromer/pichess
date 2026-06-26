@@ -303,6 +303,16 @@ object LogicSpec extends ZIOSpecDefault:
         )
       }
     ),
+    suite("clampPly")(
+      test("bounds replay navigation to [0, max]") {
+        assertTrue(
+          Logic.clampPly(-1, 10) == 0,   // before start
+          Logic.clampPly(5, 10) == 5,    // in range
+          Logic.clampPly(99, 10) == 10,  // past end
+          Logic.clampPly(3, -1) == 0     // no frames (max < 0)
+        )
+      }
+    ),
     suite("movedSquares")(
       test("flags exactly the from/to of a quiet move") {
         // e2 pawn → e4: e2 emptied, e4 gained the pawn; d2 unchanged.
