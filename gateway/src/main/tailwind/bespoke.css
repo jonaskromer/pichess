@@ -1428,23 +1428,7 @@ body.is-dragging { cursor: grabbing; }
 /* `align-items: center` lines the plain-text move number up with the
    inline-block SAN cuttings; the bottom margin gives each row breathing
    room so adjacent cuttings' drop-shadows don't graze. */
-.move-row {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  margin-bottom: 0.25rem;
-  /* A long game stacks 100+ of these rows, each carrying newsprint cuttings
-     whose wrapper runs four stacked drop-shadows (--paper-contact/-diffuse) and
-     whose pill paints an SVG texture through a multiply blend — costly to
-     rasterise, paid ×every ply. content-visibility lets the browser skip
-     layout + paint for rows scrolled out of the move-log viewport, and isolates
-     on-screen rows so scrubbing the active move repaints one row, not the list.
-     contain-intrinsic-size is the placeholder height for a skipped row (≈ one
-     line) so the scrollbar stays stable; `auto` swaps in each row's real
-     measured height once it has rendered, self-correcting the estimate. */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 1.85rem;
-}
+.move-row { display: flex; align-items: center; gap: 0.3rem; margin-bottom: 0.25rem; }
 /* Move number — a muted pencil note on the grid paper, sitting between the
    cuttings (the score no longer rides one big newsprint slab). */
 .move-number { color: var(--text-muted); min-width: 1.75rem; text-align: right; margin-right: 0.25rem; }
@@ -1454,7 +1438,22 @@ body.is-dragging { cursor: grabbing; }
    column and drops the text cursor — no hover highlighter, since the cutting
    itself is the treatment and moves aren't interactive. The compound
    `.code-inline.move-san` out-specifies `.code-inline`'s own padding. */
-.code-inline.move-san { padding: 0.02rem 0.32rem 0.06rem; cursor: default; }
+.code-inline.move-san {
+  padding: 0.02rem 0.32rem 0.06rem;
+  cursor: default;
+  /* Scroll perf: a long game stacks 100+ of these pills, and the move-log
+     viewport repaints them as it scrolls. The two priciest paint ops per pill
+     are the crumple texture (decoded at each pill's own width via
+     background-size:cover, then composited through a multiply blend) and the
+     wide blur-radius diffuse shadow halo. Both are imperceptible on a 3-glyph
+     pill, so drop them HERE (scoped to move tokens only — the help/heading/
+     result cuttings keep the full treatment). The flat --newsprint colour, the
+     scissor clip-path, and the crisp contact shadow all stay. */
+  background-image: none;
+}
+/* Lose only the expensive wide-blur diffuse halo on move pills; keep the tight
+   --paper-contact edge shadow that defines the cut-paper silhouette. */
+.move-cell-wrap .newsprint-shadow { filter: var(--paper-contact); }
 
 /* ── Replay: clickable move log of a finished game (docs/replay-plan.md) ──────
    When the log is `.replayable` (game over) each move cutting becomes a
@@ -2043,8 +2042,9 @@ body.is-dragging { cursor: grabbing; }
   vertical-align: -0.15em;
   flex-shrink: 0;
 }
-.icon-undo    { --icon-url: url(/web/doodle_icons/interface/backward.svg); }
-.icon-redo    { --icon-url: url(/web/doodle_icons/interface/forward.svg); }
+/* arrow-28 points left by default → undo uses it as-is; redo mirrors it right. */
+.icon-undo    { --icon-url: url(/web/dddoodle_pack/arrows/arrow-28.svg); }
+.icon-redo    { --icon-url: url(/web/dddoodle_pack/arrows/arrow-28.svg); transform: scaleX(-1); }
 .icon-flip    { --icon-url: url(/web/doodle_icons/interface/flip.svg); }
 .icon-new     { --icon-url: url(/web/doodle_icons/interface/play.svg); }
 .icon-load    { --icon-url: url(/web/doodle_icons/interface/upload.svg); }
