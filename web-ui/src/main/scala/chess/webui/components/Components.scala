@@ -35,17 +35,34 @@ object Components:
     val _ = crumpled
     div(
       className := "paper-layer",
+      // Crumple layer: the baked #crumple-tile heightmap tiled at a fixed px
+      // size (constant fold scale), lit live by the per-theme --paper-filter
+      // (.crumple-fill in bespoke.css). No viewBox → user units = CSS px, so the
+      // tile doesn't stretch with the panel.
       svg.svg(
-        svg.viewBox := "0 0 600 600",
-        svg.preserveAspectRatio := "xMidYMid slice",
-        svg.use(
-          svg.href := (if grid then PaperGridHref else PaperGridlessHref)
+        svg.cls := "crumple-svg",
+        svg.width := "100%",
+        svg.height := "100%",
+        svg.rect(
+          svg.cls := "crumple-fill",
+          svg.width := "100%",
+          svg.height := "100%",
+          svg.fill := "url(#crumple-tile)"
         )
-      )
+      ),
+      // Grid overlay drawn on top — still 600 viewBox + slice, so the ruling
+      // scales with the panel exactly as before. Plain-paper surfaces skip it.
+      if grid then
+        svg.svg(
+          svg.cls := "grid-svg",
+          svg.viewBox := "0 0 600 600",
+          svg.preserveAspectRatio := "xMidYMid slice",
+          svg.use(svg.href := PaperGridHref)
+        )
+      else emptyNode
     )
 
-  private val PaperGridHref     = "#paper-crumpled-grid-square"
-  private val PaperGridlessHref = "#paper-crumpled-square"
+  private val PaperGridHref = "#paper-grid-square"
 
   /** The canonical screen container. Used by every routed screen as the
     * outermost element — see design.md §6.1. The `.screen` class carries

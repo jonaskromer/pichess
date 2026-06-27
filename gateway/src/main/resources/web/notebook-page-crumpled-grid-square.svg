@@ -1,64 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600">
 <!--
-  Square crumpled paper WITH grid. Sibling of notebook-page-crumpled-square
-  but adds the printed-ruling grid (24/120 minor/major) so panels and
-  the header read as actual notebook pages, not just textured paper.
+  GRID-ONLY overlay (printed ruling). The crumpled-paper texture + lighting it
+  used to carry now comes from the shared #crumple-tile / #crumple-hard /
+  #crumple-soft pipeline (see HtmlPage), so panels can light a baked, constant-
+  size heightmap per theme. This symbol is just the ruling, drawn on top of that
+  crumple layer in `paperLayer()`; it stays in the 600 viewBox + slice so the
+  grid keeps scaling with the panel exactly as before.
 
-  Grid pattern width/height stay as SVG attributes (24 / 120) — CSS
-  geometry properties do not apply to the pattern element in any browser
-  (a previous attempt at `style="width: var(...)"` broke rendering
-  because the patterns then defaulted to 0x0). Per-panel grid scaling
-  uses CSS `transform` on the pattern (see grid-scale tunables below)
-  rather than width/height.
-
-  CSS-tunable per-callsite via these custom properties (all optional):
-
-    grid-color           — grid stroke colour
-    grid-minor-width     — minor stroke width                (default 0.6)
-    grid-minor-opacity   — minor stroke opacity              (default 0.55)
-    grid-major-width     — major stroke width                (default 1.1)
-    grid-major-opacity   — major stroke opacity              (default 0.9)
-    crumple-highlight    — wrinkle highlight tint
-    paper-color          — paper fill
-
-  Same colour-dodge crumple filter as the gridless square sibling. Grid
-  lines are drawn ON TOP of the crumpled paper (not crumpled themselves).
-
-  IMPORTANT — the var() cascade for grid-color into a pattern inside a
-  symbol referenced via cross-document use is unreliable across browsers:
-  some honour it, some keep the default. The SVG default below
-  (#7a96ad) is therefore tuned to read on BOTH light and dark paper, so
-  the page still looks coherent if the dark-mode override doesn't take
-  effect. Same caveat for crumple-highlight.
+  Grid pattern width/height stay as SVG attributes (24 / 120) — CSS geometry
+  properties don't apply to <pattern> in any browser. CSS-tunable per callsite:
+    grid-color, grid-minor-width, grid-minor-opacity, grid-major-width,
+    grid-major-opacity. Default #7a96ad reads on both light and dark paper
+    (the var cascade through <pattern> is unreliable cross-browser).
 -->
-  <symbol id="paper-crumpled-grid-square" viewBox="0 0 600 600" overflow="visible">
+  <symbol id="paper-grid-square" viewBox="0 0 600 600" overflow="visible">
     <defs>
-      <!-- Same crumple as the gridless square sibling: multiply blend with
-           a tame 70-100% lighting range (digital-art texture overlay
-           convention). See that file's header for the full reasoning. -->
-      <filter id="crumple-grid-square" x="0" y="0" width="100%" height="100%">
-        <feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="3"
-                      seed="7" result="noise"
-                      style="base-frequency: var(--crumple-frequency, 0.012);"/>
-
-        <feDiffuseLighting in="noise" surfaceScale="4" diffuseConstant="1"
-                           lighting-color="white"
-                           style="lighting-color: var(--crumple-highlight, white);
-                                  surface-scale: var(--crumple-depth, 4);"
-                           result="lightRaw">
-          <feDistantLight azimuth="135" elevation="45"/>
-        </feDiffuseLighting>
-
-        <feComponentTransfer in="lightRaw" result="lightSoft">
-          <feFuncR type="linear" slope="0.3" intercept="0.7"/>
-          <feFuncG type="linear" slope="0.3" intercept="0.7"/>
-          <feFuncB type="linear" slope="0.3" intercept="0.7"/>
-        </feComponentTransfer>
-
-        <feComposite in="lightSoft" in2="SourceGraphic" operator="in" result="lightMasked"/>
-        <feBlend in="SourceGraphic" in2="lightMasked" mode="multiply"/>
-      </filter>
-
       <pattern id="grid-grid-minor" width="24" height="24" patternUnits="userSpaceOnUse">
         <path stroke="var(--grid-color, #7a96ad)" fill="none"
               style="stroke-width: var(--grid-minor-width, 0.6);
@@ -73,19 +29,14 @@
       </pattern>
     </defs>
 
-    <!-- Crumpled paper -->
-    <rect width="600" height="600"
-          fill="var(--paper-color, #fdfbf3)"
-          filter="url(#crumple-grid-square)"/>
-
-    <!-- Grid drawn on top of the paper. -->
+    <!-- Ruling drawn on top of the (separate) crumple layer. -->
     <rect width="600" height="600" fill="url(#grid-grid-minor)"/>
     <rect width="600" height="600" fill="url(#grid-grid-major)"/>
-    <!-- Right & bottom edges (the grid pattern only draws top & left of each cell) -->
+    <!-- Right & bottom edges (the grid pattern only draws top & left of each cell). -->
     <path stroke="var(--grid-color, #7a96ad)" fill="none"
           style="stroke-width: var(--grid-major-width, 1.1);
                  stroke-opacity: var(--grid-major-opacity, 0.9);"
           d="M 600 0 L 600 600 M 0 600 L 600 600"/>
   </symbol>
-  <use href="#paper-crumpled-grid-square"/>
+  <use href="#paper-grid-square"/>
 </svg>

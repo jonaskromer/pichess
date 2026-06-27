@@ -709,52 +709,37 @@ object Main:
   // dark-mode toggle retint the paper without duplicating SVG files.
   // --------------------------------------------------------------------------
 
-  // Paper SVG sprites — both square (so wrinkle texture stays native-scale
-  // when sliced onto any container shape, no aspect distortion) and both
-  // sharing the same crumple lighting filter via colour-dodge so they
-  // re-tint cleanly across themes via --crumple-highlight.
-  //
-  // paperGridHref     — paper + ruled grid; used for panels and the header
-  //                     so they read as actual notebook pages
-  // paperGridlessHref — paper without ruling; used as the page background
-  //                     so the page doesn't tile a busy grid behind every
-  //                     panel that already has its own grid
-  // Document-internal hrefs — the symbols are inlined in HtmlPage.scala's
-  // sprite host so cross-document `<use href="external.svg#id">` (which
-  // has flaky CSS-var cascade through <pattern> / <feDiffuseLighting>)
-  // is no longer needed. Same-document `<use href="#id">` cascades vars
-  // reliably, so --paper-color / --grid-color / --crumple-highlight
-  // overrides actually take effect.
-  private val paperGridHref = "#paper-crumpled-grid-square"
-  private val paperGridlessHref = "#paper-crumpled-square"
-
+  // Paper backdrops now share one pipeline: a baked, constant-size crumple
+  // heightmap (#crumple-tile) lit live per theme by --paper-filter, with the
+  // ruled grid as a separate overlay layer. The page background uses just the
+  // crumple (no grid); panels add the grid via Components.paperLayer.
   private def pageBackground(): HtmlElement =
+    // No viewBox: the svg maps 1 user unit = 1 CSS px, so the #crumple-tile
+    // heightmap (640px = 8 folds) tiles at a constant on-screen size instead of
+    // stretching with the viewport. The rect is lit by the per-theme
+    // `--paper-filter` (.crumple-fill); the baked tile means zero live
+    // feTurbulence. (Panels still use the legacy <use> sprites for now.)
     div(
       className := "page-bg",
       svg.svg(
-        svg.viewBox := "0 0 600 600",
-        svg.preserveAspectRatio := "xMidYMid slice",
-        svg.use(svg.href := paperGridlessHref)
+        svg.width  := "100%",
+        svg.height := "100%",
+        svg.rect(
+          svg.cls    := "crumple-fill",
+          svg.width  := "100%",
+          svg.height := "100%",
+          svg.fill   := "url(#crumple-tile)"
+        )
       )
     )
 
-  // Defaults to grid (panels + header want ruling). Pass grid = false for
-  // any surface that should sit on plain crumpled paper. The legacy
-  // `crumpled` parameter is retained as an unused alias for source-compat
-  // with existing callsites; everything is crumpled now anyway.
+  // Thin alias over the shared Components.paperLayer (crumple tile + optional
+  // grid overlay) so Main's many callsites keep working unchanged.
   private def paperLayer(
       crumpled: Boolean = false,
       grid: Boolean = true
   ): HtmlElement =
-    val _ = crumpled
-    div(
-      className := "paper-layer",
-      svg.svg(
-        svg.viewBox := "0 0 600 600",
-        svg.preserveAspectRatio := "xMidYMid slice",
-        svg.use(svg.href := (if grid then paperGridHref else paperGridlessHref))
-      )
-    )
+    Components.paperLayer(crumpled, grid)
 
   private def gameBody(): HtmlElement =
     div(
@@ -1720,6 +1705,10 @@ object Main:
     span(
       className := "move-cell-wrap",
       Components
+        // Chips carry the same newspaper grain as the other cuttings now (the
+        // fine, mostly-light clip-grain reads fine even at chip size, and with
+        // the single drop-shadow + composited hover-lift it stays smooth). The
+        // `.is-flat` variant remains for anything that needs to opt out.
         .newsprintClip("move-san")(san)
         .amend(
           cls := "move-cell",

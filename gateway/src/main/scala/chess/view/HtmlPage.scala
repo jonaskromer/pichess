@@ -82,6 +82,51 @@ $pieceSprites
     </filter>
   </defs>
 </svg>
+<!-- Crumpled-paper pipeline. The costly live feTurbulence is baked once into
+     crumple-height.png; the `#crumple-tile` pattern tiles it at a FIXED 640px
+     (= 8 folds, so crumple size is constant regardless of panel size). The two
+     filters light that heightmap LIVE so rotation stays world-fixed (azimuth set
+     per element) and the paper retints via --crumple-highlight / --paper-color:
+     hard-light for light mode, soft-light for dark (multiply only darkens, which
+     reads as stains on dark paper). Chosen per theme via `filter: var(--paper-filter)`.
+     `luminanceToAlpha` turns the grayscale tile into the alpha bump feDiffuseLighting
+     reads; the feComponentTransfer recentres the lighting so a flat face → 0.5
+     (ridges lighten, creases darken). -->
+<svg width="0" height="0" aria-hidden="true">
+  <defs>
+    <pattern id="crumple-tile" width="640" height="640" patternUnits="userSpaceOnUse">
+      <image href="/web/crumple-height.png" width="640" height="640"/>
+    </pattern>
+    <filter id="crumple-hard" x="0" y="0" width="100%" height="100%" primitiveUnits="userSpaceOnUse">
+      <feColorMatrix in="SourceGraphic" type="luminanceToAlpha" result="hmap"/>
+      <feDiffuseLighting in="hmap" surfaceScale="3" diffuseConstant="1"
+                         lighting-color="#fff" style="lighting-color: var(--crumple-highlight, #fff)" result="lightRaw">
+        <feDistantLight azimuth="135" elevation="45"/>
+      </feDiffuseLighting>
+      <feComponentTransfer in="lightRaw" result="lightSoft">
+        <feFuncR type="linear" slope="0.65" intercept="0.04"/>
+        <feFuncG type="linear" slope="0.65" intercept="0.04"/>
+        <feFuncB type="linear" slope="0.65" intercept="0.04"/>
+      </feComponentTransfer>
+      <feFlood flood-color="#fdfbf3" style="flood-color: var(--paper-color, #fdfbf3)" result="paper"/>
+      <feBlend in="lightSoft" in2="paper" mode="hard-light"/>
+    </filter>
+    <filter id="crumple-soft" x="0" y="0" width="100%" height="100%" primitiveUnits="userSpaceOnUse">
+      <feColorMatrix in="SourceGraphic" type="luminanceToAlpha" result="hmap"/>
+      <feDiffuseLighting in="hmap" surfaceScale="3" diffuseConstant="1"
+                         lighting-color="#fff" style="lighting-color: var(--crumple-highlight, #fff)" result="lightRaw">
+        <feDistantLight azimuth="135" elevation="35"/>
+      </feDiffuseLighting>
+      <feComponentTransfer in="lightRaw" result="lightSoft">
+        <feFuncR type="linear" slope="0.60" intercept="0.156"/>
+        <feFuncG type="linear" slope="0.60" intercept="0.156"/>
+        <feFuncB type="linear" slope="0.60" intercept="0.156"/>
+      </feComponentTransfer>
+      <feFlood flood-color="#fdfbf3" style="flood-color: var(--paper-color, #fdfbf3)" result="paper"/>
+      <feBlend in="lightSoft" in2="paper" mode="soft-light"/>
+    </filter>
+  </defs>
+</svg>
 </div>
 <div id="app"></div>
 <script src="/web/main.js"></script>
@@ -89,9 +134,12 @@ $pieceSprites
 </html>"""
 
   private val css: String = loadResource("web/style.css")
+  // Only the grid-only sprite is inlined now. The old gridless crumple SVG is
+  // dead (every cutting + the page background moved to the baked #crumple-tile /
+  // crumple-height.png pipeline), and inlining it ran a stray feTurbulence in
+  // the 0×0 sprite host for nothing.
   private val paperSprites: String =
-    loadResource("web/notebook-page-crumpled-square.svg") +
-      loadResource("web/notebook-page-crumpled-grid-square.svg")
+    loadResource("web/notebook-page-crumpled-grid-square.svg")
   // Piece SVGs were previously referenced cross-document via
   // `<use href="/web/pieces/<name>.svg#<name>"/>`. Even with a warm
   // browser cache that path forces a per-element resolve step the first

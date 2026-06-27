@@ -39,6 +39,20 @@
   --paper-grid:         var(--color-paper-grid);
   --grid-color:         var(--color-grid);
   --crumple-highlight:  var(--color-crumple-highlight);
+  /* Which crumple lighting filter the paper rect uses (see HtmlPage defs).
+     Light paper reads shadows with hard-light; dark paper needs soft-light so
+     lit ridges glow instead of creases blotching into stains. */
+  --paper-filter:       url(#crumple-hard);
+  /* Blend for the cuttings' grain tile (clip-grain.png, a mostly-light grain).
+     Unlike the panels (feDiffuseLighting → smooth directional shading), cuttings
+     value-blend the raw grain, so the panels' hard-light scorched the light
+     paper ("burnt"). Light mode multiplies the faint grain into soft wrinkles;
+     dark mode soft-lights it into subtle highlights (multiply would re-stain). */
+  --clip-blend:         multiply;
+  /* Flat fill for cuttings that opt out of the texture (`.code-inline.is-flat`,
+     e.g. the move chips). The legacy crumple+multiply's effective tone, so a
+     flat cutting reads the same minus the grain. */
+  --clip-flat:          #e7e4d8;
   --bg-page:            var(--color-paper);
   --text-primary:       var(--color-text-primary);
   --text-secondary:     var(--color-text-secondary);
@@ -298,6 +312,9 @@
      entries (because they don't fit Tailwind's utility shape) need a
      bespoke dark variant. */
   --tape-rgb: 220, 200, 180;
+  --paper-filter: url(#crumple-soft);
+  --clip-blend: soft-light;
+  --clip-flat: #a09685;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -362,6 +379,11 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
   background: var(--bg-page);
 }
 .page-bg svg { width: 100%; height: 100%; display: block; }
+/* The crumpled-paper rect: a `#crumple-tile` heightmap fill lit by the
+   per-theme `--paper-filter`. The svg around it carries NO viewBox, so user
+   units = CSS px and the 640px tile stays a constant on-screen size (the fold
+   scale no longer stretches with the panel). */
+.crumple-fill { filter: var(--paper-filter); }
 /* Clean paper background for large dialogs. Rendered as the first child of
    a positioned dialog wrapper; the dialog's actual content sits in a
    sibling .paper-content with z-index: 1 so it renders on top.
@@ -386,7 +408,10 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
   pointer-events: none;
   filter: drop-shadow(var(--panel-shadow));
 }
-.paper-layer svg { width: 100%; height: 100%; display: block; }
+/* Two stacked layers now (crumple tile + grid overlay) — absolutely position
+   both so they overlap instead of stacking vertically; the grid (later child)
+   paints on top. */
+.paper-layer svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 /* Adhesive-tape strips at the top corners of paper panels. Pseudo-element
    pair (left + right) with a vertical sheen gradient + soft shadow + slight
    rotation per side reads as scotch tape holding a clipping in place. The
@@ -609,15 +634,14 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
    texture. Distinct vocabulary from post-its so the user can tell
    "go look at this" apart from "do this". */
 .header-link {
-  /* The bg image (square gridless crumple — mostly cream paper with
-     darker wrinkles) blends into the newsprint colour via multiply, so
-     the wrinkle shading shows but the underlying yellow stays. cover
-     keeps the wrinkles native-scale even on tiny buttons. */
+  /* Crumple grain from the baked heightmap blended onto the newsprint colour
+     (hard/soft-light per theme — multiply stained dark mode). Fixed tile size
+     so the grain stays constant + shares one raster across every cutting. */
   background-color: var(--newsprint);
-  background-image: url('/web/notebook-page-crumpled-square.svg');
-  background-size: cover;
+  background-image: url('/web/clip-grain.png');
+  background-size: 200px 200px;
   background-position: center;
-  background-blend-mode: multiply;
+  background-blend-mode: var(--clip-blend, hard-light);
   color: var(--newsprint-text);
   font-family: var(--font-press);
   font-size: 0.95rem;
@@ -1439,21 +1463,22 @@ body.is-dragging { cursor: grabbing; }
    itself is the treatment and moves aren't interactive. The compound
    `.code-inline.move-san` out-specifies `.code-inline`'s own padding. */
 .code-inline.move-san {
+  /* Flat fill comes from `.is-flat` (added in moveCell) — chips are too small
+     for grain to read and they scroll/hover a lot, so they opt out of the
+     texture. This rule only tightens the pill. */
   padding: 0.02rem 0.32rem 0.06rem;
   cursor: default;
-  /* Scroll perf: a long game stacks 100+ of these pills, and the move-log
-     viewport repaints them as it scrolls. The two priciest paint ops per pill
-     are the crumple texture (decoded at each pill's own width via
-     background-size:cover, then composited through a multiply blend) and the
-     wide blur-radius diffuse shadow halo. Both are imperceptible on a 3-glyph
-     pill, so drop them HERE (scoped to move tokens only — the help/heading/
-     result cuttings keep the full treatment). The flat --newsprint colour, the
-     scissor clip-path, and the crisp contact shadow all stay. */
-  background-image: none;
 }
-/* Lose only the expensive wide-blur diffuse halo on move pills; keep the tight
-   --paper-contact edge shadow that defines the cut-paper silhouette. */
-.move-cell-wrap .newsprint-shadow { filter: var(--paper-contact); }
+/* Move chips repeat 100+ times in a scrolling log AND lift on hover, so the full
+   newsprint shadow (3 contact drop-shadows + 1 wide diffuse halo = 4 blurs) is
+   far too much filter to re-rasterise per chip per frame — that's the hover AND
+   scroll lag, not the clip-path. One small contact shadow keeps the cut-paper
+   edge at ~4× less cost (the wide halo is the priciest and invisible at this
+   size). Scoped to chips; the bigger help/heading/result cuttings keep the
+   full treatment. */
+.move-cell-wrap .newsprint-shadow {
+  filter: drop-shadow(0 0.05rem 0.06rem rgb(0 0 0 / 0.32));
+}
 
 /* ── Replay: clickable move log of a finished game (docs/replay-plan.md) ──────
    When the log is `.replayable` (game over) each move cutting becomes a
@@ -1467,10 +1492,9 @@ body.is-dragging { cursor: grabbing; }
 .move-cell .move-san { position: relative; }
 
 /* Emphatic scribble underline — a thicker, full-ink take on `.scribble-underline`
-   (same hand-drawn SVG mask), drawn on the move token's free `::after` (the clip
-   background lives on `::before`). Shown on the active move and on hover-preview. */
-.move-cell.is-active .move-san::after,
-.move-log-inner.replayable .move-cell:hover:not(.is-active) .move-san::after {
+   (same hand-drawn SVG mask), drawn on the move token's free `::after`. Shown on
+   the ACTIVE move only now; hover gets a lift instead (see below). */
+.move-cell.is-active .move-san::after {
   content: '';
   position: absolute;
   left: -0.14rem;
@@ -1484,15 +1508,18 @@ body.is-dragging { cursor: grabbing; }
 }
 .move-cell.is-active .move-san::after { opacity: 1; }
 
-/* Hover-preview a non-active move: muted ink + a fainter underline. Mute via
-   opacity, NOT a `--text-muted` colour swap — the SAN sits on an always-light
-   newsprint cutting, and `--text-muted` reads light-on-light there in dark mode
-   (washed-out, unreadable). Same trap the `.is-future` rule below documents. */
-.move-log-inner.replayable .move-cell:hover:not(.is-active) .move-san {
-  opacity: 0.6;
-}
-.move-log-inner.replayable .move-cell:hover:not(.is-active) .move-san::after {
-  opacity: 0.5;
+/* Hover affordance: LIFT the cutting, don't recolour it. The old hover changed
+   the SAN's opacity and revealed the underline — both alter the cutting's
+   content, which forced the wrapper's 4-stacked-drop-shadow filter to
+   re-rasterise on every hover (that was the lag). A `transform` on `.move-cell`
+   — which IS the filtered `.newsprint-shadow` wrapper — is composited instead:
+   the filter result is cached and merely scaled, so the scrap pops up off the
+   page (its shadow growing with it) for free. `.newsprint-shadow` already has
+   `position: relative`, so the z-index lifts it above its neighbours. */
+.move-log-inner.replayable .move-cell { transition: transform 0.12s ease; }
+.move-log-inner.replayable .move-cell:hover:not(.is-active) {
+  transform: translateY(-0.12rem) scale(1.07);
+  z-index: 1;
 }
 
 /* Moves after the shown position (not yet "played" at this ply) read muted.
@@ -2388,10 +2415,10 @@ body.is-dragging { cursor: grabbing; }
   position: relative;
   isolation: isolate;
   background-color: var(--newsprint);
-  background-image: url('/web/notebook-page-crumpled-square.svg');
-  background-size: cover;
+  background-image: url('/web/clip-grain.png');
+  background-size: 200px 200px;
   background-position: center;
-  background-blend-mode: multiply;
+  background-blend-mode: var(--clip-blend, hard-light);
   color: var(--newsprint-text);
   font-family: var(--font-press);
   font-size: 0.95rem;
@@ -2836,14 +2863,28 @@ body.is-dragging { cursor: grabbing; }
 .code-inline,
 .help-pre {
   background-color: var(--newsprint);
-  background-image: url('/web/notebook-page-crumpled-square.svg');
-  background-size: cover;
-  background-blend-mode: multiply;
+  /* Crumple grain from the baked heightmap blended onto the cutting colour at a
+     fine FIXED tile (≈ newspaper grain, finer than the panels' notebook folds):
+     one shared raster across every cutting (no per-width re-raster), and
+     hard/soft-light per theme instead of `multiply` (which stained dark mode).
+     Add `.is-flat` (below) to opt a cutting out of the grain entirely. */
+  background-image: url('/web/clip-grain.png');
+  background-size: 200px 200px;
+  background-blend-mode: var(--clip-blend, hard-light);
   color: var(--newsprint-text);
   font-family: var(--font-press);
   clip-path: var(--newsprint-cut);
   display: inline-block;
   border-radius: 0;
+}
+/* Reusable flat cutting: opt out of the crumple grain (flat cutting tone, no
+   blend). For cuttings too small for grain to read or that scroll/hover a lot —
+   the move chips use it (newsprintClip("move-san is-flat")). */
+.code-inline.is-flat,
+.help-pre.is-flat {
+  background-image: none;
+  background-color: var(--clip-flat);
+  background-blend-mode: normal;
 }
 .code-inline {
   /* Override the shared `--newsprint-cut` with the smaller wobble — the
