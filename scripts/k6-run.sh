@@ -59,10 +59,12 @@ log() { printf '\n[\033[1;34mk6\033[0m %s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 # what k6 sees, not host paths.
 surface_script() {
   case "$1" in
-    browser) echo "/scripts/browser/lobby-flow.js" ;;
-    kafka)   echo "/scripts/kafka/game-events.js" ;;
-    grpc)    echo "/scripts/grpc/game-service.js" ;;
-    *)       echo "" ;;
+    browser)        echo "/scripts/browser/lobby-flow.js" ;;
+    kafka)          echo "/scripts/kafka/game-events.js" ;;
+    kafka-complete) echo "/scripts/kafka/complete-games.js" ;;
+    grpc)           echo "/scripts/grpc/game-service.js" ;;
+    grpc-analyze)   echo "/scripts/grpc/analyze.js" ;;
+    *)              echo "" ;;
   esac
 }
 

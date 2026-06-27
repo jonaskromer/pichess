@@ -492,15 +492,15 @@ tournament-bot: ## Connect piChess to a NowChess tournament & play (auto-registe
 	sbt "botTournament/runMain chess.bot.tournament.TournamentBotMain"
 
 .PHONY: bench-persistence
-bench-persistence: ## Per-backend persistence benches (testcontainer-backed). Phase D stub today.
-	@mkdir -p $(PERF_REPORTS_DIR)
-	@ts=$$(date -u +%Y%m%dT%H%M%SZ); \
-	out="$$PWD/$(PERF_REPORTS_DIR)/bench-persistence-$$ts.json"; \
-	sbt "bench/Jmh/run $(JMH_FLAGS) -rf json -rff $$out $(BENCH_PERSISTENCE_CLASSES)"; \
-	echo "persistence bench results → $$out"
+bench-persistence: ## Persistence latency — covered at service level (DB locked). See message.
+	@echo "Persistence perf is covered at the service level, not as a JMH micro-bench:"
+	@echo "  * make perf-features SIMS=Archive  -> POST/GET /archives load on the live mongo/redis store"
+	@echo "  * Jaeger (OBS=true)                 -> per-op repo span latency (TracedGameRepository)"
+	@echo "An isolated backend micro-bench is intentionally omitted: the DB choice is locked"
+	@echo "(mongo primary + redis cache), so a cross-backend matrix would not teach us anything new."
 
 .PHONY: bench-wire
-bench-wire: ## Wire-format benches — BoardStateDto JSON, GameDomainEvent JSON, protobuf. Phase D stub today.
+bench-wire: ## Wire-format benches — analysis DTO + Kafka event JSON encode/decode + payload sizes.
 	@mkdir -p $(PERF_REPORTS_DIR)
 	@ts=$$(date -u +%Y%m%dT%H%M%SZ); \
 	out="$$PWD/$(PERF_REPORTS_DIR)/bench-wire-$$ts.json"; \
@@ -510,6 +510,10 @@ bench-wire: ## Wire-format benches — BoardStateDto JSON, GameDomainEvent JSON,
 .PHONY: perf
 perf: ## Cross-backend Gatling harness. Vars: BACKENDS, MODE, OBS, PEAK_USERS, …
 	scripts/perf-run.sh
+
+.PHONY: perf-features
+perf-features: ## New-feature sims (complete-game/archive/analyze/analytics/spectate/tournament) vs the running locked stack. Vars: SIMS, PEAK_USERS, ANALYZE_DEPTH, SEED_TOURNAMENT, TOURNAMENT_URL
+	scripts/perf-features.sh
 
 .PHONY: db-matrix
 db-matrix: ## Persistence experiment — backend×cache×workload matrix. Vars: BACKENDS, WORKLOADS, WARMUP_ITERS, PEAK_USERS, RAMP_SECONDS, HOLD_SECONDS, RATE_PER_SEC
