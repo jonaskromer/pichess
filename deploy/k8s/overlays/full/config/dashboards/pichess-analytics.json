@@ -1,0 +1,990 @@
+{
+  "uid": "pichess-analytics",
+  "title": "piChess \u2014 game analytics",
+  "tags": [
+    "pichess",
+    "analytics"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 6,
+  "refresh": "5s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Total games",
+      "description": "Completed games (cumulative).",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "pichess_games_completed_total",
+          "legendFormat": "",
+          "refId": "A",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "graphMode": "area",
+        "colorMode": "value",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "id": 1,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Active games",
+      "description": "Games in progress (started, not ended).",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "pichess_active_games",
+          "legendFormat": "",
+          "refId": "A",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "graphMode": "area",
+        "colorMode": "value",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "id": 2,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Moves / sec",
+      "description": "MoveMade events/sec (1m rate).",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(pichess_moves_total[1m]))",
+          "legendFormat": "",
+          "refId": "A",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "graphMode": "area",
+        "colorMode": "value",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "id": 3,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Games / min",
+      "description": "GameStarted/min (5m rate).",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(pichess_games_started_total[5m]))*60",
+          "legendFormat": "",
+          "refId": "A",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "graphMode": "area",
+        "colorMode": "value",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "id": 4,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Move-event rates (per sec)",
+      "description": "Per-second rate of each move classifier (1m). Legend: current + peak.",
+      "gridPos": {
+        "h": 9,
+        "w": 16,
+        "x": 0,
+        "y": 5
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(pichess_moves_total[1m]))",
+          "legendFormat": "moves",
+          "refId": "A",
+          "instant": false,
+          "format": "time_series"
+        },
+        {
+          "expr": "sum(rate(pichess_captures_total[1m]))",
+          "legendFormat": "captures",
+          "refId": "B",
+          "instant": false,
+          "format": "time_series"
+        },
+        {
+          "expr": "sum(rate(pichess_checks_total[1m]))",
+          "legendFormat": "checks",
+          "refId": "C",
+          "instant": false,
+          "format": "time_series"
+        },
+        {
+          "expr": "sum(rate(pichess_checkmates_total[1m]))",
+          "legendFormat": "checkmates",
+          "refId": "D",
+          "instant": false,
+          "format": "time_series"
+        },
+        {
+          "expr": "sum(rate(pichess_promotions_total[1m]))",
+          "legendFormat": "promotions",
+          "refId": "E",
+          "instant": false,
+          "format": "time_series"
+        },
+        {
+          "expr": "sum(rate(pichess_castles_total[1m]))",
+          "legendFormat": "castles",
+          "refId": "F",
+          "instant": false,
+          "format": "time_series"
+        },
+        {
+          "expr": "sum(rate(pichess_takebacks_total{kind=\"undo\"}[1m]))",
+          "legendFormat": "undo",
+          "refId": "G",
+          "instant": false,
+          "format": "time_series"
+        },
+        {
+          "expr": "sum(rate(pichess_takebacks_total{kind=\"redo\"}[1m]))",
+          "legendFormat": "redo",
+          "refId": "H",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "lineWidth": 2
+          }
+        },
+        "overrides": []
+      },
+      "id": 5,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Game length & tempo",
+      "description": "Avg/median/p90 length (moves) + median think-time/move (histograms).",
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 5
+      },
+      "targets": [
+        {
+          "expr": "pichess_completed_moves_total / clamp_min(pichess_games_completed_total,1)",
+          "legendFormat": "avg moves/game",
+          "refId": "A",
+          "instant": true
+        },
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (pichess_game_length_moves_bucket))",
+          "legendFormat": "median length",
+          "refId": "B",
+          "instant": true
+        },
+        {
+          "expr": "histogram_quantile(0.9, sum by (le) (pichess_game_length_moves_bucket))",
+          "legendFormat": "p90 length",
+          "refId": "C",
+          "instant": true
+        },
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (pichess_think_seconds_per_move_bucket))",
+          "legendFormat": "median think (s)",
+          "refId": "D",
+          "instant": true
+        },
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (pichess_game_duration_seconds_bucket))",
+          "legendFormat": "median duration (s)",
+          "refId": "E",
+          "instant": true
+        },
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (pichess_captures_per_game_bucket))",
+          "legendFormat": "median captures/game",
+          "refId": "F",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "graphMode": "none",
+        "colorMode": "value",
+        "textMode": "value_and_name",
+        "orientation": "horizontal"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 6,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Top openings (sequence \u2192 games, click to look up)",
+      "description": "Most-played opening sequences. Bar = games; click the moves to look it up.",
+      "gridPos": {
+        "h": 11,
+        "w": 14,
+        "x": 0,
+        "y": 14
+      },
+      "targets": [
+        {
+          "expr": "topk(15, sum by (opening) (pichess_opening_games_total))",
+          "legendFormat": "",
+          "refId": "A",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "instance": true,
+              "stack": true
+            },
+            "renameByName": {
+              "Value": "Games",
+              "opening": "Opening (moves)"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Games",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Games"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "gradient",
+                  "valueDisplayMode": "text"
+                }
+              },
+              {
+                "id": "custom.width",
+                "value": 170
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "continuous-GrYlRd"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Opening (moves)"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Look up this opening",
+                    "targetBlank": true,
+                    "url": "https://www.google.com/search?q=chess+opening+${__value.text}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "id": 7,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      }
+    },
+    {
+      "type": "bargauge",
+      "title": "Opening families (ECO)",
+      "description": "Games grouped into ECO opening families.",
+      "gridPos": {
+        "h": 11,
+        "w": 10,
+        "x": 14,
+        "y": 14
+      },
+      "targets": [
+        {
+          "expr": "sum by (family) (pichess_opening_family_total)",
+          "legendFormat": "{{family}}",
+          "refId": "A",
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "valueMode": "text",
+        "minVizWidth": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 8,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      }
+    },
+    {
+      "type": "bargauge",
+      "title": "Game result (winner)",
+      "description": "Who won: White/Black (incl. resignations), Draw, or Decisive (GameEnded w/o a colour).",
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 0,
+        "y": 25
+      },
+      "targets": [
+        {
+          "expr": "sum by (winner) (pichess_games_by_winner_total)",
+          "legendFormat": "{{winner}}",
+          "refId": "A",
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "valueMode": "text",
+        "minVizWidth": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 9,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      }
+    },
+    {
+      "type": "bargauge",
+      "title": "How games end (reason)",
+      "description": "End reason: resignation, draw-claim, or a GameEnded status (Checkmate/Timeout/\u2026).",
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 8,
+        "y": 25
+      },
+      "targets": [
+        {
+          "expr": "sum by (reason) (pichess_games_by_end_reason_total)",
+          "legendFormat": "{{reason}}",
+          "refId": "A",
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "valueMode": "text",
+        "minVizWidth": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 10,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      }
+    },
+    {
+      "type": "bargauge",
+      "title": "First move",
+      "description": "Distribution of opening first moves.",
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 25
+      },
+      "targets": [
+        {
+          "expr": "sum by (move) (pichess_first_move_total)",
+          "legendFormat": "{{move}}",
+          "refId": "A",
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "valueMode": "text",
+        "minVizWidth": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 11,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      }
+    },
+    {
+      "type": "bargauge",
+      "title": "White win-rate by opening family",
+      "description": "Share of games won by White within each opening family (winner=White \u00f7 all in family).",
+      "gridPos": {
+        "h": 9,
+        "w": 16,
+        "x": 0,
+        "y": 34
+      },
+      "targets": [
+        {
+          "expr": "sum by (family) (pichess_family_result_total{winner=\"White\"}) / clamp_min(sum by (family) (pichess_family_result_total),1)",
+          "legendFormat": "{{family}}",
+          "refId": "A",
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "valueMode": "text",
+        "minVizWidth": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 12,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      }
+    },
+    {
+      "type": "bargauge",
+      "title": "Records",
+      "description": "Running leaderboard across completed games.",
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 34
+      },
+      "targets": [
+        {
+          "expr": "pichess_record_longest_game_moves",
+          "legendFormat": "longest (moves)",
+          "refId": "A",
+          "instant": true,
+          "format": "time_series"
+        },
+        {
+          "expr": "pichess_record_shortest_game_moves",
+          "legendFormat": "shortest (moves)",
+          "refId": "B",
+          "instant": true,
+          "format": "time_series"
+        },
+        {
+          "expr": "pichess_record_most_captures",
+          "legendFormat": "most captures",
+          "refId": "C",
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "valueMode": "text"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 13,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Kafka consumer-group lag",
+      "description": "Unconsumed messages per group; ~0 = consumers (incl. Spark) keeping up.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 43
+      },
+      "targets": [
+        {
+          "expr": "sum by (consumergroup) (kafka_consumergroup_lag)",
+          "legendFormat": "{{consumergroup}}",
+          "refId": "A",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "lineWidth": 2
+          }
+        },
+        "overrides": []
+      },
+      "id": 14,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Kafka topic throughput (msg/s)",
+      "description": "Messages/sec per topic (1m rate).",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 43
+      },
+      "targets": [
+        {
+          "expr": "sum by (topic) (rate(kafka_topic_partition_current_offset[1m]))",
+          "legendFormat": "{{topic}}",
+          "refId": "A",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "lineWidth": 2
+          }
+        },
+        "overrides": []
+      },
+      "id": 15,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      }
+    }
+  ]
+}

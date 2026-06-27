@@ -1,0 +1,17 @@
+# Auto-provision every JSON dashboard mounted under /var/lib/grafana/dashboards.
+# That directory is bind-mounted from `docker/grafana/dashboards/` so adding
+# a new `.json` there + restarting grafana is enough to ship it.
+
+apiVersion: 1
+
+providers:
+  - name: pichess
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

@@ -21,6 +21,8 @@ spec:
           ports:
             - name: http
               containerPort: 8092
+            - name: metrics
+              containerPort: 9104
           env:
             - name: LOBBY_PORT
               value: "8092"
@@ -55,3 +57,6 @@ spec:
     - name: http
       port: 8092
       targetPort: 8092
+    - name: metrics
+      port: 9104
+      targetPort: 9104

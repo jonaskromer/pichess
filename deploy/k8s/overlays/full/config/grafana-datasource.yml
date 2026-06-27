@@ -1,0 +1,12 @@
+# Auto-provisioned Prometheus datasource for the prod grafana. `prometheus`
+# resolves to the in-cluster Service. Mounted at
+# /etc/grafana/provisioning/datasources/ via the grafana-datasources ConfigMap.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true

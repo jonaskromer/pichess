@@ -68,6 +68,8 @@ jobs:
           repository/Docker/stage
           lobbyService/Docker/stage
           botTournament/Docker/stage
+          analyticsService/Docker/stage
+          sparkAnalytics/Docker/stage
 
       - name: Build multi-arch images and push to GHCR
         run: |
@@ -82,6 +84,8 @@ jobs:
             [pichess-repository]=repository
             [pichess-lobby-service]=lobby-service
             [pichess-bot-tournament]=bot-tournament
+            [pichess-analytics-service]=analytics-service
+            [pichess-spark-analytics]=spark-analytics
           )
           for img in "${!DIRS[@]}"; do
             ctx="${DIRS[$img]}/target/docker/stage"

@@ -21,6 +21,8 @@ spec:
           ports:
             - name: http
               containerPort: 8091
+            - name: metrics
+              containerPort: 9103
           envFrom:
             - configMapRef:
                 name: pichess-config # mongo + kafka + REPOSITORY_PORT + consumer group
@@ -52,3 +54,6 @@ spec:
     - name: http
       port: 8091
       targetPort: 8091
+    - name: metrics
+      port: 9103
+      targetPort: 9103

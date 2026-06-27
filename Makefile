@@ -151,7 +151,7 @@ EXTRA            ?=
 # survives a stack switch.
 ALL_PROFILES := --profile postgres --profile mongo --profile cassandra \
                 --profile redis --profile opening --profile analytics \
-                --profile tui --profile obs --profile k6
+                --profile tui --profile dev-obs --profile prod-obs --profile k6
 
 # Convert "opening,analytics" → "--profile opening --profile analytics"
 # (empty string when EXTRA is unset). `empty :=` is the standard Make
@@ -248,9 +248,16 @@ stack-status: ## Show the active stack profile + running containers
 #   * `make obs` is fully self-contained — Prometheus / Grafana / Jaeger
 #     have no service dependencies and can come up at any time.
 
+.PHONY: dev-obs
+dev-obs: ## Dev observability: Prometheus + Grafana + Jaeger (tracing/profiling)
+	docker compose --profile dev-obs up -d prometheus grafana jaeger
+
 .PHONY: obs
-obs: ## Bring up Prometheus + Grafana + Jaeger alongside the running stack
-	docker compose --profile obs up -d prometheus grafana jaeger
+obs: dev-obs ## Alias for dev-obs (local development observability)
+
+.PHONY: prod-obs
+prod-obs: ## Prod observability: Prometheus + Grafana (no Jaeger — tracing is dev-only)
+	docker compose --profile prod-obs up -d prometheus grafana
 
 .PHONY: obs-down
 obs-down: ## Stop the obs containers (Prometheus / Grafana / Jaeger) only

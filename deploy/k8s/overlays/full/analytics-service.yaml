@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics-service
+  labels:
+    app: analytics-service
+    pichess.tier: full # reset.yml prunes this label's tier when downgrading
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: analytics-service
+  template:
+    metadata:
+      labels:
+        app: analytics-service
+    spec:
+      containers:
+        - name: analytics-service
+          image: ghcr.io/jonaskromer/pichess-analytics-service
+          ports:
+            - name: http
+              containerPort: 8093
+            - name: metrics
+              containerPort: 9106
+          envFrom:
+            - configMapRef:
+                name: pichess-config # KAFKA_BOOTSTRAP_SERVERS lives here
+          env:
+            - name: ANALYTICS_PORT
+              value: "8093"
+            # Distinct consumer group — pichess-config's KAFKA_CONSUMER_GROUP is
+            # the repository's; analytics must read the topics independently.
+            - name: KAFKA_CONSUMER_GROUP
+              value: "pichess-analytics"
+            # No DB (ADR 022): aggregates are in-memory, rebuilt by replaying the
+            # topic. Cap the heap under the 512Mi limit.
+            - name: JAVA_TOOL_OPTIONS
+              value: "-Xmx384m"
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: 8093
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: analytics-service
+  labels:
+    app: analytics-service
+    pichess.tier: full
+spec:
+  selector:
+    app: analytics-service
+  ports:
+    - name: http
+      port: 8093
+      targetPort: 8093
+    - name: metrics
+      port: 9106
+      targetPort: 9106

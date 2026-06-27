@@ -56,3 +56,6 @@ spec:
     - name: http
       port: 8090
       targetPort: 8090
+    - name: metrics
+      port: 9101
+      targetPort: 9101

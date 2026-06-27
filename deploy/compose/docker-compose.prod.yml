@@ -71,6 +71,14 @@ services:
       # Empty in mvp; the lobbies/full env-files point it at lobby-service.
       PICHESS_LOBBY_URL: "${PICHESS_LOBBY_URL:-}"
       PICHESS_STACK: "${PICHESS_BACKEND:-inmemory}"
+      # Tournament spectate (browser polls the NowChess server via the gateway)
+      # + bot control (gateway signals join/withdraw). bot-control resolves to the
+      # full-tier bot-tournament service; the NowChess URL is editable per event.
+      # PICHESS_BOT_NAME must match bot-tournament's TOURNAMENT_BOT_NAME or the
+      # spectate list hides our own games.
+      PICHESS_TOURNAMENT_URL: "${PICHESS_TOURNAMENT_URL:-http://141.37.123.132:8086}"
+      PICHESS_BOT_CONTROL_URL: "${PICHESS_BOT_CONTROL_URL:-http://bot-tournament:8080}"
+      PICHESS_BOT_NAME: "${PICHESS_BOT_NAME:-piChess}"
     cpus: 0.5
     mem_limit: 512m
     healthcheck:
@@ -182,6 +190,9 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       CLUSTER_ID: "pichess-cluster-0001"
       KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+      # Cap broker heap under the 1g mem_limit (image default -Xmx1G == limit →
+      # OOM under load). Matches deploy/k8s/overlays/full/kafka.yaml.
+      KAFKA_HEAP_OPTS: "-Xmx512m -Xms512m"
     volumes:
       - pichess-kafka-data:/var/lib/kafka/data
     cpus: 1.0
@@ -193,6 +204,124 @@ services:
       retries: 12
       start_period: 20s
 
+  # --- tournament bridge: piChess engine ↔ NowChess server (full tier) -------
+  # Plays bot-vs-bot tournament games: registers, joins, streams each game's
+  # events, drives the engine to choose moves, posts them back. Exposes a control
+  # API (:8080) the gateway signals (join/withdraw) + Prometheus metrics (:9107).
+  # OUTBOUND-only to the NowChess server; engine weights ship in the image. No
+  # published port — internal only (gateway reaches it at bot-tournament:8080;
+  # NEVER expose /control publicly).
+  bot-tournament:
+    image: ${PICHESS_REGISTRY:-ghcr.io/jonaskromer}/pichess-bot-tournament:${PICHESS_IMAGE_TAG:-0.0.2}
+    profiles: ["full"]
+    restart: unless-stopped
+    environment:
+      TOURNAMENT_BASE_URL: "${PICHESS_TOURNAMENT_URL:-http://141.37.123.132:8086}"
+      TOURNAMENT_BOT_NAME: "${PICHESS_BOT_NAME:-piChess}"
+      TOURNAMENT_CONTROL_PORT: "8080"
+      METRICS_PORT: "9107"
+      JAVA_OPTS: "-Xmx1024m" # off-heap + NNUE net live outside the heap
+    cpus: 2.0
+    mem_limit: 1536m
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+
+  # --- analytics: post-game / tournament aggregation (full tier) -------------
+  # spark sessionizes chess.game-events → chess.analytics; analytics-service
+  # serves the aggregates. Opening NAMING is in-process EcoBook (no opening-
+  # service / neo4j needed here — that's a separate move-popularity graph).
+  analytics-service:
+    image: ${PICHESS_REGISTRY:-ghcr.io/jonaskromer}/pichess-analytics-service:${PICHESS_IMAGE_TAG:-0.0.2}
+    profiles: ["full"]
+    restart: unless-stopped
+    depends_on:
+      kafka: {condition: service_healthy}
+    environment:
+      ANALYTICS_PORT: "8093"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      KAFKA_CONSUMER_GROUP: "pichess-analytics" # distinct from repository's
+      JAVA_TOOL_OPTIONS: "-Xmx384m"
+    cpus: 0.5
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8093/healthcheck 2>&1 | grep -q ok"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+
+  spark-analytics:
+    image: ${PICHESS_REGISTRY:-ghcr.io/jonaskromer}/pichess-spark-analytics:${PICHESS_IMAGE_TAG:-0.0.2}
+    profiles: ["full"]
+    restart: unless-stopped
+    depends_on:
+      kafka: {condition: service_healthy}
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      PICHESS_SPARK_CHECKPOINT: "/var/pichess/spark/analytics-sink"
+      JAVA_TOOL_OPTIONS: >-
+        -Xmx1g
+        -Djava.security.manager=allow
+        -Duser.language=en -Duser.country=US
+        --add-opens=java.base/java.lang=ALL-UNNAMED
+        --add-opens=java.base/java.lang.invoke=ALL-UNNAMED
+        --add-opens=java.base/java.lang.reflect=ALL-UNNAMED
+        --add-opens=java.base/java.io=ALL-UNNAMED
+        --add-opens=java.base/java.net=ALL-UNNAMED
+        --add-opens=java.base/java.nio=ALL-UNNAMED
+        --add-opens=java.base/java.util=ALL-UNNAMED
+        --add-opens=java.base/java.util.concurrent=ALL-UNNAMED
+        --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED
+        --add-opens=java.base/sun.nio.ch=ALL-UNNAMED
+        --add-opens=java.base/sun.nio.cs=ALL-UNNAMED
+        --add-opens=java.base/sun.security.action=ALL-UNNAMED
+        --add-opens=java.base/sun.util.calendar=ALL-UNNAMED
+        --add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED
+    volumes:
+      - pichess-spark-checkpoint:/var/pichess/spark
+    cpus: 1.0
+    mem_limit: 1536m
+
+  # --- prod-obs: prometheus + grafana (no jaeger) ---------------------------
+  # Opt-in profile so obs is separable from the app tiers. Activate with an extra
+  # --profile prod-obs (or add it to full.env's COMPOSE_PROFILES). Configs are
+  # bind-mounted from the repo checkout on the deploy host.
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    profiles: ["prod-obs"]
+    restart: unless-stopped
+    volumes:
+      - ../../docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=6h
+    cpus: 0.25
+    mem_limit: 256m
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    profiles: ["prod-obs"]
+    restart: unless-stopped
+    depends_on:
+      prometheus: {condition: service_started}
+    ports:
+      - "3000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer" # behind the VPN; harden for public
+      GF_USERS_DEFAULT_THEME: "light"
+    volumes:
+      - ../../docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../../docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    cpus: 0.25
+    mem_limit: 256m
+
 volumes:
   pichess-mongo-data:
   pichess-kafka-data:
+  pichess-spark-checkpoint:

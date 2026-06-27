@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: spark-checkpoint
+  labels:
+    app: spark-analytics
+    pichess.tier: full
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-analytics
+  labels:
+    app: spark-analytics
+    pichess.tier: full
+spec:
+  replicas: 1
+  # Recreate (not RollingUpdate): a single RWO checkpoint PVC can't be mounted by
+  # two pods at once, and two stream drivers on the same checkpoint would clash.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: spark-analytics
+  template:
+    metadata:
+      labels:
+        app: spark-analytics
+    spec:
+      containers:
+        - name: spark-analytics
+          image: ghcr.io/jonaskromer/pichess-spark-analytics
+          envFrom:
+            - configMapRef:
+                name: pichess-config # KAFKA_BOOTSTRAP_SERVERS
+          env:
+            # Persistent checkpoint → restart resumes from committed offsets
+            # instead of replaying chess.game-events (the duplicate-games bug).
+            - name: PICHESS_SPARK_CHECKPOINT
+              value: "/var/pichess/spark/analytics-sink"
+            # Spark on JDK 17+ needs the module opens; -Xmx1g under the 1.5Gi limit.
+            - name: JAVA_TOOL_OPTIONS
+              value: >-
+                -Xmx1g
+                -Djava.security.manager=allow
+                -Duser.language=en -Duser.country=US
+                --add-opens=java.base/java.lang=ALL-UNNAMED
+                --add-opens=java.base/java.lang.invoke=ALL-UNNAMED
+                --add-opens=java.base/java.lang.reflect=ALL-UNNAMED
+                --add-opens=java.base/java.io=ALL-UNNAMED
+                --add-opens=java.base/java.net=ALL-UNNAMED
+                --add-opens=java.base/java.nio=ALL-UNNAMED
+                --add-opens=java.base/java.util=ALL-UNNAMED
+                --add-opens=java.base/java.util.concurrent=ALL-UNNAMED
+                --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED
+                --add-opens=java.base/sun.nio.ch=ALL-UNNAMED
+                --add-opens=java.base/sun.nio.cs=ALL-UNNAMED
+                --add-opens=java.base/sun.security.action=ALL-UNNAMED
+                --add-opens=java.base/sun.util.calendar=ALL-UNNAMED
+                --add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED
+          volumeMounts:
+            - name: checkpoint
+              mountPath: /var/pichess/spark
+          resources:
+            requests:
+              cpu: 300m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1536Mi
+      volumes:
+        - name: checkpoint
+          persistentVolumeClaim:
+            claimName: spark-checkpoint

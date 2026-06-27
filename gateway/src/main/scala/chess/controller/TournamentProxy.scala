@@ -80,6 +80,18 @@ object TournamentProxy:
       case Right(url) =>
         Client
           .batched(Request(method = method, url = url))
+          // Cap the upstream relay so a slow / unreachable tournament server
+          // can't tie up gateway connections — mirrors SpectateIndex's per-source
+          // 2 s cap. `disconnect` makes the timeout fire promptly even when a TCP
+          // connect is stuck (a plain `timeout` would wait for the slow
+          // interruption). Without this, `/tournament/list` hung ~60 s/request
+          // under load when the upstream was down.
+          .disconnect
+          .timeoutTo(
+            Response
+              .text("tournament proxy: upstream timed out")
+              .status(Status.GatewayTimeout)
+          )(identity)(2.seconds)
           .orElseSucceed(
             Response
               .text("tournament proxy: upstream unreachable")

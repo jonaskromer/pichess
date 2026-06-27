@@ -1,0 +1,30 @@
+# Prometheus scrape config for the prod (k8s full) tier. Targets are k8s
+# Service DNS names = the same names the dev config uses (game-service, gateway,
+# …), so each service's metrics port (chess.obs.MetricsHttpServer allocation)
+# must be exposed on its Service. Prod drops opening-service (dev-only) and the
+# kafka-exporter job (no exporter on this tier).
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  external_labels:
+    project: pichess
+    tier: prod
+
+scrape_configs:
+  - job_name: pichess
+    static_configs:
+      - targets:
+          - gateway:9101
+          - game-service:9102
+          - repository:9103
+          - lobby-service:9104
+          - analytics-service:9106
+        labels:
+          stack: pichess
+
+  - job_name: tournament
+    static_configs:
+      - targets:
+          - bot-tournament:9107
+        labels:
+          stack: pichess

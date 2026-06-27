@@ -15,6 +15,15 @@ resources:
   # Optional containerised tournament bot (gateway-signalled control API). It
   # only talks OUTBOUND to the NowChess server, so it rides the full tier here.
   - bot-tournament.yaml
+  # Analytics tier: spark sessionizes chess.game-events → chess.analytics;
+  # analytics-service serves the aggregates. Powers post-game / tournament
+  # analytics. (Game-OPENING naming is in-process EcoBook, so no opening-service
+  # / neo4j here — that's a separate move-popularity graph, left dev-only.)
+  - analytics-service.yaml
+  - spark-analytics.yaml
+  # prod-obs: prometheus + grafana (NO jaeger — tracing/profiling is dev-only).
+  - prometheus.yaml
+  - grafana.yaml
 
 configMapGenerator:
   - name: pichess-config
@@ -34,9 +43,32 @@ configMapGenerator:
       # bot-tournament.yaml's TOURNAMENT_BOT_NAME (gateway defaults to "pichess"
       # otherwise, which would hide every game on this tier).
       - PICHESS_BOT_NAME=piChess
+  # prod-obs config, generated from files copied into ./config so the default
+  # kustomize load-restrictor (no ../.. refs) is satisfied.
+  - name: prometheus-config
+    files:
+      - prometheus.yml=config/prometheus.yml
+  - name: grafana-datasources
+    files:
+      - datasource.yml=config/grafana-datasource.yml
+  - name: grafana-dashboards-provider
+    files:
+      - dashboards.yml=config/grafana-dashboards-provider.yml
+  - name: grafana-dashboards
+    files:
+      - config/dashboards/pichess.json
+      - config/dashboards/pichess-tournament.json
+      - config/dashboards/pichess-analytics.json
 
 images:
   - name: ghcr.io/jonaskromer/pichess-repository
     newTag: "0.3.1"
   - name: ghcr.io/jonaskromer/pichess-bot-tournament
+    newTag: "0.3.1"
+  # analytics + spark images: published by release.yml as of this change. Bump
+  # these together with the others at each release (they only resolve once a
+  # release ≥ the version that first publishes them has run).
+  - name: ghcr.io/jonaskromer/pichess-analytics-service
+    newTag: "0.3.1"
+  - name: ghcr.io/jonaskromer/pichess-spark-analytics
     newTag: "0.3.1"
