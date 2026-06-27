@@ -47,6 +47,22 @@ object SearchRegressionSpec extends ZIOSpecDefault:
         chosen <- search.bestMove(root, depth = 4, history = Set(hp))
       yield assertTrue(chosen.contains(mv("a1", "a2")))
     },
+    // Same repetition, but the matching hash is buried among several benign
+    // entries spanning the signed-long range (incl. a negative hash). Guards a
+    // primitive multi-entry lookup (e.g. sorted long[] + binary search): it must
+    // find the match regardless of ordering, so the search still picks Ra1-a2.
+    test("repetition is detected among a multi-entry history") {
+      for
+        root <- FenParserRegex.parse("1r4rk/8/8/8/8/8/8/R6K w - - 0 1")
+        after <- FenParserRegex.parse("1r4rk/8/8/8/8/8/R7/7K b - - 1 1")
+        hp = Zobrist.hash(after)
+        chosen <- search.bestMove(
+          root,
+          depth = 4,
+          history = Set(0x1L, 0xffffffffffffffffL, hp, 0x5L, 0xabcdef123456L)
+        )
+      yield assertTrue(chosen.contains(mv("a1", "a2")))
+    },
     // A benign history (a hash never reached in the tree) must NOT change the
     // chosen move vs an empty history — i.e. history is consulted, not blindly
     // applied. Guards against the path-stack scanning the wrong range.
