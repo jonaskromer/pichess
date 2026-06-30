@@ -27,6 +27,6 @@ configMapGenerator:
 # deploy/ansible/group_vars/all.yml.
 images:
   - name: ghcr.io/jonaskromer/pichess-gateway
-    newTag: "1.0.1"
+    newTag: "1.0.2"
   - name: ghcr.io/jonaskromer/pichess-game-service
-    newTag: "1.0.1"
+    newTag: "1.0.2"
