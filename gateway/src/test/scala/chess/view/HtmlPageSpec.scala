@@ -21,7 +21,9 @@ object HtmlPageSpec extends ZIOSpecDefault:
       assertTrue(html.contains("""id="app""""))
     },
     test("load the Scala.js bundle") {
-      assertTrue(html.contains("""<script src="/web/main.js"></script>"""))
+      // Cache-busted with a content-hash query (?v=…) so a new build is fetched
+      // on reload; match the stable prefix, not the per-build hash.
+      assertTrue(html.contains("""<script src="/web/main.js?v="""))
     },
     test("inline the stylesheet") {
       // The stylesheet ships minified via the Tailwind pipeline, so the
@@ -83,8 +85,12 @@ object HtmlPageSpec extends ZIOSpecDefault:
       // rendered page.
       assertTrue(
         html.contains("""class="svg-sprite-host""""),
-        html.contains("""id="paper-crumpled-square""""),
-        html.contains("""id="paper-crumpled-grid-square"""")
+        // Grid-only paper sprite now (the crumple texture moved to the baked
+        // #crumple-tile heightmap + the per-theme #crumple-hard/-soft lighting
+        // filters, all inlined here for the document-internal var cascade).
+        html.contains("""id="paper-grid-square""""),
+        html.contains("""id="crumple-tile""""),
+        html.contains("""id="crumple-hard"""")
       )
     },
     test("embed all six piece-SVG sprites in the same sprite host") {
