@@ -153,6 +153,21 @@ object PgnSerializerSpec extends ZIOSpecDefault:
         pgn.endsWith("1/2-1/2")
       )
     },
+    test("serializeWithResult defaults extraHeaders to none (2-arg form)") {
+      // Every caller (e.g. the game archive) passes headers explicitly, so the
+      // defaulted third parameter (`extraHeaders = Nil`) is only exercised here
+      // — the 2-arg form emits the default roster with no overlay.
+      for pgn <- PgnSerializer.serializeWithResult(
+          List(PgnMove(Color.White, "e4")),
+          "1-0"
+        )
+      yield assertTrue(
+        pgn.contains("[Result \"1-0\"]"),
+        pgn.contains("[Site \"Local\"]"),
+        pgn.contains("1. e4"),
+        pgn.endsWith("1-0")
+      )
+    },
     test("overlays extra headers, overriding defaults and appending new tags") {
       for pgn <- PgnSerializer.serializeAnnotated(
           List(PgnMove(Color.White, "e4")),
