@@ -15,7 +15,8 @@ import chess.persistence.mongo.{
   MongoClientLayer,
   MongoGameArchiveRepository,
   MongoGameRepository,
-  MongoLobbyRepository
+  MongoLobbyRepository,
+  MongoTournamentArchiveRepository
 }
 import chess.persistence.postgres.PostgresDatabaseOptimisations.given
 import chess.persistence.postgres.{
@@ -39,7 +40,9 @@ import chess.persistence.{
   InMemoryGameArchiveRepository,
   InMemoryGameRepository,
   InMemoryLobbyRepository,
-  LobbyRepository
+  InMemoryTournamentArchiveRepository,
+  LobbyRepository,
+  TournamentArchiveRepository
 }
 
 /** Maps a [[BackendConfig]] to the right `GameRepository` /
@@ -134,6 +137,18 @@ object PersistenceLayers:
         RedisLayers.live >>> RedisGameArchiveRepository.layer
       case Backend.Cassandra =>
         CassandraSession.withSchemaLayer >>> CassandraGameArchiveRepository.layer
+
+  /** Tournament-archive store (post-tournament browse). Slice-2 scope: Mongo
+    * (durable — the prod backend) + in-memory; Redis/Postgres/Cassandra fall
+    * back to in-memory until those impls land (mirroring [[archiveRepository]]). */
+  def tournamentArchiveRepository(
+      cfg: BackendConfig
+  ): TaskLayer[TournamentArchiveRepository] =
+    cfg.backend match
+      case Backend.Mongo =>
+        MongoClientLayer.layer >>> MongoTournamentArchiveRepository.layer
+      case _ =>
+        InMemoryTournamentArchiveRepository.layer
 
   private def cachedLobbyRepo(
       backend: Backend

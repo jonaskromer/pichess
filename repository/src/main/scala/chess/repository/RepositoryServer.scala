@@ -6,13 +6,24 @@ import zio.*
 import zio.http.*
 
 import chess.codec.{FenParserRegex, FenSerializer}
+import chess.model.{
+  TournamentArchive as TArchive,
+  TournamentStanding as TStanding
+}
 import chess.opening.EcoBook
-import chess.persistence.{GameArchiveRepository, GameRepository}
+import chess.persistence.{
+  GameArchiveRepository,
+  GameRepository,
+  TournamentArchiveRepository
+}
 import chess.repository.api.{
   ArchivePgnDto,
   GameStateEnvelope,
   LoadFailure,
-  RepositoryEndpoints
+  RepositoryEndpoints,
+  TournamentArchiveDto,
+  TournamentStandingDto,
+  TournamentSummaryDto
 }
 
 /** Tapir-backed HTTP server that exposes [[GameRepository]] over REST.
@@ -31,6 +42,7 @@ object RepositoryServer:
   def routes(
       repo: GameRepository,
       archiveRepo: GameArchiveRepository,
+      tournamentRepo: TournamentArchiveRepository,
       eco: EcoBook
   ): Routes[Any, Response] =
     ZioHttpInterpreter().toHttp(
@@ -91,6 +103,93 @@ object RepositoryServer:
         },
         RepositoryEndpoints.deleteGame.zServerLogic[Any] { id =>
           repo.delete(id).mapError(err => s"Delete failed: ${err.message}").unit
+        },
+        RepositoryEndpoints.postTournamentArchive.zServerLogic[Any] { dto =>
+          tournamentRepo
+            .save(toTournamentArchive(dto))
+            .mapError(err => s"Tournament archive save failed: ${err.message}")
+            .unit
+        },
+        RepositoryEndpoints.listTournamentArchives.zServerLogic[Any] { _ =>
+          tournamentRepo.list
+            .mapError(err => s"Tournament archive list failed: ${err.message}")
+            .map(_.sortBy(-_.finishedAt).map(toSummaryDto))
+        },
+        RepositoryEndpoints.getTournamentArchive.zServerLogic[Any] { id =>
+          tournamentRepo
+            .find(id)
+            .foldZIO(
+              err =>
+                ZIO.fail(
+                  LoadFailure.ServerError(
+                    s"Tournament archive load failed: ${err.message}"
+                  )
+                ),
+              {
+                case Some(a) => ZIO.succeed(toTournamentDto(a))
+                case None    => ZIO.fail(LoadFailure.NotFound)
+              }
+            )
         }
       )
+    )
+
+  private def toTournamentArchive(
+      dto: TournamentArchiveDto
+  ): TArchive =
+    TArchive(
+      dto.tournamentId,
+      dto.name,
+      dto.format,
+      dto.finishedAt,
+      dto.standings.map(s =>
+        TStanding(
+          s.rank,
+          s.botId,
+          s.botName,
+          s.family,
+          s.engineType,
+          s.modelVersion,
+          s.points,
+          s.wins,
+          s.draws,
+          s.losses,
+          s.tieBreak
+        )
+      ),
+      dto.gameIds
+    )
+
+  private def toTournamentDto(a: TArchive): TournamentArchiveDto =
+    TournamentArchiveDto(
+      a.tournamentId,
+      a.name,
+      a.format,
+      a.finishedAt,
+      a.standings.map(s =>
+        TournamentStandingDto(
+          s.rank,
+          s.botId,
+          s.botName,
+          s.family,
+          s.engineType,
+          s.modelVersion,
+          s.points,
+          s.wins,
+          s.draws,
+          s.losses,
+          s.tieBreak
+        )
+      ),
+      a.gameIds
+    )
+
+  private def toSummaryDto(a: TArchive): TournamentSummaryDto =
+    TournamentSummaryDto(
+      a.tournamentId,
+      a.name,
+      a.format,
+      a.finishedAt,
+      nbPlayers = a.standings.size,
+      winner = a.standings.find(_.rank == 1).map(_.botName)
     )

@@ -7,7 +7,12 @@ import zio.telemetry.opentelemetry.tracing.Tracing
 
 import chess.obs.{MetricsHttpServer, MetricsLayer, ProfilerLayer, TracingLayer, TracingMiddleware}
 import chess.persistence.runtime.PersistenceLayers
-import chess.persistence.{BackendConfig, GameArchiveRepository, GameRepository}
+import chess.persistence.{
+  BackendConfig,
+  GameArchiveRepository,
+  GameRepository,
+  TournamentArchiveRepository
+}
 
 /** Standalone entry point for the repository microservice.
   *
@@ -43,6 +48,7 @@ object RepositoryMain extends ZIOAppDefault:
         _    <- serve(port).provide(
                   gameRepoLayer(cfg),
                   PersistenceLayers.archiveRepository(cfg),
+                  PersistenceLayers.tournamentArchiveRepository(cfg),
                   TracingLayer.fromEnv("repository")
                 )
       yield ()
@@ -71,13 +77,14 @@ object RepositoryMain extends ZIOAppDefault:
   private[repository] def serve(
       port: Int
   ): ZIO[
-    GameRepository & GameArchiveRepository & Tracing & ContextStorage,
+    GameRepository & GameArchiveRepository & TournamentArchiveRepository &
+      Tracing & ContextStorage,
     Throwable,
     Unit
   ] =
     val program: ZIO[
-      GameRepository & GameArchiveRepository & Server & Tracing &
-        ContextStorage & Scope,
+      GameRepository & GameArchiveRepository & TournamentArchiveRepository &
+        Server & Tracing & ContextStorage & Scope,
       Throwable,
       Unit,
     ] =
@@ -85,6 +92,7 @@ object RepositoryMain extends ZIOAppDefault:
         _           <- MetricsLayer.jvmMetricsBootstrap
         repo        <- ZIO.service[GameRepository]
         archiveRepo <- ZIO.service[GameArchiveRepository]
+        tournamentRepo <- ZIO.service[TournamentArchiveRepository]
         eco         <- chess.opening.EcoBook.load
         bootstrap   <- zio.System.env("KAFKA_BOOTSTRAP_SERVERS")
         group       <- zio.System
@@ -117,18 +125,19 @@ object RepositoryMain extends ZIOAppDefault:
                                )
                                .forkDaemon *>
                              Server.serve(
-                               RepositoryServer.routes(repo, archiveRepo, eco)
+                               RepositoryServer.routes(repo, archiveRepo, tournamentRepo, eco)
                                  @@ TracingMiddleware.serverSpan
                              )
                          case None =>
                            Server.serve(
-                             RepositoryServer.routes(repo, archiveRepo, eco)
+                             RepositoryServer.routes(repo, archiveRepo, tournamentRepo, eco)
                                @@ TracingMiddleware.serverSpan
                            )
       yield ()
 
     ZIO.scoped {
       program.provideSomeLayer[
-        GameRepository & GameArchiveRepository & Tracing & ContextStorage & Scope
+        GameRepository & GameArchiveRepository & TournamentArchiveRepository &
+          Tracing & ContextStorage & Scope
       ](Server.defaultWithPort(port))
     }

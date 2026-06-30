@@ -93,5 +93,49 @@ object RepositoryEndpoints:
         "Fetch an archived game's PGN-with-clocks + metadata; 404 if unknown"
       )
 
+  // -- tournament archives (post-tournament browse + ladder) ----------------
+  private val tournamentsBase = endpoint.in("tournament-archives")
+
+  private given Schema[TournamentStandingDto] = Schema.derived
+  private given Schema[TournamentArchiveDto]   = Schema.derived
+  private given Schema[TournamentSummaryDto]   = Schema.derived
+
+  val postTournamentArchive
+      : PublicEndpoint[TournamentArchiveDto, String, Unit, Any] =
+    tournamentsBase.post
+      .in(jsonBody[TournamentArchiveDto])
+      .out(statusCode(StatusCode.NoContent))
+      .errorOut(statusCode(StatusCode.InternalServerError).and(stringBody))
+      .name("postTournamentArchive")
+      .description("Persist a finished tournament's ladder + game ids")
+
+  val listTournamentArchives
+      : PublicEndpoint[Unit, String, List[TournamentSummaryDto], Any] =
+    tournamentsBase.get
+      .out(jsonBody[List[TournamentSummaryDto]])
+      .errorOut(statusCode(StatusCode.InternalServerError).and(stringBody))
+      .name("listTournamentArchives")
+      .description("List archived tournaments (history index)")
+
+  val getTournamentArchive
+      : PublicEndpoint[String, LoadFailure, TournamentArchiveDto, Any] =
+    tournamentsBase.get
+      .in(path[String]("id"))
+      .out(jsonBody[TournamentArchiveDto])
+      .errorOut(loadErrorOut)
+      .name("getTournamentArchive")
+      .description(
+        "Fetch one archived tournament's ladder + game ids; 404 if unknown"
+      )
+
   val all: List[AnyEndpoint] =
-    List(saveGame, loadGame, deleteGame, postArchive, getArchive)
+    List(
+      saveGame,
+      loadGame,
+      deleteGame,
+      postArchive,
+      getArchive,
+      postTournamentArchive,
+      listTournamentArchives,
+      getTournamentArchive
+    )
