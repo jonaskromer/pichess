@@ -3,15 +3,22 @@ package chess.bot.tournament
 import zio.*
 
 import chess.model.piece.Color
-import chess.repository.api.{ArchiveSubmissionDto, SubmittedMoveDto}
+import chess.repository.api.{
+  ArchiveSubmissionDto,
+  SubmittedMoveDto,
+  TournamentArchiveDto
+}
 
-/** Ships finished tournament games to the repository's archive store. `botName`
-  * labels our side; `sink` performs the POST (errors swallowed — archiving is
-  * best-effort and must never disturb play).
+/** Ships finished tournament data to the repository's archive store. `botName`
+  * labels our side; `sink` POSTs a finished game, `tournamentSink` POSTs the
+  * tournament-level record (ladder + game ids). Both are best-effort (errors
+  * swallowed — archiving must never disturb play); `tournamentSink` defaults to
+  * a no-op so test doubles can ignore it.
   */
 final case class GameRecorder(
     botName: String,
-    sink: ArchiveSubmissionDto => UIO[Unit]
+    sink: ArchiveSubmissionDto => UIO[Unit],
+    tournamentSink: TournamentArchiveDto => UIO[Unit] = _ => ZIO.unit
 )
 
 object TournamentRecorder:

@@ -22,12 +22,15 @@ final class TournamentManager private (
     api: TournamentApiClient,
     reconnectDelay: Duration,
     recorder: Option[GameRecorder],
+    metadata: Option[BotMetadata],
     registered: Ref.Synchronized[Option[String]],
     active: Ref.Synchronized[Map[String, Fiber.Runtime[Throwable, Unit]]]
 ):
 
   /** Register piChess exactly once and return our bot id. Concurrent callers
     * serialise on the `Ref.Synchronized`, so `register` is hit at most once.
+    * After the auth registration we also refresh our bot-registry entry with
+    * engine metadata (best-effort — a failure must never block play).
     */
   def ensureRegistered: IO[Throwable, String] =
     registered.modifyZIO {
@@ -35,10 +38,20 @@ final class TournamentManager private (
       case None =>
         api.register(botName).flatMap { reg =>
           ZIO
-            .logInfo(
-              s"Registered with tournament server as ${reg.id} (name='$botName')"
-            )
-            .as((reg.id, Some(reg.id)))
+            .foreachDiscard(metadata)(meta =>
+              api
+                .registerInRegistry(botName, meta)
+                .catchAll(err =>
+                  ZIO.logWarning(
+                    s"bot-registry metadata registration failed (non-fatal): ${err.getMessage}"
+                  )
+                )
+            ) *>
+            ZIO
+              .logInfo(
+                s"Registered with tournament server as ${reg.id} (name='$botName')"
+              )
+              .as((reg.id, Some(reg.id)))
         }
     }
 
@@ -114,7 +127,8 @@ object TournamentManager:
       searchFactory: () => Search,
       api: TournamentApiClient,
       reconnectDelay: Duration = 5.seconds,
-      recorder: Option[GameRecorder] = None
+      recorder: Option[GameRecorder] = None,
+      metadata: Option[BotMetadata] = None
   ): UIO[TournamentManager] =
     for
       registered <- Ref.Synchronized.make(Option.empty[String])
@@ -128,6 +142,7 @@ object TournamentManager:
       api,
       reconnectDelay,
       recorder,
+      metadata,
       registered,
       active
     )

@@ -10,7 +10,7 @@ import zio.json.*
 
 import chess.bot.engine.{EngineBundle, ParallelismBudget, Search}
 import chess.obs.{MetricsHttpServer, MetricsLayer}
-import chess.repository.api.ArchiveSubmissionDto
+import chess.repository.api.{ArchiveSubmissionDto, TournamentArchiveDto}
 
 /** Runnable entrypoint for the NowChess tournament bot.
   *
@@ -100,13 +100,22 @@ object TournamentBotMain extends ZIOAppDefault:
               .get("PICHESS_ARCHIVE_URL")
               .map(_.trim)
               .filter(_.nonEmpty)
-              .map(url => GameRecorder(botName, archiveSink(backend, url)))
+              .map(url =>
+                GameRecorder(
+                  botName,
+                  archiveSink(backend, url),
+                  tournamentArchiveSink(backend, url)
+                )
+              )
             manager <- TournamentManager.make(
               botName,
               fallbackDepth,
               searchFactory,
               api,
-              recorder = recorder
+              recorder = recorder,
+              // Self-describe in the bot registry so analytics-export attributes
+              // our games with engine family / type / model version.
+              metadata = Some(BotMetadata.pichess(weightsVersion))
             )
             // Prometheus metrics (tournament play + JVM) on a dedicated port,
             // scraped into the `piChess — tournament` Grafana dashboard. Forked
@@ -163,6 +172,27 @@ object TournamentBotMain extends ZIOAppDefault:
         .catchAll(e =>
           ZIO.logWarning(
             s"Failed to archive tournament game ${dto.gameId}: ${e.getMessage}"
+          )
+        )
+
+  /** POST a finished tournament's record (ladder + game ids) to the repository.
+    * Best-effort — failures are logged and swallowed. */
+  private def tournamentArchiveSink(
+      backend: SttpBackend[Task, ZioStreams],
+      baseUrl: String
+  ): TournamentArchiveDto => UIO[Unit] =
+    dto =>
+      val request = basicRequest
+        .post(uri"$baseUrl/tournament-archives")
+        .header("Content-Type", "application/json")
+        .body(dto.toJson)
+        .response(asStringAlways)
+      backend
+        .send(request)
+        .unit
+        .catchAll(e =>
+          ZIO.logWarning(
+            s"Failed to archive tournament ${dto.tournamentId}: ${e.getMessage}"
           )
         )
 

@@ -85,6 +85,42 @@ object TournamentBridge:
       }
     yield done
 
+  /** On tournament end, pull the analytics-export and archive (a) every game we
+    * did NOT play (ours are archived live, with richer clocks), and (b) the
+    * tournament-level record (ladder + game ids) for the history index.
+    * Best-effort: a missing export — the tournament was cancelled, or its status
+    * hasn't settled to `Finished` yet — is logged, never fatal. Retries briefly
+    * to ride out the end-of-stream → `Finished` window. No-op without a recorder.
+    */
+  private[tournament] def archiveTournament(
+      tournamentId: String,
+      myId: String,
+      api: TournamentApiClient,
+      recorder: Option[GameRecorder]
+  ): UIO[Unit] =
+    ZIO.foreachDiscard(recorder) { rec =>
+      (for
+        name <- api
+          .getTournament(tournamentId)
+          .map(_.fullName)
+          .orElseSucceed(tournamentId)
+        exp <- api
+          .analyticsExport(tournamentId)
+          .retry(Schedule.spaced(2.seconds) && Schedule.recurs(5))
+        subs   = TournamentImport.opponentSubmissions(exp, myId)
+        record = TournamentImport.toArchiveRecord(exp, name)
+        _ <- ZIO.foreachDiscard(subs)(rec.sink)
+        _ <- rec.tournamentSink(record)
+        _ <- ZIO.logInfo(
+          s"tournament $tournamentId: archived ${subs.size} non-ours games + ladder (${record.standings.size} players)"
+        )
+      yield ()).catchAll(err =>
+        ZIO.logWarning(
+          s"tournament $tournamentId: archive failed (export unavailable?): ${err.getMessage}"
+        )
+      )
+    }
+
   /** Tournament-level dispatch: on `gameStart`, work out whether this is one of
     * OUR games and as which colour (the broadcast `color` is meaningless — see
     * [[resolveOurColor]]), then fork a per-game fiber. Other events are
@@ -123,6 +159,12 @@ object TournamentBridge:
           case None =>
             ZIO.unit
         }
+      case TournamentEvent.TournamentFinished(_) =>
+        // The stream stays open after the tournament ends, so this event — not
+        // the stream closing — is the archive trigger. Archive the whole event
+        // (opponent games + the ladder) for post-tournament browse + analysis.
+        ZIO.logInfo(s"Tournament $tournamentId finished — archiving") *>
+          archiveTournament(tournamentId, myId, api, recorder)
       case TournamentEvent.Heartbeat =>
         ZIO.unit // keep-alive; silently ignored (arrives every ~10s)
       case other =>

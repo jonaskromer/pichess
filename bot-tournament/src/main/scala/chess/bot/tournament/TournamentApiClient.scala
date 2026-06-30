@@ -26,6 +26,17 @@ trait TournamentApiClient:
     */
   def register(name: String): IO[Throwable, TournamentApiClient.RegisterResult]
 
+  /** `POST /api/bots` — register/refresh our entry in the bot REGISTRY (distinct
+    * from the auth identity) with engine metadata. Sent under our own token, so
+    * the registry entry is keyed by our auth id and the metadata flows into the
+    * server's analytics-export for our games + standings. Defaulted to no-op so
+    * test doubles needn't implement it; the sttp impl overrides it.
+    */
+  def registerInRegistry(
+      name: String,
+      meta: BotMetadata
+  ): IO[Throwable, Unit] = ZIO.unit
+
   /** `GET /api/tournament` → the `created` (joinable) tournaments. Public. */
   def listTournaments: IO[Throwable, List[TournamentApiClient.TournamentInfo]]
 
@@ -46,6 +57,21 @@ trait TournamentApiClient:
       id: String,
       gameId: String
   ): IO[Throwable, TournamentApiClient.GamePlayers]
+
+  /** `GET /api/tournament/{id}/analytics-export` → a FINISHED tournament's full
+    * record: every game (incl. ones we didn't play) with its UCI moves, plus the
+    * clock. Used to archive the whole event for post-tournament browse +
+    * analysis. Only succeeds once the tournament is `Finished`. Public.
+    *
+    * Defaulted to an empty export so test doubles needn't implement it; the real
+    * [[TournamentApiClient.SttpTournamentApiClient]] overrides it.
+    */
+  def analyticsExport(
+      id: String
+  ): IO[Throwable, TournamentApiClient.AnalyticsExport] =
+    ZIO.succeed(
+      TournamentApiClient.AnalyticsExport(id, TournamentClock(0, 0), List.empty)
+    )
 
   /** `POST /api/tournament/{id}/join` — only valid while status is `created`.
     */
@@ -75,6 +101,18 @@ object TournamentApiClient:
   object RegisterResult:
     given JsonDecoder[RegisterResult] = DeriveJsonDecoder.gen[RegisterResult]
 
+  /** `POST /api/bots` body. `endpoint` is omitted (None) — piChess is
+    * outbound-only (it streams + posts moves; the server never calls us). */
+  private final case class RegisterBotBody(
+      name: String,
+      family: String,
+      strategyType: String,
+      engineType: String,
+      modelVersion: String
+  )
+  private object RegisterBotBody:
+    given JsonEncoder[RegisterBotBody] = DeriveJsonEncoder.gen[RegisterBotBody]
+
   /** Minimal projection of the (large, flattened) tournament JSON — we need the
     * id, the display name (for name-based auto-join), and the clock. zio-json
     * ignores the many other fields.
@@ -98,6 +136,56 @@ object TournamentApiClient:
   final case class GamePlayers(white: BotRef, black: BotRef)
   object GamePlayers:
     given JsonDecoder[GamePlayers] = DeriveJsonDecoder.gen[GamePlayers]
+
+  /** One game from the analytics-export. We keep the ids (to skip our own,
+    * already-archived games), the names + winner + UCI moves (to build the
+    * archive submission). zio-json ignores the export's many other fields
+    * (round, bot metadata, timestamps, durations, …). */
+  final case class AnalyticsExportGame(
+      gameId: String,
+      whiteBotId: String,
+      whiteBotName: String,
+      blackBotId: String,
+      blackBotName: String,
+      winner: Option[String],
+      moves: String
+  )
+  object AnalyticsExportGame:
+    given JsonDecoder[AnalyticsExportGame] =
+      DeriveJsonDecoder.gen[AnalyticsExportGame]
+
+  /** One ladder row of the analytics-export. */
+  final case class AnalyticsExportStanding(
+      rank: Int,
+      botId: String,
+      botName: String,
+      botFamily: Option[String],
+      engineType: Option[String],
+      modelVersion: Option[String],
+      points: Double,
+      wins: Int,
+      draws: Int,
+      losses: Int,
+      tieBreak: Double
+  )
+  object AnalyticsExportStanding:
+    given JsonDecoder[AnalyticsExportStanding] =
+      DeriveJsonDecoder.gen[AnalyticsExportStanding]
+
+  /** Projection of `GET /api/tournament/{id}/analytics-export`: games + clock +
+    * the ladder (standings) + format/finishedAt for the tournament record. The
+    * trailing fields are defaulted so the trait stub + tests can omit them; the
+    * other export fields (schemaVersion, rated, …) are ignored. */
+  final case class AnalyticsExport(
+      tournamentId: String,
+      clock: TournamentClock,
+      games: List[AnalyticsExportGame],
+      format: String = "",
+      finishedAt: Option[String] = None,
+      standings: List[AnalyticsExportStanding] = Nil
+  )
+  object AnalyticsExport:
+    given JsonDecoder[AnalyticsExport] = DeriveJsonDecoder.gen[AnalyticsExport]
 
   /** Build a NowChess-talking client over an existing sttp backend. Effectful
     * because it allocates the token `Ref`.
@@ -139,6 +227,19 @@ object TournamentApiClient:
         else ZIO.fail(TournamentApiError(response.code, response.body))
       }
 
+    override def registerInRegistry(
+        name: String,
+        meta: BotMetadata
+    ): IO[Throwable, Unit] =
+      val body = RegisterBotBody(
+        name,
+        meta.family,
+        meta.strategyType,
+        meta.engineType,
+        meta.modelVersion
+      ).toJson
+      postJsonExpectOk(config.baseUrl.addPath("api", "bots"), body)
+
     def listTournaments: IO[Throwable, List[TournamentInfo]] =
       getJson[TournamentList](config.baseUrl.addPath("api", "tournament"))
         .map(_.created)
@@ -149,6 +250,11 @@ object TournamentApiClient:
     def getGame(id: String, gameId: String): IO[Throwable, GamePlayers] =
       getJson[GamePlayers](
         config.baseUrl.addPath("api", "tournament", id, "game", gameId)
+      )
+
+    override def analyticsExport(id: String): IO[Throwable, AnalyticsExport] =
+      getJson[AnalyticsExport](
+        config.baseUrl.addPath("api", "tournament", id, "analytics-export")
       )
 
     def joinTournament(id: String): IO[Throwable, Unit] =
@@ -226,6 +332,24 @@ object TournamentApiClient:
         val request = basicRequest
           .post(endpoint)
           .header("Authorization", auth)
+          .response(asStringAlways)
+        backend.send(request).flatMap { response =>
+          if response.code.isSuccess then ZIO.unit
+          else ZIO.fail(TournamentApiError(response.code, response.body))
+        }
+      }
+
+    /** Authenticated POST with a JSON body; any 2xx is success. */
+    private def postJsonExpectOk(
+        endpoint: Uri,
+        body: String
+    ): IO[Throwable, Unit] =
+      authHeader.flatMap { auth =>
+        val request = basicRequest
+          .post(endpoint)
+          .header("Authorization", auth)
+          .header("Content-Type", "application/json")
+          .body(body)
           .response(asStringAlways)
         backend.send(request).flatMap { response =>
           if response.code.isSuccess then ZIO.unit
