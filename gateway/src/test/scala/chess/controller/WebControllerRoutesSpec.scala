@@ -79,7 +79,9 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
           registry <- chess.controller.SessionRegistry.make
           cache <- chess.controller.AnnotationCache.make
           presence <- chess.controller.SpectatorPresence.make
-          tournamentSpectate <- chess.controller.TournamentSpectate.make
+          tournamentSpectate <- chess.controller.TournamentSpectate.make(
+            presence
+          )
           // Tests don't exercise the lobby proxy — pass any URL.
           // `stackInfo` defaults to the inmemory/no-extras/no-dev
           // value; per-test override is the second arg list.

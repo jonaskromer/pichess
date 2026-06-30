@@ -14,6 +14,7 @@ import chess.controller.{
   SessionRegistry,
   SpectatorPresence,
   StackInfo,
+  TournamentHistory,
   TournamentProxy,
   TournamentSpectate,
   WebController
@@ -86,7 +87,8 @@ object GatewayMain extends ZIOAppDefault:
         tournamentUrl <- TournamentProxy.tournamentUrlFromEnv
         botControlUrl <- TournamentProxy.botControlUrlFromEnv
         botName <- TournamentProxy.botNameFromEnv
-        tournamentSpectate <- TournamentSpectate.make
+        tournamentSpectate <- TournamentSpectate.make(presence)
+        repositoryUrl <- TournamentHistory.repositoryUrlFromEnv
         stackInfo <- StackInfo.fromEnv
         // Optional: enables the Lichess spectate bridge (POST /lichess/games)
         // when a bot token is present. Absent → the route is simply not added.
@@ -106,7 +108,7 @@ object GatewayMain extends ZIOAppDefault:
         )
         _ <- MetricsHttpServer.serve(metricsPort).forkDaemon
         _ <- Server.install(
-          WebController.routes(
+          (WebController.routes(
             client,
             registry,
             cache,
@@ -118,7 +120,8 @@ object GatewayMain extends ZIOAppDefault:
             botControlUrl,
             botName,
             tournamentSpectate
-          ) @@ TracingMiddleware.serverSpan
+          ) ++ TournamentHistory.routes(repositoryUrl))
+            @@ TracingMiddleware.serverSpan
         )
         // Run forever; the gateway is no longer killable from a network
         // request — `docker stop` / SIGTERM is the only shutdown path.
