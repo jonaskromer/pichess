@@ -377,6 +377,10 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
   z-index: -1;
   pointer-events: none;
   background: var(--bg-page);
+  /* Own compositor layer so Safari/Firefox cache the crumple filter's output as
+     a texture instead of re-running it (and flashing the unfiltered paper) when
+     something repaints over it. */
+  will-change: transform;
 }
 .page-bg svg { width: 100%; height: 100%; display: block; }
 /* The crumpled-paper rect: a `#crumple-tile` heightmap fill lit by the
@@ -407,6 +411,12 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
   z-index: -1;
   pointer-events: none;
   filter: drop-shadow(var(--panel-shadow));
+  /* Own compositor layer: in Safari/Firefox the crumple + drop-shadow filters
+     get RE-RUN when a sibling/child repaints (e.g. a button :hover), flashing
+     the panel's paper for a frame. Caching this layer's filtered output as a
+     texture makes neighbouring repaints composite-only. The panel sits behind
+     content (z-index:-1) and never changes, so the layer is paid once. */
+  will-change: transform;
 }
 /* Two stacked layers now (crumple tile + grid overlay) — absolutely position
    both so they overlap instead of stacking vertically; the grid (later child)
@@ -705,8 +715,8 @@ a.header-link:not([target])::before {
   inset: -0.05rem -0.15rem;
   z-index: -1;
   background: var(--marker-yellow);
-  -webkit-mask: url(/web/marker-stripe.svg) center/auto 100% repeat-x;
-          mask: url(/web/marker-stripe.svg) center/auto 100% repeat-x;
+  -webkit-mask: url(/web/marker-stripe.png) center/auto 100% repeat-x;
+          mask: url(/web/marker-stripe.png) center/auto 100% repeat-x;
   opacity: 0.7;
   transition: opacity 0.15s ease;
   pointer-events: none;
@@ -916,6 +926,7 @@ a.header-link:not([target]):focus-visible::before { opacity: 1; }
   border: 0.2rem solid rgba(54, 122, 189, 0.85);
   border-radius: 50%;
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
   pointer-events: none;
 }
 
@@ -930,6 +941,7 @@ a.header-link:not([target]):focus-visible::before { opacity: 1; }
   background-position: center;
   background-repeat: no-repeat;
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
   pointer-events: none;
 }
 
@@ -946,6 +958,7 @@ a.header-link:not([target]):focus-visible::before { opacity: 1; }
   background-position: center;
   background-repeat: no-repeat;
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
   pointer-events: none;
 }
 
@@ -962,6 +975,7 @@ a.header-link:not([target]):focus-visible::before { opacity: 1; }
   background-position: center;
   background-repeat: no-repeat;
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
   pointer-events: none;
   border: none;
   border-radius: 0;
@@ -991,6 +1005,7 @@ a.header-link:not([target]):focus-visible::before { opacity: 1; }
   border-radius: 0;
   background: none;
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
   pointer-events: none;
 }
 .square.is-promo-dest::after {
@@ -1001,6 +1016,7 @@ a.header-link:not([target]):focus-visible::before { opacity: 1; }
   border-radius: 0.12rem;
   background: none;
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
   pointer-events: none;
 }
 
@@ -1318,6 +1334,7 @@ body.is-dragging { cursor: grabbing; }
      disc. The ring uses --text-secondary so it stays legible on light AND
      dark paper. */
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
   transform: rotate(-6deg);
 }
 /* Cross-hatched fill in the side colour — the move-preview technique, denser
@@ -1556,8 +1573,8 @@ body.is-dragging { cursor: grabbing; }
   inset: -0.05rem -0.1rem;
   z-index: -1;
   background: var(--glyph-marker, var(--marker-yellow));
-  -webkit-mask: url(/web/marker-stripe.svg) center/auto 100% repeat-x;
-          mask: url(/web/marker-stripe.svg) center/auto 100% repeat-x;
+  -webkit-mask: url(/web/marker-stripe.png) center/auto 100% repeat-x;
+          mask: url(/web/marker-stripe.png) center/auto 100% repeat-x;
 }
 .move-glyph-brilliant   { --glyph-marker: var(--marker-blue); }
 .move-glyph-good        { --glyph-marker: var(--marker-green); }
@@ -1915,8 +1932,8 @@ body.is-dragging { cursor: grabbing; }
      twice) and clips to a centred slice on narrow ones — rather than
      stretching into a flat smear on wide and squishing into a wedge
      on narrow. */
-  -webkit-mask: url(/web/marker-stripe.svg) center/auto 100% repeat-x;
-          mask: url(/web/marker-stripe.svg) center/auto 100% repeat-x;
+  -webkit-mask: url(/web/marker-stripe.png) center/auto 100% repeat-x;
+          mask: url(/web/marker-stripe.png) center/auto 100% repeat-x;
   opacity: 0;
   transition: opacity 0.15s;
   pointer-events: none;
@@ -1989,6 +2006,7 @@ body.is-dragging { cursor: grabbing; }
   height: 0.12rem;
   background: currentColor;
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
   opacity: 0.85;
   pointer-events: none;
 }
@@ -2040,6 +2058,7 @@ body.is-dragging { cursor: grabbing; }
   height: 0.18rem;
   background: var(--marker-yellow);
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
   opacity: 0.85;
 }
 
@@ -2199,6 +2218,7 @@ body.is-dragging { cursor: grabbing; }
   height: 0;
   border-bottom: 0.22rem solid var(--status-ink, var(--accent));
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
   pointer-events: none;
 }
 .status-badge.status-waiting,
@@ -2224,6 +2244,7 @@ body.is-dragging { cursor: grabbing; }
   height: 0;
   border-bottom: 0.1rem solid var(--text-secondary);
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
   opacity: 0.55;
   pointer-events: none;
 }
@@ -2365,6 +2386,7 @@ body.is-dragging { cursor: grabbing; }
   height: 0;
   border-bottom: 0.09rem solid var(--text-secondary);
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
   opacity: 0.6;
   pointer-events: none;
 }
@@ -2443,8 +2465,8 @@ body.is-dragging { cursor: grabbing; }
   position: absolute;
   inset: -0.05rem -0.15rem;
   z-index: -1;
-  -webkit-mask: url(/web/marker-stripe.svg) center/auto 100% repeat-x;
-          mask: url(/web/marker-stripe.svg) center/auto 100% repeat-x;
+  -webkit-mask: url(/web/marker-stripe.png) center/auto 100% repeat-x;
+          mask: url(/web/marker-stripe.png) center/auto 100% repeat-x;
   opacity: 0.75;
   transition: opacity 0.15s ease;
   pointer-events: none;
@@ -2593,6 +2615,7 @@ body.is-dragging { cursor: grabbing; }
   inset: 0;
   border: 0.13rem solid var(--text-secondary);
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
   opacity: 0.7;
   pointer-events: none;
 }
@@ -2631,6 +2654,7 @@ body.is-dragging { cursor: grabbing; }
     transparent 0.06rem 0.24rem
   );
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
   opacity: 0.6;
   pointer-events: none;
 }
@@ -2745,6 +2769,7 @@ body.is-dragging { cursor: grabbing; }
      the blue grid-paper ruling. */
   border-bottom: 0.12rem solid var(--text-muted);
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
 }
 .scrap-table td {
   position: relative;
@@ -2766,6 +2791,7 @@ body.is-dragging { cursor: grabbing; }
   bottom: 0;
   border-left: 0.12rem solid var(--text-muted);
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
 }
 /* numeric columns: typewriter, right-aligned (design.md §5.8) */
 .scrap-table .col-num {
@@ -2809,14 +2835,13 @@ body.is-dragging { cursor: grabbing; }
 }
 /* Pin the column headers while the rows scroll under them. The header
    underline + separators are pseudo-elements on the th, so they travel with
-   it. A flat `--paper-color` band (the card's own base tone) occludes the
-   rows passing beneath — the grid SVG sits behind the whole card, so the
-   pinned strip reads as clean ledger paper. */
+   it. The header CELL itself stays transparent — only the label's own
+   newsprint-scrap background shows — so the th reads as a scrap pinned to the
+   ledger, not a flat paper band. */
 .ledger-scroll .scrap-table thead th {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: var(--paper-color);
 }
 
 /* ─── Hand-drawn multi-stroke underline (decoration) ──────────────────────
@@ -3157,8 +3182,8 @@ body.is-dragging { cursor: grabbing; }
   /* See `.post-it-action::before` for the `auto 100% repeat-x` rationale
      — keeps the marker SVG's natural aspect so it tiles on wide buttons
      and centre-clips on narrow ones instead of stretching/squishing. */
-  -webkit-mask: url(/web/marker-stripe.svg) center/auto 100% repeat-x;
-          mask: url(/web/marker-stripe.svg) center/auto 100% repeat-x;
+  -webkit-mask: url(/web/marker-stripe.png) center/auto 100% repeat-x;
+          mask: url(/web/marker-stripe.png) center/auto 100% repeat-x;
   /* 0.7 matches `.post-it-action[type="submit"]` (the move submit) so
      every text-marker button on paper has the same at-rest stripe
      intensity. */
@@ -3205,6 +3230,7 @@ body.is-dragging { cursor: grabbing; }
   border: 0.13rem solid currentColor;
   border-radius: 50%;
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
   opacity: 0;
   transition: opacity 0.15s ease;
   pointer-events: none;
@@ -3256,6 +3282,7 @@ body.is-dragging { cursor: grabbing; }
   transform: translateY(-50%);
   background: var(--text-secondary);   /* ink, not alarm-red */
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
   pointer-events: none;
   z-index: 4;
 }
@@ -3312,6 +3339,7 @@ body.is-dragging { cursor: grabbing; }
   height: 0.13rem;
   background: var(--text-muted);
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
   opacity: 0.8;
   pointer-events: none;
 }
@@ -3374,6 +3402,7 @@ body.is-dragging { cursor: grabbing; }
   height: 0.12rem;
   background: var(--text-muted);
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
   opacity: 0.8;
   pointer-events: none;
   transition: background 0.15s ease;
@@ -3485,11 +3514,13 @@ body.is-dragging { cursor: grabbing; }
   height: 0.18rem;
   background: var(--hairline);
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
 }
 .range-slider::-moz-range-track {
   height: 0.18rem;
   background: var(--hairline);
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
 }
 .range-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
@@ -3500,6 +3531,7 @@ body.is-dragging { cursor: grabbing; }
   border: 0.12rem solid var(--text-secondary);
   border-radius: 0;
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
 }
 .range-slider::-moz-range-thumb {
   width: 1.1rem;
@@ -3508,6 +3540,7 @@ body.is-dragging { cursor: grabbing; }
   border: 0.12rem solid var(--text-secondary);
   border-radius: 0;
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
 }
 .range-slider:focus-visible::-webkit-slider-thumb { background: var(--accent-hover); }
 .range-slider:focus-visible::-moz-range-thumb { background: var(--accent-hover); }
@@ -3548,8 +3581,13 @@ input[type="checkbox"] {
   position: absolute;
   inset: 0;
   background-color: var(--color-text-primary);
-  -webkit-mask: url(/web/dddoodle_pack/boxes/box-4-bold.svg) center/contain no-repeat;
-          mask: url(/web/dddoodle_pack/boxes/box-4-bold.svg) center/contain no-repeat;
+  /* Baked PNG, not the source SVG: box-4-bold.svg carries an internal
+     feTurbulence/displacement filter, and Safari renders nothing when a
+     filtered SVG is used as a CSS mask → the box vanished. The PNG bakes the
+     hand-drawn wobble in (filter-free), so the mask renders everywhere.
+     Regenerate: rsvg-convert -w128 -h128 box-4-bold.svg -o box-4-bold.png */
+  -webkit-mask: url(/web/dddoodle_pack/boxes/box-4-bold.png) center/contain no-repeat;
+          mask: url(/web/dddoodle_pack/boxes/box-4-bold.png) center/contain no-repeat;
 }
 .checkbox-visual::after {
   content: '';
@@ -3627,6 +3665,7 @@ input[type="checkbox"]:focus-visible + .checkbox-visual { outline: 2px dashed va
   -webkit-mask-repeat: repeat;
           mask-repeat: repeat;
   filter: url(#hand-drawn);
+  will-change: transform; /* cache filtered result — Safari/FF re-run the wobble on repaint */
   /* GPU compositing layer — keeps the displacement filter from re-rasterising
      on every scroll frame, which would otherwise flicker on big move logs. */
   will-change: transform;
