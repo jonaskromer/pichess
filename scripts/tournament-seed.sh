@@ -59,7 +59,8 @@ curl -fsS -X POST "$TS_URL/api/tournament/$tid/start" \
   -H "Authorization: Bearer $dir_token" >/dev/null
 
 pairings=$(curl -fsS "$TS_URL/api/tournament/$tid/round/1")
-game_ids=$(echo "$pairings" | jq -r '.pairings[].gameId' | paste -sd, -)
+# gameId lives on each pairing's match(es), not the pairing itself.
+game_ids=$(echo "$pairings" | jq -r '.pairings[].matches[].gameId' | paste -sd, -)
 
 # token for a given bot id (maps pairing.white.id / .black.id back to its token)
 token_for() {
@@ -74,7 +75,7 @@ if [ "$SEED_MOVES" = "1" ]; then
   # move (illegal in this server's rules, wrong turn) just stops that game early.
   MOVES=(e2e4 e7e5 g1f3 b8c6 f1b5 a7a6 b5a4 g8f6)
   echo "$pairings" | jq -c '.pairings[]' | while read -r p; do
-    gid=$(echo "$p" | jq -r .gameId)
+    gid=$(echo "$p" | jq -r '.matches[0].gameId')
     wtok=$(token_for "$(echo "$p" | jq -r .white.id)")
     btok=$(token_for "$(echo "$p" | jq -r .black.id)")
     if [ -z "$wtok" ] || [ -z "$btok" ]; then continue; fi

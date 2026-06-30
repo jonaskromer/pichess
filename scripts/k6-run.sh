@@ -60,6 +60,7 @@ log() { printf '\n[\033[1;34mk6\033[0m %s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 surface_script() {
   case "$1" in
     browser)        echo "/scripts/browser/lobby-flow.js" ;;
+    history)        echo "/scripts/browser/history-flow.js" ;;
     kafka)          echo "/scripts/kafka/game-events.js" ;;
     kafka-complete) echo "/scripts/kafka/complete-games.js" ;;
     grpc)           echo "/scripts/grpc/game-service.js" ;;

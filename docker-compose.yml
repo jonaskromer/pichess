@@ -464,6 +464,12 @@ services:
       # games by the bot's registered name — track the same var the
       # bot-tournament service uses so the two never drift.
       PICHESS_BOT_NAME: "${TOURNAMENT_BOT_NAME:-pichess}"
+      # Tournament spectate (browser polls the NowChess server via the gateway)
+      # + bot control relay. Point PICHESS_TOURNAMENT_URL at a local
+      # tournament-server (e.g. http://host.docker.internal:8086) to spectate
+      # local games; defaults to the gateway's built-in (external) value.
+      PICHESS_TOURNAMENT_URL: "${PICHESS_TOURNAMENT_URL:-http://141.37.123.132:8086}"
+      PICHESS_BOT_CONTROL_URL: "${PICHESS_BOT_CONTROL_URL:-http://bot-tournament:8080}"
       # When set to "true" the /dev/* routes light up and the UI
       # surfaces the Dev link on the start screen post-it.
       PICHESS_DEV: "${PICHESS_DEV:-false}"
