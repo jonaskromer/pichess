@@ -2248,6 +2248,14 @@ body.is-dragging { cursor: grabbing; }
   opacity: 0.55;
   pointer-events: none;
 }
+/* Lock the panel width, like the new-game screen above. The `.screen`
+   centres its card (`align-items: center`) rather than stretching it, so an
+   unconstrained `.content-card` is shrink-to-fit around its widest child —
+   here the public-lobbies `.scrap-table`, whose nowrap code/status/action
+   columns plus host names give it a wide max-content that balloons the whole
+   card (and the full-width Join button with it). 30rem matches the new-game
+   card so the two routed screens read as siblings. */
+.screen-join .content-card { width: 30rem; }
 
 
 .toast {
