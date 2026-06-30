@@ -40,6 +40,12 @@ object TournamentHistorySpec extends ZIOSpecDefault:
         Response.json(
           """{"tournamentId":"t1","name":"Cup","format":"swiss","finishedAt":1,"standings":[],"gameIds":["g1"]}"""
         )
+      ),
+    Method.GET / "archives" / "g1" ->
+      handler(
+        Response.json(
+          """{"gameId":"g1","pgn":"1. e4 e5","white":"pichess","black":"random"}"""
+        )
       )
   )
 
@@ -81,5 +87,64 @@ object TournamentHistorySpec extends ZIOSpecDefault:
             )
         }
         .provide(Client.default)
+    },
+    test("GET /tournament/game/{gameId} relays the per-game archive") {
+      serveWith(fakeRepo) { base =>
+        for
+          res <- TournamentHistory
+            .routes(base)
+            .runZIO(Request.get(url"/tournament/game/g1"))
+          body <- res.body.asString
+        yield assertTrue(
+          res.status == Status.Ok,
+          body.contains("\"gameId\":\"g1\"")
+        )
+      }
+    },
+    test("a malformed repository URL becomes a 502 (buildUrl Left arm)") {
+      ZIO
+        .scoped {
+          for
+            res <- TournamentHistory
+              .routes("http://repository with space")
+              .runZIO(Request.get(url"/tournament/history"))
+            body <- res.body.asString
+          yield assertTrue(
+            res.status == Status.BadGateway,
+            body.contains("invalid URL")
+          )
+        }
+        .provide(Client.default)
+    },
+    test("a slow repository becomes a 504 (timeoutTo arm)") {
+      // Accepts the connection but doesn't answer within the 2 s cap, so the
+      // relay takes the GatewayTimeout arm — distinct from the connection-
+      // refused BadGateway arm above. Live clock so the real cap actually fires.
+      val slowRepo: Routes[Any, Response] = Routes(
+        Method.GET / "tournament-archives" ->
+          handler(ZIO.sleep(3.seconds).as(Response.json("[]")))
+      )
+      serveWith(slowRepo) { base =>
+        for
+          res <- TournamentHistory
+            .routes(base)
+            .runZIO(Request.get(url"/tournament/history"))
+          body <- res.body.asString
+        yield assertTrue(
+          res.status == Status.GatewayTimeout,
+          body.contains("timed out")
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("repositoryUrlFromEnv reads PICHESS_REPOSITORY_URL when set") {
+      for
+        _ <- TestSystem
+          .putEnv(TournamentHistory.EnvRepositoryUrl, "http://repo.test:8091")
+        url <- TournamentHistory.repositoryUrlFromEnv
+      yield assertTrue(url == "http://repo.test:8091")
+    },
+    test("repositoryUrlFromEnv falls back to the default when unset") {
+      for url <- TournamentHistory.repositoryUrlFromEnv
+      yield assertTrue(url == "http://repository:8091")
     }
   )
