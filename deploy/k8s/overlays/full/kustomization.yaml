@@ -69,13 +69,13 @@ configMapGenerator:
 
 images:
   - name: ghcr.io/jonaskromer/pichess-repository
-    newTag: "1.0.0"
+    newTag: "1.0.1"
   - name: ghcr.io/jonaskromer/pichess-bot-tournament
-    newTag: "1.0.0"
+    newTag: "1.0.1"
   # analytics + spark images: published by release.yml as of this change. Bump
   # these together with the others at each release (they only resolve once a
   # release ≥ the version that first publishes them has run).
   - name: ghcr.io/jonaskromer/pichess-analytics-service
-    newTag: "1.0.0"
+    newTag: "1.0.1"
   - name: ghcr.io/jonaskromer/pichess-spark-analytics
-    newTag: "1.0.0"
+    newTag: "1.0.1"
