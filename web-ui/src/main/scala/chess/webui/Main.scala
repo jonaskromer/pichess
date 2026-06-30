@@ -826,6 +826,26 @@ object Main:
       .flatMap(e => Option(e.getAttribute("content")))
       .contains("true")
 
+  /** Read a `<meta name=…>` content value injected into the SPA shell by
+    * HtmlPage — trimmed + normalised (no trailing slash), or None when
+    * absent/blank. */
+  private def metaContent(name: String): Option[String] =
+    Option(dom.document.querySelector(s"meta[name='$name']"))
+      .flatMap(e => Option(e.getAttribute("content")))
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .map(_.stripSuffix("/"))
+
+  /** Base URL of Grafana (`pichess-grafana` meta), injected by the gateway from
+    * `PICHESS_GRAFANA_URL`. Falls back to the dev obs port so the `#analytics`
+    * links work under `make … EXTRA=analytics,obs` too. */
+  private val grafanaUrl: String =
+    metaContent("pichess-grafana").getOrElse("http://localhost:3000")
+
+  /** Base URL of Prometheus (`pichess-prometheus` meta); dev-port fallback. */
+  private val prometheusUrl: String =
+    metaContent("pichess-prometheus").getOrElse("http://localhost:9090")
+
   /** Kick off a live Lichess bot-game on the server, then navigate to the
     * read-only spectator view of its mirror game. */
   private def startLichessWatch(): Unit =
@@ -2963,18 +2983,24 @@ object Main:
               "served by Grafana."
           ),
           a(
-            href   := "http://localhost:3000/d/pichess-analytics",
+            href   := s"$grafanaUrl/d/pichess-tournament",
+            target := "_blank",
+            "Tournament dashboard ↗"
+          ),
+          a(
+            href   := s"$grafanaUrl/d/pichess-analytics",
             target := "_blank",
             "Game analytics dashboard ↗"
           ),
           a(
-            href   := "http://localhost:3000/d/pichess-jvm-overview",
+            href   := s"$grafanaUrl/d/pichess-jvm-overview",
             target := "_blank",
             "JVM / service overview ↗"
           ),
-          p(
-            className := "opacity-60 text-sm",
-            "Needs the stack running with EXTRA=analytics,obs (Grafana on :3000)."
+          a(
+            href   := s"$prometheusUrl/",
+            target := "_blank",
+            "Prometheus metrics browser ↗"
           )
         )
       )

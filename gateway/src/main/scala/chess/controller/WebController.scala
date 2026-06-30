@@ -467,7 +467,9 @@ object WebController:
         body = Body.fromString(
           HtmlPage.render(
             devMode = stackInfo.devMode,
-            lichessEnabled = lichessEnabled
+            lichessEnabled = lichessEnabled,
+            grafanaUrl = stackInfo.grafanaUrl,
+            prometheusUrl = stackInfo.prometheusUrl
           )
         )
       )

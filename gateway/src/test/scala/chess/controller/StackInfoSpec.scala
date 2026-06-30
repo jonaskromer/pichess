@@ -12,7 +12,9 @@ object StackInfoSpec extends ZIOSpecDefault:
   private def withEnv(
       stack: Option[String] = None,
       extras: Option[String] = None,
-      devMode: Option[String] = None
+      devMode: Option[String] = None,
+      grafana: Option[String] = None,
+      prometheus: Option[String] = None
   ): UIO[StackInfo] =
     val sets =
       ZIO.foreachDiscard(stack)(v =>
@@ -23,6 +25,12 @@ object StackInfoSpec extends ZIOSpecDefault:
         ) *>
         ZIO.foreachDiscard(devMode)(v =>
           TestSystem.putEnv(StackInfo.EnvDevMode, v)
+        ) *>
+        ZIO.foreachDiscard(grafana)(v =>
+          TestSystem.putEnv(StackInfo.EnvGrafanaUrl, v)
+        ) *>
+        ZIO.foreachDiscard(prometheus)(v =>
+          TestSystem.putEnv(StackInfo.EnvPrometheusUrl, v)
         )
     sets *> StackInfo.fromEnv
 
@@ -34,7 +42,9 @@ object StackInfoSpec extends ZIOSpecDefault:
       yield assertTrue(
         info.backend == "inmemory",
         info.extras.isEmpty,
-        info.devMode == false
+        info.devMode == false,
+        info.grafanaUrl == StackInfo.DefaultGrafanaUrl,
+        info.prometheusUrl == StackInfo.DefaultPrometheusUrl
       )
     },
     test("reads PICHESS_STACK as the backend") {
@@ -85,6 +95,23 @@ object StackInfoSpec extends ZIOSpecDefault:
         !falseVal.devMode,
         !bogus.devMode,
         !empty.devMode
+      )
+    },
+    test("reads + trims PICHESS_GRAFANA_URL and PICHESS_PROMETHEUS_URL") {
+      for info <- withEnv(
+          grafana = Some("  http://grafana.example  "),
+          prometheus = Some("http://prom.example")
+        )
+      yield assertTrue(
+        info.grafanaUrl == "http://grafana.example",
+        info.prometheusUrl == "http://prom.example"
+      )
+    },
+    test("falls back to the dev obs URLs when grafana/prometheus are blank") {
+      for info <- withEnv(grafana = Some("   "), prometheus = Some(""))
+      yield assertTrue(
+        info.grafanaUrl == StackInfo.DefaultGrafanaUrl,
+        info.prometheusUrl == StackInfo.DefaultPrometheusUrl
       )
     }
   )

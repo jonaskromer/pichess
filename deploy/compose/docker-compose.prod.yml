@@ -79,6 +79,10 @@ services:
       PICHESS_TOURNAMENT_URL: "${PICHESS_TOURNAMENT_URL:-http://141.37.123.132:8086}"
       PICHESS_BOT_CONTROL_URL: "${PICHESS_BOT_CONTROL_URL:-http://bot-tournament:8080}"
       PICHESS_BOT_NAME: "${PICHESS_BOT_NAME:-piChess}"
+      # Obs UI base URLs for the Analytics screen links (empty -> the gateway's
+      # localhost dev defaults). full.env sets the prod nip.io hosts.
+      PICHESS_GRAFANA_URL: "${PICHESS_GRAFANA_URL:-}"
+      PICHESS_PROMETHEUS_URL: "${PICHESS_PROMETHEUS_URL:-}"
     cpus: 0.5
     mem_limit: 512m
     healthcheck:

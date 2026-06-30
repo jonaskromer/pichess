@@ -126,5 +126,29 @@ object HtmlPageSpec extends ZIOSpecDefault:
         html.contains("'dark'"),
         html.contains("documentElement.classList.add('dark')")
       )
+    },
+    test("inject the obs UI base URLs as meta tags (dev-default fallback)") {
+      assertTrue(
+        html.contains(
+          """<meta name="pichess-grafana" content="http://localhost:3000">"""
+        ),
+        html.contains(
+          """<meta name="pichess-prometheus" content="http://localhost:9090">"""
+        )
+      )
+    },
+    test("inject custom obs URLs when the gateway supplies them") {
+      val custom = HtmlPage.render(
+        grafanaUrl = "http://grafana.141.37.123.131.nip.io",
+        prometheusUrl = "http://prometheus.141.37.123.131.nip.io"
+      )
+      assertTrue(
+        custom.contains(
+          """<meta name="pichess-grafana" content="http://grafana.141.37.123.131.nip.io">"""
+        ),
+        custom.contains(
+          """<meta name="pichess-prometheus" content="http://prometheus.141.37.123.131.nip.io">"""
+        )
+      )
     }
   )

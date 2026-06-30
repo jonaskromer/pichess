@@ -10,12 +10,18 @@ object HtmlPage:
     */
   def render(
       devMode: Boolean = false,
-      lichessEnabled: Boolean = false
+      lichessEnabled: Boolean = false,
+      grafanaUrl: String = "http://localhost:3000",
+      prometheusUrl: String = "http://localhost:9090"
   ): String =
     val devMeta =
       s"""<meta name="pichess-dev" content="${devMode.toString}">"""
     val lichessMeta =
       s"""<meta name="pichess-lichess" content="${lichessEnabled.toString}">"""
+    val grafanaMeta =
+      s"""<meta name="pichess-grafana" content="$grafanaUrl">"""
+    val prometheusMeta =
+      s"""<meta name="pichess-prometheus" content="$prometheusUrl">"""
     s"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -23,6 +29,8 @@ object HtmlPage:
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 $devMeta
 $lichessMeta
+$grafanaMeta
+$prometheusMeta
 <title>piChess</title>
 <link rel="icon" type="image/png" sizes="32x32" href="/web/peach-32.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/web/peach.png">

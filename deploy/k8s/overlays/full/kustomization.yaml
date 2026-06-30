@@ -45,6 +45,11 @@ configMapGenerator:
       # bot-tournament.yaml's TOURNAMENT_BOT_NAME (gateway defaults to "pichess"
       # otherwise, which would hide every game on this tier).
       - PICHESS_BOT_NAME=piChess
+      # Obs UI base URLs → injected into the gateway-served SPA (StackInfo →
+      # HtmlPage meta tags) so the Analytics screen's dashboard + Prometheus
+      # links resolve over the VPN. Match ingress-obs.yaml's nip.io hosts.
+      - PICHESS_GRAFANA_URL=http://grafana.141.37.123.131.nip.io
+      - PICHESS_PROMETHEUS_URL=http://prometheus.141.37.123.131.nip.io
   # prod-obs config, generated from files copied into ./config so the default
   # kustomize load-restrictor (no ../.. refs) is satisfied.
   - name: prometheus-config

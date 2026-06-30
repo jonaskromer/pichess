@@ -448,8 +448,8 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
     },
     test("GET /api/stack-info reports the configured backend + extras") {
       runWith(
-        chess.controller
-          .StackInfo("postgres", List("analytics"), devMode = false)
+        chess.controller.StackInfo.Default
+          .copy(backend = "postgres", extras = List("analytics"))
       ) { routes =>
         for
           response <- routes.runZIO(Request.get(url"/api/stack-info"))
@@ -635,7 +635,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
       // falls through to the serveDevAsset 404 branch (rather than the
       // route-not-found 404 we get when devMode is false). The
       // generated report files aren't checked in.
-      runWith(chess.controller.StackInfo("postgres", Nil, devMode = true)) {
+      runWith(chess.controller.StackInfo.Default.copy(backend = "postgres", devMode = true)) {
         routes =>
           for response <- routes.runZIO(
               Request.get(url"/dev/coverage/report/some-missing.html")
@@ -644,7 +644,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
       }
     },
     test("GET /dev/performance/report/ same routing applies") {
-      runWith(chess.controller.StackInfo("postgres", Nil, devMode = true)) {
+      runWith(chess.controller.StackInfo.Default.copy(backend = "postgres", devMode = true)) {
         routes =>
           for response <- routes.runZIO(
               Request.get(url"/dev/performance/report/notthere.html")
@@ -839,7 +839,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
       // Hits the `raw.isEmpty || raw.endsWith("/")` branch in serveDevAsset.
       // The actual index.html isn't checked in, so the response is 404,
       // but the rewrite branch IS traversed before the classpath lookup.
-      runWith(chess.controller.StackInfo("postgres", Nil, devMode = true)) {
+      runWith(chess.controller.StackInfo.Default.copy(backend = "postgres", devMode = true)) {
         routes =>
           for response <- routes.runZIO(Request.get(url"/dev/coverage/report/"))
           yield assertTrue(response.status == Status.NotFound)
@@ -853,7 +853,7 @@ object WebControllerRoutesSpec extends ZIOSpecDefault:
       // touching the classpath lookup. Distinct from the
       // <missing>.html case which hits the Some-arm + 404 from
       // serveClasspathResource.
-      runWith(chess.controller.StackInfo("postgres", Nil, devMode = true)) {
+      runWith(chess.controller.StackInfo.Default.copy(backend = "postgres", devMode = true)) {
         routes =>
           for response <- routes.runZIO(
               Request.get(url"/dev/coverage/report/noext")
