@@ -594,18 +594,24 @@ private[engine] final class AlphaBetaSearch(
       history: Set[Long],
       maxDepth: Int
   ): UIO[Option[Move]] =
+    // Count this main worker so concurrent games each keep a core (see
+    // [[ParallelismBudget]]); then take only the genuinely-spare helper cores.
+    budget.enter()
     val helpers = budget.acquireHelpers(budget.permits)
-    if helpers == 0 then budgetedBestMove(state, budgetMillis, history, maxDepth)
-    else
-      ZIO
-        .foreach(0 until helpers)(_ =>
-          budgetedBestMove(state, budgetMillis, history, maxDepth).forkDaemon
-        )
-        .flatMap { fibers =>
-          budgetedBestMove(state, budgetMillis, history, maxDepth)
-            .ensuring(ZIO.foreachDiscard(fibers)(_.interrupt.unit))
-            .ensuring(ZIO.succeed(budget.release(helpers)))
-        }
+    val finalize = ZIO.succeed { budget.release(helpers); budget.leave() }
+    val run =
+      if helpers == 0 then
+        budgetedBestMove(state, budgetMillis, history, maxDepth)
+      else
+        ZIO
+          .foreach(0 until helpers)(_ =>
+            budgetedBestMove(state, budgetMillis, history, maxDepth).forkDaemon
+          )
+          .flatMap { fibers =>
+            budgetedBestMove(state, budgetMillis, history, maxDepth)
+              .ensuring(ZIO.foreachDiscard(fibers)(_.interrupt.unit))
+          }
+    run.ensuring(finalize)
 
   /** ID loop with a wall-clock deadline. Each completed iteration records its
     * elapsed time; the next iteration is only started if `elapsed +

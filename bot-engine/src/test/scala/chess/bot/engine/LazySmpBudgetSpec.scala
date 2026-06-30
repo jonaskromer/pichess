@@ -26,6 +26,29 @@ object LazySmpBudgetSpec extends ZIOSpecDefault:
         ParallelismBudget.Single.acquireHelpers(4) == 0
       )
     },
+    test("a lone main worker keeps the full helper budget (no 1-game regression)") {
+      val b = new ParallelismBudget(3)
+      b.enter() // one active search
+      assertTrue(b.acquireHelpers(3) == 3)
+    },
+    test("each additional concurrent main worker reserves a core for itself") {
+      val b2 = new ParallelismBudget(3)
+      b2.enter(); b2.enter() // two concurrent searches → one core reserved
+      val two = new ParallelismBudget(3)
+      two.enter(); two.enter(); two.enter() // three → two cores reserved
+      assertTrue(b2.acquireHelpers(3) == 2, two.acquireHelpers(3) == 1)
+    },
+    test("more mains than permits floor the helper cap at zero (never negative)") {
+      val b = new ParallelismBudget(2)
+      b.enter(); b.enter(); b.enter(); b.enter() // 4 mains, 2 permits
+      assertTrue(b.acquireHelpers(2) == 0)
+    },
+    test("leave() releases a main's core reservation") {
+      val b = new ParallelismBudget(3)
+      b.enter(); b.enter() // cap → 2
+      b.leave() // back to one active → full budget
+      assertTrue(b.acquireHelpers(3) == 3)
+    },
     test(
       "overlapping budgeted-LazySMP searches stay legal, don't crash, don't leak permits"
     ) {
