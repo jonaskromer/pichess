@@ -24,6 +24,10 @@ spec:
             - --storage.tsdb.retention.time=6h
             - --web.console.libraries=/usr/share/prometheus/console_libraries
             - --web.console.templates=/usr/share/prometheus/consoles
+            # Reachable over the VPN via a dedicated nip.io host (ingress-obs.yaml).
+            # Path is "/", so route-prefix stays "/" — the in-cluster datasource
+            # (http://prometheus:9090) and the /-/ready probe are unaffected.
+            - --web.external-url=http://prometheus.141.37.123.131.nip.io/
           ports:
             - name: http
               containerPort: 9090

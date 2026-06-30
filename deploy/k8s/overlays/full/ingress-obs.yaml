@@ -1,0 +1,34 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pichess-obs
+  labels:
+    pichess.tier: full
+spec:
+  ingressClassName: traefik # ships with k3s
+  # Host-based routes for the obs UIs, reached over the HTWG VPN via nip.io
+  # wildcard DNS (*.141.37.123.131.nip.io -> 141.37.123.131). Kept separate from
+  # the base gateway ingress so the mvp/lobbies tiers (which have no grafana /
+  # prometheus) stay clean. Both apps serve at root (path "/"), so no sub-path /
+  # route-prefix wiring is needed. Update the host IP if the VM moves.
+  rules:
+    - host: grafana.141.37.123.131.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  number: 3000
+    - host: prometheus.141.37.123.131.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: prometheus
+                port:
+                  number: 9090

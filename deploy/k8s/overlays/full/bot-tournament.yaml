@@ -4,6 +4,7 @@ metadata:
   name: bot-tournament
   labels:
     app: bot-tournament
+    pichess.tier: full # reset.yml prunes this label's tier when downgrading
 spec:
   # In-process state (registered identity + active-tournaments map) is per-pod,
   # so a single replica only — two would register/join independently.
@@ -68,6 +69,9 @@ apiVersion: v1
 kind: Service
 metadata:
   name: bot-tournament
+  labels:
+    app: bot-tournament
+    pichess.tier: full
 spec:
   # ClusterIP (default) — internal only. NEVER add an ingress rule: anyone who
   # can reach /control can enter piChess into arbitrary tournaments. The gateway

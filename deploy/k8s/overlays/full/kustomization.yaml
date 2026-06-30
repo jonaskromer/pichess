@@ -24,6 +24,8 @@ resources:
   # prod-obs: prometheus + grafana (NO jaeger — tracing/profiling is dev-only).
   - prometheus.yaml
   - grafana.yaml
+  # Host-based ingress (nip.io wildcard DNS) exposing the two obs UIs over the VPN.
+  - ingress-obs.yaml
 
 configMapGenerator:
   - name: pichess-config
@@ -62,13 +64,13 @@ configMapGenerator:
 
 images:
   - name: ghcr.io/jonaskromer/pichess-repository
-    newTag: "0.3.1"
+    newTag: "1.0.0"
   - name: ghcr.io/jonaskromer/pichess-bot-tournament
-    newTag: "0.3.1"
+    newTag: "1.0.0"
   # analytics + spark images: published by release.yml as of this change. Bump
   # these together with the others at each release (they only resolve once a
   # release ≥ the version that first publishes them has run).
   - name: ghcr.io/jonaskromer/pichess-analytics-service
-    newTag: "0.3.1"
+    newTag: "1.0.0"
   - name: ghcr.io/jonaskromer/pichess-spark-analytics
-    newTag: "0.3.1"
+    newTag: "1.0.0"

@@ -29,7 +29,7 @@ kubeconfig_path: "{{ ansible_env.HOME }}/.kube/pichess.yaml" # k3d cluster kubec
 
 # Public, multi-arch images pushed by .github/workflows/release.yml.
 image_registry: ghcr.io/jonaskromer
-image_tag: "0.3.1" # the released version to deploy (kustomize sets this tag)
+image_tag: "1.0.0" # the released version to deploy (kustomize sets this tag)
 
 # --- k3s ---
 k3s_version: "v1.31.5+k3s1" # pinned for reproducible installs

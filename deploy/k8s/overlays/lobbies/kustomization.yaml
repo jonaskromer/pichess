@@ -11,4 +11,4 @@ patches:
 
 images:
   - name: ghcr.io/jonaskromer/pichess-lobby-service
-    newTag: "0.3.1"
+    newTag: "1.0.0"
