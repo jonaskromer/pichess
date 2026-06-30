@@ -289,6 +289,59 @@ object Logic:
   def orderTournaments(list: TournamentList): List[TournamentRow] =
     list.created ++ list.started ++ list.finished
 
+  // -- Tournament history (archived, finished tournaments) -------------------
+
+  /** One row of the history index (gateway `GET /tournament/history`). Extra
+    * fields are ignored by the decoder. */
+  final case class ArchivedTournamentRow(
+      tournamentId: String,
+      name: String,
+      format: String,
+      nbPlayers: Int,
+      winner: Option[String]
+  )
+  object ArchivedTournamentRow:
+    given JsonDecoder[ArchivedTournamentRow] =
+      DeriveJsonDecoder.gen[ArchivedTournamentRow]
+
+  /** One ladder row of an archived tournament (subset — other fields ignored). */
+  final case class ArchivedStanding(
+      rank: Int,
+      botName: String,
+      engineType: Option[String],
+      points: Double,
+      wins: Int,
+      draws: Int,
+      losses: Int
+  )
+  object ArchivedStanding:
+    given JsonDecoder[ArchivedStanding] =
+      DeriveJsonDecoder.gen[ArchivedStanding]
+
+  /** An archived tournament's detail (gateway `GET /tournament/archive/{id}`):
+    * the final ladder + the ids of every game played. */
+  final case class ArchivedTournament(
+      name: String,
+      format: String,
+      standings: List[ArchivedStanding],
+      gameIds: List[String]
+  )
+  object ArchivedTournament:
+    given JsonDecoder[ArchivedTournament] =
+      DeriveJsonDecoder.gen[ArchivedTournament]
+
+  /** An archived game's PGN (gateway `GET /tournament/game/{gameId}`), loaded
+    * into a board for replay/analysis. Other fields (white/black/result/opening)
+    * are ignored by the decoder. */
+  final case class ArchivedGamePgn(pgn: String)
+  object ArchivedGamePgn:
+    given JsonDecoder[ArchivedGamePgn] = DeriveJsonDecoder.gen[ArchivedGamePgn]
+
+  /** Tournament points as a tidy string: "1", "0.5", "2.5" (drop the ".0"). */
+  def pointsText(points: Double): String =
+    if points == points.toLong.toDouble then points.toLong.toString
+    else points.toString
+
   // -- Analysis (post-game move quality) -------------------------------------
 
   /** White-relative eval (centipawns) → display text: "+1.5", "-2.0", or a

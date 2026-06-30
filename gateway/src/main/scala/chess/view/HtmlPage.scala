@@ -129,11 +129,17 @@ $pieceSprites
 </svg>
 </div>
 <div id="app"></div>
-<script src="/web/main.js"></script>
+<script src="/web/main.js?v=$mainJsVersion"></script>
 </body>
 </html>"""
 
   private val css: String = loadResource("web/style.css")
+  // Cache-bust the Scala.js bundle: a content hash in the query string, so every
+  // new build is fetched on reload even though the filename is fixed (`main.js`).
+  // The CSS is inlined above, so it's always fresh with the rendered HTML — only
+  // main.js is a separately-cacheable resource that needs this.
+  private val mainJsVersion: String =
+    Integer.toHexString(loadResource("web/main.js").hashCode)
   // Only the grid-only sprite is inlined now. The old gridless crumple SVG is
   // dead (every cutting + the page background moved to the baked #crumple-tile /
   // crumple-height.png pipeline), and inlining it ran a stray feTurbulence in

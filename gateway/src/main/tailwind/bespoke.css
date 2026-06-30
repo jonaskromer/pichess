@@ -2833,15 +2833,17 @@ body.is-dragging { cursor: grabbing; }
   width: 100%;
   box-sizing: border-box;
 }
-/* Pin the column headers while the rows scroll under them. The header
-   underline + separators are pseudo-elements on the th, so they travel with
-   it. The header CELL itself stays transparent — only the label's own
-   newsprint-scrap background shows — so the th reads as a scrap pinned to the
-   ledger, not a flat paper band. */
+/* Pin the column headers while the rows scroll under them. The header underline
+   + separators are pseudo-elements on the th, so they travel with it. The cell
+   takes the card's own base tone (--paper-color) as an OPAQUE band: a
+   transparent th let scrolled rows bleed through behind the header. Shared by
+   every ledger table (#join, spectate, tournaments, history, ladder, games), so
+   they all read the same. */
 .ledger-scroll .scrap-table thead th {
   position: sticky;
   top: 0;
   z-index: 1;
+  background: var(--paper-color);
 }
 
 /* ─── Hand-drawn multi-stroke underline (decoration) ──────────────────────

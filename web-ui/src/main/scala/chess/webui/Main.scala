@@ -219,6 +219,14 @@ object Main:
     case Settings
     case Help
     case Analytics
+    // Browse finished tournaments archived for review: the index, and one
+    // tournament's final ladder + game list.
+    case History
+    case HistoryDetail(tournamentId: String)
+    // Replay/analyse one archived game on the read-only board. Routed by the
+    // ARCHIVED game id (stable) so the title + board survive a reload — the
+    // game-service game is re-derived from the archive each load.
+    case ArchivedGame(archivedGameId: String)
 
   private val currentScreenVar: Var[Screen] = Var(Screen.Start)
 
@@ -236,6 +244,9 @@ object Main:
       case "settings"           => Screen.Settings
       case "help"               => Screen.Help
       case "analytics"          => Screen.Analytics
+      case "history"            => Screen.History
+      case s"history/$id"       => Screen.HistoryDetail(id)
+      case s"archived-game/$id" => Screen.ArchivedGame(id)
       case s"lobby/$c"          => Screen.Lobby(c)
       case s"watch/$id"         => Screen.Watch(id)
       case s"game/$id"          => Screen.Game(id)
@@ -253,6 +264,9 @@ object Main:
     case Screen.Settings       => "#settings"
     case Screen.Help           => "#help"
     case Screen.Analytics      => "#analytics"
+    case Screen.History        => "#history"
+    case Screen.HistoryDetail(id) => s"#history/$id"
+    case Screen.ArchivedGame(id)  => s"#archived-game/$id"
 
   /** Navigate to a different screen by mutating the URL hash. The
     * `hashchange` listener picks it up and updates `currentScreenVar`,
@@ -417,7 +431,10 @@ object Main:
           // renders it read-only. `enterGame` is idempotent + reusable.
           case Screen.Game(id)  => enterGame(id, spectator = false)
           case Screen.Watch(id) => enterGame(id, spectator = true)
-          case _                => disconnectEvents()
+          // Re-derive the read-only board from the archive each load (incl.
+          // reload / deep-link), so the title is tied to the archived id.
+          case Screen.ArchivedGame(id) => enterArchivedGame(id)
+          case _                       => disconnectEvents()
         }(using ctx.owner)
         // Phase 3: any state change (move, undo, redo, SSE push) clears
         // the per-click preview and triggers a fresh /threats fetch
@@ -564,6 +581,9 @@ object Main:
     case Screen.Settings        => settingsScreen()
     case Screen.Help            => helpScreen()
     case Screen.Analytics       => analyticsScreen()
+    case Screen.History         => historyScreen()
+    case Screen.HistoryDetail(id) => historyDetailScreen(id)
+    case Screen.ArchivedGame(_) => spectatorUi()
 
   /** Side-effect when entering a Game screen: ensure gameIdVar is set,
     * pull current state, (re)connect SSE for that id. Idempotent — a
@@ -1482,7 +1502,19 @@ object Main:
       Components.newsprintClip(clipClass, heading = heading)(text)
     def conn(text: String): HtmlElement =
       span(className := connClass, text)
-    def winnerName: String = status.winner.map(capitalize).getOrElse("Someone")
+    // Prefer the player's name (from the board title's roster) over the bare
+    // colour, so a tournament game reads "pichess-arch won by checkmate" rather
+    // than "White won …". Falls back to the capitalised colour when there's no
+    // roster (local / generic title).
+    def winnerName: String =
+      status.winner match
+        case Some(colour) =>
+          gameTitleVar
+            .now()
+            .map(t => if colour == "white" then t.white else t.black)
+            .filter(_.nonEmpty)
+            .getOrElse(capitalize(colour))
+        case None => "Someone"
     status.kind match
       case "checkmate" =>
         List(clip(winnerName), conn(s"$verb by"), clip("checkmate!"))
@@ -2113,11 +2145,13 @@ object Main:
           }
         )
       ),
-      // Close rides the default (yellow) marker, New Game the green one — and
-      // New Game is dropped entirely when spectating.
+      // Close rides the default (yellow) marker. The green CTA is contextual:
+      // a player gets "New Game"; a spectator (e.g. a replayed tournament game)
+      // gets "Analyze game" instead — they can't start a game, but can rate the
+      // one they're watching (synced with the board's analyze state).
       footer =
         Components.linkButton("Close") { _ => resultDismissedVar.set(true) } ::
-          (if spectator then Nil
+          (if spectator then List(analyzeGameButton("marker-green"))
            else
              List(
                Components.linkButton("New Game", extraClass = "marker-green") {
@@ -2126,6 +2160,30 @@ object Main:
                    postNew()
                }
              ))
+    )
+
+  /** "Analyze game" as a result-card CTA, sharing the analyze state
+    * (`analyzeRequestedVar` + `analysisVar`) and action (`requestAnalysis`) with
+    * the board's analyze prompt — so the two stay in sync: idle → "Analyze
+    * game", in-flight → "Analyzing…", done → "Analyzed" (both disabled). Used in
+    * the spectator card, which has no on-board analyze CTA. */
+  private def analyzeGameButton(extraClass: String): HtmlElement =
+    val state = analyzeRequestedVar.signal.combineWith(analysisVar.signal)
+    button(
+      typ := "button",
+      className := s"btn-link $extraClass",
+      disabled <-- state.map { case (req, an) => req || an.isDefined },
+      child.text <-- state.map {
+        case (_, an) if an.isDefined => "Analyzed"
+        case (req, _) if req         => "Analyzing…"
+        case _                       => "Analyze game"
+      },
+      onClick --> { _ =>
+        gameIdVar.now().foreach { id =>
+          analyzeRequestedVar.set(true)
+          requestAnalysis(id)
+        }
+      }
     )
 
   /** Two king stickers flanking the result card: the WINNER on the left
@@ -3470,7 +3528,10 @@ object Main:
       Components.contentCard(
         onMountCallback { _ => refreshTournaments() },
         div(
-          className := "flex flex-row items-center justify-end gap-3 flex-wrap mb-3",
+          className := "flex flex-row items-center justify-between gap-3 flex-wrap mb-3",
+          Components.linkButton("Past tournaments →") { _ =>
+            navigate(Screen.History)
+          },
           refreshBar(tournamentsIntervalVar, () => refreshTournaments())
         ),
         ledgerScroll(child <-- tournamentsVar.signal.map(tournamentTable)),
@@ -3532,6 +3593,171 @@ object Main:
         refreshTournaments()
       case scala.util.Failure(err) =>
         showToast(s"Couldn't enter: ${err.getMessage}")
+    }
+
+  // -- Tournament history (archived tournaments) ------------------------------
+
+  private val historyVar: Var[List[Logic.ArchivedTournamentRow]]      = Var(Nil)
+  private val historyDetailVar: Var[Option[Logic.ArchivedTournament]] = Var(None)
+
+  private def historyScreen(): HtmlElement =
+    Components.screenLayout("history")(
+      Components.titleCard(
+        Components.cornerPeach(),
+        Components.backLink(() => navigate(Screen.Tournaments)),
+        Components.screenHeading("Past tournaments")
+      ),
+      Components.contentCard(
+        onMountCallback { _ => refreshHistory() },
+        ledgerScroll(child <-- historyVar.signal.map(historyTable))
+      )
+    )
+
+  private def refreshHistory(): Unit =
+    fetchJson("GET", "/tournament/history", None).onComplete {
+      case scala.util.Success(raw) =>
+        raw.fromJson[List[Logic.ArchivedTournamentRow]] match
+          case Right(rows) => historyVar.set(rows)
+          case Left(_)     => showToast("Couldn't read the tournament history.")
+      case scala.util.Failure(err) =>
+        showToast(s"Could not fetch history: ${err.getMessage}")
+    }
+
+  private def historyTable(
+      rows: List[Logic.ArchivedTournamentRow]
+  ): HtmlElement =
+    Components.scrapTable(
+      Seq(
+        "Tournament" -> "",
+        "Format"     -> "",
+        "Players"    -> "col-num",
+        "Winner"     -> "",
+        ""           -> "col-action"
+      ),
+      rows.map(historyRow),
+      "No finished tournaments archived yet."
+    )
+
+  private def historyRow(t: Logic.ArchivedTournamentRow): HtmlElement =
+    tr(
+      td(t.name),
+      td(t.format),
+      td(className := "col-num", t.nbPlayers.toString),
+      td(t.winner.getOrElse("—")),
+      td(
+        className := "col-action",
+        Components.linkButton("View") { _ =>
+          navigate(Screen.HistoryDetail(t.tournamentId))
+        }
+      )
+    )
+
+  private def historyDetailScreen(id: String): HtmlElement =
+    Components.screenLayout("history-detail")(
+      Components.titleCard(
+        Components.cornerPeach(),
+        Components.backLink(() => navigate(Screen.History)),
+        Components.screenHeading("Tournament")
+      ),
+      Components.contentCard(
+        onMountCallback { _ => fetchHistoryDetail(id) },
+        child <-- historyDetailVar.signal.map {
+          case None =>
+            div(className := "text-sm opacity-70", "Loading…")
+          case Some(t) =>
+            div(
+              h3(className := "mb-2 font-semibold", t.name),
+              ledgerScroll(ladderTable(t.standings)),
+              h3(
+                className := "mt-4 mb-2 font-semibold",
+                s"Games (${t.gameIds.size})"
+              ),
+              ledgerScroll(gameList(t.gameIds))
+            )
+        }
+      )
+    )
+
+  private def fetchHistoryDetail(id: String): Unit =
+    historyDetailVar.set(None)
+    fetchJson("GET", s"/tournament/archive/$id", None).onComplete {
+      case scala.util.Success(raw) =>
+        raw.fromJson[Logic.ArchivedTournament] match
+          case Right(t) => historyDetailVar.set(Some(t))
+          case Left(_)  => showToast("Couldn't read the tournament.")
+      case scala.util.Failure(err) =>
+        showToast(s"Could not fetch tournament: ${err.getMessage}")
+    }
+
+  private def ladderTable(
+      standings: List[Logic.ArchivedStanding]
+  ): HtmlElement =
+    Components.scrapTable(
+      Seq(
+        "#"      -> "col-num",
+        "Bot"    -> "",
+        "Engine" -> "",
+        "Pts"    -> "col-num",
+        "W/D/L"  -> "col-num"
+      ),
+      standings.map(ladderRow),
+      "No standings."
+    )
+
+  private def ladderRow(s: Logic.ArchivedStanding): HtmlElement =
+    tr(
+      td(className := "col-num", s.rank.toString),
+      td(s.botName),
+      td(s.engineType.getOrElse("—")),
+      td(className := "col-num", Logic.pointsText(s.points)),
+      td(className := "col-num", s"${s.wins}/${s.draws}/${s.losses}")
+    )
+
+  private def gameList(gameIds: List[String]): HtmlElement =
+    Components.scrapTable(
+      Seq("Game" -> "", "" -> "col-action"),
+      gameIds.zipWithIndex.map(gameListRow),
+      "No games."
+    )
+
+  private def gameListRow(entry: (String, Int)): HtmlElement =
+    val (gameId, idx) = entry
+    tr(
+      td(s"Game ${idx + 1}"),
+      td(
+        className := "col-action",
+        Components.linkButton("Open board") { _ => openArchivedGame(gameId) }
+      )
+    )
+
+  /** Open an archived game on the read-only board. Routes by the ARCHIVED id, so
+    * a reload / deep-link re-derives the board + title (see `enterArchivedGame`)
+    * — the names stay tied to the stable archived id instead of a transient. */
+  private def openArchivedGame(gameId: String): Unit =
+    navigate(Screen.ArchivedGame(gameId))
+
+  /** Screen-enter handler for `#archived-game/<id>` (navigate, reload, or deep
+    * link): (re)fetch the archived PGN, create a fresh read-only game-service
+    * game from it, and title it with the PGN roster (the real bot names). Run on
+    * every load, so the title survives a reload — it's derived from the stable
+    * archived id, not staged in a transient. */
+  private def enterArchivedGame(archivedGameId: String): Unit =
+    fetchJson("GET", s"/tournament/game/$archivedGameId", None).onComplete {
+      case scala.util.Success(raw) =>
+        raw.fromJson[Logic.ArchivedGamePgn] match
+          case Right(g) =>
+            postCreateGameClient((sessionId, CreateGameRequest(Some(g.pgn))))
+              .foreach {
+                case Right(snapshot) =>
+                  gameTitleVar.set(Logic.titleFromPgn(g.pgn))
+                  gameIdVar.set(Some(snapshot.id))
+                  getStateClient((snapshot.id, None)).foreach(handleStateResult)
+                  connectEvents(snapshot.id, spectator = true)
+                case Left(err) => showToast(err.error)
+              }
+          case Left(_) => showToast("Couldn't read the archived game.")
+      case scala.util.Failure(err) =>
+        showToast(s"Couldn't open the game: ${err.getMessage}")
     }
 
   // -- Shared Grafana-style refresh bar ---------------------------------------
