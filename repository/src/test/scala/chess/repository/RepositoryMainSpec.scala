@@ -8,7 +8,8 @@ import chess.persistence.{
   BackendConfig,
   CacheBackend,
   InMemoryGameArchiveRepository,
-  InMemoryGameRepository
+  InMemoryGameRepository,
+  InMemoryTournamentArchiveRepository
 }
 
 object RepositoryMainSpec extends ZIOSpecDefault:
@@ -50,6 +51,7 @@ object RepositoryMainSpec extends ZIOSpecDefault:
           .provide(
             InMemoryGameRepository.layer,
             InMemoryGameArchiveRepository.layer,
+            InMemoryTournamentArchiveRepository.layer,
             chess.obs.TracingLayer.noop
           )
           .fork
