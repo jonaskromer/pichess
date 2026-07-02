@@ -27,11 +27,17 @@ spec:
               containerPort: 9107
           env:
             # The NowChess tournament server to play on (edit per event). The bot
-            # only makes OUTBOUND calls to it; it needs no other pichess service.
+            # makes OUTBOUND calls to it (to play) and to the repository (to
+            # archive finished tournaments — see PICHESS_ARCHIVE_URL below).
             - name: TOURNAMENT_BASE_URL
               value: "http://141.37.123.132:8086"
             - name: TOURNAMENT_BOT_NAME
               value: "piChess"
+            # Repository archive store. REQUIRED for #history: finished tournaments
+            # + their games are POSTed here (POST /tournament-archives + /archives).
+            # Without it the recorder is off (None) and archiving is a silent no-op.
+            - name: PICHESS_ARCHIVE_URL
+              value: "http://repository:8091"
             - name: TOURNAMENT_CONTROL_PORT
               value: "8080"
             # Prometheus metrics endpoint (win/loss vs opponents, openings,
